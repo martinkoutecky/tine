@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tine_core::model::GraphMeta;
-use tine_store::{OpenError, OpenOptions, Store};
+use tine_store::{GraphRev, OpenError, OpenOptions, Store};
 
 pub(crate) fn open_error_text(error: OpenError, layout_prefix: bool) -> String {
     let text = error.to_string();
@@ -450,6 +450,7 @@ fn route_bound_root(
             binding_generation: slot.binding_generation,
             config_problem: config_problem(&slot.store),
             draft_status: crate::page_commands::draft_status(&slot),
+            published_rev: slot.rescan.emitted(),
         }));
     }
     // `FocusedExisting` is an explicit activation request. Update capture
@@ -769,12 +770,15 @@ fn load_graph_with_relocation(
     let binding_generation = slot.binding_generation;
     let config_problem = config_problem(&slot.store);
     let draft_status = crate::page_commands::draft_status(&slot);
+    // After `start_slot_events`: at least the subscription's start revision.
+    let published_rev = slot.rescan.emitted();
     warm_cache_async(app.clone(), window_label.to_string(), slot, warm_generation);
     Ok(LoadGraphResult::Loaded {
         meta,
         binding_generation,
         config_problem,
         draft_status,
+        published_rev,
     })
 }
 
@@ -883,12 +887,20 @@ pub(crate) enum LoadGraphResult {
         config_problem: Option<ConfigProblem>,
         /// Crash-recovery availability (§4, B-Q1); None with no page host.
         draft_status: Option<tine_store::DraftStatus>,
+        /// The last publication whose window events were already emitted
+        /// when this answer was made (`RescanCursor::emitted`); every later
+        /// publication's change summary follows on the event channel. The
+        /// window's change-summary baseline (`changeSummary.ts`), so its
+        /// first summary is read as the delta it is. None: no dispatch yet.
+        published_rev: Option<GraphRev>,
     },
     AlreadyCurrent {
         meta: GraphMeta,
         binding_generation: u64,
         config_problem: Option<ConfigProblem>,
         draft_status: Option<tine_store::DraftStatus>,
+        /// As for `Loaded`.
+        published_rev: Option<GraphRev>,
     },
     FocusedExisting {
         window_label: String,
