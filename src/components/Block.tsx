@@ -27,7 +27,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -120,7 +120,7 @@ import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenu
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, type RowHost } from "./block/embedRowHost";
 import { beginEditGesture, dragId, dropInd, renderedClickOffset } from "./blockGestures";
-import { bodyNeighbor, threadRootOf } from "../document";
+import { bodyNeighbor, rawToWrite, threadRootOf, type PendingEdit } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
@@ -579,9 +579,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   let rawBeforeLastCommit = node().raw;
   const markerBaseline = editorMarkerBaseline(node().raw, pageFmt());
   const commitRecovery = editorCommitRecovery(() => ref, editorNodeCurrent, () => ref.value);
-  const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
+  /** The write `commit(text)` would make, decided but not made: `raw` is the block's text once written (the
+   *  clock transition settled, so it runs once), `write` writes it. A refused join throws here, as in
+   *  `commit`. A structural gesture that edits the text it acts on (the multiline exit's trim) asks the
+   *  kernel about `raw` and writes only on an answer. */
+  const stage = (text: string, opts?: { timetracking?: boolean; calc?: boolean }): PendingEdit => {
+    const unchanged = (): PendingEdit => ({ raw: node().raw, write() {} });
     // A disposed editor whose block was replaced never writes (see shownNode).
-    if (replacedUnderEditor()) return;
+    if (replacedUnderEditor()) return unchanged();
     const commitAsCalc = opts?.calc ?? isCalc();
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
@@ -595,22 +600,29 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // unchanged, don't rewrite. Needed for org, where reattaching the hidden
     // drawer canonicalizes its position — so `next === raw` alone wouldn't catch
     // a block whose drawer wasn't already canonical, and would churn the file.
-    if (!commitAsCalc && !codeShown() && text === editorValue()) { commitRecovery.applied(); return; }
+    if (!commitAsCalc && !codeShown() && text === editorValue()) { commitRecovery.applied(); return unchanged(); }
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
     const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : text;
     const next = commitRecovery.join(() => (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt()), text);
-    if (next === node().raw) return;
+    if (next === node().raw) return unchanged();
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
-    // GH #515: capture once for the autosize frame, before live mirrors above react.
-    if (pendingScrollAnchor === undefined) {
-      pendingScrollAnchor = ref && documentOf(ref).activeElement === ref
-        ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
-    }
-    autosize();
-    rawBeforeLastCommit = node().raw;
-    keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, next, { ...setRawOpts, markerBaseline: markerBaseline(node().raw) }));
+    const settled = rawToWrite(props.id, next, { ...setRawOpts, markerBaseline: markerBaseline(node().raw) });
+    return {
+      raw: settled,
+      write() {
+        // GH #515: capture once for the autosize frame, before live mirrors above react.
+        if (pendingScrollAnchor === undefined) {
+          pendingScrollAnchor = ref && documentOf(ref).activeElement === ref
+            ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
+        }
+        autosize();
+        rawBeforeLastCommit = node().raw;
+        keepCaretThroughRewrite(ref, !commitAsCalc && !codeShown() && !compositionActive, () => setRaw(props.id, settled, { timetracking: false }));
+      },
+    };
   };
+  const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => stage(text, opts).write();
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
   // the caret is on a `+`/`*`/ordered list line).
@@ -1698,11 +1710,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         const trimmed = kind === "code" ? codeBodyExitTrim(raw, start) : multilineExitTrim(raw, start, kind, pageFmt());
         if (trimmed !== null) {
           e.preventDefault();
-          let newId: string | null = props.id;
-          withUndoUnit(`multiline-exit:${props.id}`, [node().page], () => {
-            commit(trimmed);
-            newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
-          });
+          // One gesture: the kernel is asked about the sibling over the trimmed text, which is written only
+          // once it has answered, so a refused or failed insert leaves the blank line in place.
+          const newId = exitMultilineBlock(props.id, stage(trimmed));
           if (newId) startEditing(newId, 0, null, editSurface());
           return;
         }

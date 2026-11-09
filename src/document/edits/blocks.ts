@@ -61,8 +61,9 @@ export function prepareReferenceChangeNotice(roots: readonly string[], subtree: 
 // ---------------------------------------------------------------------------
 
 
-/** Supply graph identity context; insertion and duplicate handling live in Rust. */
-function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: OutlinePlace, reuse?: string) {
+/** Supply graph identity context; insertion and duplicate handling live in Rust. `edited` names a block
+ *  whose text a same-gesture edit is about to write (see `PendingEdit`): the kernel reads that text. */
+function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: OutlinePlace, reuse?: string, edited?: { id: string; raw: string }) {
   const liveIds: string[] = [];
   const format = formatForBlock(anchor);
   const visit = (node: OutlineNode) => {
@@ -71,10 +72,36 @@ function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: Outl
     node.children.forEach(visit);
   };
   nodes.forEach(visit);
-  return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page]);
+  return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page], edited);
 }
 
-export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean; markerBaseline?: string }) {
+type SetRawOptions = { timetracking?: boolean; markerBaseline?: string };
+
+/** What `setRaw(id, raw, opts)` stores: `raw` with the marker transition (the
+ *  clock) applied. Pure; one parser call when time tracking is on. A caller
+ *  that must know the stored text before writing it settles it here, then
+ *  writes it with `timetracking: false` so the transition runs once. */
+export function rawToWrite(id: string, raw: string, opts?: SetRawOptions): string {
+  return opts?.timetracking === false
+    ? raw
+    : applyMarkerTransition(
+        opts?.markerBaseline ?? doc.byId[id].raw,
+        raw,
+        formatForBlock(id),
+        timetrackingEnabled(),
+        logbookWithSecondSupport(),
+      );
+}
+
+/** An edit to a block's text that the editor has decided on but not written:
+ *  `raw` is the block's raw once `write` has run. A structural gesture that
+ *  edits the text it acts on (Enter over a selection, the multiline exit's
+ *  trim of a trailing blank line) computes the kernel's answer from `raw` and
+ *  calls `write` only when the kernel answers, so a refused gesture leaves the
+ *  editor and the document as they were. */
+export interface PendingEdit { raw: string; write(): void }
+
+export function setRaw(id: string, raw: string, opts?: SetRawOptions) {
   if (!blockWritable(id)) return;
   const prev = doc.byId[id].raw;
   const page = pageByName(doc.byId[id].page);
@@ -83,16 +110,7 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean;
       && readPropertyValue(prev, "title") !== readPropertyValue(raw, "title")) {
     noteTitleIdentityIntent(page.name);
   }
-  const next =
-    opts?.timetracking === false
-      ? raw
-      : applyMarkerTransition(
-          opts?.markerBaseline ?? prev,
-          raw,
-          formatForBlock(id),
-          timetrackingEnabled(),
-          logbookWithSecondSupport(),
-        );
+  const next = rawToWrite(id, raw, opts);
   pushRawUndo(id, prev);
   setDoc("byId", id, "raw", next);
   markDirty(doc.byId[id].page, "save-block");
@@ -189,7 +207,12 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
  *  (built-in properties hidden). The kernel's `split` owns the rule
  *  (outline::split): hidden props stay with the original block, a split at the
  *  head inserts an empty block before it, and GH #361's line boundary becomes the
- *  block separator. Returns false when the outline cap refuses a child. */
+ *  block separator. Returns false when the outline cap refuses a child.
+ *
+ *  `pending` is an edit to this block's text that belongs to the same gesture
+ *  (the selection Enter replaces). The kernel splits the text `pending` leaves;
+ *  `pending.write` runs once the kernel has answered, ahead of the undo entry
+ *  and the patch. A refusal or a parser failure writes nothing. */
 export function splitBlock(
   id: string,
   offset: number,
@@ -197,22 +220,24 @@ export function splitBlock(
   keepStartInScope: boolean = false,
   editingSurface: string | null = null,
   hiddenProperties: HidePolicy = BUILTIN_HIDE,
+  pending?: PendingEdit,
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
   const change = outlineChange({
     verb: "split",
     key: id,
-    raw_offset: visibleOffsetToRawByte(node.raw, offset, hiddenProperties, formatForBlock(id)),
+    raw_offset: visibleOffsetToRawByte(pending?.raw ?? node.raw, offset, hiddenProperties, formatForBlock(id)),
     force_child: forceChild,
     children_visible: node.children.length > 0 && !node.collapsed,
     keep_start_in_scope: keepStartInScope,
-  }, [node.page]);
+  }, [node.page], pending && { id, raw: pending.raw });
   if ("refused" in change) {
     if (change.refused !== "depth_cap") return;
     pushToast(msg("blocks-outline-is-too-deep-to-insert-a-child"), "error");
     return false;
   }
+  pending?.write();
   pushUndo("split", [node.page]);
   applyOutlineChange(change);
   if (change.focus) {
@@ -367,6 +392,30 @@ export function insertOutlineBefore(beforeId: string, nodes: OutlineNode[]): str
   return insertOutlineBeside(beforeId, nodes, "before", "insert-block");
 }
 
+/** The kernel's answer to an insert beside `anchorId`, or null when nothing may change: an empty outline,
+ *  a read-only anchor, an outline past the depth cap, a refusal, or a parser failure (the kernel has
+ *  already told the user the last two). Pure: nothing is written, pushed to undo or marked dirty, so a
+ *  caller that has staged an edit (`pending`, read by the kernel as the anchor's text) writes it only
+ *  when this returns a change. */
+function planInsertBeside(
+  anchorId: string,
+  nodes: OutlineNode[],
+  side: "before" | "after",
+  pending?: PendingEdit,
+): OutlineChange | null {
+  if (!nodes.length) return null;
+  // Read-only gate at the choke point — file drops (and any future caller)
+  // must not mutate a page the round-trip self-check marked read-only
+  // (Phase-6 review finding, validated).
+  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
+  const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId }, undefined, pending && { id: anchorId, raw: pending.raw });
+  if ("refused" in change) {
+    noteOutlineRefusal(change.refused);
+    return null;
+  }
+  return change;
+}
+
 /** Shared body of insertOutlineAfter/Before. Focus answer: the inserted block
  *  the reading order ends on beside the anchor — last after it, first before. */
 function insertOutlineBeside(
@@ -375,20 +424,33 @@ function insertOutlineBeside(
   side: "before" | "after",
   undoLabel: string,
 ): string | null {
-  if (!nodes.length) return null;
-  // Read-only gate at the choke point — file drops (and any future caller)
-  // must not mutate a page the round-trip self-check marked read-only
-  // (Phase-6 review finding, validated).
-  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
-  const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId });
-  if ("refused" in change) {
-    noteOutlineRefusal(change.refused);
-    return null;
-  }
+  const change = planInsertBeside(anchorId, nodes, side);
+  if (!change) return null;
   pushUndo(undoLabel, [doc.byId[anchorId].page]);
   applyOutlineChange(change);
   markOutlineDirty(change);
   return change.focus?.key ?? null;
+}
+
+/** The multiline exit: double Enter on the blank last line of a code, calc, fence, display-math or
+ *  page-properties block. The gesture is one change: `trim` (the block's text without that line) is
+ *  written and an empty sibling follows the block, as one undo unit, so one Undo restores the line and
+ *  removes the sibling. The kernel is asked about the insert over the trimmed text before anything is
+ *  written, so a refusal or a parser failure leaves the block, its editor, undo and the dirty bit
+ *  exactly as they were. Returns the new block, or null when nothing changed (the unit is entered only
+ *  once the kernel has answered, so a refusal never has to roll one back: a rollback replaces the
+ *  block's node, and the mounted editor then no longer owns it). Cost: one kernel ask, O(the page's
+ *  blocks) for the undo snapshot. */
+export function exitMultilineBlock(id: string, trim: PendingEdit): string | null {
+  const change = planInsertBeside(id, [{ raw: "", children: [] }], "after", trim);
+  if (!change) return null;
+  const sibling = withUndoUnit(`multiline-exit:${id}`, [doc.byId[id].page], () => {
+    trim.write();
+    applyOutlineChange(change);
+    markOutlineDirty(change);
+    return change.focus?.key ?? null;
+  });
+  return sibling ?? null;
 }
 
 /** Replace one empty leaf with a parsed outline in one transaction and undo
