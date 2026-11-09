@@ -2275,6 +2275,8 @@ mod og_20d_guide_tests {
             "every unreadable page",
             "claimed by more than one file",
             "exits with status 1",
+            // A date as `add --page`'s name is the day's journal, as a link is.
+            "is that day's journal, as `[[2026-10-13]]` is",
         ] {
             assert!(cli.contains(promised), "Guide omitted {promised}");
         }

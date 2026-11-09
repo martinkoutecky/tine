@@ -28,6 +28,7 @@ pub(crate) mod git_sync_cycle;
 pub(crate) mod lease;
 pub(crate) mod lock;
 pub(crate) mod namespace;
+mod op_counts;
 mod pages;
 mod properties;
 pub(crate) mod seen;

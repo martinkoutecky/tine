@@ -35,11 +35,20 @@ mod page_prop_tests;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;
 
+#[path = "owner_tests/rename_date_tests.rs"]
+mod rename_dates;
+
 #[path = "owner_tests/cm_favorites_tests.rs"]
 mod cm_favorites;
 
 #[path = "owner_tests/parallel_write_tests.rs"]
 mod parallel_writes;
+
+#[path = "owner_tests/spelling_tests.rs"]
+mod spelling;
+
+#[path = "owner_tests/write_cost_tests.rs"]
+mod write_cost;
 
 #[cfg(desktop)]
 #[path = "owner_tests/git_run_tests.rs"]
@@ -76,6 +85,12 @@ impl Graph {
     }
 
     fn watching(watch: tine_store::WatchMode) -> Self {
+        Self::seeded(watch, &[])
+    }
+
+    /// The standard graph plus `extra` files (graph-relative path, text),
+    /// written before the store opens so its first walk sees them.
+    fn seeded(watch: tine_store::WatchMode, extra: &[(&str, &str)]) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let graph = dir.path().join("graph");
         std::fs::create_dir_all(graph.join("pages")).unwrap();
@@ -97,6 +112,11 @@ impl Graph {
         .unwrap();
         std::fs::write(graph.join("pages/ns___child.md"), "- in a namespace\n").unwrap();
         std::fs::write(graph.join("pages/dup.md"), "- same\n- same\n").unwrap();
+        for (relative, text) in extra {
+            let path = graph.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
         let app_data = dir.path().join("app");
         let owners = dir.path().join("owners");
         std::fs::create_dir_all(&app_data).unwrap();
@@ -705,6 +725,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("lock", include_str!("lock.rs")),
         ("mod", include_str!("mod.rs")),
         ("namespace", include_str!("namespace.rs")),
+        ("op_counts", include_str!("op_counts.rs")),
         ("pages", include_str!("pages.rs")),
         ("properties", include_str!("properties.rs")),
         ("seen", include_str!("seen.rs")),
@@ -732,7 +753,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 34, "scan every owner/*.rs file");
+    assert_eq!(files, 35, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

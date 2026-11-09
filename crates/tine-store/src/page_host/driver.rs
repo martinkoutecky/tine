@@ -845,7 +845,7 @@ fn dispatch<F: HostIo, C: Clock>(
     wait: bool,
 ) -> Dispatched<F, C> {
     let writer = command.writer.clone();
-    let _writer = match writer.as_deref() {
+    let writer = match writer.as_deref() {
         None => None,
         Some(writer) if wait => Some(writer.lock().unwrap()),
         Some(writer) => match writer.try_lock() {
@@ -854,20 +854,37 @@ fn dispatch<F: HostIo, C: Clock>(
             Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
         },
     };
-    if !claim(&command.claim, QUEUED) {
-        return Dispatched::Done;
+    let run = move || {
+        if !claim(&command.claim, QUEUED) {
+            return Dispatched::Done;
+        }
+        let state = shared.state.lock().unwrap();
+        let (state, again) = (command.run)(shared, state);
+        drop(state);
+        debug_assert!(
+            again.is_none() || command.writer.is_none(),
+            "a writer request waits"
+        );
+        match park(command, again) {
+            Some((command, at)) => Dispatched::Waiting(command, at),
+            None => Dispatched::Done,
+        }
+    };
+    match writer {
+        Some(writer) => under_writer(writer, run),
+        None => run(),
     }
-    let state = shared.state.lock().unwrap();
-    let (state, again) = (command.run)(shared, state);
-    drop(state);
-    debug_assert!(
-        again.is_none() || command.writer.is_none(),
-        "a writer request waits"
-    );
-    match park(command, again) {
-        Some((command, at)) => Dispatched::Waiting(command, at),
-        None => Dispatched::Done,
-    }
+}
+
+/// Run `work` holding the store writer `guard`, and release it before a
+/// panic in `work` (a host bug) unwinds on: the driver still ends, but an
+/// unpoisoned writer lets the Store's other writers and `Store::close` go on
+/// (s3b O6). The host's drop hands its pages back to the watcher, which
+/// rereads them from disk.
+pub(super) fn under_writer<R>(guard: std::sync::MutexGuard<'_, ()>, work: impl FnOnce() -> R) -> R {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+    drop(guard);
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// Start an ask of a request that is `from` (queued or parked); false when

@@ -469,7 +469,14 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 56)
+## Page host (ceiling: 57)
+# audit-storage-1109 R1 (56 -> 57): `ended`, whether a host's driver ended (a
+# host bug). src-tauri's retirement must not adopt such a host on reopen
+# (host_retirement.rs adopt, state.rs PageHostSlot::ended). No existing item
+# answers it without effect: orphan_stop ends the window's session first,
+# window_reloaded/draft_status ask the dead driver, and stop_finish consumes
+# the host. A parameter on those cannot ask without acting. The terminal stop
+# itself is stop_finish's existing verb (no new item).
 # R5 F3 (55 -> 56), test-oracle only: respell_for_tests shares the former binding
 # fixture's spelling setup with feature-boundary refusal tests. It must update
 # an already-live host after a physical fixture move while preserving its old
@@ -504,6 +511,7 @@ fn page_host::PageHost::orphan_stop
 fn page_host::PageHost::retarget
 fn page_host::PageHost::stop_abort
 fn page_host::PageHost::stop_finish
+fn page_host::PageHost::ended
 struct page_host::Reloaded
 struct page_host::Opened
 struct page_host::PageMail

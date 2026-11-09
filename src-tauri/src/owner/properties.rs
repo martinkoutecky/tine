@@ -72,7 +72,7 @@ pub(super) fn prop_page(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
     }
     let graph = whole_graph(slot)?;
     let page = if let Some(name) = &args.page {
-        resolve_write_page(&graph, name)?
+        resolve_write_page(slot, &graph, name)?
     } else {
         let day = journal_day(slot, args.journal.as_deref().filter(|s| !s.is_empty()))?;
         journal_write_page(slot, &graph, day)?

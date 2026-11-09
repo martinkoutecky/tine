@@ -396,6 +396,12 @@
       "nonRequirements": ["Exact DOM nesting or palette; certification outside Linux WebKitGTK; full graph searching within Find; green-suite burn-in, which belongs to the manager."],
       "stability":"burn-in"
     },
+    "scripts/e2e-journal-edit-feed-kept.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart, even when the edit is the session's first change.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART; UI-FEED-FIRST-CHANGE-RESTART"}],
+      "acceptableVariations": ["Read, save, watcher and render latency; extra days loaded by infinite scroll while settling; the edited day moving by less than a quarter of the viewport."],
+      "nonRequirements": ["Exact pixels, DOM nesting or scroll offsets; day references and planning (Rust change-summary tests); external journal changes, which keep their own feed restart; certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-rn-cf-org-body.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"An unloaded uppercase-extension Org block's Note:: body remains visible in a routed Markdown page's bare block reference and in Foo's linked references, while the Org source remains byte-identical. Extending a bare running task retains one clock; completing it with its checkbox closes that clock in the saved file.","blocking":false,"authority":"RN-C/F; audits L3-04 and L3-07"}],
       "acceptableVariations": ["Rendering and inventory arrival latency; whitespace around inline links."],
@@ -492,6 +498,7 @@
       "contracts": [
         { "class": "core-operation", "userOutcome": "Page-property CLI edits, aliases and new-page header imports work with serve and app owners in Markdown and Org; a title edit updates the open page, and existing-page header-shape refusals explain page-property recovery (#839).", "blocking": true, "authority": "docs/contracts/cli-output.md page.prop; GH #839" },
         { "class": "core-operation", "userOutcome": "Six parallel tine add commands to one page all land while the real app owns the graph, with the page open in its window and with it closed (#842).", "blocking": true, "authority": "docs/contracts/cli-output.md Writes; GH #842" },
+        { "class": "core-operation", "userOutcome": "While the real app owns the graph, tine add --page naming two spellings of a page that does not exist yet (Twin, twin) at once writes one page with every block, and tine add --page with a date no page claims writes that day's journal file beside tine add --journal, not a second file under pages/.", "blocking": true, "authority": "docs/contracts/cli-output.md block.add; Tine app: [[date]] opens the day's journal" },
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit keeps the block's properties the new text does not name, whether tine serve or the real app owns the graph (#840).", "blocking": true, "authority": "docs/contracts/cli-output.md block.edit; D-20261101-CLIE" },
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
         { "class": "core-operation", "userOutcome": "A CLI edit to a page open in the real app appears in its window without navigation and reaches the guarded page file.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },

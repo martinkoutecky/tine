@@ -250,3 +250,65 @@ impl<'de> Deserialize<'de> for IndexState {
         })))
     }
 }
+
+/// PC-7 unit-cost probe for the receipt: what the `tine.*` keys add to the
+/// checkpointed key table (FORMAT 29). Ignored: `TINE_KEY_PROBE_ROOT=<copy of
+/// a generated graph>`, run alone. Prints the index's encoded size, the whole
+/// checkpoint's, and the `tine.*` share: their digest entries and posting
+/// members, encoded (postcard, as written) and retained (slot sizes plus heap
+/// string bytes; persistent-map node overhead not counted).
+#[cfg(test)]
+#[test]
+#[ignore]
+fn tine_key_table_unit_cost() {
+    let root = std::path::PathBuf::from(std::env::var("TINE_KEY_PROBE_ROOT").unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let opts = crate::OpenOptions {
+        launch_checkpoint: Some(dir.path().join("checkpoint.bin")),
+        ..Default::default()
+    };
+    let store = crate::Store::open(&root, opts).unwrap().0;
+    let whole = store.whole_graph().unwrap();
+    let index = whole.graph.query_index();
+    let extra = |key: &str| key.starts_with("tine.") && key != DECLARED_TYPE_KEY;
+    let encoded = postcard::to_stdvec(&IndexState(Arc::clone(&index))).unwrap();
+    let compressed = zstd::encode_all(encoded.as_slice(), 3).unwrap().len();
+    let facts = flat(&index.facts.base, &index.facts.delta);
+    let digests: Vec<(String, u64)> = facts
+        .iter()
+        .filter_map(|(_, facts)| facts.as_ref())
+        .flat_map(|facts| facts.keys.iter().filter(|(key, _)| extra(key)).cloned())
+        .collect();
+    let postings: Vec<(String, Vec<String>)> = postings_parts(&index.key_pages)
+        .into_iter()
+        .filter(|(key, _)| extra(key))
+        .collect();
+    let members: usize = postings.iter().map(|(_, paths)| paths.len()).sum();
+    let encoded_extra = postcard::to_stdvec(&digests).unwrap().len()
+        + postcard::to_stdvec(&postings).unwrap().len();
+    let string = std::mem::size_of::<String>();
+    let retained = digests
+        .iter()
+        .map(|(key, _)| std::mem::size_of::<(String, u64)>() + key.len())
+        .sum::<usize>()
+        + postings
+            .iter()
+            .map(|(key, paths)| {
+                string + key.len() + paths.iter().map(|path| string + path.len()).sum::<usize>()
+            })
+            .sum::<usize>();
+    let written = store.write_checkpoint_now();
+    println!(
+        "KEYTABLE pages={} keys={} index_raw={} index_zstd={} checkpoint={written:?} \
+         tine_digests={} tine_keys={} tine_members={members} tine_encoded={encoded_extra} \
+         tine_retained={retained}",
+        facts.len(),
+        postings_parts(&index.key_pages).len(),
+        encoded.len(),
+        compressed,
+        digests.len(),
+        postings.len(),
+    );
+    drop(whole);
+    store.close();
+}

@@ -37,10 +37,11 @@ fn picker_cost_is_independent_of_non_template_pages() {
             elapsed.as_nanos()
         );
         assert_eq!(work, (count, count * 3, 9));
-        assert_eq!(
-            old.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
-            ["Template 0", "Template 1", "Template 2"]
-        );
+        // Page-slot order follows the directory listing, which is unsorted on
+        // some filesystems: compare the set here; `names == old` pins the order.
+        let mut sorted = old.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        sorted.sort();
+        assert_eq!(sorted, ["Template 0", "Template 1", "Template 2"]);
         let start = std::time::Instant::now();
         let names = view.template_names();
         let elapsed = start.elapsed();
