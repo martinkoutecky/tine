@@ -7,9 +7,7 @@ use tine_core::model::{BlockDto, Format};
 use tine_core::outline_kernel::{apply, KeySource, OutlineNode, Place, Verb};
 use tine_store::EditKind;
 
-use super::verbs::{
-    internal, journal_day, journal_write_page, resolve_write_page, whole_graph, Diag,
-};
+use super::verbs::{internal, journal_day, journal_write_page, whole_graph, Diag};
 use super::wire::ErrorBody;
 use super::write::{
     block_at_mut, creation_turn, handle_page, outline_refused, page_turn, parse_handle, refused,
@@ -64,23 +62,21 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         .or(args.before.as_ref());
     let handle = anchor.map(|s| parse_handle(s)).transpose()?;
     let mut graph = whole_graph(slot)?;
-    // A page the command creates by name is written under the whole graph's turn
-    // (`creation_turn`); any other target under its page's own.
-    let (page, created) = if let Some(handle) = &handle {
+    // A page named by a name nothing claimed is written under the whole graph's
+    // turn (`creation_turn`); any other target under its page's own.
+    let (page, held) = if let Some(handle) = &handle {
         (handle_page(slot, handle)?, None)
     } else if let Some(name) = &args.page {
         if name.trim().is_empty() {
             return Err(ErrorBody::new("bad-args", "page name is empty", false));
         }
-        match creation_turn(slot, &mut graph, name)? {
-            Some((page, turn)) => (page, Some(turn)),
-            None => (resolve_write_page(&graph, name)?, None),
-        }
+        let (named, held) = creation_turn(slot, &mut graph, name)?;
+        (named.page(name)?, held)
     } else {
         let day = journal_day(slot, args.journal.as_deref().filter(|d| !d.is_empty()))?;
         (journal_write_page(slot, &graph, day)?, None)
     };
-    let turn = match created {
+    let turn = match held {
         Some(turn) => turn,
         None => page_turn(slot, &page)?,
     };

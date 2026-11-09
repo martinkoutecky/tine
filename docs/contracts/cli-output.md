@@ -258,8 +258,8 @@ and a handle are checked against the page as it stands at that command's turn. T
 reach the line; a `--run` write reaches it only after the graph's run lock, whose waiters have no order, and
 `page rename`, `page delete` and a command that creates its page by name (`add --page`, `page create`, when
 nothing claims the name yet) take the whole graph's turn and resolve their name in it, so two spellings of one
-new page (`Foo`, `foo`) are one page and the later command writes to the first's file. A write to an existing
-page takes only that page's turn. If something outside
+new page (`Foo`, `foo`) are one page and the later command writes to the first's file, still in the graph's
+turn it holds. A write to a page that exists when the command names it takes only that page's turn. If something outside
 the owner's commands changed the page in between (someone typed, an editor, Syncthing), the write re-reads and
 re-resolves once; a second change is `stale`. A write still in line after 45 seconds is `refused`, reason
 `page-busy`, nothing written (other writers behind a wedged or very slow one). The 45 seconds cover the line

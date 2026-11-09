@@ -6,7 +6,7 @@ use tine_core::block_regions::{self, Edit};
 use tine_core::model::{Format, PageDto};
 use tine_store::{EditKind, HostReadError, PageId, PageOperation, Resolved};
 
-use super::verbs::{parse, resolve_write_page, whole_graph, write_claimant};
+use super::verbs::{parse, resolve_write_page, whole_graph, write_claimant, Named};
 use super::wire::{ok, ErrorBody};
 use super::write::{self, apply_refused, host_failed, refused, store_refused, Planned};
 use crate::state::GraphSlot;
@@ -31,12 +31,12 @@ fn name_valid(name: &str) -> Result<(), ErrorBody> {
 /// Unlike a read's preferred claimant, a mutation must not choose among twins
 /// (`verbs::write_claimant`, CLI-DUPNAME).
 fn unique_page(slot: &GraphSlot, name: &str) -> Result<PageId, ErrorBody> {
-    resolve_write_page(&whole_graph(slot)?, name)
+    resolve_write_page(slot, &whole_graph(slot)?, name)
 }
 
 /// A rename can also start from a reference-only name or fileless namespace.
 fn unique_source(slot: &GraphSlot, name: &str) -> Result<Option<PageId>, ErrorBody> {
-    write_claimant(&whole_graph(slot)?, name)
+    write_claimant(slot, &whole_graph(slot)?, name)
 }
 
 pub(super) fn create_named_page(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
@@ -44,7 +44,8 @@ pub(super) fn create_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
     name_valid(&args.name)?;
     // Created under the whole graph's turn, in which the name is resolved again:
     // of two spellings of one new page the second finds the first (`page-exists`).
-    let Some((id, turn)) = write::creation_turn(slot, &mut whole_graph(slot)?, args.name.trim())?
+    let (Named::New(id), Some(turn)) =
+        write::creation_turn(slot, &mut whole_graph(slot)?, args.name.trim())?
     else {
         return Err(refused(
             "page-exists",
