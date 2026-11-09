@@ -3,9 +3,10 @@
 // them. Derived at render time from the children's `tine.quote::` and the parent's
 // current raw text; nothing is stored.
 
-import { createContext, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
+import { createContext, createMemo, type Accessor } from "solid-js";
 import { anchorQuote, quoteSelectorOf, resolvedOf, type QuoteSelector } from "../comments";
-import { node as docNode, onBlockRawChanged } from "../document";
+import { node as docNode } from "../document";
+import { createCommentChildren, type CommentChildren } from "../commentChildren";
 import { facetsOf } from "./facets";
 import { utf8ByteLength } from "./spans";
 import type { Format } from "./ast";
@@ -44,7 +45,7 @@ export function quotedSourceRanges(parentId: string, format: Format): QuotedRang
   return rangesForSelectors(parent.raw, selectors, format);
 }
 
-function rangesForSelectors(raw: string, selectors: Iterable<readonly [string, QuoteSelector]>, format: Format): QuotedRange[] {
+export function rangesForSelectors(raw: string, selectors: Iterable<readonly [string, QuoteSelector]>, format: Format): QuotedRange[] {
   const lead = raw.length - raw.trimStart().length;
   const out: QuotedRange[] = [];
   for (const [childId, selector] of selectors) {
@@ -56,41 +57,16 @@ function rangesForSelectors(raw: string, selectors: Iterable<readonly [string, Q
   return out;
 }
 
-/** Follow only changes to actual quote selectors. Sheet rows are ordinary
- * children too: typing in one must not rescan every sibling for comments. */
-export function createQuotedSourceRanges(parentId: Accessor<string | null>, format: Accessor<Format>): Accessor<QuotedRange[]> {
-  const [revision, setRevision] = createSignal(0);
-  const children = createMemo(() => {
-    const id = parentId();
-    const parent = id ? docNode(id) : null;
-    const fmt = format();
-    const positions = new Map<string, number>();
-    const selectors = new Map<string, QuoteSelector>();
-    for (const childId of parent?.children ?? []) {
-      positions.set(childId, positions.size);
-      const child = docNode(childId);
-      const selector = child && untrack(() => openSelector(child.raw, fmt));
-      if (selector) selectors.set(childId, selector);
-    }
-    const current = { positions, selectors, fmt };
-    onCleanup(onBlockRawChanged(id => {
-      const child = docNode(id);
-      const selector = child ? openSelector(child.raw, current.fmt) : null;
-      const previous = current.selectors.get(id);
-      if ((!selector && !previous) || selector && previous && selector.quote === previous.quote
-        && selector.prefix === previous.prefix && selector.suffix === previous.suffix) return;
-      if (selector) current.selectors.set(id, selector); else current.selectors.delete(id);
-      setRevision(value => value + 1);
-    }, positions.keys()));
-    return current;
-  });
+/** Follow only changes to actual quote selectors (`createCommentChildren`).
+ * Sheet rows are ordinary children too: typing in one must not rescan every
+ * sibling for comments. Pass the block's own producer to share it. */
+export function createQuotedSourceRanges(parentId: Accessor<string | null>, format: Accessor<Format>, source?: Accessor<CommentChildren>): Accessor<QuotedRange[]> {
+  const comments = source ?? createCommentChildren(parentId, format);
   return createMemo(() => {
-    const current = children();
-    revision();
-    if (!current.selectors.size) return [];
+    const open = comments().entries.filter(entry => !entry.resolved);
+    if (!open.length) return [];
     const id = parentId();
     const parent = id ? docNode(id) : null;
-    return parent ? rangesForSelectors(parent.raw, [...current.selectors]
-      .sort(([a], [b]) => current.positions.get(a)! - current.positions.get(b)!), format()) : [];
+    return parent ? rangesForSelectors(parent.raw, open.map(entry => [entry.id, entry.selector] as const), format()) : [];
   });
 }

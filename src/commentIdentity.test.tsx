@@ -1,6 +1,7 @@
 // "Your name" (D-20261017-LD1): comments and replies the user writes carry
 // `tine.author:: <name>` when a name is set; unset keeps today's behaviour (no author
 // written, rendered "you"); an author equal to the name renders as "you".
+import { openCommentThread } from "./tests/commentEntry";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -38,7 +39,7 @@ function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
       {extra?.()}
     </>
   ), root);
-  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  openCommentThread(root);
   return document.body;
 }
 

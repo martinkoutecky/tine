@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { openCommentThread } from "../tests/commentEntry";
 import { render } from "solid-js/web";
 import { BlockList } from "./BlockList";
 import { Block, SurfaceContext } from "./Block";
@@ -61,7 +62,7 @@ it("child outlines, comment threads and embeds bound runs; no inheritance", () =
     expect(row(root, id).querySelector(":scope > .block-main .author-chip")?.textContent).toBe("Ada");
   for (const id of ["parent", "kid2", "commented"])
     expect(row(root, id).querySelector(":scope > .block-main .author-chip")).toBeNull();
-  row(root, "commented").querySelector<HTMLButtonElement>(".margin-marker")!.click();
+  openCommentThread(row(root, "commented"));
   expect(row(document.body, "thread").querySelector(".author-mark")).toBeNull();
   expect(row(root, "embed").querySelector(".author-mark")).not.toBeNull();
   expect(row(root, "owner").querySelector(".author-mark, .author-chip")).toBeNull();

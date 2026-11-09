@@ -201,8 +201,11 @@ try {
     check(await browser.execute((reply) => [...document.querySelectorAll(".margin-thread")].some(thread => thread.textContent.includes(reply)), REPLY), "Undo did not restore the thread and replies");
   }
   await browser.setWindowSize(1000, 820);
-  await browser.$(".page-blocks .margin-marker").waitForExist({ timeout: 5000 });
-  await browser.$(".page-blocks .margin-marker").click();
+  // D-20261108-MC7/MC8: medium panes have no counted marker; hovering the
+  // highlighted words opens the live thread after the hover-preview delay.
+  await browser.$(".page-blocks .comment-quote-anchor").waitForExist({ timeout: 5000 });
+  check(!await browser.$(".page-blocks .margin-marker").isExisting(), "Medium pane still shows a comment marker beside anchored threads");
+  await browser.$(".page-blocks .comment-quote-anchor").moveTo();
   await browser.$(".comment-thread-popup .comment-card").waitForExist({ timeout: 5000 });
   await shot("10-narrow-popover");
   check(!await browser.$(".margin-column").isExisting(), "Narrow pane still has a margin column");
@@ -223,9 +226,9 @@ try {
     await browser.waitUntil(() => browser.execute((comment, reply) => {
       const panes = [...document.querySelectorAll(".pane-leaf")];
       return panes.length === 2 && panes.every(pane => {
-        return !!pane.querySelector(".page-blocks .margin-marker") && !pane.querySelector(".page-blocks .comment-card");
+        return !!pane.querySelector(".page-blocks .comment-quote-anchor") && !pane.querySelector(".page-blocks .margin-marker") && !pane.querySelector(".page-blocks .comment-card");
       });
-    }, COMMENT, REPLY), { timeout: 10_000, timeoutMsg: "split panes did not expose restored threads through their own chips" });
+    }, COMMENT, REPLY), { timeout: 10_000, timeoutMsg: "split panes did not expose restored threads through their own highlights" });
     await shot("11-split-chips");
     check(!await browser.$(".margin-column").isExisting(), "Split pane still draws margin threads");
     // Resume the unrelated stale-quote/editor checks on one wide pane.

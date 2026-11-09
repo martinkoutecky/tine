@@ -4,7 +4,7 @@
 // All of it is derived at render time from ordinary block properties. Slice 2
 // adds the main column's marker for comments drawn in the margin.
 
-import { createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, Show, type Accessor, type JSX } from "solid-js";
 import { DialogActions } from "./DialogActions";
 import { t, activeLocale } from "../i18n";
 import { anchorQuote, commentDateOf, type QuoteSelector } from "../comments";
@@ -20,6 +20,7 @@ import { commentMarginHidden } from "../commentMarginPref";
 import { openContextMenu } from "../ui";
 import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
+import type { CommentChildren } from "../commentChildren";
 import { consumeReplyFocus, replyFocusRequest } from "../commentReplyFocus";
 import { commentDraftState } from "../commentDraftState";
 import { threadResolved } from "../commentResolution";
@@ -197,10 +198,10 @@ function sameRanges(a: readonly QuotedRange[], b: readonly QuotedRange[]): boole
 /** Mark the passages `parentId`'s comment children quote inside the rendering
  * `children()` draws; a block with no children (`when` false) has none to mark
  * and draws it plainly, as does a hidden margin (GH #845). */
-export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; children: () => JSX.Element }): JSX.Element {
+export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; comments?: Accessor<CommentChildren>; children: () => JSX.Element }): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
-  // the parent's text runs.
-  const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format);
+  // the parent's text runs. The block's own comment producer is shared.
+  const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format, props.comments);
   const ranges = createMemo(observedRanges, [], { equals: sameRanges });
   return (
     <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>

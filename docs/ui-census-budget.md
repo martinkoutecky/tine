@@ -66,6 +66,13 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
+  `settings.appearance.open` 30→31 for the explicitly requested **Comments**
+  display selector, **In the margin** / **On click**, beside the other display
+  preferences. It reuses the annotation settings group and adds no command,
+  menu or topbar control. Palette-only or graph configuration would not provide
+  the approved device-local Settings choice. Integration commit rationale is
+  recorded in the lane receipt; this implementation lane does not commit.
 - 2026-11-08, GH #896 (D-20261107-MC3 §10 and the 0.10 author-marks lane brief):
   `commands.registry` 149→150, `commands.palette` 90→91 and
   `settings.appearance.open` 29→30 for the explicitly requested independent

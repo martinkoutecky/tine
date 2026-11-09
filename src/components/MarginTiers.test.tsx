@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { SurfaceContext } from "./Block";
 import { BlockList } from "./BlockList";
@@ -20,20 +20,34 @@ import { bindTestHost } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import type { BlockDto } from "../types";
 import { backend } from "../backend";
+import { AnnotationVisibilitySettings } from "./AnnotationVisibilitySettings";
+import { hoverHighlight, leaveHighlight, openCommentThread, tapHighlight } from "../tests/commentEntry";
+import { editingId } from "../editorController";
 
 let dispose: (() => void) | undefined;
 let keys: (() => void) | undefined;
+let disposeSettings: (() => void) | undefined;
 beforeAll(async () => { await initParser(); keys = installKeybindings(); });
 afterAll(() => keys?.());
 beforeEach(async () => { answerOpensFromDocument(await bindTestHost()); persistCommentMarginHidden(false); resetCommentAuthorNameForTests("Ada"); });
-afterEach(() => { endEdit("page-navigation"); dispose?.(); resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { endEdit("page-navigation"); dispose?.(); if (disposeSettings) chooseComments("margin"); disposeSettings?.(); disposeSettings = undefined; resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+function chooseComments(value: "margin" | "popup") {
+  if (!disposeSettings) {
+    const root = document.createElement("div"); document.body.append(root);
+    disposeSettings = render(() => <AnnotationVisibilitySettings />, root);
+  }
+  const select = document.querySelector<HTMLSelectElement>('[data-setting-id="settings-comments-display"] select');
+  expect(select, "Settings offers the Comments display choice").not.toBeNull();
+  select!.value = value; select!.dispatchEvent(new Event("change", { bubbles: true }));
+}
 function b(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, children, collapsed: false, properties: blockRegions(raw, "md").properties.filter(p => p.primary).map(p => [p.key, p.value]) };
 }
-function mount(width: number, surface = "main") {
-  loadSingle({ name: "Tiers", title: "Tiers", kind: "page", pre_block: null, format: "md", blocks: [
-    b("p", "First passage then second passage", [b("one", "First thread\ntine.quote:: First", [b("reply", "Existing reply")]), b("two", "Second thread\ntine.quote:: second")]),
-  ] });
+const TIERS = () => [
+  b("p", "First passage then second passage", [b("one", "First thread\ntine.quote:: First", [b("reply", "Existing reply")]), b("two", "Second thread\ntine.quote:: second")]),
+];
+function mount(width: number, surface = "main", blocks: BlockDto[] = TIERS()) {
+  loadSingle({ name: "Tiers", title: "Tiers", kind: "page", pre_block: null, format: "md", blocks });
   const pane = document.createElement("main"); pane.className = "main-content";
   Object.defineProperty(pane, "clientWidth", { configurable: true, get: () => width }); document.body.append(pane);
   if (surface !== "main") vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("comment-surface") ? width : 0; });
@@ -54,23 +68,26 @@ function send(text: string, id = "one") {
   draft.focus(); draft.value = text; draft.dispatchEvent(new Event("input", { bubbles: true }));
   draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
 }
-it.each([800, 390])("width %s removes inline threads, counts roots, opens while folded and replies live", width => {
+it.each([800, 390])("width %s removes inline threads, shows no count, opens while folded and replies live", width => {
   const pane = mount(width);
-  expect(pane.querySelector(".page-blocks .comment-card")).toBeNull(); expect(chip(pane)?.textContent).toBe("2");
-  setCollapsed("p", true); chip(pane).click();
+  expect(pane.querySelector(".page-blocks .comment-card")).toBeNull();
+  // D-20261108-MC8: no count anywhere; phones keep a glyph chip as a tap target.
+  if (width === 800) expect(chip(pane)).toBeNull(); else expect(chip(pane).textContent).toBe("");
+  expect(pane.querySelector(".comment-rail-marker,.comment-rail")).toBeNull();
+  setCollapsed("p", true); if (width === 390) chip(pane).click(); else openCommentThread(pane);
   expect(popup()?.getAttribute("role")).toBe("dialog");
   expect(popup().classList.contains("comment-bottom-sheet")).toBe(width === 390);
   expect(popup().textContent).toContain("First thread"); send("Live reply");
   const id = node("one")!.children.at(-1)!;
   expect(node(id)!.raw).toContain("Live reply"); expect(node(id)!.parent).toBe("one");
 });
-it("medium markers and highlights open the selected live editable thread", async () => {
-  const pane = mount(800); pane.querySelector<HTMLButtonElement>('[data-comment-marker="two"]')!.click();
+it("medium highlights open the selected live editable thread on tap", async () => {
+  const pane = mount(800); openCommentThread(pane, "two");
   expect(popup().textContent).toContain("Second thread"); startEditing("two", 0); await Promise.resolve();
   const editor = editorIn(popup()); editor.input("Changed thread", 14); editor.keydown({ key: "Escape" });
   expect(node("two")!.raw).toContain("Changed thread\ntine.quote:: second");
   popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
-  pane.querySelector<HTMLElement>('[data-comment-id="one"]')!.click(); expect(popup().textContent).toContain("First thread");
+  tapHighlight(pane.querySelector<HTMLElement>('[data-comment-id="one"]')!); expect(popup().textContent).toContain("First thread");
 });
 it("phone navigation preserves unsent drafts while moving between threads", () => {
   const pane = mount(390); chip(pane).click();
@@ -90,14 +107,15 @@ it("phone swipes change passages and keep the selected source's threads reachabl
   expect(popup().querySelector('[data-comment-group="two"]')?.parentElement?.hidden).toBe(false);
   expect(popup().querySelector('[data-comment-group="one"]')?.parentElement?.hidden).toBe(true);
 });
-it("open counts omit resolved roots and a reply's quote metadata", () => {
+it("resolved roots and a reply's quote metadata add no highlight, marker or count", () => {
   const pane = mount(800);
   setRaw("two", "Second thread\ntine.quote:: second\ntine.resolved:: true", { timetracking: false });
   setRaw("reply", "Existing reply\ntine.quote:: First", { timetracking: false });
-  expect(chip(pane).textContent).toBe("1"); expect(pane.querySelectorAll(".comment-rail-marker")).toHaveLength(1);
+  expect([...pane.querySelectorAll<HTMLElement>(".comment-quote-anchor")].map(mark => mark.dataset.commentId)).toEqual(["one"]);
+  expect(chip(pane)).toBeNull();
 });
 it("deleting the selected root leaves another thread visible and replyable", () => {
-  const pane = mount(800); chip(pane).click();
+  const pane = mount(800); openCommentThread(pane);
   popup().querySelector<HTMLButtonElement>(".comment-delete")!.click();
   expect(node("one")).toBeUndefined();
   expect(popup().querySelector('[data-comment-group="two"]')?.parentElement?.hidden).toBe(false);
@@ -105,18 +123,18 @@ it("deleting the selected root leaves another thread visible and replyable", () 
   expect(node(node("two")!.children[0])!.raw).toContain("Remaining thread reply");
 });
 it("releasing a source block closes its compact thread surface", () => {
-  const pane = mount(800); chip(pane).click();
+  const pane = mount(800); openCommentThread(pane);
   loadSingle({ name: "Tiers", title: "Tiers", kind: "page", pre_block: null, format: "md", blocks: [] });
   expect(popup()).toBeNull(); expect(pane.querySelector(".margin-marker")).toBeNull();
 });
 it("reply Escape cancels the draft before dismissing the preview, and closing retains other unsent drafts", () => {
-  const pane = mount(800); chip(pane).click();
+  const pane = mount(800); openCommentThread(pane);
   const draft = popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
   draft.focus(); draft.value = "Discard me"; draft.dispatchEvent(new Event("input", { bubbles: true }));
   draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   expect(popup()).not.toBeNull(); expect(draft.value).toBe("");
   draft.focus(); draft.value = "Retain me"; draft.dispatchEvent(new Event("input", { bubbles: true }));
-  popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click(); chip(pane).click();
+  popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click(); openCommentThread(pane);
   expect(popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!.value).toBe("Retain me");
 });
 it("the same width measurement selects the tiers at their boundaries", () => {
@@ -128,7 +146,7 @@ it("a held editor survives medium/phone transitions while the preview changes pl
     constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
     observe() {} unobserve() {} disconnect() {}
   });
-  const pane = mount(800); chip(pane).click(); startEditing("one", 0); await Promise.resolve();
+  const pane = mount(800); openCommentThread(pane); startEditing("one", 0); await Promise.resolve();
   const editor = editorIn(popup()); editor.focus(); editor.input("Keep editing");
   Object.defineProperty(pane, "clientWidth", { configurable: true, get: () => 390 });
   for (const callback of callbacks) callback([], {} as ResizeObserver);
@@ -166,12 +184,12 @@ it.each(["sidebar:item", "ref:item", "embed:item"].flatMap(surface => [390, 800,
   expect(pane.querySelector(".page-blocks > .ls-block > .block-children-container .comment-card")).toBeNull();
   if (width >= 960) expect(pane.querySelectorAll(".margin-column .comment-card")).toHaveLength(2);
   else {
-    chip(pane).click(); expect(popup()).not.toBeNull();
+    openCommentThread(pane); expect(popup()).not.toBeNull();
     expect(popup().classList.contains("comment-bottom-sheet")).toBe(width <= 480);
   }
 });
 it.each([800, 390])("Show/Hide comments removes every entry point and open surface at %s", width => {
-  const pane = mount(width); chip(pane).click(); persistCommentMarginHidden(true);
+  const pane = mount(width); openCommentThread(pane); persistCommentMarginHidden(true);
   expect(document.querySelector(".comment-thread-popup,.margin-marker,.comment-rail-marker,.comment-quote-anchor")).toBeNull();
 });
 it("wide expanded blocks have no count badge beside visible margin threads", () => {
@@ -182,7 +200,7 @@ it("wide expanded blocks have no count badge beside visible margin threads", () 
 it.each([800, 390])("width %s reveals closed-only threads with dates and Reopen without open entry points", width => {
   const pane = mount(width);
   setRaw("one", "First thread\ntine.quote:: First\ntine.date:: 2026-11-07T13:37Z", { timetracking: false });
-  chip(pane).click();
+  openCommentThread(pane);
   popup().querySelector<HTMLButtonElement>('[data-block-id="one"] .comment-resolve')!.click();
   setRaw("two", "Second thread\ntine.quote:: second\ntine.resolved:: true", { timetracking: false });
   expect(document.querySelector(".comment-thread-popup,.margin-marker,.comment-rail-marker,.comment-quote-anchor")).toBeNull();
@@ -194,9 +212,8 @@ it.each([800, 390])("width %s reveals closed-only threads with dates and Reopen 
   expect(popup().querySelector(".comment-resolved time")?.getAttribute("datetime")).toBe("2026-11-07T13:37Z");
   popup().querySelector<HTMLButtonElement>('[data-block-id="one"] .comment-resolve')!.click();
   expect(node("one")!.raw).not.toContain("tine.resolved");
-  expect(chip(pane)?.textContent).toBe("1");
+  if (width === 390) expect(chip(pane).textContent).toBe(""); else expect(chip(pane)).toBeNull();
   expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(1);
-  expect(pane.querySelectorAll(".comment-rail-marker")).toHaveLength(width === 390 ? 0 : 1);
   persistCommentMarginHidden(true);
   expect(document.querySelector(".comment-thread-popup,.comment-resolved-toggle,.comment-resolved-entry,.margin-marker,.comment-rail-marker,.comment-quote-anchor")).toBeNull();
 });
@@ -204,13 +221,14 @@ it.each([800, 390])("width %s reveals closed-only threads with dates and Reopen 
 it.each(["sidebar:item", "ref:item", "embed:item"].flatMap(surface => [800, 390].map(width => ({ surface, width }))))("$surface width $width reveals closed threads and replying reopens them", ({ surface, width }) => {
   const pane = mount(width, surface);
   setRaw("one", "First thread\ntine.quote:: First\ntine.resolved:: true\ntine.date:: 2026-11-07T13:37Z", { timetracking: false });
-  expect(chip(pane)?.textContent).toBe("1");
+  expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(1);
+  if (width === 390) expect(chip(pane).textContent).toBe(""); else expect(chip(pane)).toBeNull();
   pane.querySelector<HTMLButtonElement>(".comment-resolved-toggle")?.click();
   const entry = pane.querySelector<HTMLButtonElement>(".comment-resolved-entry");
   expect(entry).not.toBeNull(); entry!.click();
   expect(popup().querySelector('.comment-resolved .comment-date')?.getAttribute("datetime")).toBe("2026-11-07T13:37Z");
   send("Reply reopens");
-  expect(node("one")!.raw).not.toContain("tine.resolved"); expect(chip(pane).textContent).toBe("2");
+  expect(node("one")!.raw).not.toContain("tine.resolved"); expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
   expect(node(node("one")!.children.at(-1)!)!.raw).toContain("tine.date::");
 });
 
@@ -244,4 +262,189 @@ it.each([800, 390])("width %s compact reveal and passage navigation perform zero
   console.log(JSON.stringify({ measurement: "compact reveal, open, next, previous, close", width, milliseconds: elapsed, pageReads: 0, pageWrites: 0 }));
   await flushPage("Tiers");
   expect(reads).not.toHaveBeenCalled(); expect(writes).not.toHaveBeenCalled();
+});
+it("In a popup replaces the wide margin live, opens highlights, and retains drafts when switched back", () => {
+  const pane = mount(1400);
+  expect(pane.querySelectorAll(".margin-column .comment-card")).toHaveLength(2);
+  chooseComments("popup");
+  expect(pane.querySelector(".margin-column,.page-blocks .comment-card,.margin-marker,.comment-rail-marker")).toBeNull();
+  tapHighlight(pane.querySelector<HTMLElement>('[data-comment-id="two"]')!);
+  expect(popup().textContent).toContain("Second thread");
+  expect(popup().querySelector('[data-comment-group="two"]')!.closest("[hidden]")).toBeNull();
+  popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+  tapHighlight(pane.querySelector<HTMLElement>('[data-comment-id="one"]')!);
+  expect(popup().textContent).toContain("First thread");
+  expect(popup().querySelector('[data-comment-group="one"]')!.closest("[hidden]")).toBeNull();
+  const draft = popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
+  draft.value = "Keep across display choices"; draft.dispatchEvent(new Event("input", { bubbles: true }));
+  chooseComments("margin");
+  expect(popup()).toBeNull(); expect(pane.querySelectorAll(".margin-column .comment-card")).toHaveLength(2);
+  expect(pane.querySelector<HTMLTextAreaElement>('[data-reply-root="one"]')!.value).toBe("Keep across display choices");
+  chooseComments("popup"); openCommentThread(pane, "one");
+  expect(popup().querySelector<HTMLTextAreaElement>('[data-reply-root="one"]')!.value).toBe("Keep across display choices");
+  persistCommentMarginHidden(true);
+  expect(document.querySelector(".comment-thread-popup,.margin-column,.margin-marker,.comment-rail-marker,.comment-quote-anchor")).toBeNull();
+});
+it.each(["main", "sidebar:item", "ref:item", "embed:item"])("In a popup applies to %s at wide width, including Wide mode", surface => {
+  const pane = mount(1400, surface); pane.classList.add("wide-mode");
+  chooseComments("popup");
+  expect(pane.querySelector(".margin-column")).toBeNull(); openCommentThread(pane);
+  expect(popup()).not.toBeNull(); expect(popup().classList.contains("comment-bottom-sheet")).toBe(false);
+});
+it("In a popup keeps the phone sheet and switching the choice preserves its open draft", () => {
+  const pane = mount(390); chip(pane).click();
+  const draft = popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
+  draft.value = "Phone draft"; draft.dispatchEvent(new Event("input", { bubbles: true }));
+  chooseComments("popup");
+  expect(popup().classList.contains("comment-bottom-sheet")).toBe(true);
+  expect(popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!.value).toBe("Phone draft");
+  chooseComments("margin");
+  expect(popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!.value).toBe("Phone draft");
+});
+
+// D-20261108-MC7: in the popup display and the medium tier a highlight opens its
+// thread through the hover preview's own trigger, delay and close rules.
+describe("hovering a highlight", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  const mark = (pane: HTMLElement, id: string) => pane.querySelector<HTMLElement>(`.comment-quote-anchor[data-comment-id="${id}"]`)!;
+  async function advance(ms: number) { await vi.advanceTimersByTimeAsync(ms); await Promise.resolve(); }
+  it.each([{ width: 800, display: "margin" }, { width: 1400, display: "popup" }] as const)("width $width ($display) opens after the preview delay and closes on leave", async ({ width, display }) => {
+    const pane = mount(width); if (display === "popup") chooseComments("popup");
+    hoverHighlight(mark(pane, "two"));
+    await advance(999); expect(popup()).toBeNull();
+    await advance(1); expect(popup()).not.toBeNull();
+    expect(popup().querySelector('[data-comment-group="two"]')!.closest("[hidden]")).toBeNull();
+    expect(popup().classList.contains("comment-bottom-sheet")).toBe(false);
+    leaveHighlight(mark(pane, "two"));
+    await advance(99); expect(popup()).not.toBeNull();
+    await advance(1); expect(popup()).toBeNull();
+  });
+  it("leaving before the delay opens nothing, and entering the popover keeps it open", async () => {
+    const pane = mount(800);
+    hoverHighlight(mark(pane, "one")); await advance(500); leaveHighlight(mark(pane, "one"));
+    await advance(2000); expect(popup()).toBeNull();
+    hoverHighlight(mark(pane, "one")); await advance(1000);
+    leaveHighlight(mark(pane, "one")); popup().dispatchEvent(new MouseEvent("mouseenter"));
+    await advance(500); expect(popup()).not.toBeNull();
+    popup().dispatchEvent(new MouseEvent("mouseleave")); await advance(100); expect(popup()).toBeNull();
+  });
+  it("a reply draft with the caret holds the hovered popover open and stays live", async () => {
+    const pane = mount(800);
+    hoverHighlight(mark(pane, "one")); await advance(1000);
+    const draft = popup().querySelector<HTMLTextAreaElement>('[data-reply-root="one"]')!;
+    draft.focus(); draft.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    draft.value = "Hovered reply"; draft.dispatchEvent(new Event("input", { bubbles: true }));
+    leaveHighlight(mark(pane, "one")); popup().dispatchEvent(new MouseEvent("mouseleave"));
+    await advance(1000); expect(popup()).not.toBeNull();
+    draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(node("one")!.children.map(id => node(id)!.raw.split("\n")[0])).toContain("Hovered reply");
+    expect(popup().textContent).toContain("Hovered reply");
+  });
+  it("a mouse press during the dwell places the caret and the preview never opens", async () => {
+    const pane = mount(800);
+    const two = mark(pane, "two");
+    hoverHighlight(two); await advance(400);
+    const down = new (window.PointerEvent ?? MouseEvent)("pointerdown", { bubbles: true, cancelable: true });
+    Object.defineProperty(down, "pointerType", { value: "mouse" });
+    two.dispatchEvent(down);
+    two.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    expect(editingId()).toBe("p");
+    await advance(2000);
+    expect(popup()).toBeNull();
+  });
+  it("phones and the wide margin do not open on hover", async () => {
+    for (const width of [390, 1400]) {
+      const pane = mount(width);
+      hoverHighlight(mark(pane, "one")); await advance(2000);
+      expect(popup()).toBeNull();
+      dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren();
+    }
+  });
+});
+
+it.each([{ width: 800, display: "margin" }, { width: 1400, display: "popup" }] as const)("width $width ($display): a mouse click on a highlight places the caret and opens nothing", ({ width, display }) => {
+  const pane = mount(width); if (display === "popup") chooseComments("popup");
+  const mark = pane.querySelector<HTMLElement>('.comment-quote-anchor[data-comment-id="two"]')!;
+  const down = new (window.PointerEvent ?? MouseEvent)("pointerdown", { bubbles: true, cancelable: true });
+  Object.defineProperty(down, "pointerType", { value: "mouse" });
+  mark.dispatchEvent(down);
+  mark.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+  mark.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+  mark.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+  expect(popup()).toBeNull();
+  expect(editingId()).toBe("p");
+});
+
+// D-20261108-MC8: only a thread with no resolvable highlight keeps a marker.
+it.each([
+  { why: "changed", raw: "Second thread\ntine.quote:: words no longer here" },
+  { why: "ambiguous", raw: "Second thread\ntine.quote:: passage" },
+])("a $why quote gets the one small marker, and it opens that thread", ({ raw }) => {
+  const pane = mount(800);
+  expect(pane.querySelector(".margin-marker")).toBeNull();
+  setRaw("two", raw, { timetracking: false });
+  const marker = pane.querySelector<HTMLButtonElement>(".comment-unanchored-marker")!;
+  expect(marker).not.toBeNull(); expect(marker.textContent).toBe("");
+  expect(marker.getAttribute("aria-label")).toBe("Open the comment whose quoted text has no highlight");
+  expect(pane.querySelectorAll(".margin-marker")).toHaveLength(1);
+  marker.click();
+  expect(popup().querySelector('[data-comment-group="two"]')!.closest("[hidden]")).toBeNull();
+  persistCommentMarginHidden(true);
+  expect(pane.querySelector(".margin-marker,.comment-quote-anchor")).toBeNull(); expect(popup()).toBeNull();
+});
+
+it("the phone chip is a tap target without a count and opens the bottom sheet", () => {
+  const pane = mount(390);
+  expect(chip(pane).textContent).toBe(""); expect(chip(pane).querySelector("svg")).not.toBeNull();
+  chip(pane).click();
+  expect(popup().classList.contains("comment-bottom-sheet")).toBe(true);
+});
+
+// GH #891 finding 2: grouped presentation and the arrow keys consume one
+// surface order. Interleaved threads A (alpha), B (beta), C (alpha) are shown
+// as [A, C] then [B]; the arrows walk the same order.
+const INTERLEAVED = () => [
+  b("p", "The alpha words, then the beta words", [
+    b("A", "Thread A\ntine.quote:: alpha"), b("B", "Thread B\ntine.quote:: beta"), b("C", "Thread C\ntine.quote:: alpha"),
+  ]),
+  b("after", "After the threads"),
+];
+/** The visible thread roots of each grouped card, in presentation order. */
+function groupsIn(root: Element) {
+  return [...root.querySelectorAll<HTMLElement>(".comment-group")].filter(group => !group.closest("[hidden]"))
+    .map(group => [...new Set([...group.querySelectorAll<HTMLElement>("[data-block-id]")].map(el => el.dataset.blockId!))].filter(id => /^[ABC]$/.test(id)));
+}
+/** Moves the caret to the edge of the edited block and presses the arrow, read
+ * synchronously the way the margin arrow tests read it: one session walks the
+ * whole order, so no intermediate save reloads the page under it. */
+function arrow(keyName: "ArrowDown" | "ArrowUp", root: ParentNode = document) {
+  const editor = editorIn(root, editingId()!);
+  const at = keyName === "ArrowDown" ? editor.value().length : 0;
+  editor.select(at, at); editor.keydown({ key: keyName });
+  return editingId();
+}
+async function from(id: string) { startEditing(id, 0); await Promise.resolve(); }
+it("the wide margin presents interleaved groups in passage order and the arrows follow it", async () => {
+  const pane = mount(1400, "main", INTERLEAVED());
+  expect(groupsIn(pane.querySelector(".margin-column")!)).toEqual([["A", "C"], ["B"]]);
+  await from("A");
+  expect(arrow("ArrowDown")).toBe("C");
+  expect(arrow("ArrowDown")).toBe("B");
+  expect(arrow("ArrowUp")).toBe("C");
+  expect(arrow("ArrowUp")).toBe("A");
+  expect(arrow("ArrowUp")).toBe("p");
+  await from("B");
+  expect(arrow("ArrowDown")).toBe("after");
+});
+it("the popover walks only the group it shows, in the same order", async () => {
+  const pane = mount(800, "main", INTERLEAVED());
+  openCommentThread(pane, "A");
+  expect(groupsIn(popup())).toEqual([["A", "C"]]);
+  await from("A");
+  expect(arrow("ArrowDown", popup())).toBe("C");
+  expect(arrow("ArrowUp", popup())).toBe("A");
+  expect(arrow("ArrowDown", popup())).toBe("C");
+  // Past the shown group the caret returns to the page, never to hidden B.
+  expect(arrow("ArrowDown", popup())).toBe("after");
 });

@@ -2,6 +2,7 @@
 // fold arrow; the author chip keeps the block menu on long press (DESIGN §1).
 // Blocks without the comment marker, and agent-written blocks that are not
 // comments, keep their bullets exactly as before.
+import { openCommentThread } from "../tests/commentEntry";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -31,7 +32,7 @@ function mount(blocks: BlockDto[]): { root: HTMLElement; dispose: () => void } {
   const dispose = render((): JSX.Element => (
     <For each={pageByName(PAGE)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  openCommentThread(root);
   return { root: document.body, dispose };
 }
 

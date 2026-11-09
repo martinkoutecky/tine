@@ -3,6 +3,7 @@
 // name (all graphs); skipping is remembered (all graphs); the comment is
 // written either way; nothing is asked without git, with a name, after a
 // decline, or before the facts are known.
+import { openCommentThread } from "./tests/commentEntry";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -48,7 +49,7 @@ function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
       {extra?.()}
     </>
   ), root);
-  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  openCommentThread(root);
   return document.body;
 }
 

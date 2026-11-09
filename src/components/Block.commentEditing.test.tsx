@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { openCommentThread } from "../tests/commentEntry";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
 import { blockRegions, initParser } from "../render/parse";
@@ -68,7 +69,7 @@ it("reply drafts keep Enter as text, ignore composing submission and send with m
   ] });
   const root = document.createElement("div"); document.body.append(root);
   dispose = render(() => <Block id="p" />, root);
-  root.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+  openCommentThread(root);
   const draft = document.querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
   draft.focus(); draft.value = "line one\nline two"; draft.dispatchEvent(new Event("input", { bubbles: true }));
   const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
@@ -96,7 +97,7 @@ it.each((["md", "org"] as const).flatMap(format => [false, true].flatMap(touch =
   globalThis.__TINE_E2E_TOUCH_GESTURES__ = touch ? "ios" : undefined;
   const body = id === "c" ? "Root" : "Reply";
   const hidden = id === "c" ? rootMetadata : metadata;
-  root.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+  openCommentThread(root);
   const content = document.querySelector(`[data-block-id="${id}"] > .block-main .block-content`)!;
   // A tap's compatibility mousedown enters the same Editor as a mouse.
   if (touch) for (const type of ["touchstart", "touchend"]) {

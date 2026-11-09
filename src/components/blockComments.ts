@@ -5,7 +5,7 @@ import { createMemo, useContext } from "solid-js";
 import type { OutlineScope } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
 import { AUTHOR_TINTS, authorTint, isOwnAuthor } from "../commentIdentity";
-import { isCommentId, marginNext, marginPrev, threadRootOf } from "../margin";
+import { marginNext, marginPrev, threadRootOf } from "../margin";
 import { nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
@@ -14,6 +14,7 @@ import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
+import { createCommentChildren } from "../commentChildren";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
@@ -66,9 +67,12 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
 const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:");
 
 /** Body outlines omit annotations at every width. Thread views retain their
- * complete file pre-order, including quoted replies. */
+ * complete file pre-order, including quoted replies. Membership comes from the
+ * block's one comment producer (`createCommentChildren`), so typing in an
+ * ordinary child re-runs none of this (GH #891 review finding 1). */
 export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt: () => "md" | "org") {
   const showResolved = useResolvedComments();
+  const comments = createCommentChildren(() => node()?.id ?? null, fmt);
   const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
   // A body editor that is hand-writing its first quote property must finish
   // that buffer before moving to an annotation surface. Otherwise accepting
@@ -78,19 +82,24 @@ export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt:
     if (!n?.children.length) return null;
     const id = editingId();
     if (!id || !n.children.includes(id)) return null;
-    return previous === id || !isCommentId(id, fmt()) ? id : null;
+    return previous === id || !comments().has(id) ? id : null;
   }, null);
   // GH #845: with the margin hidden no surface draws a thread (not even inline).
-  const outlineChildren = () => {
+  const outlineChildren = createMemo(() => {
     const n = node();
     if (!n) return [];
-    if (main() || commentMarginHidden()) return n.children.filter(id => id === heldBody() || !isCommentId(id, fmt()));
+    if (!comments().entries.length) return n.children;
+    if (main() || commentMarginHidden()) return n.children.filter(id => id === heldBody() || !comments().has(id));
     // Replies retain file pre-order, even when a hand-nested reply has a quote.
     return n.children;
-  };
-  const marginComments = () => (main() && !commentMarginHidden() ? node().children.filter((id) => id !== heldBody() && isCommentId(id, fmt())
-    && (showResolved() || !threadResolved(id))) : []);
-  return { outlineChildren, marginComments };
+  }, [], { equals: sameIds });
+  const marginComments = createMemo(() => (main() && !commentMarginHidden() ? comments().entries.flatMap(entry => entry.id !== heldBody()
+    && (showResolved() || !entry.resolved) ? [entry.id] : []) : []), [], { equals: sameIds });
+  return { outlineChildren, marginComments, commentChildren: comments };
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a === b || (a.length === b.length && a.every((id, i) => id === b[i]));
 }
 
 /** Body navigation skips annotations through the shared tree API. A margin

@@ -10,10 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
-- Resolved comments remain reachable with Reopen and dates in narrow popovers and phone sheets, while staying out of open counts, passage markers and highlights (UI-MC010-COMPACT-RESOLVE; GH #891, #831).
+- Settings → Appearance → Comments offers **In a popup**: hovering highlighted words opens their live, editable thread with the same delay and close rules as a page link's hover preview, at every width including Wide mode. A click on the words places the caret, touch tablets tap, a reply draft keeps the popover open, and phones keep the bottom sheet. **In the margin** stays the default; the choice uses a new device key, so an earlier On click choice returns to the default once (GH #891; UI-MC010-CLICK-DISPLAY).
+- Resolved comments remain reachable with Reopen and dates in narrow popovers and phone sheets, while staying out of markers and highlights (UI-MC010-COMPACT-RESOLVE; GH #891, #831).
 - Resolve closes a whole comment thread; the page's resolved count reveals it with Reopen, and replying reopens it. Closed threads leave highlights and open counts (UI-MC010-RESOLVE; GH #891).
 - New comments and replies show a localized creation date, stored once as a UTC minute; edits keep it and messages retain file order (UI-MC010-DATES; GH #831).
-- Narrow panes open live comment threads from passage markers, highlights and thread-count chips; phones use a bottom sheet with swipe navigation. The tiers follow pane width on pages, journals, splits, sidebars and embeds, and visible wide-margin threads no longer duplicate a count badge (GH #891; UI-MC010-MEDIUM; UI-MC010-PHONE).
+- Narrow panes open live comment threads by hovering highlighted words (tap on touch screens), with no passage rail and no comment counts; only a thread whose quoted words changed or match more than once gets a small marker that opens it. Phones tap a highlight or a count-free comment chip to open a bottom sheet with swipe navigation. The tiers follow pane width on pages, journals, splits, sidebars and embeds, and visible wide-margin threads no longer duplicate a count badge (GH #891; UI-MC010-MEDIUM; UI-MC010-PHONE).
 - Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
 - Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
 - The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).
@@ -29,6 +30,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Typing in a block that shares its parent with comment threads no longer slows down as that parent gains children: comment membership, highlights, grouping and the margin follow each edit instead of rescanning every sibling (GH #891; UI-MC010-MEDIUM).
+- The arrow keys in the comment margin and popover move through threads in the order the cards are shown, so a second thread on the same passage is no longer skipped (GH #891; UI-MC010-KEYBOARD).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).

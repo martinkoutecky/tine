@@ -1,13 +1,21 @@
-// Width-only annotation entry points. Only annotated, mounted body rows own an
-// observer; measuring a rail reads one rectangle per thread and writes offsets
-// together in a coalesced frame. No document writes or additional source loads.
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
+// Annotation entry points for the pane's tier (D-20261107-MC3 §§6–7,
+// D-20261108-MC7/MC8). Medium (and the "In a popup" display at every width):
+// hovering a highlight opens its thread through the hover preview's own trigger,
+// delay and close rules (`createPeekBridge`); a mouse click places the caret; a
+// touch tap or Enter on the focused highlight opens it. No rail and no count: only
+// open threads without a highlight (quoted text changed, ambiguous, whole block)
+// put a marker on their block. Phones: highlight or chip (no count) opens the
+// bottom sheet. Only mounted annotated rows own observers. No document writes or
+// additional source loads; grouping runs only while a thread view is open.
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext, type Accessor, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { MarginContext, type MarginApi } from "./marginContext";
 import { CommentGroup } from "./CommentGroup";
 import { PeekPopup } from "../render/PeekPopup";
+import { createPeekBridge } from "../render/peekBridge";
+import { rangesForSelectors } from "../render/quoteHighlight";
 import { commentTier } from "../margin";
-import { commentGroups } from "../commentGroups";
+import { groupCommentEntries } from "../commentGroups";
 import { node, formatForBlock, threadRootOf } from "../document";
 import { editingId, editingSurface, endEdit } from "../editorController";
 import { replyFocusRequest } from "../commentReplyFocus";
@@ -15,15 +23,19 @@ import { newResizeObserver, requestFrame, viewportOf } from "../windowRealm";
 import { t } from "../i18n";
 import { commentDraftState } from "../commentDraftState";
 import { registerReplyDraft } from "../commentMargin";
-import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
+import { NO_COMMENT_CHILDREN, type CommentChildren } from "../commentChildren";
 
-export function MarginMarker(props: { parentId: string; comments: readonly string[] }): JSX.Element {
-  return <Show when={props.comments.length > 0}><CommentEntry {...props} /></Show>;
+export function MarginMarker(props: { parentId: string; comments: readonly string[]; source?: Accessor<CommentChildren> }): JSX.Element {
+  return <Show when={props.comments.length > 0}><CommentEntry {...props} source={props.source ?? (() => NO_COMMENT_CHILDREN)} /></Show>;
 }
 
-function CommentEntry(props: { parentId: string; comments: readonly string[] }): JSX.Element {
-  const showResolved = useResolvedComments();
+const HIGHLIGHT = ".comment-quote-anchor[data-comment-id]";
+const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
+const CommentGlyph = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>;
+
+function CommentEntry(props: { parentId: string; comments: readonly string[]; source: Accessor<CommentChildren> }): JSX.Element {
+  useResolvedComments();
   const place = useContext(MarginContext);
   const surface = useContext(SurfaceContext);
   const secondary = place?.surface !== surface && (surface.startsWith("ref:") || surface.startsWith("embed:"));
@@ -32,27 +44,42 @@ function CommentEntry(props: { parentId: string; comments: readonly string[] }):
   let row: HTMLElement | null = null;
   const [width, setWidth] = createSignal(800);
   const phone = () => commentTier(width()) === "phone";
-  const [opened, setOpened] = createSignal<{ id: string; anchor: HTMLElement }>();
-  const [offsets, setOffsets] = createSignal<Record<string, number>>({});
-  const groups = createMemo(() => {
+  const format = () => formatForBlock(props.parentId);
+  const entries = createMemo(() => {
     const available = new Set(props.comments);
-    return commentGroups(props.parentId, formatForBlock(props.parentId), showResolved()).map(ids => ids.filter(id => available.has(id))).filter(ids => ids.length);
+    return props.source().entries.filter(entry => available.has(entry.id));
   });
-  const openComments = createMemo(() => props.comments.filter(id => !threadResolved(id)));
-  const resolvedComments = createMemo(() => props.comments.filter(threadResolved));
+  const openComments = createMemo(() => entries().filter(entry => !entry.resolved).map(entry => entry.id), [], { equals: sameIds });
+  const resolvedComments = createMemo(() => entries().filter(entry => entry.resolved).map(entry => entry.id), [], { equals: sameIds });
+  // Medium only: open threads with nothing to highlight keep a block marker.
+  const unanchored = createMemo(() => {
+    if (wide() || phone()) return [];
+    const open = entries().filter(entry => !entry.resolved);
+    const marked = new Set(rangesForSelectors(node(props.parentId)?.raw ?? "", open.map(entry => [entry.id, entry.selector] as const), format()).map(range => range[2]));
+    return open.flatMap(entry => marked.has(entry.id) ? [] : [entry.id]);
+  }, [], { equals: sameIds });
+  // One bridge per block: hover arms it, explicit entry (tap, Enter, marker) holds it open.
+  const peek = createPeekBridge(wide);
+  const [target, setTarget] = createSignal<{ id: string; anchor: HTMLElement }>();
+  const opened = () => (peek.open() ? target() : undefined);
+  const groups = createMemo(() => opened()
+    ? groupCommentEntries(node(props.parentId)?.raw ?? "", entries(), format())
+    : []);
   const selectedId = () => props.comments.includes(opened()?.id ?? "") ? opened()?.id : groups()[0]?.[0];
   const index = () => Math.max(0, groups().findIndex(ids => ids.includes(selectedId() ?? "")));
+  // The arrow keys walk exactly the threads this view presents (review finding 2).
+  const visibleOrder = () => groups()[index()] ?? [];
   const openLabel = () => t("comment-margin-count", { count: openComments().length });
   const resolvedLabel = () => t("comment-resolved-count", { count: resolvedComments().length });
-  const label = () => selectedId() && threadResolved(selectedId()!) ? resolvedLabel() : openLabel();
-  const open = (id: string, anchor: HTMLElement) => setOpened({ id, anchor });
+  const label = () => selectedId() && !openComments().includes(selectedId()!) ? resolvedLabel() : openLabel();
+  const open = (id: string, anchor: HTMLElement) => { setTarget({ id, anchor }); peek.hold(); };
   const finishThreadEdit = () => {
     const id = editingId();
     if (id && (editingSurface() === null || editingSurface() === surface) && props.comments.includes(threadRootOf(id, formatForBlock(props.parentId)) ?? "")) endEdit("blur");
     const active = host.ownerDocument.activeElement as HTMLElement | null;
     if (active?.closest(".comment-thread-popup")) active.blur();
   };
-  const close = () => { finishThreadEdit(); setOpened(undefined); host.querySelector<HTMLButtonElement>(".margin-marker,.comment-resolved-entry")?.focus({ preventScroll: true }); };
+  const close = () => { finishThreadEdit(); peek.dismiss(); host.querySelector<HTMLButtonElement>(".margin-marker,.comment-resolved-entry")?.focus({ preventScroll: true }); };
   const move = (step: number) => {
     const ids = groups()[index() + step];
     if (ids && opened()) { finishThreadEdit(); open(ids[0], opened()!.anchor); }
@@ -60,35 +87,24 @@ function CommentEntry(props: { parentId: string; comments: readonly string[] }):
   const api: MarginApi = place?.api ?? {
     active: () => false, register: () => () => {}, schedule: () => {}, activeComment: () => null, setActiveComment: () => {},
   };
+  // Compact tiers make each highlight a keyboard target; the wide margin does not.
+  // The wide margin re-measures this row (coalesced) when its text moves.
   let frame: (() => void) | undefined;
-  const measure = () => {
+  const refresh = () => {
     frame = undefined;
     if (!row) return;
-    const marks = [...row.querySelectorAll<HTMLElement>(".comment-quote-anchor[data-comment-id]")];
-    const top = row.getBoundingClientRect().top;
-    const next: Record<string, number> = {};
-    const lanes = new Map<number, number>();
-    for (const id of openComments()) {
-      const peers = groups().find(ids => ids.includes(id)) ?? [id];
-      const mark = marks.find(mark => mark.dataset.commentId === id) ?? marks.find(mark => peers.includes(mark.dataset.commentId!));
-      const y = Math.max(0, Math.round((mark?.getBoundingClientRect().top ?? top) - top));
-      // Same-line threads occupy adjacent slim columns, retaining alignment.
-      const lane = lanes.get(y) ?? 0; lanes.set(y, lane + 1);
-      next[id] = y; next[`${id}:lane`] = lane;
-    }
-    setOffsets(next);
-    for (const mark of marks) {
+    for (const mark of row.querySelectorAll<HTMLElement>(HIGHLIGHT)) {
       if (!wide()) { mark.tabIndex = 0; mark.setAttribute("role", "button"); mark.setAttribute("aria-label", t("comment-open-thread")); }
       else { mark.removeAttribute("tabindex"); mark.removeAttribute("role"); mark.removeAttribute("aria-label"); }
     }
     api.schedule();
   };
-  const schedule = () => { if (!frame) frame = requestFrame(host, measure); };
+  const schedule = () => { if (!frame) frame = requestFrame(host, refresh); };
   onCleanup(() => frame?.());
   onMount(() => {
     row = host.closest<HTMLElement>(".block-main");
     if (!row) return;
-    if (place && !secondary) onCleanup(api.register(props.parentId, row));
+    if (place && !secondary) onCleanup(api.register(props.parentId, row, props.source));
     const pane = row.closest<HTMLElement>(".comment-surface, [data-sidebar-surface], .live-ref-group, .main-content, .right-sidebar") ?? row.parentElement!;
     const read = () => { setWidth(pane.clientWidth || viewportOf(pane).width); schedule(); };
     read();
@@ -101,20 +117,48 @@ function CommentEntry(props: { parentId: string; comments: readonly string[] }):
     const watcher = Observer ? new Observer(schedule) : null;
     watcher?.observe(row.querySelector(".block-content-wrapper") ?? row, { childList: true, subtree: true, characterData: true });
     onCleanup(() => watcher?.disconnect());
-    const markOf = (event: Event) => (event.target as Element | null)?.closest<HTMLElement>(".comment-quote-anchor[data-comment-id]");
-    const down = (event: MouseEvent) => { if (!wide() && markOf(event)) event.stopPropagation(); };
+    const markOf = (event: Event) => {
+      const mark = (event.target as Element | null)?.closest?.<HTMLElement>(HIGHLIGHT);
+      return mark && props.comments.includes(mark.dataset.commentId!) ? mark : null;
+    };
+    // Mouse: hover opens, click places the caret. Touch and pen: tap opens.
+    let pointer = "mouse";
+    const pointerDown = (event: PointerEvent) => {
+      pointer = event.pointerType || "mouse";
+      // A mouse press on a highlight is caret placement: cancel the dwell it armed.
+      if (pointer === "mouse" && !wide() && !phone() && markOf(event)) peek.dismiss();
+    };
+    const tapOpens = () => phone() || pointer !== "mouse";
+    const down = (event: MouseEvent) => { if (!wide() && tapOpens() && markOf(event)) event.stopPropagation(); };
     const click = (event: MouseEvent | KeyboardEvent) => {
       const mark = markOf(event);
-      if (wide() || !mark || !props.comments.includes(mark.dataset.commentId!)) return;
+      if (wide() || !mark) return;
       const keyboard = event instanceof host.ownerDocument.defaultView!.KeyboardEvent;
-      if (keyboard && event.key !== "Enter" && event.key !== " ") return;
+      if (keyboard ? event.key !== "Enter" && event.key !== " " : !tapOpens()) return;
       if (!keyboard && host.ownerDocument.defaultView?.getSelection()?.toString()) return;
       event.preventDefault(); event.stopPropagation(); open(mark.dataset.commentId!, mark);
     };
-    row.addEventListener("mousedown", down, true); row.addEventListener("click", click, true); row.addEventListener("keydown", click, true);
-    onCleanup(() => { row?.removeEventListener("mousedown", down, true); row?.removeEventListener("click", click, true); row?.removeEventListener("keydown", click, true); });
+    const over = (event: PointerEvent) => {
+      const mark = markOf(event);
+      if (wide() || phone() || !mark || (event.relatedTarget as Node | null) && mark.contains(event.relatedTarget as Node)) return;
+      peek.anchorEnter(event, () => setTarget({ id: mark.dataset.commentId!, anchor: mark }));
+    };
+    const out = (event: PointerEvent) => {
+      const mark = markOf(event);
+      if (!mark || (event.relatedTarget as Node | null) && mark.contains(event.relatedTarget as Node)) return;
+      peek.anchorLeave();
+    };
+    row.addEventListener("pointerdown", pointerDown, true); row.addEventListener("mousedown", down, true);
+    row.addEventListener("click", click, true); row.addEventListener("keydown", click, true);
+    row.addEventListener("pointerover", over); row.addEventListener("pointerout", out);
+    onCleanup(() => {
+      row?.removeEventListener("pointerdown", pointerDown, true); row?.removeEventListener("mousedown", down, true);
+      row?.removeEventListener("click", click, true); row?.removeEventListener("keydown", click, true);
+      row?.removeEventListener("pointerover", over); row?.removeEventListener("pointerout", out);
+    });
   });
   createEffect(() => { void node(props.parentId)?.raw; props.comments; wide(); schedule(); });
+  createEffect(() => { if (wide()) peek.dismiss(); });
   // Creation and Comment-on-existing requests must reveal the live thread even
   // when the old body editor has already unmounted. Preserve its surface key.
   createEffect(() => {
@@ -123,8 +167,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[] }):
     const edit = editingId();
     const id = request && (request.surface === null || request.surface === surface) ? request.id
       : edit && (editingSurface() === null || editingSurface() === surface) ? threadRootOf(edit, formatForBlock(props.parentId)) : null;
-    if (id && props.comments.includes(id) && !groups()[index()]?.includes(id)) open(id, host);
-    else if (id && props.comments.includes(id) && !opened()) open(id, host);
+    if (id && props.comments.includes(id) && (!opened() || !groups()[index()]?.includes(id))) open(id, host);
   });
   let touch: { x: number; y: number } | undefined;
   const content = () => <div class="comment-popup-content"
@@ -148,7 +191,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[] }):
       <For each={groups().map(ids => ids[0])}>{key => {
         const ids = () => groups().find(ids => ids[0] === key) ?? [];
         return <div hidden={!ids().includes(selectedId() ?? "")}>
-          <CommentGroup ids={ids()} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId } }}><Block id={id} /></MarginContext.Provider>} />
+          <CommentGroup ids={ids()} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId, order: visibleOrder } }}><Block id={id} /></MarginContext.Provider>} />
         </div>;
       }}</For>
     </SurfaceContext.Provider>
@@ -160,18 +203,17 @@ function CommentEntry(props: { parentId: string; comments: readonly string[] }):
       return null;
     }}</For>
     <Show when={!wide()}>
-      <Show when={openComments().length > 0}><button type="button" class="margin-marker" title={openLabel()} aria-label={openLabel()}
-        onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); open(openComments()[0], e.currentTarget); }}>{openComments().length}</button></Show>
+      <Show when={phone() ? openComments().length > 0 : unanchored().length > 0}>
+        <button type="button" class="margin-marker" classList={{ "comment-unanchored-marker": !phone() }}
+          title={phone() ? openLabel() : t("comment-unanchored-marker", { count: unanchored().length })}
+          aria-label={phone() ? openLabel() : t("comment-unanchored-marker", { count: unanchored().length })}
+          onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); open((phone() ? openComments() : unanchored())[0], e.currentTarget); }}><CommentGlyph /></button>
+      </Show>
       <Show when={resolvedComments().length > 0}><button type="button" class="comment-resolved-entry" title={resolvedLabel()} aria-label={resolvedLabel()}
         onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); open(resolvedComments()[0], e.currentTarget); }}>{resolvedLabel()}</button></Show>
-      <Show when={!phone() && openComments().length > 0}><span class="comment-rail" aria-label={t("comment-margin-label")}>
-        <For each={openComments()}>{id => <button type="button" class="comment-rail-marker" data-comment-marker={id}
-          style={{ top: `${offsets()[id] ?? 0}px`, "inset-inline-end": `${(offsets()[`${id}:lane`] ?? 0) * 10}px` }} aria-label={t("comment-open-thread")}
-          onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); open(id, e.currentTarget); }} />}</For>
-      </span></Show>
       <Show when={opened()}><PeekPopup anchor={() => opened()?.anchor} blocks={() => []}
         class={`comment-thread-popup${phone() ? " comment-bottom-sheet" : ""}`} label={label()} bottomSheet={phone()}
-        onPointerEnter={() => {}} onPointerLeave={() => {}} onDismiss={close} content={content()} /></Show>
+        onPointerEnter={peek.popupEnter} onPointerLeave={peek.popupLeave} onDismiss={close} onHold={peek.setHeld} content={content()} /></Show>
     </Show>
   </span>;
 }

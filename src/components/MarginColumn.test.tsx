@@ -1,8 +1,10 @@
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
+import { openCommentThread } from "../tests/commentEntry";
 // Margin dialogue, slice 2 (vision §3.7 "Layout"): on a wide main pane, a page
 // that holds comments draws them in a right-hand column instead of the outline,
-// with a count marker on the commented block; the threads are ordinary Blocks,
-// edited in place; arrows lead in and out of them; hovering a thread emphasises
+// without a count on the commented block (D-20261108-MC8); the threads are
+// ordinary Blocks, edited in place; arrows lead in and out of them in the order
+// the margin presents them (GH #891 finding 2); hovering a thread emphasises
 // its passage and vice versa; and a keystroke costs at most one measurement pass.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createSignal, Show, type JSX } from "solid-js";
@@ -204,8 +206,9 @@ describe("the margin column on a wide main pane", () => {
         expect(column(pane)).toBeNull();
         expect(blockEl(outline(pane), "c1")).toBeNull();
         expect(blockEl(outline(pane), "r1")).toBeNull();
-        const chip = pane.querySelector<HTMLButtonElement>(".margin-marker")!;
-        expect(chip.textContent).toBe("2"); chip.click();
+        // D-20261108-MC7/MC8: no count; the highlight opens its thread.
+        expect(pane.querySelector(".margin-marker")).toBeNull();
+        openCommentThread(pane, "c1");
         expect(document.querySelector(".comment-thread-popup")?.textContent).toContain("Only if the loss is convex");
       } finally {
         dispose();
@@ -236,7 +239,7 @@ describe("the margin column on a wide main pane", () => {
       expect(column(pane)).not.toBeNull();
       expect(blockEl(embed, "c1")).toBeNull();
       expect(blockEl(embed, "r1")).toBeNull();
-      embed.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      openCommentThread(embed, "c1");
       expect(document.querySelector(".comment-thread-popup")?.textContent).toContain("Only if the loss is convex");
     } finally {
       dispose();
@@ -409,7 +412,7 @@ describe("editing in the margin", () => {
     }
   });
 
-  it("arrow up from a thread's first line returns to the commented block; down past its end goes to the next outline block", async () => {
+  it("arrow up from a thread's first line returns to the commented block; down past its end goes to the next thread, then the next outline block", async () => {
     const { pane, dispose } = mount(commented());
     try {
       startEditing("c1", 0);
@@ -422,6 +425,11 @@ describe("editing in the margin", () => {
       // The reply's own property line is the last line: put the caret there.
       ta.select(ta.value().length, ta.value().length);
       key(ta, "ArrowDown");
+      // GH #891 finding 2: the margin draws c2 below c1, so the caret goes there next.
+      expect(editingId()).toBe("c2");
+      const next = editor(thread(pane, "c2")!)!;
+      next.select(next.value().length, next.value().length);
+      key(next, "ArrowDown");
       expect(editingId()).toBe("kid");
     } finally {
       dispose();

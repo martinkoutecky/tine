@@ -4,6 +4,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // not the highlight of the commented words or the count on the commented block;
 // the arrow keys never stop on one; nothing is written to the graph.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { openCommentThread } from "../tests/commentEntry";
 import { type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -141,13 +142,15 @@ describe("a hidden comment margin", () => {
     const { pane, dispose } = mount(commented(), 800);
     try {
       expect(anywhere(pane)).toEqual([]);
-      expect(pane.querySelector(".margin-marker")?.textContent).toBe("2");
+      // D-20261108-MC8: the highlights are the entry points; no counted marker.
+      expect(pane.querySelector(".margin-marker")).toBeNull();
+      expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
       setCommentMarginVisible(false);
       expect(anywhere(pane)).toEqual([]);
       expect(pane.querySelector(".comment-quote-anchor")).toBeNull();
       setCommentMarginVisible(true);
       expect(anywhere(pane)).toEqual([]);
-      pane.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      openCommentThread(pane, "c1");
       expect(anywhere(document.body)).toEqual(COMMENTS);
       expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
     } finally {
@@ -163,8 +166,8 @@ describe("a hidden comment margin", () => {
       </div>
     ));
     try {
-      expect(pane.querySelector(".plain .margin-marker")).not.toBeNull();
-      expect(pane.querySelector(".embed .margin-marker")).not.toBeNull();
+      expect(pane.querySelectorAll(".plain .comment-quote-anchor")).toHaveLength(2);
+      expect(pane.querySelectorAll(".embed .comment-quote-anchor")).toHaveLength(2);
       setCommentMarginVisible(false);
       for (const part of ["plain", "embed"]) {
         const surface = pane.querySelector(`.${part}`)!;

@@ -1,22 +1,48 @@
 # Margin comment interaction
 
-Authority: D-20261107-MC3, design §§4–7 and 9; internal IDs UI-MC010-KEYBOARD,
-UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE, UI-MC010-DATES,
-UI-MC010-MEDIUM, UI-MC010-PHONE.
+Authority: D-20261107-MC3, design §§4–7 and 9; D-20261108-MC4, MC7, MC8; internal IDs
+UI-MC010-KEYBOARD, UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE,
+UI-MC010-DATES, UI-MC010-MEDIUM, UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY; GH #891 review
+findings 1 and 2.
 
-- Layout uses the containing pane's CSS width, including interface zoom. At
+- Settings > Appearance > Comments offers **In the margin** (default) and
+  **In a popup** (D-20261108-MC7). This viewer preference uses the same
+  device-local display preference storage as Wide mode, under the key
+  `logseq-claude.comments-in-popup`; the earlier On click value is not migrated
+  (a viewer who chose it sees the default once). In a popup substitutes the
+  medium tier for the wide tier, including in Wide mode; phone widths still use
+  the bottom sheet. It applies live on every comment surface without changing
+  the graph. Switching preserves unsent reply drafts by thread and surface, just
+  as crossing tier widths does. Show/Hide comments takes precedence over either
+  display choice. Changing the preference costs one local preference write
+  and an O(1) tier comparison per mounted surface, with no graph I/O or IPC;
+  rendering the newly visible threads costs O(visible threads).
+
+- With In the margin, layout uses the containing pane's CSS width, including interface zoom. At
   960 px the existing margin fits; below that threads never fall back to inline
-  cards. Medium panes retain highlights and a slim per-thread passage rail.
-  Markers, highlights and the block's own-thread chip open the live thread in
-  `PeekPopup`, sharing preview placement and outside-press, Escape, scroll and
-  resize dismissal. Editing holds the popup under the preview's existing rules.
-  Cards, replies and document mutations are the same components and door as
-  in the wide margin. Expanded wide blocks have no count badge.
-- At 480 px or less, highlight/chip entry opens a bottom sheet capped at 55% of
-  the viewport height, leaving source text above. Swipe horizontally or use the
+  cards. In a popup and the medium tier draw nothing beside the text: no
+  per-thread rail markers and no count on any chip (D-20261108-MC8).
+  Hovering a highlight with a mouse opens its thread through the hover
+  preview's own trigger, delay (Settings hover-preview delay, default 1 s),
+  100 ms close grace and popup-enter rules (`createPeekBridge`, shared with
+  page-link and block-reference previews). A mouse click on a highlight places
+  the caret and opens nothing; a press during the dwell cancels it. Touch and
+  pen taps open the thread; Enter or Space on a focused highlight opens it.
+  The thread opens in `PeekPopup`, sharing preview placement and outside-press,
+  Escape, scroll and resize dismissal; it stays live and editable, and a
+  focused comment editor or reply draft holds it open past pointer exit. Only
+  an open thread with no resolvable highlight (its quote changed, matches more
+  than once, or covers the whole block) gives its block one small glyph
+  marker, labelled with the number of such threads, that opens the first of
+  them. Cards, replies and document mutations are the same components and door
+  as in the wide margin. Expanded wide blocks have no count badge.
+- At 480 px or less, highlight or chip tap opens a bottom sheet capped at 55% of
+  the viewport height, leaving source text above; hover does not open at this
+  tier. Swipe horizontally or use the
   previous/next controls to move between passages; same-passage threads stay
   grouped. The block's composers retain drafts across navigation. The chip
-  counts own open thread roots, never replies, and remains reachable when the
+  shows a comment glyph without a count (its accessible name still states the
+  number of own open roots) and remains reachable when the
   block is folded. Show/Hide comments removes these entry points and surfaces.
   Page routes, journal days, zoomed blocks, splits, sidebar blocks, references
   and embeds follow the same width rule. Crossing the medium/phone boundary
@@ -25,6 +51,28 @@ UI-MC010-MEDIUM, UI-MC010-PHONE.
   existing keyboard reveals the source in the visible text strip. Removing its source
   closes the compact surface; deleting its selected thread leaves any remaining
   thread visible and replyable.
+
+- Surface order (GH #891 finding 2). One producer orders a block's thread roots:
+  `groupCommentEntries` sorts by resolved anchor start (file order breaks ties,
+  unresolved last) and groups by passage; `threadOrder` flattens the groups.
+  The margin cards and the popover's grouped cards render that order, and the
+  arrow keys in a thread consume the same list: past a thread's last message
+  the caret moves to the next root in the order, above a root to the previous
+  root's last message, and past either end to the commented block or the body
+  block after it. The margin walks every group of the block; the popover and
+  sheet walk only the group they show. Interleaved A (alpha), B (beta),
+  C (alpha) present and navigate as A, C, B.
+- Cost (GH #891 finding 1). Which children of a block are comment roots, and
+  their selectors and resolution, come from one delta-maintained producer
+  (`createCommentChildren`): a structural change of the block rescans its
+  children once with untracked reads; a raw edit of one child re-derives only
+  that child (one key screen, plus one facet lookup if it may quote) and
+  notifies only when membership, selector or resolution changed. The outline
+  filter, highlights, compact entry and margin column consume it. Typing in an
+  ordinary sibling therefore costs a constant number of store reads and at most
+  one facet lookup, whatever the number of siblings (14 foreign raw reads and 1
+  facet lookup at 4, 16 and 64 siblings in the counter test); the native typing
+  p95 budget beside 64 siblings is 16 ms.
 
 - In either block editor, Enter and Shift+Enter insert a line break in a comment
   or any reply. Ctrl/Cmd+Enter and Escape finish editing. These keys never split
@@ -68,8 +116,7 @@ resolved thread removes its resolution in the reply's single undo unit.
 At compact widths, revealing adds a muted **N resolved** entry beside each
 source block with closed threads. It opens those same greyed live cards in the
 popover or phone sheet, with Reopen and dates. This entry is separate from the
-open-thread chip; closed roots never contribute rail markers, highlights or
-open counts. Secondary outlines and zoomed blocks own the same reveal scope.
+open-thread chip; closed roots never contribute markers or highlights. Secondary outlines and zoomed blocks own the same reveal scope.
 Show/Hide comments also removes the resolved entry and any open compact view.
 
 New comments and replies carry `tine.date:: 2026-11-07T13:37Z`: UTC, minute

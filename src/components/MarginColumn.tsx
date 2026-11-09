@@ -1,5 +1,5 @@
 // Margin dialogue, slice 2 (vision 2026-10 §3.7 "Layout"): the comment column.
-// On a wide main pane, a page that holds comments shifts its outline left and
+// In the wide tier, a page that holds comments shifts its outline left and
 // draws each comment thread in a right-hand column, top-aligned to the passage
 // it quotes (or to the commented block when the quote is stale or whole-block).
 // Threads that would overlap stack downward in document order; nothing overlaps.
@@ -13,15 +13,16 @@
 // or one of its comments changed. Typing in any other block that keeps its
 // height costs nothing; one that grows costs one pass.
 
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type Accessor, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
-import { countMarginMeasurePass, MARGIN_MIN_PANE_WIDTH, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
-import { type FeedPage } from "../document";
+import { countMarginMeasurePass, commentTier, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
+import { node, type FeedPage } from "../document";
 import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
-import { commentGroups } from "../commentGroups";
+import { groupCommentEntries, threadOrder } from "../commentGroups";
+import type { CommentChildren } from "../commentChildren";
 import { CommentGroup } from "./CommentGroup";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { threadResolved } from "../commentResolution";
@@ -57,8 +58,8 @@ function reserveColumnWidth(inner: HTMLElement, outline: HTMLElement, width: num
 }
 
 /** The margin for one page section. `eligible` says whether this surface may
- * have a margin at all; the pane width and
- * whether the page holds a comment decide the rest. `outline` is the section's
+ * have a margin at all; the viewer's tier policy and whether the page holds
+ * a comment decide the rest. `outline` is the section's
  * `.page-blocks`; the column renders as its next sibling. */
 export function createMarginSurface(opts: {
   page: () => FeedPage | undefined;
@@ -85,7 +86,7 @@ export function createMarginSurface(opts: {
     observer?.observe(pane);
     onCleanup(() => observer?.disconnect());
   });
-  const active = createMemo(() => hasComment() && paneWidth() >= MARGIN_MIN_PANE_WIDTH);
+  const active = createMemo(() => hasComment() && commentTier(paneWidth()) === "wide");
   // A pane with room to spare beside the reading column gives it to the threads
   // (Martin 2026-10-31): the column grows from 280 px up to a readable maximum,
   // never taking width from the outline.
@@ -102,7 +103,7 @@ export function createMarginSurface(opts: {
     onCleanup(reserveColumnWidth(inner, outline, column));
   });
 
-  const [rows, setRows] = createSignal<readonly { parentId: string; row: HTMLElement }[]>([]);
+  const [rows, setRows] = createSignal<readonly { parentId: string; row: HTMLElement; comments: Accessor<CommentChildren> }[]>([]);
   const [activeComment, setActiveComment] = createSignal<string | null>(null);
   const [focusedComment, setFocusedComment] = createSignal<string | null>(null);
   const threads = new Map<string, Thread>();
@@ -164,8 +165,8 @@ export function createMarginSurface(opts: {
 
   const api: MarginApi = {
     active,
-    register(parentId, row) {
-      setRows((list) => [...list, { parentId, row }]);
+    register(parentId, row, comments) {
+      setRows((list) => [...list, { parentId, row, comments }]);
       return () => setRows((list) => list.filter((entry) => entry.row !== row || entry.parentId !== parentId));
     },
     schedule() {
@@ -213,7 +214,7 @@ export function createMarginSurface(opts: {
     });
   });
 
-  function ThreadView(props: { id: string; ids: readonly string[]; parentId: string; row: HTMLElement }): JSX.Element {
+  function ThreadView(props: { id: string; ids: readonly string[]; parentId: string; row: HTMLElement; order: () => readonly string[] }): JSX.Element {
     let el!: HTMLDivElement;
     onMount(() => {
       threads.set(props.id, { el, parentId: props.parentId, row: props.row });
@@ -239,7 +240,7 @@ export function createMarginSurface(opts: {
         onFocusIn={() => { setActiveComment(props.id); setFocusedComment(props.id); }}
         onFocusOut={(e) => { if (!el.contains(e.relatedTarget as Node | null)) { setActiveComment(null); setFocusedComment(null); } }}
       >
-        <CommentGroup ids={props.ids} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId } }}><Block id={id} /></MarginContext.Provider>} />
+        <CommentGroup ids={props.ids} render={id => <MarginContext.Provider value={{ api, thread: { root: id, parent: props.parentId, order: props.order } }}><Block id={id} /></MarginContext.Provider>} />
       </div>
     );
   }
@@ -275,15 +276,19 @@ export function createMarginSurface(opts: {
       rows();
       api.schedule();
     });
-    function RowGroups(props: { parentId: string; row: HTMLElement }): JSX.Element {
+    function RowGroups(props: { parentId: string; row: HTMLElement; comments: Accessor<CommentChildren> }): JSX.Element {
       const showResolved = useResolvedComments();
-      const groups = createMemo(() => new Map(commentGroups(props.parentId, opts.page()?.format ?? "md", showResolved()).map(ids => [ids[0], ids])));
-      return <For each={[...groups().keys()]}>{id => <ThreadView id={id} ids={groups().get(id)!} parentId={props.parentId} row={props.row} />}</For>;
+      // One surface order for the cards and the arrow keys (review finding 2).
+      const ordered = createMemo(() => groupCommentEntries(node(props.parentId)?.raw ?? "",
+        props.comments().entries.filter(entry => showResolved() || !entry.resolved), opts.page()?.format ?? "md"));
+      const groups = createMemo(() => new Map(ordered().map(ids => [ids[0], ids])));
+      const order = createMemo(() => threadOrder(ordered()));
+      return <For each={[...groups().keys()]}>{id => <ThreadView id={id} ids={groups().get(id)!} parentId={props.parentId} row={props.row} order={order} />}</For>;
     }
     return (
       <aside class="margin-column" aria-label={t("comment-margin-label")} ref={el}>
         <For each={rows()}>
-          {(entry) => <RowGroups parentId={entry.parentId} row={entry.row} />}
+          {(entry) => <RowGroups parentId={entry.parentId} row={entry.row} comments={entry.comments} />}
         </For>
       </aside>
     );

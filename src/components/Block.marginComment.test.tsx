@@ -4,6 +4,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // as a card with a quote header, an author chip and a marked passage in the
 // parent. The comment is an ordinary child block written through the document
 // door, so undo removes it like any other insert.
+import { openCommentThread } from "../tests/commentEntry";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -43,7 +44,7 @@ function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): 
     <For each={pageByName(PAGE)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
   // Existing card assertions now exercise the live popover reached by its chip.
-  if (!edit) root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  if (!edit) openCommentThread(root);
   return { root: document.body, dispose };
 }
 
@@ -115,7 +116,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
         return element!;
       });
       expect(root.querySelector(".margin-column")).toBeNull();
-      zoom.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      openCommentThread(zoom);
       const card = document.querySelector('[data-block-id="c"]')!;
       expect(card.textContent).toContain("My view");
       expect(card.textContent).toContain("Earlier reply");

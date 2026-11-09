@@ -2,14 +2,15 @@
 // a page holding comments gets a right-hand comment column. This module is the
 // model side: which blocks belong in the margin, how threads stack, and where the
 // arrow keys go when part of the outline is drawn beside it. Everything is
-// derived from the outline at render time; nothing is persisted.
+// derived from the outline at render time, with a device-local display policy.
 
 import { createSignal } from "solid-js";
-import { anchorQuote, quoteSelectorOf } from "./comments";
-import { facetsOf } from "./render/facets";
+import { anchorQuote, type QuoteSelector } from "./comments";
+import { commentChildOf } from "./commentChildren";
 import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
 import { isCommentId, bodyNeighbor } from "./document";
+import { commentsInPopup } from "./commentMarginPref";
 export { isCommentId, threadRootOf } from "./document";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The
@@ -19,8 +20,9 @@ export const MARGIN_MIN_PANE_WIDTH = 960;
 /** Below this pane width there is no useful side rail: use a bottom sheet.
  * Measured in the same CSS pixels as margin fit, including interface zoom. */
 export const COMMENT_PHONE_MAX_WIDTH = 480;
+/** O(1) viewer policy: On click uses medium entry at wide widths too. */
 export function commentTier(width: number): "wide" | "medium" | "phone" {
-  return width >= MARGIN_MIN_PANE_WIDTH ? "wide" : width <= COMMENT_PHONE_MAX_WIDTH ? "phone" : "medium";
+  return width <= COMMENT_PHONE_MAX_WIDTH ? "phone" : width >= MARGIN_MIN_PANE_WIDTH && !commentsInPopup() ? "wide" : "medium";
 }
 /** The comment column's width bounds, px (`--margin-column-width` in comments.css
  * is the narrow end). */
@@ -44,17 +46,23 @@ export function marginColumnWidth(paneWidth: number, content: number | null): nu
 export const MARGIN_THREAD_GAP = 8;
 
 /** Stable passage order, independent of creation/file order. Unanchored threads
- * stay reachable at the block's start; replies never contribute a thread. */
+ * stay reachable at the block's start; replies never contribute a thread.
+ * `entries` are comment roots in file order (`createCommentChildren`). */
+export function orderCommentEntries(parentRaw: string, entries: readonly { id: string; selector: QuoteSelector }[], format: Format): string[] {
+  return entries.map(({ id, selector }) => {
+    const anchor = anchorQuote(parentRaw, selector, format);
+    return { id, at: anchor.kind === "range" ? anchor.start : -1 };
+  }).sort((a, b) => a.at - b.at).map(item => item.id);
+}
+
+/** Imperative form for actions: scans the children once. */
 export function orderedCommentIds(parentId: string, format: Format): string[] {
   const parent = docNode(parentId);
   if (!parent) return [];
-  return parent.children.flatMap(id => {
+  return orderCommentEntries(parent.raw, parent.children.flatMap(id => {
     const child = docNode(id);
-    const selector = child && quoteSelectorOf(facetsOf(child.raw, format).properties);
-    if (!selector) return [];
-    const anchor = anchorQuote(parent.raw, selector, format);
-    return [{ id, at: anchor.kind === "range" ? anchor.start : -1 }];
-  }).sort((a, b) => a.at - b.at).map(item => item.id);
+    return (child && commentChildOf(id, child.raw, format)) || [];
+  }), format);
 }
 
 // Bumped when a comment is written, so the margin re-asks `pageHasComment`
@@ -97,28 +105,43 @@ export function stackThreads(items: readonly { anchor: number; height: number }[
 }
 
 /** Where a block's arrow-key exit goes while comments are drawn in the margin.
- * `thread` names the thread the block is drawn in, or null for the main column. */
+ * `thread` names the thread the block is drawn in, or null for the main column;
+ * its `order` is the presented root order of that surface (review finding 2). */
 export interface MarginNav {
-  thread: { root: string; parent: string } | null;
+  thread: { root: string; parent: string; order?: () => readonly string[] } | null;
   format: Format;
 }
 
 /** The block above `id` in the view: the main column skips threads; the top of a
- * thread returns to the commented block. */
+ * thread goes to the end of the thread drawn above it, else to the commented block. */
 export function marginPrev(id: string, scope: OutlineScope | null, nav: MarginNav): string | null {
   const step = (at: string) => prevVisible(at, scope);
   if (!nav.thread) return bodyNeighbor(id, -1, scope);
-  return id === nav.thread.root ? nav.thread.parent : step(id);
+  if (id !== nav.thread.root) return step(id);
+  const order = nav.thread.order?.() ?? [];
+  const above = order[order.indexOf(id) - 1];
+  return above !== undefined && order.indexOf(id) > 0 && docNode(above) ? lastInThread(above, scope) : nav.thread.parent;
 }
 
 /** The block below `id` in the view: the main column skips threads; past the end
- * of a thread comes the main-column block after the commented one. */
+ * of a thread comes the next thread drawn on the same surface, then the
+ * main-column block after the commented one. */
 export function marginNext(id: string, scope: OutlineScope | null, nav: MarginNav): string | null {
   const step = (at: string) => nextVisible(at, scope);
   if (!nav.thread) return bodyNeighbor(id, 1, scope);
   const next = step(id);
   if (next !== null && insideThread(next, nav.thread.root)) return next;
-  return bodyNeighbor(nav.thread.parent, 1, scope);
+  const order = nav.thread.order?.() ?? [];
+  const at = order.indexOf(nav.thread.root);
+  const below = at >= 0 ? order[at + 1] : undefined;
+  return below !== undefined && docNode(below) ? below : bodyNeighbor(nav.thread.parent, 1, scope);
+}
+
+/** The last visible message of a thread. O(thread size). */
+function lastInThread(root: string, scope: OutlineScope | null): string {
+  let last = root;
+  for (let at = nextVisible(root, scope); at !== null && insideThread(at, root); at = nextVisible(at, scope)) last = at;
+  return last;
 }
 
 function insideThread(id: string, root: string): boolean {

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { openCommentThread } from "../tests/commentEntry";
 import { render } from "solid-js/web";
 import { Block, SurfaceContext } from "./Block";
 import { blockRegions, initParser } from "../render/parse";
@@ -30,7 +31,7 @@ function mount(blocks: BlockDto[]) {
   loadSingle({ name: "Groups", title: "Groups", id: "/graph/pages/Groups.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks });
   const el = document.createElement("div"); document.body.append(el);
   dispose = render(() => <Block id="p" />, el);
-  el.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  openCommentThread(el);
   return document.body;
 }
 it("groups equal resolved ranges, quotes once, and keeps each thread's replies independent", () => {

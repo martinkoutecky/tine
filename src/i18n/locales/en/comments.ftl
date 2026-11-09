@@ -46,6 +46,11 @@ comment-name-prompt-graph-changed = The graph changed while Tine asked for your 
 comment-remove-author = Remove author
 comment-margin-draft-pending = Send or discard the unsent reply before hiding the comments
 comment-open-thread = Open comment thread
+# $count (number): open threads on this block whose quoted text cannot be highlighted (changed or ambiguous).
+comment-unanchored-marker = { $count ->
+        [one] Open the comment whose quoted text has no highlight
+       *[other] Open { NUMBER($count, useGrouping: 0) } comments whose quoted text has no highlight
+    }
 comment-thread-position = Passage { $current } of { $count }
 comment-prev-thread = Previous passage
 comment-next-thread = Next passage

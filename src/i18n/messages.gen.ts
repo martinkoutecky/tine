@@ -336,6 +336,7 @@ export interface MessageArgs {
   "comment-thread-position": { "count": string | number; "current": string | number };
   "comment-toolbar": {};
   "comment-toolbar-shortcut": {};
+  "comment-unanchored-marker": { "count": number };
   "comment-written-by": { "author": string | number };
   "comment-written-by-you": {};
   "config-query-details": {};
@@ -2498,6 +2499,10 @@ export interface MessageArgs {
   "settings-cm6-label": {};
   "settings-color-indent-guides-by-level": {};
   "settings-color-indent-guides-by-level-hint": {};
+  "settings-comments-display": {};
+  "settings-comments-display-hint": {};
+  "settings-comments-in-margin": {};
+  "settings-comments-in-popup": {};
   "settings-conflicts-summary": { "count": number };
   "settings-could-not-apply-spellcheck-settings": {};
   "settings-could-not-load-asset-filename-format": {};

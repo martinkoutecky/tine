@@ -1,4 +1,5 @@
-// D-20261107-MC3 §§6–7: native routed-page proof in both editor engines.
+// D-20261107-MC3 §§6–7 / D-20261108-MC4, MC7, MC8: routed-page proof in both editors.
+// GH #891 finding 1: a native typing budget beside a commented block with many siblings.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -40,6 +41,13 @@ const seed = `- First passage then second passage.
     tine.quote:: Collapsed
 `;
 for (const mode of ["textarea", "cm6"]) fs.writeFileSync(path.join(graph, `pages/Comments ${mode}.md`), mode === "cm6" ? seed.replaceAll("01000000", "02000000") : seed);
+// 64 ordinary siblings of one comment root; the typed sibling has its own id.
+const SIBLINGS = 64, TYPED = 32, TYPING_P95_MS = 16;
+const siblingSeed = prefix => `- A commented passage among many siblings
+  - Comment on the passage
+    tine.quote:: commented passage
+${Array.from({ length: SIBLINGS }, (_, i) => `  - Sibling ${i}\n${i === TYPED ? `    id:: ${prefix}000000-0000-4000-8000-000000000032\n` : ""}`).join("")}`;
+for (const [mode, prefix] of [["textarea", "03"], ["cm6", "04"]]) fs.writeFileSync(path.join(graph, `pages/Siblings ${mode}.md`), siblingSeed(prefix));
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
@@ -58,8 +66,8 @@ const log = fs.openSync(path.join(out, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", ["--port", String(port), "--native-port", String(nativePort), "--native-driver", "/usr/bin/WebKitWebDriver"],
   { env: fixture.env, stdio: ["ignore", log, log], detached: true });
 const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-const proof = { base, delta: "working tree", app, modes, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"), outcomes: [], focusProbes: [], controlProbes: [], menuProbes: [], screenshots: [] };
-let browser, stage = "startup", editorSelector, runtimeIds;
+const proof = { base, delta: "working tree", app, modes, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"), outcomes: [], typing: [], focusProbes: [], controlProbes: [], menuProbes: [], screenshots: [] };
+let browser, stage = "startup", editorSelector, runtimeIds, siblingId;
 const row = id => `.ls-block[data-block-ref="${id}"]`;
 async function shot(name) {
   await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(done)));
@@ -85,6 +93,75 @@ async function activate(selector, scaled = false) {
   await browser.execute(selector => document.querySelector(selector).focus(), selector); await keys("Enter");
 }
 async function closePopup(scaled = false) { await activate(".comment-popup-close", scaled); await browser.$(".comment-thread-popup").waitForExist({ reverse: true }); }
+async function pause(ms) { await browser.executeAsync((ms, done) => setTimeout(done, ms), ms); }
+const highlight = id => `.page-blocks ${row(ids.parent)} .comment-quote-anchor[data-comment-id="${id}"]`;
+async function shownThread(text) {
+  await browser.waitUntil(() => browser.execute(text => [...document.querySelectorAll(".comment-thread-popup [data-block-ref]")].some(el => !el.closest("[hidden]") && el.textContent.includes(text)), text));
+}
+// D-20261108-MC7: a real pointer move onto the words; the hover preview's own
+// dwell must elapse first (default 1 s), so nothing is open shortly after.
+async function hoverOpen(selector, text) {
+  await browser.$(selector).moveTo();
+  await pause(400);
+  assert.equal(await browser.$(".comment-thread-popup").isExisting(), false, "Hover opens only after the preview delay");
+  await browser.$(".comment-thread-popup").waitForDisplayed({ timeout: 5000 });
+  if (text) await shownThread(text);
+}
+// A mouse click on highlighted words places the caret in the commented block and opens nothing.
+async function clickPlacesCaret(id, file, expected) {
+  await browser.$(highlight(id)).click();
+  await browser.waitUntil(() => browser.execute((selector, parent) => document.querySelector(selector)?.closest(".ls-block")?.dataset.blockRef === parent, editorSelector, ids.parent),
+    { timeout: 5000, timeoutMsg: "A click on a highlight must edit the commented block" });
+  await pause(1600);
+  assert.equal(await browser.$(".comment-thread-popup").isExisting(), false, "A click on a highlight opens no thread");
+  await shot(stage.replaceAll(": ", "-").replaceAll(" ", "-").toLowerCase());
+  await keys("Escape"); await browser.$(editorSelector).waitForExist({ reverse: true });
+  assert.equal(fs.readFileSync(file, "utf8"), expected, "Placing the caret must not change the file");
+}
+async function datedReply(file, text) {
+  const pattern = new RegExp(`    - ${text}\\n      tine.author:: Ada Test\\n      tine.date:: (\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\dZ)\\n`);
+  const saved = await waitForFileText(file, value => pattern.test(value));
+  return `    - ${text}\n      tine.author:: Ada Test\n      tine.date:: ${saved.match(pattern)[1]}\n`;
+}
+// GH #891 finding 1: keystroke-to-paint latency while typing in one ordinary sibling.
+async function siblingTyping(mode, tier, count) {
+  await browser.$(`${row(siblingId)} > .block-main .block-content`).click();
+  await browser.$(editorSelector).waitForExist();
+  await keys("End");
+  await browser.execute(() => {
+    const p = window.__siblingTyping = { paint: [] };
+    p.key = event => { if (event.key !== "x") return; const at = performance.now(); requestAnimationFrame(() => setTimeout(() => p.paint.push(performance.now() - at), 0)); };
+    document.addEventListener("keydown", p.key, true);
+  });
+  await type("x".repeat(count));
+  await browser.executeAsync(done => requestAnimationFrame(() => setTimeout(done, 0)));
+  const paint = await browser.execute(() => { const p = window.__siblingTyping; document.removeEventListener("keydown", p.key, true); return p.paint; });
+  await keys("Escape");
+  const sorted = [...paint].sort((a, b) => a - b), p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+  const result = { mode, tier, siblings: SIBLINGS, samples: paint.length, p50: sorted[Math.floor(sorted.length / 2)], p95, load: fs.readFileSync("/proc/loadavg", "utf8").trim() };
+  proof.typing.push(result); console.log(JSON.stringify({ measurement: "sibling typing", ...result }));
+  assert.equal(paint.length, count);
+}
+async function commentsDisplay(choice) {
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-search-input").setValue("Comments");
+  await browser.$('[data-setting-target="settings-comments-display"]').click();
+  const select = await browser.$('[data-setting-id="settings-comments-display"] select');
+  await select.waitForDisplayed(); await select.selectByAttribute("value", choice);
+  assert.equal(await select.getValue(), choice);
+  await shot(stage.replaceAll(": ", "-").replaceAll(" ", "-").toLowerCase() + "-" + choice);
+  await keys("Escape");
+}
+async function readThreadTargets() {
+  await browser.$('.page-blocks ' + row(ids.parent) + ' .comment-quote-anchor').waitForDisplayed();
+  const targets = await browser.execute(parent => {
+    const marks = [...document.querySelectorAll('.page-blocks .ls-block[data-block-ref="' + parent + '"] .comment-quote-anchor')];
+    return { one: marks.find(mark => mark.textContent === "First")?.dataset.commentId,
+      two: marks.find(mark => mark.textContent === "second")?.dataset.commentId };
+  }, ids.parent);
+  assert.ok(targets.one && targets.two, "Passage highlights identify both thread targets");
+  return targets;
+}
 async function enterPhone() {
   await browser.setWindowSize(700, 1000);
   let steps = 0;
@@ -122,7 +199,9 @@ async function resolutionJourney(file, expected, mode, tier, scaled = false) {
   const parent = row(ids.parent) + " > .block-main";
   if (await browser.$(".comment-thread-popup").isExisting()) await closePopup(scaled);
   for (const id of [ids.one, ids.two]) {
-    await activate(parent + " .margin-marker", scaled);
+    // Phones tap the count-free chip; medium panes hover the thread's words.
+    if (scaled) await activate(parent + " .margin-marker", scaled);
+    else await hoverOpen(highlight(id === ids.one ? runtimeIds.one : runtimeIds.two));
     await browser.$(".comment-thread-popup").waitForDisplayed();
     await activate(`.comment-thread-popup ${row(id)} > .comment-header .comment-resolve`, scaled);
     if (await browser.$(".comment-thread-popup").isExisting()) await closePopup(scaled);
@@ -149,7 +228,7 @@ async function resolutionJourney(file, expected, mode, tier, scaled = false) {
   await waitForFileText(file, text => text === expected);
   assert.equal(fs.readFileSync(file, "utf8"), expected, "Reopen must restore the exact original Markdown");
   await browser.$(".main-content .comment-resolved-toggle").waitForExist({ reverse: true });
-  await activate(parent + " .margin-marker", scaled);
+  if (scaled) await activate(parent + " .margin-marker", scaled); else await hoverOpen(highlight(runtimeIds.one));
   await browser.$(".comment-thread-popup").waitForDisplayed();
   proof.outcomes.push({ mode, tier, resolve: true, reveal: true, explicitReopen: true, compactDate: true, exactMarkdown: true });
 }
@@ -169,17 +248,30 @@ try {
     await browser.$('button[title^="Settings"]').click(); await browser.$(".settings-search-input").setValue("CodeMirror"); await browser.$(".settings-search-result").click();
     const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
     await toggle.waitForDisplayed(); if (await toggle.getAttribute("aria-checked") !== String(mode === "cm6")) await toggle.click();
-    await keys("Escape"); await openPageByName(browser, `Comments ${mode}`);
+    await keys("Escape");
+    stage = `${mode}: sibling typing budget`;
+    siblingId = `${mode === "cm6" ? "04" : "03"}000000-0000-4000-8000-000000000032`;
+    const siblingsFile = path.join(graph, `pages/Siblings ${mode}.md`);
+    await openPageByName(browser, `Siblings ${mode}`);
+    await browser.$(".margin-column .comment-card").waitForDisplayed();
+    await siblingTyping(mode, "wide", 12);
+    await browser.setWindowSize(850, 1000);
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector(".margin-column")));
+    await siblingTyping(mode, "medium", 12);
+    const typed = siblingSeed(mode === "cm6" ? "04" : "03").replace(`  - Sibling ${TYPED}\n`, `  - Sibling ${TYPED}${"x".repeat(24)}\n`);
+    await waitForFileText(siblingsFile, text => text === typed);
+    assert.equal(fs.readFileSync(siblingsFile, "utf8"), typed, "Typing beside many siblings saves exact Markdown");
+    await browser.setWindowSize(1700, 1000);
+    await openPageByName(browser, `Comments ${mode}`);
     stage = `${mode}: wide`;
     await browser.$(".margin-column .comment-card").waitForDisplayed();
-    runtimeIds = await browser.execute(ids => Object.fromEntries(Object.entries(ids).map(([key, id]) => [key,
-      document.querySelector('.ls-block[data-block-ref="' + id + '"]')?.dataset.blockId])), ids);
+    runtimeIds = await readThreadTargets();
     if (process.env.MC010_LAYOUT_PROBE === "1") {
       stage = `${mode}: baseline layout probe`;
       const observations = [{ tier: "wide", ...await layoutState() }];
       await shot(`${mode}-before-wide`); await browser.setWindowSize(850, 1000);
       await browser.waitUntil(() => browser.execute(() => document.querySelector(".main-content").clientWidth < 960));
-      await browser.$(".page-blocks .comment-quote-anchor").click();
+      await browser.$(".page-blocks .comment-quote-anchor").moveTo(); await pause(1500);
       const medium = await layoutState();
       medium.highlightEditsParentInstead = await browser.execute(id => document.querySelector("textarea.block-editor,[data-block-editor=cm6]")?.closest(".ls-block")?.dataset.blockRef === id, ids.parent);
       observations.push({ tier: "medium", ...medium });
@@ -193,37 +285,61 @@ try {
     assert.equal(await browser.$$(row(ids.parent) + " > .block-main button.margin-marker").then(items => items.length), 0);
     assert.equal(fs.readFileSync(file, "utf8"), expectedSeed);
     await shot(`${mode}-01-wide`);
-    stage = `${mode}: medium marker`;
+    stage = `${mode}: wide In a popup setting`;
+    await commentsDisplay("popup");
+    await browser.$(highlight(runtimeIds.one)).waitForDisplayed();
+    assert.equal(await browser.execute(() => document.querySelectorAll(".margin-column,.page-blocks .comment-card,.margin-marker,.comment-rail-marker").length), 0,
+      "In a popup draws no margin, cards, markers or counts");
+    await browser.refresh(); await browser.$(".app-container").waitForExist({ timeout: 30000 });
+    await openPageByName(browser, `Comments ${mode}`);
+    await browser.$('.page-blocks ' + row(ids.parent)).waitForDisplayed();
+    runtimeIds = await readThreadTargets();
+    assert.equal(await browser.execute(() => document.querySelectorAll(".margin-column,.margin-marker").length), 0, "In a popup survives reload");
+    stage = `${mode}: wide In a popup hover`;
+    await hoverOpen(highlight(runtimeIds.one), "First thread");
+    assert.equal(await browser.$(".comment-bottom-sheet").isExisting(), false);
+    await shot(`${mode}-wide-popup-hover`);
+    await reply("Popup reply");
+    let tail = "    - An existing reply\n", added = await datedReply(file, "Popup reply");
+    let expected = expectedSeed.replace(tail, tail + added); tail = added;
+    await waitForFileText(file, text => text === expected);
+    assert.equal(fs.readFileSync(file, "utf8"), expected, "A hovered popover reply saves exact Markdown");
+    assert.ok(await browser.execute(() => document.querySelector(".comment-thread-popup")?.textContent.includes("Popup reply")), "The hovered popover stays live after replying");
+    await shot(`${mode}-wide-popup-replied`); await closePopup();
+    stage = `${mode}: wide In a popup leave closes`;
+    await hoverOpen(highlight(runtimeIds.two), "Second thread");
+    await browser.$(".main-content h1.page-title").moveTo(); await browser.$(".comment-thread-popup").waitForExist({ reverse: true, timeout: 3000 });
+    stage = `${mode}: wide In a popup click places caret`;
+    await clickPlacesCaret(runtimeIds.two, file, expected);
+    await commentsDisplay("margin");
+    await browser.$(".margin-column .comment-card").waitForDisplayed(); await shot(`${mode}-wide-margin-restored`);
+    stage = `${mode}: medium hover`;
     // Below margin fit even after phone layout closes the left sidebar.
     await browser.setWindowSize(850, 1000);
-    await browser.$('[data-comment-marker="' + runtimeIds.one + '"]').waitForDisplayed();
-    assert.equal(await browser.execute(() => document.querySelectorAll(".page-blocks .comment-card,.margin-column").length), 0);
-    await activate('[data-comment-marker="' + runtimeIds.one + '"]');
-    await browser.$(".comment-thread-popup").waitForDisplayed(); await reply("Medium reply");
-    const mediumSaved = await waitForFileText(file, text => text.includes("Medium reply"));
-    const mediumDate = mediumSaved.match(/tine.date:: (\d{4}-\d\d-\d\dT\d\d:\d\dZ)/)?.[1];
-    assert.ok(mediumDate, "Medium reply must carry a UTC minute creation date");
-    let expected = expectedSeed.replace("    - An existing reply\n", `    - An existing reply\n    - Medium reply\n      tine.author:: Ada Test\n      tine.date:: ${mediumDate}\n`);
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector(".margin-column")));
+    await browser.$(highlight(runtimeIds.one)).waitForDisplayed();
+    assert.equal(await browser.execute(() => document.querySelectorAll(".page-blocks .comment-card,.margin-column,.comment-rail-marker,.margin-marker").length), 0,
+      "Medium panes draw no inline cards, rail markers or counted chips");
+    await hoverOpen(highlight(runtimeIds.one), "First thread"); await reply("Medium reply");
+    added = await datedReply(file, "Medium reply"); expected = expected.replace(tail, tail + added); tail = added;
     await waitForFileText(file, text => text === expected);
     await resolutionJourney(file, expected, mode, "medium");
     await shot(`${mode}-02-medium-popover`); await closePopup();
     stage = `${mode}: medium highlight`;
-    await activate('.page-blocks [data-comment-id="' + runtimeIds.two + '"]');
-    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".comment-thread-popup [data-block-ref]")].some(el => !el.closest("[hidden]") && el.textContent.includes("Second thread"))));
+    await hoverOpen(highlight(runtimeIds.two), "Second thread");
     await shot(`${mode}-03-medium-highlight`); await closePopup();
-    stage = `${mode}: folded own chip`;
-    await activate(row(ids.folded) + " > .block-main .margin-marker");
-    await browser.$(".comment-thread-popup").waitForDisplayed();
+    stage = `${mode}: medium click places caret`;
+    await clickPlacesCaret(runtimeIds.one, file, expected);
+    stage = `${mode}: folded own highlight`;
+    await hoverOpen(row(ids.folded) + " > .block-main .comment-quote-anchor");
     assert.ok(await browser.execute(() => document.querySelector(".comment-thread-popup").textContent.includes("Own folded thread")));
     await closePopup();
     stage = `${mode}: phone`;
+    await commentsDisplay("popup");
     await enterPhone();
     await activate('.page-blocks [data-comment-id="' + runtimeIds.one + '"]', true);
     await browser.$(".comment-bottom-sheet").waitForDisplayed(); await reply("Phone reply", true);
-    const phoneSaved = await waitForFileText(file, text => text.includes("Phone reply"));
-    const phoneDate = phoneSaved.match(/- Phone reply\n      tine.author:: Ada Test\n      tine.date:: (\d{4}-\d\d-\d\dT\d\d:\d\dZ)/)?.[1];
-    assert.ok(phoneDate, "Phone reply must carry a UTC minute creation date");
-    expected = expected.replace(`      tine.date:: ${mediumDate}\n`, `      tine.date:: ${mediumDate}\n    - Phone reply\n      tine.author:: Ada Test\n      tine.date:: ${phoneDate}\n`);
+    added = await datedReply(file, "Phone reply"); expected = expected.replace(tail, tail + added); tail = added;
     await waitForFileText(file, text => text === expected);
     await resolutionJourney(file, expected, mode, "phone", true);
     const geometry = await browser.execute(() => {
@@ -247,17 +363,23 @@ try {
     });
     assert.ok(syntheticSwipe, "A rightward swipe must return to the previous passage");
     await closePopup(true);
+    assert.equal(await browser.$(row(ids.parent) + " > .block-main .margin-marker").getText(), "", "The phone chip shows no count");
     await activate(row(ids.parent) + " > .block-main .margin-marker", true);
     await browser.$(".comment-bottom-sheet").waitForDisplayed(); await closePopup(true);
     await keys("Control", "0"); await browser.waitUntil(() => browser.execute(() => innerWidth > 420));
-    proof.outcomes.push({ mode, exactMarkdown: true, wide: true, mediumMarker: true, mediumHighlight: true, phoneHighlight: true, phoneChip: true, foldedOwnChip: true, syntheticSwipe, geometry });
+    await commentsDisplay("margin");
+    assert.equal(fs.readFileSync(file, "utf8"), expected, "Display changes and thread browsing preserve exact Markdown");
+    proof.outcomes.push({ mode, exactMarkdown: true, wide: true, popupHoverReply: true, popupLeaveCloses: true, clickPlacesCaret: true, displaySurvivesReload: true, marginRestored: true, mediumHover: true, mediumHighlight: true, noRailOrCount: true, phonePopup: true, phoneHighlight: true, phoneChipWithoutCount: true, foldedOwnHighlight: true, syntheticSwipe, geometry });
   }
   fixture.verify();
+  stage = "sibling typing budget";
+  const overBudget = proof.typing.filter(result => !(result.p95 < TYPING_P95_MS));
+  assert.deepEqual(overBudget, [], `Typing p95 beside ${SIBLINGS} siblings must stay under ${TYPING_P95_MS} ms`);
   if (process.env.MC010_LAYOUT_PROBE === "1") {
     stage = "baseline width assertions";
     const deviations = proof.outcomes.flatMap(({ mode, observations }) => observations.flatMap(state => {
       const missing = state.tier === "wide" ? state.expandedBadges > 0
-        : state.tier === "medium" ? state.inlineCards > 0 || state.railMarkers === 0 || !state.popover
+        : state.tier === "medium" ? state.inlineCards > 0 || state.railMarkers > 0 || !state.popover
         : state.inlineCards > 0 || !state.sheet;
       return missing ? [{ mode, ...state }] : [];
     }));
@@ -266,10 +388,10 @@ try {
   fs.writeFileSync(path.join(out, "receipt.json"), JSON.stringify({ outcome: "PASS", ...proof }, null, 2)); console.log(`PASS ${out}`);
 } catch (error) {
   try { proof.dom = await browser.execute(() => ({ width: innerWidth, panes: [...document.querySelectorAll(".main-content")].map(el => el.clientWidth),
-    markers: [...document.querySelectorAll(".comment-rail-marker")].map(el => ({ id: el.dataset.commentMarker, rect: el.getBoundingClientRect().toJSON(),
+    markers: [...document.querySelectorAll(".comment-quote-anchor,.margin-marker")].map(el => ({ id: el.dataset.commentId, rect: el.getBoundingClientRect().toJSON(),
       chain: [...(function* () { for (let at = el; at && at !== document.body; at = at.parentElement) yield at; })()].map(at => ({ cls: at.className, display: getComputedStyle(at).display, visibility: getComputedStyle(at).visibility, rect: at.getBoundingClientRect().toJSON() })) })) })); } catch { /* retain original error */ }
   try { await shot("failure"); } catch { /* preserve original error */ }
-  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, expected: "Width-only live threads and exact saved replies", observed: error.stack, classification: error.code === "ERR_ASSERTION" ? "product" : "ambiguous harness/infrastructure" }, null, 2)); throw error;
+  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage, expected: "Viewer display choice and pane tiers open live threads and preserve exact saved Markdown", observed: error.stack, classification: error.code === "ERR_ASSERTION" ? "product" : "ambiguous harness/infrastructure" }, null, 2)); throw error;
 } finally {
   try { await browser?.deleteSession(); } catch { /* session may have failed */ }
   try { process.kill(-driver.pid, "SIGTERM"); } catch { /* driver may have exited */ }
