@@ -1158,7 +1158,7 @@ impl WatchHandle {
     pub(crate) fn stop(&self) {
         if !self.core.closed.swap(true, Ordering::AcqRel) {
             let _ = self.wake.send(());
-            if let Some(thread) = self.thread.lock().unwrap().take() {
+            if let Some(thread) = self.thread.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 let _ = thread.join();
             }
         }

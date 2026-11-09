@@ -492,7 +492,11 @@ namespaces, titles, the home page and favorites. A sole alias resolves to its ca
 A reference-only source or fileless namespace parent uses the same operation:
 references and physical descendants move without creating a placeholder page.
 A destination owned by a file or alias refuses as `refused:page-exists`; merging
-requires confirmation in the app. Duplicate source claimants return `ambiguous`.
+requires confirmation in the app. A date whose day has a journal file is owned by that
+journal under every spelling the app accepts for the day (`2026_11_02`, `2026-11-02`,
+`Nov 2nd, 2026`), so it refuses the same way and writes nothing. A date no file claims is
+an ordinary page under `pages/` with exactly that name: `[[NAME]]` then opens it, and the
+day's other spellings keep meaning the journal day (conceptual model D-20261107-KD). Duplicate source claimants return `ambiguous`.
 The window saves typed text first and receives the app's rename report to refresh
 navigation and rewritten pages. A graph-wide rename cannot use the existing
 single-file revision guard or run commits: `--rev` or `--run` (including `TINE_RUN`)
