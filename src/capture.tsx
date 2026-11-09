@@ -376,6 +376,14 @@ function Capture() {
     composing = false;
     queueMicrotask(() => { const consume = afterComposition; afterComposition = undefined; consume?.(); });
   };
+  // An IME cancelled by focus loss may send no compositionend (L9-18). Focus
+  // moving between fields in the window shows as `focusout`; another window
+  // taking native focus does not: WebKitGTK sends `blur` to the field and the
+  // window and no `focusout` (seen in scripts/e2e-capture.mjs), so the window
+  // blur ends it too.
+  const endCompositionOnFocusLoss = () => { if (composing) endComposition(); };
+  window.addEventListener("blur", endCompositionOnFocusLoss);
+  onCleanup(() => window.removeEventListener("blur", endCompositionOnFocusLoss));
   const scratchNodes = (): Array<{ id: string; raw: string }> => {
     const nodes: Array<{ id: string; raw: string }> = [];
     const visit = (id: string) => {
@@ -718,8 +726,7 @@ function Capture() {
     <CaptureCtx.Provider value={captureApi}>
       <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { composing = true; scratchRevision++; }}
         onCompositionEnd={endComposition}
-        // An IME cancelled by focus loss may send no compositionend (L9-18).
-        onFocusOut={() => { if (composing) endComposition(); }}>
+        onFocusOut={endCompositionOnFocusLoss}>
         <Show when={ready()}>
           {/* Optional page title. Filled → the capture becomes a NEW page; empty →
               appended to today. Plain Enter drops into the bullet; the submit

@@ -209,3 +209,20 @@ it("L9-18: focus leaving a composing field ends the composition, so File capture
   expect(request.text).toContain("typed before the IME was cancelled");
   await ack(request.id, { ok: true });
 });
+
+it("L9-18: another window taking native focus ends the composition too (WebKitGTK sends blur, not focusout)", async () => {
+  setRaw(roots()[0], "typed before another window took focus");
+  const title = document.querySelector<HTMLInputElement>(".capture-title")!;
+  title.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+  const filed = h.requests.length;
+  h.api!.submit();
+  await Promise.resolve();
+  expect(h.requests.length).toBe(filed);
+  // What the real webview delivers: `blur` on the field (it does not bubble)
+  // and on the window, with no `focusout` at all.
+  title.dispatchEvent(new FocusEvent("blur"));
+  window.dispatchEvent(new FocusEvent("blur"));
+  const request = await submit();
+  expect(request.text).toContain("typed before another window took focus");
+  await ack(request.id, { ok: true });
+});
