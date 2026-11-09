@@ -4,6 +4,7 @@
 // disagrees with the switch (`node scripts/set-app-identity.mjs <ship>`
 // rewrites every derived place).
 fn main() {
+    generate_command_names();
     println!("cargo:rerun-if-changed=app-identity.json");
     let read = |file: &str| -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(file).expect(file)).expect(file)
@@ -157,4 +158,38 @@ fn main() {
             ),
     )
     .expect("failed to run tauri-build");
+}
+
+/// Diagnostics accepts registered names, never arbitrary IPC text. Derive
+/// every target's names from the same handler list Tauri compiles.
+fn generate_command_names() {
+    println!("cargo:rerun-if-changed=src/lib.rs");
+    let source = std::fs::read_to_string("src/lib.rs").expect("command source");
+    let marker = "generate_handler![";
+    let start = source.find(marker).expect("handler list") + marker.len();
+    let mut depth = 1usize;
+    let end = source[start..]
+        .bytes()
+        .position(|byte| {
+            match byte {
+                b'[' => depth += 1,
+                b']' => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+        })
+        .expect("handler list end")
+        + start;
+    let names: std::collections::BTreeSet<_> = source[start..end]
+        .lines()
+        .map(|line| line.trim().trim_end_matches(','))
+        .filter(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with("#["))
+        .map(|line| line.rsplit("::").next().expect("command name").trim())
+        .collect();
+    let generated = format!(
+        "pub(crate) const KNOWN_COMMANDS: &[&str] = &{:?};\n",
+        names.into_iter().collect::<Vec<_>>()
+    );
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("build output"));
+    std::fs::write(out.join("command_names.rs"), generated).expect("generated command names");
 }

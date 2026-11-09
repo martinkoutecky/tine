@@ -832,6 +832,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return { available: false, reason: "Git is not available in a published graph.", head_commit: null,
         baseline_commit: null, current_text_sha256: "", identity_known: false, unattributed: false, blocks: [], removed: [] };
     },
+    async getPageLastChanged() { return []; },
     async getBackupKeep() {
       return 0;
     },

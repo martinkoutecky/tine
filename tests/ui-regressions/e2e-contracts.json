@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-context-menu-font.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Every visible page and block context-menu row, including hovered Copy as and view submenu rows, uses the same font size and interface font family on a routed page in desktop and narrow touch-stylesheet layouts.","blocking":false,"authority":"GH #916; UI-GH916-CONTEXT-MENU-FONT"}],
+      "acceptableVariations": ["Font face, common size, menu geometry and theme may vary; equality across rows and inheritance of the interface family are material."],
+      "nonRequirements": ["No exact pixels, menu structure or behavior changes, real touch gestures, macOS/Windows/iOS/Android runtime certification or release acceptance."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-block-last-changed.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"On a routed git page with three dated commits, hovering the second block shows commit 2's local date, the untouched block shows its creating commit, and an uncommitted block says so. Repeated hovers retain gesture help and change neither graph bytes nor HEAD.","blocking":true,"authority":"D-20261107-MC3 §9; GH #831"}],
+      "acceptableVariations":["Locale-specific date rendering, tooltip placement, and native tooltip timing may vary."],
+      "nonRequirements":["Creation-time UI, persisted properties, touch gestures, the 500-commit boundary (Rust tests), or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-external-pdf.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
@@ -31,7 +43,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-completion-perf.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL"}],
+      "contracts": [{"class":"core-operation","userOutcome":"In textarea and CM6 on a routed page, extending a page query keeps visible ranked choices; choosing an authored alias inserts that spelling and saves it through the normal editor path. COMPLETION_ASSERT_SINGLE_INPUT requires one page read per key and rows on its first reply; COMPLETION_INPUT_CENSUS also counts tag, block, slash and property reads, preserving local command filtering and shared property sessions.","blocking":false,"authority":"D-20261102-PERF follow-up 2; UI-PERF-COMPLETION-INCREMENTAL; UI-CM6-COMPLETION-SINGLE-INPUT; ET2 GH #767"}],
       "acceptableVariations": ["Paint times vary with host load; timings are observations, not a flaky threshold oracle."],
       "nonRequirements": ["Release burn-in and Windows/macOS/mobile runtime certification."],
       "stability":"burn-in"
@@ -419,7 +431,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-code-wrap-toggle.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "The palette and bound code wrap command preserve the reading position in every mounted main, split and sidebar scroller in both directions without changing note source.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Palette, bound shortcut and Settings code wrapping preserve unobscured reading text in mounted main, split and sidebar scrollers in both directions with the classic and CodeMirror editor preferences, without changing note source.", "blocking": true }],
       "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"

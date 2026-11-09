@@ -1,5 +1,6 @@
 import { pageToDto } from "./convert";
-import { doc } from "./model";
+import { doc, pageByName, structureRevision } from "./model";
+import { pageInstanceGeneration } from "./instance";
 import type { BlockDto } from "../types";
 
 /** One block of a seen snapshot: its runtime id and its raw text at snapshot time. */
@@ -18,6 +19,9 @@ export interface SeenSnapshot {
   path: string;
   text: string;
   roots: SeenSnapshotNode[];
+  /** O(1) ownership check for the loaded instance and outline structure.
+   * Callers separately compare the raw bodies they display. */
+  sameOutline: () => boolean;
 }
 
 function nodes(blocks: BlockDto[]): SeenSnapshotNode[] {
@@ -49,8 +53,9 @@ function org(blocks: BlockDto[], level: number, out: string[]): void {
  *  in-memory document; O(blocks and text bytes of this page). Call it untracked
  *  and only on a read trigger, never per keystroke. */
 export function seenPageSnapshot(pageName: string): SeenSnapshot | null {
-  const page = doc.pages.find((p) => p.name === pageName);
+  const page = pageByName(pageName);
   if (!page?.id || page.guide) return null;
+  const instance = pageInstanceGeneration(pageName), structure = structureRevision();
   const dto = pageToDto(pageName);
   if (!dto) return null;
   const lines: string[] = [];
@@ -59,5 +64,6 @@ export function seenPageSnapshot(pageName: string): SeenSnapshot | null {
     if (dto.blocks.length && dto.format !== "org") lines.push("");
   }
   (dto.format === "org" ? org : markdown)(dto.blocks, dto.format === "org" ? 1 : 0, lines);
-  return { path: page.id, text: `${lines.join("\n")}\n`, roots: nodes(dto.blocks) };
+  return { path: page.id, text: `${lines.join("\n")}\n`, roots: nodes(dto.blocks),
+    sameOutline: () => pageInstanceGeneration(pageName) === instance && structureRevision() === structure };
 }

@@ -25,6 +25,7 @@ pub(crate) struct GraphSlot {
     pub(crate) store: Arc<Store>,
     /// Latest `((` request per transport lane for this window binding.
     pub(crate) block_search_lanes: tine_graph_features::search::SearchLanes,
+    pub(crate) block_dates: Mutex<crate::owner::seen::last_changed::Cache>,
     /// One cancellation flag per in-flight IR query run (`query_run`,
     /// `query_explain_empty`, the owner's `query` verb). Revoking the binding
     /// sets every one, so a graph switch or close stops a running query
@@ -179,6 +180,7 @@ impl GraphSlot {
         Self {
             store: store.into(),
             block_search_lanes: tine_graph_features::search::SearchLanes::default(),
+            block_dates: Default::default(),
             query_runs: QueryRuns::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),

@@ -911,6 +911,9 @@ class TauriBackend implements Backend {
   getPageChanges(pageKey: string, path: string, currentText: string) {
     return this.call<import("./backendTypes").SeenPageChanges>("get_page_changes", { pageKey, path, currentText });
   }
+  getPageLastChanged(path: string, currentText: string) {
+    return this.call<import("./backendTypes").PageBlockLastChanged[]>("get_page_last_changed", { path, currentText });
+  }
   markPageSeen(pageKey: string, path: string) {
     return this.call<void>("mark_page_seen", { pageKey, path });
   }

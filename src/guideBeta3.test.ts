@@ -11,6 +11,7 @@ it("the Guide explains usable journals during graph loading and the later refere
 it("the Guide explains the page copy submenu, the block menu's top-level copy rows and reference click zoom", () => {
   const references = guide("pages-links-references-search");
   for (const detail of ["Page menus keep reference, embed and link copying under **Copy as ▸**", "A block's menu lists **Copy block ref**, **Copy block embed** and **Copy link** directly", "**Click a block reference to zoom in**", "including on another page"]) expect(references).toContain(detail);
+  expect(references).toContain("Page and block menus use the same text size and font, including submenu choices.");
 });
 
 it("the Guide describes Soft's middle-range light and dark choices", () => {

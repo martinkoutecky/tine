@@ -5,4 +5,6 @@ it("the bundled Guide explains narrowing page completion in both editors (D-2026
   const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   expect(guide).toContain("Keep typing inside `[[...]]` to narrow page suggestions in either editor");
   expect(guide).toContain("The list ranks page names, aliases and namespace parents for your current query");
+  expect(guide).toContain("page and tag suggestions appear as soon as the current search finishes, without waiting for another reply");
+  expect(guide).toContain("Chinese IME queries wait until composition finishes");
 });

@@ -28,8 +28,8 @@ import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } f
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
-import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
-import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { pasteAsLinkEdit } from "../blockRefActions";
+import { BlockBullet } from "./BlockBullet";
 import {
   editingId,
   isEditingId,
@@ -119,7 +119,7 @@ import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, type RowHost } from "./block/embedRowHost";
-import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { beginEditGesture, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { bodyNeighbor, threadRootOf } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
@@ -355,36 +355,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               </svg>
             </Show>
           </span>
-          <span
-            class="bullet-container"
-            classList={{ "bullet-closed": collapsed() && hasFoldableBody(), ordered: !!orderMarker() }}
-            title={translate("editor-block-click-to-zoom-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new-tab-alt-click-other-pane-drag-to-move")}
-            onMouseDown={(e) => {
-              // Shared link gesture contract (GH #207): suppress shift-range selection
-              // and middle-button autoscroll / PRIMARY-paste the destinations replace.
-              internalLinkMouseDown(e);
-              const owner = rowHost()?.id ?? props.id; // click/zoom stays the source's (GH #514)
-              if (e.button === 0 && !blockPageReadOnly(owner)) beginDrag(owner, e);
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (bulletDragMoved()) return; // was a drag, not a click
-              // GH #456: the same one decision every internal link uses (GH #283).
-              switch (internalLinkDest(e)) {
-                case "sidebar": openDurableBlock(props.id, "sidebar"); break;
-                case "background": openDurableBlock(props.id, "tab"); break;
-                case "pane": openDurableBlock(props.id, "pane"); break;
-                default: if (bulletOpen) bulletOpen(props.id); else zoomInto(props.id);
-              }
-            }}
-            onAuxClick={(e) => {
-              if (internalLinkAuxClick(e, () => openDurableBlock(props.id, "tab"))) e.stopPropagation();
-            }}
-          >
-            <Show when={orderMarker()} fallback={<span class="bullet" />}>
-              <span class="bullet-order">{orderMarker()}.</span>
-            </Show>
-          </span>
+          <BlockBullet id={props.id} owner={rowHost()?.id ?? props.id} closed={collapsed() && hasFoldableBody()}
+            order={orderMarker()} open={() => bulletOpen ? bulletOpen(props.id) : zoomInto(props.id)} />
         </div>
         </Show>
 

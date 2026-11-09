@@ -76,6 +76,11 @@ Notes.
   the list: `--tine-editable-font: Georgia, var(--tine-editable-emoji-font), serif;`.
   Dropping it lets a generic family resolve to a system color-emoji font that
   has crashed WebKitGTK (see `src/editableEmojiFont.test.ts`).
+- **Context menus.** Page, block and other shared context-menu rows, including
+  submenu rows, use one text size (14px by default) and inherit the interface
+  font family. This includes narrow layouts with the touch stylesheet. The
+  native journey `scripts/e2e-context-menu-font.mjs` compares computed sizes and
+  families across page, block and submenu rows (GH #916).
 
 ### Theme-package typography (API 0.3, GH #760)
 

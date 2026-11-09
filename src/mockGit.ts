@@ -4,6 +4,7 @@
 import type { Backend } from "./backendInterface";
 
 export const mockGitCommands = {
+  async getPageLastChanged() { return []; },
   gitCloneGraph: () => Promise.reject(new Error("Git is not available in the browser mock.")),
   gitSetupSignIn: () => Promise.reject(new Error("Git is not available in the browser mock.")),
   gitInitGraph: () => Promise.reject(new Error("Git is not available in the browser mock.")),

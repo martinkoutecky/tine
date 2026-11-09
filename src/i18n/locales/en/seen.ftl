@@ -29,3 +29,9 @@ seen-settings-label = Changed since you last looked
 seen-settings-hint = On a git graph, Tine marks blocks other people or tools committed since you last left a page. This is stored on this device only, never in the graph. Uncommitted edits are invisible, and your own commits never count.
 seen-settings-mark-graph = Mark whole graph seen
 seen-settings-forget = Forget seen state
+# $date (string): the git commit time formatted in local date and time.
+block-last-changed-date = Last changed { $date }
+block-last-changed-uncommitted = Changed, not yet committed
+block-last-changed-limit = Unknown — history limit reached
+block-last-changed-unknown = Unknown
+ui-failure-block-history = Could not read this block’s git history.
