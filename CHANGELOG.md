@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).
 - Context-menu rows use a consistent font size and family, including the page menu's **Copy as** submenu (GH #916).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).

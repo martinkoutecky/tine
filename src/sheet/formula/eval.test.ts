@@ -24,7 +24,7 @@ function dateValue(source: string): FormulaValue {
   return parsed;
 }
 
-function evalExpr(src: string, fields: Record<string, FormulaValue> = {}, formulas: Record<string, Ast> = {}, now = new Date(Date.UTC(2026, 0, 15, 12, 34))): FormulaValue {
+function evalExpr(src: string, fields: Record<string, FormulaValue> = {}, formulas: Record<string, Ast> = {}, now = new Date(2026, 0, 15, 12, 34)): FormulaValue {
   return evaluate(parseOk(src), {
     field: (name) => fields[name] ?? errorValue(`Missing field ${name}`),
     formulaAst: (name) => formulas[name] ?? null,
@@ -92,7 +92,7 @@ describe("formula evaluator", () => {
           const result = evaluate(binaryAst(op), {
             field: (name) => name === "left" ? left : right,
             formulaAst: () => null,
-            now: new Date(Date.UTC(2026, 0, 15)),
+            now: new Date(2026, 0, 15),
           });
           expect(result.kind === "error", `${op} ${leftKind}/${rightKind}`).toBe(!shouldSucceed(op, leftKind, rightKind));
         }
@@ -147,7 +147,7 @@ describe("formula evaluator", () => {
 
     const d = dateValue("2026-03-04 05:06");
     expect(evalExpr('d.format("YYYY/MM/DD HH:mm")', { d })).toEqual(textValue("2026/03/04 05:06"));
-    expect(evalExpr("d.relative()", { d }, {}, new Date(Date.UTC(2026, 2, 1)))).toEqual(textValue("in 3d"));
+    expect(evalExpr("d.relative()", { d }, {}, new Date(2026, 2, 1))).toEqual(textValue("in 3d"));
     expect(evalExpr("d.year", { d })).toEqual(numberValue(2026));
     expect(evalExpr("d.month", { d })).toEqual(numberValue(3));
     expect(evalExpr("d.day", { d })).toEqual(numberValue(4));
@@ -173,7 +173,7 @@ describe("formula evaluator", () => {
     const listError = evaluate(binaryAst("=="), {
       field: (name) => name === "left" ? { kind: "list", values: [errorValue("nested")] } : { kind: "list", values: [numberValue(1)] },
       formulaAst: () => null,
-      now: new Date(Date.UTC(2026, 0, 15)),
+      now: new Date(2026, 0, 15),
     });
     expect(listError).toEqual(errorValue("nested"));
   });
@@ -200,8 +200,8 @@ describe("formula evaluator", () => {
   });
 
   it("derives now and today only from the injected context time", () => {
-    expect(evalExpr('now().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(Date.UTC(2030, 5, 1, 1, 2)))).toEqual(textValue("2030-06-01 01:02"));
-    expect(evalExpr('today().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(Date.UTC(2030, 5, 1, 23, 59)))).toEqual(textValue("2030-06-01 00:00"));
+    expect(evalExpr('now().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(2030, 5, 1, 1, 2))).toEqual(textValue("2030-06-01 01:02"));
+    expect(evalExpr('today().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(2030, 5, 1, 23, 59))).toEqual(textValue("2030-06-01 00:00"));
   });
 });
 
