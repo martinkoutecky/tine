@@ -283,7 +283,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-page-lifecycle-summary.mjs": {
-      "setup": "Uses the shared account-home fixture; asserts a held app lease after the graph opens.",
+      "setup": "Uses the shared account-home fixture; asserts a held app lease after the graph opens. One unrelated outside write gives the window its first (by design full) publication before counting; IPC calls and graph-changed summaries are recorded as artifacts.",
       "contracts": [{"class":"core-operation","userOutcome":"With a page shown in the right sidebar, renaming a page that links to it from its title and then deleting it from the page menu updates the sidebar's linked references and its dependent query; an unrelated query on that page does not rerun; the target page file is unchanged.","blocking":true,"authority":"D-20261102-PERF row 3; precise page-lifecycle change summary in docs/storage-contract.md"}],
       "acceptableVariations": ["Publication and rendering latency, IPC batching, machine load, and how many times the dependent query reruns."],
       "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a native fail-before control: the counter tests in crates/tine-store/tests/page_lifecycle_summary.rs give that."],

@@ -57,8 +57,12 @@ async function until(predicate, message) {
   await browser.waitUntil(async () => predicate(await shownState()), { timeout: 30000, interval: 200, timeoutMsg: message })
     .catch(async error => { throw new Error(`${error.message}; shown ${JSON.stringify(await shownState())}`); });
 }
+// WebKitWebDriver can stall on a screenshot after a resize; as the other
+// native journeys do (e2e-comment-structure.mjs), capture Xvfb directly.
 async function screenshot(name) {
-  await browser.saveScreenshot(path.join(run, `${name}.png`));
+  const file = path.join(run, `${name}.png`);
+  if (process.platform === "linux") execFileSync("import", ["-window", "root", file], { timeout: 10_000 });
+  else await browser.saveScreenshot(file);
 }
 const queryRuns = async () => browser.execute(() => window.__queryIpc.filter(c => c.command === "query_run"));
 const runsOf = (calls, form) => calls.filter(c => JSON.stringify(c.args).includes(form.replace(/"/g, '\\"'))).length;
@@ -94,12 +98,33 @@ try {
       let recorded;
       if ((url.protocol === "ipc:" || url.hostname === "ipc.localhost") && window.__queryIpc.length < 10000) {
         let args = {}; if (typeof init?.body === "string") { try { args = JSON.parse(init.body); } catch {} }
-        recorded = { at: Date.now(), command: decodeURIComponent(url.pathname.slice(1)), args };
+        recorded = { at: Date.now(), command: decodeURIComponent(url.pathname.slice(1)), args, stack: new Error().stack };
         window.__queryIpc.push(recorded);
       }
       return original.call(this, input, init).then(response => { if (recorded) recorded.finishedAt = Date.now(); return response; });
     };
   });
+
+  // Each publication's change summary, as the window receives it (evidence
+  // for which readers it named).
+  await browser.executeAsync(done => {
+    window.__summaries = [];
+    const internals = window.__TAURI_INTERNALS__;
+    const listen = name => internals.invoke("plugin:event|listen", { event: name, target: { kind: "Any" },
+      handler: internals.transformCallback(event => {
+        window.__summaries.push({ at: Date.now(), event: name, summary: event.payload?.answers?.summary ?? null });
+      }) });
+    // Own publications arrive as a bulk event with no pages (watcher.rs).
+    Promise.all(["graph-changed", "graph-changed-bulk"].map(listen)).then(() => done(true), error => done(String(error)));
+  });
+  // A window's first publication is full by design (`changeSummary.ts`: no
+  // baseline yet). Give it one, from an unrelated outside write, so the
+  // operations below are measured against a baseline, then start counting.
+  fs.writeFileSync(pageFile("Warmup"), "- warmup\n");
+  await browser.waitUntil(() => browser.execute(() => window.__summaries.length > 0),
+    { timeout: 30000, timeoutMsg: "the warm-up write never published" });
+  await delay(2500);
+  await browser.execute(() => { window.__queryIpc = []; window.__summaries = []; });
 
   stage = "rename from the title updates Target's linked references and query";
   await browser.execute(() => document.querySelector(".main-content h1.page-title")
@@ -119,6 +144,8 @@ try {
   await screenshot("2-after-rename");
   let calls = await queryRuns();
   report.reruns.rename = { dependent: runsOf(calls, dependent), unrelated: runsOf(calls, unrelated), all: calls.length };
+  fs.writeFileSync(path.join(run, "rename-calls.json"), JSON.stringify(await browser.execute(() => window.__queryIpc), null, 2));
+  fs.writeFileSync(path.join(run, "rename-summaries.json"), JSON.stringify(await browser.execute(() => window.__summaries.splice(0)), null, 2));
   assert.equal(report.reruns.rename.unrelated, 0, "the rename reran the unrelated mounted query");
   report.passed.push(stage);
 
@@ -137,6 +164,8 @@ try {
   await screenshot("3-after-delete");
   calls = await queryRuns();
   report.reruns.delete = { dependent: runsOf(calls, dependent), unrelated: runsOf(calls, unrelated), all: calls.length };
+  fs.writeFileSync(path.join(run, "delete-calls.json"), JSON.stringify(await browser.execute(() => window.__queryIpc), null, 2));
+  fs.writeFileSync(path.join(run, "delete-summaries.json"), JSON.stringify(await browser.execute(() => window.__summaries.splice(0)), null, 2));
   assert.equal(report.reruns.delete.unrelated, 0, "the delete reran the unrelated mounted query");
   assert.notEqual(await currentPageTitle(browser), "Linker Renamed", "the deleted page stayed routed");
   assert.equal(fs.readFileSync(pageFile("Target"), "utf8"), `- target seed\n- {{query ${dependent}}}\n- {{query ${unrelated}}}\n`);

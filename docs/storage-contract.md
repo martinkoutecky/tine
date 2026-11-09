@@ -1909,10 +1909,17 @@ named by the usual `touches_edit` rule on those synthetic edits. Unrelated
 mounted queries do not rerun: proof
 `crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario and a
 counter at N = 8 and 64) and steps 60–62 of the random reader oracle in
-`crates/tine-store/tests/change_summary.rs`. The frontend create and delete
-paths no longer add a full refresh of their own; they bump only
-`pageInventoryRev` and leave readers to the publication summary, as rename
-already did. Any other
+`crates/tine-store/tests/change_summary.rs`. The frontend create, delete and rename
+paths no longer add a full refresh of their own: create and delete no longer
+call `bumpDataRev()` with no summary, and the rename refresh
+(`refreshAfterRename` in `src/graph.ts`) no longer bumps `graphEpoch`, which
+re-subscribed every mounted query and reference panel. Each bumps only
+`pageInventoryRev` (the page index) and leaves readers to the publication
+summary. Their frontend results change (`beginResultsChange`) still gates
+adoption of and actions on shown answers, but a mounted `{{query}}` reruns only
+on its own `query:<id>` key: as in the Query workspace (GH #907), the macro
+passes its subscription as the membership resource's `scopedRevision` and
+re-adopts an unchanged answer (`src/components/Macro.tsx`). Any other
 config change (favorites, templates, display settings) rebuilds no name or
 index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own

@@ -504,7 +504,12 @@ fn page_lifecycle_timings_on_the_realistic_graph() {
     }
     let rerun = |summary: &Value| -> (usize, Duration) {
         let view = store.whole_graph().unwrap();
-        let fired = strings(&summary["queryTo"]);
+        // A `full` summary may omit `queryTo`; it reruns everything anyway.
+        let fired = if summary["queryTo"].is_array() {
+            strings(&summary["queryTo"])
+        } else {
+            Default::default()
+        };
         let full = summary["full"] == true;
         let started = Instant::now();
         let mut count = 0;
@@ -573,9 +578,11 @@ fn page_lifecycle_timings_on_the_realistic_graph() {
     let mut rows = Vec::new();
     for (label, op) in ops {
         let started = Instant::now();
-        let summary = op();
+        let wire = op();
         let publish = started.elapsed();
-        let (count, reread) = rerun(&summary);
+        let summary = &wire["summary"];
+        assert!(summary.is_object(), "{label}: no published summary: {wire}");
+        let (count, reread) = rerun(summary);
         rows.push(format!(
             "{label}: full={} publish={publish:?} mounted reruns={count}/64 rerun time={reread:?}",
             summary["full"]
@@ -587,4 +594,62 @@ fn page_lifecycle_timings_on_the_realistic_graph() {
         rows.join("\n")
     );
     store.close();
+}
+
+/// The native journey's graph (`scripts/e2e-page-lifecycle-summary.mjs`): a
+/// task page that links Target is renamed, then deleted. The query over its
+/// task and Target reruns; one over another task and page does not.
+#[test]
+fn moving_a_task_page_reruns_only_the_query_it_can_match() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let dependent = ("dependent", parse("(and (task TODO) [[Target]])"));
+    let unrelated = (
+        "unrelated".to_owned(),
+        parse("(and (task NOW) [[Unrelated]])"),
+    );
+    mount(&store, dependent.0, &dependent.1);
+    mount(&store, &unrelated.0, &unrelated.1);
+    let oracle = Oracle {
+        dir,
+        store,
+        queries: vec![dependent],
+        unrelated: vec![unrelated],
+    };
+    oracle.step("unrelated page", |o| {
+        create(
+            &o.store,
+            "pages/Unrelated.md",
+            None,
+            "NOW unrelated body [[Unrelated]]",
+        )
+    });
+    oracle.step("linker", |o| {
+        create(
+            &o.store,
+            "pages/Linker.md",
+            None,
+            "TODO linker body [[Target]]",
+        )
+    });
+    for (label, op) in [
+        (
+            "rename",
+            Box::new(|o: &Oracle| move_page(&o.store, "pages/Linker.md", "Linker Renamed.md"))
+                as Box<dyn Fn(&Oracle) -> Value>,
+        ),
+        (
+            "delete",
+            Box::new(|o: &Oracle| trash(&o.store, "pages/Linker Renamed.md")),
+        ),
+    ] {
+        let (summary, unrelated) = oracle.step(label, |o| op(o));
+        assert_eq!(summary["full"], false, "{label}: {summary}");
+        assert!(
+            strings(&summary["queryTo"]).contains("dependent"),
+            "{label}: {summary}"
+        );
+        assert_eq!(unrelated, 0, "{label}: {summary}");
+    }
+    oracle.store.close();
 }
