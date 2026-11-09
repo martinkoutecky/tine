@@ -24,20 +24,21 @@ function libIncludedTests(dir) {
 // `mod x;` declarations at the start of a line (a commented-out one does not compile), with an optional `#[path]`.
 const MODULE = /^[ \t]*(?:#\[path = "([^"]+)"\][ \t]*\n[ \t]*)?(?:pub(?:\([^)]*\))? )?mod (\w+);/gm;
 
-// How many times each file is compiled into the integration target, following `mod` from `tests/integration.rs`.
+// How many copies of each file the integration target compiles: a file gets one copy per copy of each parent
+// that declares it, following `mod` from `tests/integration.rs`.
 function integrationModules(crate) {
-  const root = `${crate}/tests/integration.rs`;
   const reached = new Map();
-  const queue = [root];
-  while (queue.length) {
-    const file = queue.shift();
-    for (const [, path, name] of readFileSync(file, 'utf8').matchAll(MODULE)) {
-      const stem = file === root ? '' : `${basename(file, '.rs')}/`;
-      const target = normalize(join(dirname(file), path ?? `${stem}${name}.rs`));
-      reached.set(target, (reached.get(target) ?? 0) + 1);
-      if (reached.get(target) === 1) queue.push(target);
+  const expand = (file, copies, path) => {
+    for (const [, attr, name] of readFileSync(file, 'utf8').matchAll(MODULE)) {
+      const stem = path.length === 1 ? '' : `${basename(file, '.rs')}/`;
+      const target = normalize(join(dirname(file), attr ?? `${stem}${name}.rs`));
+      assert.ok(!path.includes(target), `module cycle through ${target}`);
+      reached.set(target, (reached.get(target) ?? 0) + copies);
+      expand(target, copies, [...path, target]);
     }
-  }
+  };
+  const root = `${crate}/tests/integration.rs`;
+  expand(root, 1, [root]);
   return reached;
 }
 
@@ -98,13 +99,15 @@ test('the layout check counts every inclusion and sees an unlocked case', () => 
   write('integration.rs', '#[path = "a.rs"]\nmod a;\nmod b;\n// mod commented;\n');
   write('a.rs', '#[path = "shared.rs"]\nmod shared;\n');
   write('b.rs', '#[path = "shared.rs"]\nmod shared;\n');
-  write('shared.rs', '');
+  write('shared.rs', '#[path = "leaf.rs"]\nmod leaf;\n');
+  write('leaf.rs', '#[test]\nfn twice() {}\n');
   write('c.rs', '#[path = "d.rs"]\nmod d;\n');
   write('d.rs', '#[path = "c.rs"]\nmod c;\n');
   const reached = integrationModules(crate);
   rmSync(crate, { recursive: true });
   const count = name => reached.get(join(crate, 'tests', name)) ?? 0;
-  assert.deepEqual(['a.rs', 'b.rs', 'shared.rs', 'c.rs', 'd.rs', 'commented.rs'].map(count), [1, 1, 2, 0, 0, 0]);
+  // The leaf's test would run twice, through two copies of its helper parent.
+  assert.deepEqual(['a.rs', 'b.rs', 'shared.rs', 'leaf.rs', 'c.rs', 'd.rs', 'commented.rs'].map(count), [1, 1, 2, 2, 0, 0, 0]);
   const source = '#[test]\nfn locked() {\n    let _g = crate::integration_lock();\n}\n\n#[test]\n#[ignore]\nfn via_helper() {\n    helper();\n}\n\nfn helper() {\n    let _g = crate::exclusive_integration_lock();\n}\n\n#[test]\nfn bare() {\n    let x = 1;\n}\n';
   assert.deepEqual(unlockedTests(source), ['bare']);
 });
