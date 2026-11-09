@@ -1961,10 +1961,15 @@ The table holds every property key except the `tine.type` declaration and the
 built-in and configured hidden keys outside `tine.` (`id::`, `collapsed::`),
 which still scan every page; so the export-definitions query
 (`tine.export`/`tine.share`) visits only the pages holding a definition. The
-answer equals the full scan's (`query/exec_key_tests.rs`). FORMAT 29 discards
+answer equals the full scan's (`query/exec_key_tests.rs`). A conjunction with
+several such constraints (names, an OR of page-anchored branches, keys) visits
+the pages of its tightest one, sized from the name claimants and the key's
+holder count before any holder is walked, whatever its evaluation order; an
+unindexed key never displaces a name. FORMAT 29 discards
 older checkpointed tables, which lacked the `tine.*` keys; the body schema is
 unchanged. A page-anchored presence query builds no fileless rows: a page
-without a file has no properties, so only a name need keeps them.
+without a file has no properties, so only a name need keeps them (in a
+conjunction, a name every narrowing conjunct names).
 
 Unit cost (PC-7, I-25) of the `tine.*` keys in that table: one digest entry and
 one posting member per (page, `tine.*` key) pair, whatever the number of
