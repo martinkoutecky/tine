@@ -305,6 +305,28 @@ pub(super) fn holder(
     }
 }
 
+/// The pages other than `source` that hold `new` for a rename of `source`:
+/// [`holder`]'s answer, which the plan and its dialog question use, under
+/// the store's current journal format. Empty when the name is free or held
+/// only by `source`. A journal holds every accepted spelling of its day
+/// (M-Q7), which `resolve(new, false)` alone does not see. A caller without
+/// a confirmation dialog (the CLI) refuses a nonempty answer before it
+/// enters the operation. O(1) indexed lookups, as `holder`.
+pub fn rename_destination_holders(
+    store: &Store,
+    graph: &tine_store::WholeGraph,
+    new: &str,
+    source: Option<&PageId>,
+) -> Vec<PageId> {
+    let journal_format = store.config().config.journal_format();
+    match holder(graph, &journal_format, new.trim()) {
+        Holder::Free => Vec::new(),
+        Holder::Files(ids) | Holder::Aliases(ids) => {
+            ids.into_iter().filter(|id| Some(id) != source).collect()
+        }
+    }
+}
+
 /// CM-OWN-CHILD (D-20261103-CMA) and M-Q6 (D-20261102-MC): `new` lies
 /// strictly inside `old`'s namespace and is used, i.e. some file claims it or
 /// some page (`old` itself included) declares it as an alias. A name that is
