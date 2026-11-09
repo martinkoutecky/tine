@@ -61,6 +61,9 @@ export interface OutlineChange {
 interface OutlineRead { key: string; subtree: boolean }
 type Arena = Record<string, { raw: string; children: readonly string[] }>;
 
+/** A block's text as the gesture will have written it, not yet in the store. */
+interface EditedBlock { id: string; raw: string }
+
 /** How `outlineChange` marshals pages. `whole` sends every block (the oracle
  *  the read-set marshal is tested against); `fallbacks` counts asks the kernel
  *  found incomplete, which were asked again with whole pages. */
@@ -75,7 +78,7 @@ export const outlineMarshal = { whole: false, fallbacks: 0 };
  *  handler, and reading blocks through the store's proxies cost more than the
  *  kernel (outline-kernel gate 2). The arrays are serialized before anything
  *  else runs, so they are not copied. */
-function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
+function outlinePage(name: string, reads: readonly OutlineRead[] | null, edited?: EditedBlock) {
   const page = unwrap(pageByName(name));
   if (!page) return null;
   const byId = unwrap(doc.byId);
@@ -88,7 +91,7 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
     if (blocks[id]) return true;
     const node = byId[id];
     if (!node || node.page !== name) return false;
-    blocks[id] = { raw: node.raw, children: node.children };
+    blocks[id] = { raw: edited?.id === id ? edited.raw : node.raw, children: node.children };
     if (node.originatedFromPageHeader && headerRoot === null) headerRoot = id;
     return true;
   };
@@ -145,8 +148,10 @@ class OutlineParserFault extends Error {
 /** Ask the kernel for `verb` over the named pages. Pure: nothing is applied.
  *  The pages go as the verb's read set; a kernel that finds it incomplete
  *  (a store whose parent links disagree with its children lists, or a read
- *  set that missed a block) is asked again with whole pages. */
-export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): OutlineChange | { refused: OutlineRefusal } {
+ *  set that missed a block) is asked again with whole pages. `edited` names a
+ *  block whose text a same-gesture edit is about to write: the kernel reads
+ *  that text instead of the store's, so a refusal has written nothing. */
+export function outlineChange(verb: OutlineVerb, pageNames: readonly string[], edited?: EditedBlock): OutlineChange | { refused: OutlineRefusal } {
   const bodyVerb = bodyStructureVerb(verb);
   if (!bodyVerb) return { refused: "no_outline_step" };
   verb = bodyVerb;
@@ -159,7 +164,7 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
     try { return call(); } catch (error) { throw new OutlineParserFault(error); }
   };
   const ask = (reads: readonly OutlineRead[] | null) => {
-    const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
+    const pages = names.map((name) => outlinePage(name, reads, edited)).filter((p) => p !== null);
     return JSON.parse(parser(() => outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() }))));
   };
   let answer;

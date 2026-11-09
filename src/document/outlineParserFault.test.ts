@@ -5,12 +5,26 @@
 // caret in the original block with no message; CM6 also inserted the Enter into its text).
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 
-const wasm = vi.hoisted(() => ({ failNextApply: false, garbleNextApply: false }));
+const wasm = vi.hoisted(() => ({ failNextApply: false, garbleNextApply: false, calls: {} as Record<string, number> }));
+const writes = vi.hoisted(() => ({ document: 0 }));
+// Every store write, counted at the one setter all document edits go through.
+vi.mock("./model", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./model")>();
+  return { ...real, setDoc: Object.assign((...args: unknown[]) => { writes.document++; return (real.setDoc as (...a: unknown[]) => unknown)(...args); }, real.setDoc) };
+});
 vi.mock("../render/wasm/lsdoc_wasm.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../render/wasm/lsdoc_wasm.js")>();
+  // The doors an outline verb uses, counted.
+  const counted = (name: "raw_byte_of_editor" | "outline_reads_json") => (...args: never[]) => {
+    wasm.calls[name] = (wasm.calls[name] ?? 0) + 1;
+    return (real[name] as (...a: never[]) => unknown)(...args);
+  };
   return {
     ...real,
+    raw_byte_of_editor: counted("raw_byte_of_editor"),
+    outline_reads_json: counted("outline_reads_json"),
     outline_apply_json: (request: string) => {
+      wasm.calls.outline_apply_json = (wasm.calls.outline_apply_json ?? 0) + 1;
       if (wasm.failNextApply) {
         wasm.failNextApply = false;
         throw new Error("lsdoc-wasm trap in outline_apply_json: Out of bounds memory access [instance: 1 calls, 0 resets, 25 pages; args string:400]");
@@ -25,13 +39,13 @@ vi.mock("../render/wasm/lsdoc_wasm.js", async (importOriginal) => {
 });
 
 import { initParser } from "../render/parse";
-import { indentBlock, isDirty, pageByName, resetStore, splitBlock, undo } from ".";
+import { indentBlock, isDirty, pageByName, resetStore, setRaw, splitBlock, undo, undoTopTag } from ".";
 import { doc } from "./model";
 import { loadSingle } from "./workingSet";
 import { setToasts, toasts } from "../toasts";
 
 beforeAll(async () => { await initParser(); });
-afterEach(() => { wasm.failNextApply = false; wasm.garbleNextApply = false; resetStore(); setToasts([]); });
+afterEach(() => { wasm.failNextApply = false; wasm.garbleNextApply = false; wasm.calls = {}; resetStore(); setToasts([]); });
 
 function load() {
   loadSingle({ name: "Third", title: "Third", kind: "page", pre_block: null, format: "md",
@@ -74,4 +88,43 @@ it("only a failed parser call is a parser fault: a bug in reading its answer sti
   wasm.garbleNextApply = true;
   expect(() => splitBlock("last", "last block".length)).toThrow(SyntaxError);
   expect(failures()).toHaveLength(0);
+});
+
+const parserDoors = () => ({ offset: wasm.calls.raw_byte_of_editor ?? 0, reads: wasm.calls.outline_reads_json ?? 0, apply: wasm.calls.outline_apply_json ?? 0 });
+
+it("a refused Enter makes no document mutation, and one that succeeds asks the parser once per door", () => {
+  load();
+  wasm.failNextApply = true;
+  writes.document = 0; wasm.calls = {};
+  splitBlock("last", "last block".length);
+  // The refusal wrote nothing: no store write, no undo entry, nothing to save.
+  expect(writes.document).toBe(0);
+  expect(undoTopTag()).toBe(null);
+  expect(isDirty("Third")).toBe(false);
+  // It did ask: the offset, the read set, and the failing apply (each once).
+  expect(parserDoors()).toEqual({ offset: 1, reads: 1, apply: 1 });
+
+  writes.document = 0; wasm.calls = {};
+  splitBlock("last", "last block".length);
+  // The same three doors, once each (measured on 492f6699f): the guard, the toast and the refusal path add no call.
+  expect(parserDoors()).toEqual({ offset: 1, reads: 1, apply: 1 });
+  expect(writes.document).toBe(1);
+});
+
+it("a pending edit is written only once the kernel has answered, and the kernel splits the text it leaves", () => {
+  load();
+  const write = vi.fn(() => setRaw("last", " block", { timetracking: false }));
+  // `last` selected in `last block`, Enter: the text the selection leaves is ` block`.
+  wasm.failNextApply = true;
+  writes.document = 0;
+  splitBlock("last", 0, false, false, null, undefined, { raw: " block", write });
+  expect(write).not.toHaveBeenCalled();
+  expect(writes.document).toBe(0);
+  expect(doc.byId.last.raw).toBe("last block");
+  expect(undoTopTag()).toBe(null);
+
+  splitBlock("last", 0, false, false, null, undefined, { raw: " block", write });
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(pageByName("Third")!.roots.map((id) => doc.byId[id].raw)).toEqual(["first", "", " block"]);
+  expect(undoTopTag()).toBe("split");
 });

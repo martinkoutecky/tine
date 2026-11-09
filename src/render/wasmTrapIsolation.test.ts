@@ -5,7 +5,7 @@
 // "Unreachable code should not be executed (evaluating 'page_header_json')" report).
 // Before the wrapper only parse_block_bundle_json / header_tokens_json recovered; ~20 doors,
 // including page_header_json, did not. Exemplar: src/render/parseReinstantiate.test.tsx.
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { initParser } from "./parse";
 import { editor_text_json, format_journal_date, last_panic, outline_apply_json, page_header_json, parse_block_json, search_query_json } from "./wasm/lsdoc_wasm.js";
 
@@ -80,6 +80,31 @@ describe("a wasm trap is isolated to the call that caused it", () => {
     }
     const split = JSON.parse(outline_apply_json(enter));
     expect(split.ok.pages[0].upserts.map((u: { raw: string }) => u.raw)).toContain(raw);
+  });
+
+  it("an unwound exception or a trap costs exactly one fresh instance; an ordinary call or a Rust Err costs none", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // Count the instances the glue builds. A fresh instance is the recovery's whole cost: it is
+    // taken once per failed call, never on a call that went well.
+    const Real = WebAssembly.Instance;
+    let made = 0;
+    WebAssembly.Instance = class extends Real { constructor(...args: ConstructorParameters<typeof Real>) { made++; super(...args); } } as typeof Real;
+    onTestFinished(() => { WebAssembly.Instance = Real; });
+    const raw = "the last block of the third page";
+    for (let i = 0; i < 200; i++) page_header_json("type:: book\n");
+    expect(made).toBe(0);
+    // A Rust `Err` reaches JS as a string after the call returned: the instance is intact.
+    expect(() => outline_apply_json("{not a request")).toThrow();
+    expect(made).toBe(0);
+    // One exception thrown from inside a call: one fresh instance, and the caller's own error.
+    expect(() => editor_text_json(raw, false, undefined, '{"kind":"builtin"}')).toThrow(TypeError);
+    expect(made).toBe(1);
+    // A trap: one fresh instance (the panic message is read before it, then it is replaced once).
+    expect(() => parse_block_json(TRAPPING, false)).toThrow(/lsdoc-wasm trap/);
+    expect(made).toBe(2);
+    // And the next ordinary calls cost none.
+    for (let i = 0; i < 200; i++) page_header_json("type:: book\n");
+    expect(made).toBe(2);
   });
 
   it("a trap names how the instance got there, without page text", () => {

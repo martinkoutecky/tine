@@ -74,7 +74,32 @@ function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: Outl
   return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page]);
 }
 
-export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean; markerBaseline?: string }) {
+type SetRawOptions = { timetracking?: boolean; markerBaseline?: string };
+
+/** What `setRaw(id, raw, opts)` stores: `raw` with the marker transition (the
+ *  clock) applied. Pure; one parser call when time tracking is on. A caller
+ *  that must know the stored text before writing it settles it here, then
+ *  writes it with `timetracking: false` so the transition runs once. */
+export function rawToWrite(id: string, raw: string, opts?: SetRawOptions): string {
+  return opts?.timetracking === false
+    ? raw
+    : applyMarkerTransition(
+        opts?.markerBaseline ?? doc.byId[id].raw,
+        raw,
+        formatForBlock(id),
+        timetrackingEnabled(),
+        logbookWithSecondSupport(),
+      );
+}
+
+/** An edit to a block's text that the editor has decided on but not written:
+ *  `raw` is the block's raw once `write` has run. A structural gesture that
+ *  edits the text it acts on (Enter over a selection) computes the kernel's
+ *  answer from `raw` and calls `write` only when the kernel answers, so a
+ *  refused gesture leaves the editor and the document as they were. */
+export interface PendingEdit { raw: string; write(): void }
+
+export function setRaw(id: string, raw: string, opts?: SetRawOptions) {
   if (!blockWritable(id)) return;
   const prev = doc.byId[id].raw;
   const page = pageByName(doc.byId[id].page);
@@ -83,16 +108,7 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean;
       && readPropertyValue(prev, "title") !== readPropertyValue(raw, "title")) {
     noteTitleIdentityIntent(page.name);
   }
-  const next =
-    opts?.timetracking === false
-      ? raw
-      : applyMarkerTransition(
-          opts?.markerBaseline ?? prev,
-          raw,
-          formatForBlock(id),
-          timetrackingEnabled(),
-          logbookWithSecondSupport(),
-        );
+  const next = rawToWrite(id, raw, opts);
   pushRawUndo(id, prev);
   setDoc("byId", id, "raw", next);
   markDirty(doc.byId[id].page, "save-block");
@@ -189,7 +205,12 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
  *  (built-in properties hidden). The kernel's `split` owns the rule
  *  (outline::split): hidden props stay with the original block, a split at the
  *  head inserts an empty block before it, and GH #361's line boundary becomes the
- *  block separator. Returns false when the outline cap refuses a child. */
+ *  block separator. Returns false when the outline cap refuses a child.
+ *
+ *  `pending` is an edit to this block's text that belongs to the same gesture
+ *  (the selection Enter replaces). The kernel splits the text `pending` leaves;
+ *  `pending.write` runs once the kernel has answered, ahead of the undo entry
+ *  and the patch. A refusal or a parser failure writes nothing. */
 export function splitBlock(
   id: string,
   offset: number,
@@ -197,22 +218,24 @@ export function splitBlock(
   keepStartInScope: boolean = false,
   editingSurface: string | null = null,
   hiddenProperties: HidePolicy = BUILTIN_HIDE,
+  pending?: PendingEdit,
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
   const change = outlineChange({
     verb: "split",
     key: id,
-    raw_offset: visibleOffsetToRawByte(node.raw, offset, hiddenProperties, formatForBlock(id)),
+    raw_offset: visibleOffsetToRawByte(pending?.raw ?? node.raw, offset, hiddenProperties, formatForBlock(id)),
     force_child: forceChild,
     children_visible: node.children.length > 0 && !node.collapsed,
     keep_start_in_scope: keepStartInScope,
-  }, [node.page]);
+  }, [node.page], pending && { id, raw: pending.raw });
   if ("refused" in change) {
     if (change.refused !== "depth_cap") return;
     pushToast(msg("blocks-outline-is-too-deep-to-insert-a-child"), "error");
     return false;
   }
+  pending?.write();
   pushUndo("split", [node.page]);
   applyOutlineChange(change);
   if (change.focus) {

@@ -20,7 +20,24 @@ const sessions = Number(process.env.E2E_SESSIONS || 1);
 const pages = Number(process.env.E2E_PAGES || 3);
 const port = Number(process.env.E2E_DRIVER_PORT || 4974);
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-const pause = (browser) => browser.pause(Number(process.env.E2E_CLICK_DELAY || 250));
+
+/** The focused editor, whichever engine: the block it belongs to, its text and its selection. Every step
+ *  below waits for the state it stands for, never for a fixed time. */
+const editorState = (browser) => browser.execute(() => {
+  const el = document.activeElement;
+  const row = el?.closest?.(".ls-block");
+  const where = { id: row?.dataset.blockId ?? null, inEmbed: !!row?.closest(".embed-block") };
+  if (el instanceof HTMLTextAreaElement) return { ...where, text: el.value, start: el.selectionStart, end: el.selectionEnd };
+  const view = el?.cmTile?.root?.view;
+  if (view) { const s = view.state.selection.main; return { ...where, text: view.state.doc.toString(), start: s.from, end: s.to }; }
+  return { ...where, text: null, start: null, end: null };
+});
+// A state that never arrives is the product failing the journey (an Enter that made no block), not the harness.
+const expected = async (what, wait) => { try { return await wait(); } catch (error) { assert.fail(`never reached: ${what} (${String(error.message).slice(0, 200)})`); } };
+const untilEditor = (browser, what, predicate) => expected(what, () => browser.waitUntil(async () => predicate(await editorState(browser)),
+  { timeout: 15000, interval: 50 }));
+const untilNoEditor = (browser, what) => expected(what, () => browser.waitUntil(() => browser.execute(() => !document.querySelector(".block-editor, [data-block-editor]")),
+  { timeout: 15000, interval: 50 }));
 
 /** A source page of ordinary, varied blocks: properties, ids, tasks, links, CJK and emoji text. */
 function sourcePage(n) {
@@ -77,17 +94,34 @@ async function session(index) {
       await content.scrollIntoView({ block: "center" });
       await content.click();
       await browser.$(`${embed} [data-block-id="${last}"] > .block-main .block-editor, ${embed} [data-block-id="${last}"] > .block-main [data-block-editor]`).waitForExist({ timeout: 10000 });
-      await browser.keys(["Control", "End"]); await pause(browser);
+      await untilEditor(browser, "the clicked block editing and focused", st => st.id === last && st.text !== null);
       const sentinel = `entered s${index} p${n}`;
-      stage = `page ${n}: Enter, type, Tab`;
-      await browser.keys("Enter"); await pause(browser);
-      await browser.keys(sentinel); await pause(browser);
-      await browser.keys("Tab"); await pause(browser);
-      await browser.keys("Escape"); await pause(browser);
       const file = path.join(graph, `pages/Source ${n}.md`);
+      const lineAfterLast = (text) => { const lines = text.split("\n"); const at = lines.indexOf(`- Last block of source ${n}`); return at >= 0 ? lines[at + 1] ?? "" : null; };
+      stage = `page ${n}: caret to the end`;
+      await browser.keys(["Control", "End"]);
+      await untilEditor(browser, "the caret at the end of the last block", st => st.id === last && st.start === st.end && st.end === st.text.length);
+      stage = `page ${n}: Enter`;
+      await browser.keys("Enter");
+      // A new, empty block is editing and has focus, inside the embed and not the block Enter was pressed in.
+      await untilEditor(browser, "a new empty block editing after Enter", st => st.id !== null && st.id !== last && st.inEmbed && st.text === "");
+      const fresh = (await editorState(browser)).id;
+      stage = `page ${n}: type`;
+      await browser.keys(sentinel);
+      await untilEditor(browser, "the typed text in the new block", st => st.id === fresh && st.text === sentinel);
+      // Committed: the file shows it as the next sibling of the last block (saves do not wait for the editor to close).
+      await expected("the typed block saved as the next sibling of the last block",
+        () => waitForFileText(file, text => lineAfterLast(text) === `- ${sentinel}`, { timeoutMs: 15_000 }));
+      stage = `page ${n}: Tab`;
+      await browser.keys("Tab");
+      // The same block keeps the caret, and the file shows it as a child of the last block.
+      await untilEditor(browser, "the new block still editing after Tab", st => st.id === fresh && st.text === sentinel);
+      stage = `page ${n}: Escape`;
+      await browser.keys("Escape");
+      await untilNoEditor(browser, "no editor open after Escape");
       let saved = null;
       try {
-        saved = await waitForFileText(file, text => text.includes(`- Last block of source ${n}\n`) && /\n[\t ]+- entered/.test(text), { timeoutMs: 15_000 });
+        saved = await waitForFileText(file, text => /^[\t ]+- /.test(lineAfterLast(text) ?? "") && lineAfterLast(text).trim() === `- ${sentinel}`, { timeoutMs: 15_000 });
       } catch { saved = fs.readFileSync(file, "utf8"); }
       const view = await browser.execute((sel, s) => ({
         copies: [...document.querySelectorAll(`${sel} .block-content`)].filter(el => el.textContent.trim() === s).length,
