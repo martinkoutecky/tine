@@ -816,7 +816,7 @@ impl Signal {
     }
 
     pub(crate) fn stop(&self) {
-        self.state.lock().unwrap().stop = true;
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
         self.wake.notify_all();
     }
 
