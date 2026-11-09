@@ -189,8 +189,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.focus();
     },
   });
-  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, assets, cell, sheet: !!cell && !gridNestedBlock(props.id, cell), hiddenProperties });
+  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, stage, literal, assets, cell, sheet: !!cell && !gridNestedBlock(props.id, cell), hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, literal, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit,
+    stageDelete: (from, to) => deleteSelection(view!, from, to),
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     assets,
     languagePicker: setPickingLanguage,

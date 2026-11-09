@@ -2,7 +2,7 @@ import { clipboardEventFlavors } from "./clipboardFlavors";
 import type { EditorView } from "@codemirror/view";
 import { guardedCommands } from "./cm6Commands";
 import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
-import { insertOutlineAfter, insertOutlineChildren, node, outlineFits, pasteClipboardPayload, replaceEmptyBlockWithOutline, sanitizeOutlineIdsForPaste, withUndoUnit } from "../document";
+import { insertOutlineWithEdit, node, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, type PendingEdit } from "../document";
 import { startEditing } from "../editorController";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { copyBlockLink } from "../components/blockLinkCopy";
@@ -34,6 +34,8 @@ interface ClipboardContext {
   assets: ReturnType<typeof editorAssets>;
   current(): boolean;
   commit(text: string): void;
+  /** The write `commit(text)` would make, decided but not made. */
+  stage(text: string): PendingEdit;
   literal(): boolean;
 }
 
@@ -68,22 +70,17 @@ export function cm6Clipboard(ctx: ClipboardContext) {
       && node(ctx.id)?.page === pageAtPaste);
     const insert = (prepared: OutlineNode[] | null) => {
       if (!prepared?.length || !owner()) return;
-      if (asChildren) {
-        const inserted = withUndoUnit(tag, [pageAtPaste], () => {
-          ctx.commit(rawAtPaste);
-          return insertOutlineChildren(ctx.id, prepared) ?? false;
-        });
-        if (!inserted) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
+      // One gesture (og-enter-family-1109): the text as typed and the pasted outline are written together,
+      // once the kernel has answered; a refusal or a parser failure writes neither.
+      const typed = ctx.stage(rawAtPaste);
+      const empty = !asChildren && rawAtPaste.trim() === "" && isEditorEmpty(typed.raw, ctx.hiddenProperties, ctx.format) && node(ctx.id).children.length === 0;
+      const result = insertOutlineWithEdit(ctx.id, prepared, typed, tag, asChildren ? "children" : empty ? "replace-empty" : "after");
+      if ("refused" in result) {
+        if (result.refused !== "told") pushToast(msg(result.refused === "too_deep" ? "editor-block-pasted-outline-is-too-deep" : "editor-block-pasted-outline-was-refused"), "error");
         return;
       }
-      const lastId = withUndoUnit(tag, [pageAtPaste], () => {
-        ctx.commit(rawAtPaste);
-        const host = node(ctx.id);
-        const empty = rawAtPaste.trim() === "" && isEditorEmpty(host.raw, ctx.hiddenProperties, ctx.format) && host.children.length === 0;
-        return (empty ? replaceEmptyBlockWithOutline(ctx.id, prepared) : insertOutlineAfter(ctx.id, prepared)) ?? false;
-      });
-      if (!lastId) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
-      else if (node(lastId)) runGridOutline(ctx.cell, () => startEditing(lastId, node(lastId).raw.length));
+      const lastId = result.inserted;
+      if (!asChildren && lastId && node(lastId)) runGridOutline(ctx.cell, () => startEditing(lastId, node(lastId).raw.length));
     };
     const prepared = sanitizeOutlineIdsForPaste(ctx.id, nodes);
     if (prepared instanceof Promise) void prepared.then(insert).catch(error => reportUiFailure("clipboard-association", error));

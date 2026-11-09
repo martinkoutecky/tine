@@ -210,9 +210,10 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
  *  block separator. Returns false when the outline cap refuses a child.
  *
  *  `pending` is an edit to this block's text that belongs to the same gesture
- *  (the selection Enter replaces). The kernel splits the text `pending` leaves;
- *  `pending.write` runs once the kernel has answered, ahead of the undo entry
- *  and the patch. A refusal or a parser failure writes nothing. */
+ *  (the selection Enter deletes, in both editors: OG 6e7afa8eb editor.cljs
+ *  `compute-fst-snd-block-text`). The kernel splits the text `pending` leaves;
+ *  `pending.write` runs once the kernel has answered, in the same undo unit as
+ *  the patch. A refusal or a parser failure writes nothing. */
 export function splitBlock(
   id: string,
   offset: number,
@@ -237,9 +238,12 @@ export function splitBlock(
     pushToast(msg("blocks-outline-is-too-deep-to-insert-a-child"), "error");
     return false;
   }
-  pending?.write();
-  pushUndo("split", [node.page]);
-  applyOutlineChange(change);
+  // With `pending` the gesture is one undo unit: one Undo restores the selected text and the single block.
+  if (pending) withUndoUnit("split", [node.page], () => { pending.write(); applyOutlineChange(change); });
+  else {
+    pushUndo("split", [node.page]);
+    applyOutlineChange(change);
+  }
   if (change.focus) {
     startEditing(change.focus.key, change.focus.editorOffset ?? 0, null, editingSurface);
   }
@@ -451,6 +455,48 @@ export function exitMultilineBlock(id: string, trim: PendingEdit): string | null
     return change.focus?.key ?? null;
   });
   return sibling ?? null;
+}
+
+/** Why `insertOutlineWithEdit` changed nothing. `too_deep`: the outline would pass the depth cap.
+ *  `told`: the kernel refused or the parser failed, and the user has been told already (exactly one
+ *  toast). `refused`: anything else (an empty outline, a read-only page, a host that is not empty for
+ *  `replace-empty`); the caller says so. */
+export type EditedInsertRefusal = "too_deep" | "told" | "refused";
+
+/** One gesture that edits a block's text and inserts an outline beside it: a template completed from
+ *  the slash menu (`edit` removes the trigger text) or a multi-line paste (`edit` commits the text as
+ *  typed). `place` is where the outline goes: after the block, as its last children, or in place of the
+ *  block when the edit leaves it empty (its id is reused for the first root, as a paste into an empty
+ *  block does). The kernel is asked over `edit.raw` before anything is written; on an answer `edit` and
+ *  the patch are written as one undo unit `tag`, so one Undo restores the text and removes the outline.
+ *  A refusal or a parser failure writes nothing and enters no unit (a rollback would replace the
+ *  block's node under its mounted editor). Returns the block to focus (the last inserted root), or why
+ *  nothing changed. Cost: one kernel ask; O(the page's blocks) for the undo snapshot on success. */
+export function insertOutlineWithEdit(
+  id: string,
+  nodes: OutlineNode[],
+  edit: PendingEdit,
+  tag: string,
+  place: "after" | "children" | "replace-empty",
+): { inserted: string | null } | { refused: EditedInsertRefusal } {
+  const host = doc.byId[id];
+  if (!nodes.length || !host || !blockWritable(id)) return { refused: "refused" };
+  if (!outlineFits(id, nodes, place === "children" ? 1 : 0)) return { refused: "too_deep" };
+  if (place === "replace-empty" && (host.children.length || !isEditorEmpty(edit.raw, BUILTIN_HIDE, formatForBlock(id)))) return { refused: "refused" };
+  const at: OutlinePlace = place === "children" ? { at: "last_child", key: id } : { at: place === "after" ? "after" : "before", key: id };
+  const change = importedOutlineChange(id, nodes, at, place === "replace-empty" ? id : undefined, { id, raw: edit.raw });
+  if ("refused" in change) {
+    if (change.refused === "depth_cap") return { refused: "too_deep" };
+    noteOutlineRefusal(change.refused);
+    return { refused: change.refused === "unparseable" || change.refused === "header_root" ? "told" : "refused" };
+  }
+  const inserted = withUndoUnit(tag, [host.page], () => {
+    edit.write();
+    applyOutlineChange(change);
+    markOutlineDirty(change);
+    return change.focus?.key ?? null;
+  });
+  return { inserted: inserted ?? null };
 }
 
 /** Replace one empty leaf with a parsed outline in one transaction and undo

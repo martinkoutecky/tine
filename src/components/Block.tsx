@@ -27,7 +27,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertOutlineWithEdit, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -623,6 +623,24 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     };
   };
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => stage(text, opts).write();
+  /** Taking `from..to` out of the editor and the block, decided but not made: the textarea's counterpart of
+   *  the CodeMirror editor's `deleteSelection`. Enter over a selection and a template completion's trigger
+   *  removal stage it, ask the kernel about the text it leaves and write it only once it has answered. */
+  const deleteRange = (from: number, to: number): PendingEdit => {
+    const text = ref.value.slice(0, from) + ref.value.slice(to);
+    const staged = stage(text);
+    return {
+      raw: staged.raw,
+      write() {
+        staged.write();
+        queueMicrotask(() => {
+          if (!editorMounted) return;
+          syncTextareaToStore(ref, text, textareaValue(), from);
+          autosize();
+        });
+      },
+    };
+  };
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
   // the caret is on a `+`/`*`/ordered list line).
@@ -652,6 +670,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     text: () => ref.value, caret: () => ref.selectionStart,
     selection: () => [ref.selectionStart, ref.selectionEnd],
     rawBeforeCommit: () => rawBeforeLastCommit, visible: editorValue,
+    stageDelete: deleteRange,
     apply: (raw, start, end = start, focus = true, restoreGuard) => {
       commit(raw);
       queueMicrotask(() => {
@@ -1767,7 +1786,13 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         applyEdit({ text: raw.slice(0, start) + "\n" + prefix + raw.slice(start), start: caret, end: caret });
         return;
       }
-      commit(raw); // flush current text
+      // Enter over a selection deletes the selection, then splits at its start, as OG does (6e7afa8eb
+      // editor.cljs `compute-fst-snd-block-text`) and as the CodeMirror editor does. It is one gesture:
+      // the kernel splits the text the selection leaves, and the editor and the block lose the selected
+      // text only once it has answered, so a refusal or a parser failure leaves both as they were.
+      // A highlight block keeps its text whole (it is never split).
+      const replacement = start === end || isAnnot() ? undefined : deleteRange(start, end);
+      if (!replacement) commit(raw); // flush current text
       // A comment keeps its quote: Enter in its text adds a reply (a child).
       if (!isAnnot() && start === end && replyOnEnter(props.id, raw, start, editSurface())) return;
       if (isAnnot()) {
@@ -1778,7 +1803,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         if (newId) startEditing(newId, 0, null, editSurface());
       } else {
         const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
-        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface(), hideFn());
+        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface(), hideFn(), replacement);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
@@ -2182,24 +2207,17 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const pageAtPaste = current.page;
     const insert = (prepared: OutlineNode[] | null) => {
       if (!prepared?.length || !ref.isConnected || ref.value !== rawAtPaste || docNode(props.id)?.page !== pageAtPaste) return;
-      if (asChildren) {
-        const inserted = withUndoUnit(tag, [pageAtPaste], () => {
-          commit(rawAtPaste);
-          return insertOutlineChildren(props.id, prepared) ?? false;
-        });
-        if (!inserted) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
+      // One gesture (og-enter-family-1109): the text as typed and the pasted outline are written together,
+      // once the kernel has answered; a refusal or a parser failure writes neither.
+      const typed = stage(rawAtPaste);
+      const empty = !asChildren && rawAtPaste.trim() === "" && isEditorEmpty(typed.raw, hideFn(), pageFmt()) && docNode(props.id).children.length === 0;
+      const result = insertOutlineWithEdit(props.id, prepared, typed, tag, asChildren ? "children" : empty ? "replace-empty" : "after");
+      if ("refused" in result) {
+        if (result.refused !== "told") pushToast(msg(result.refused === "too_deep" ? "editor-block-pasted-outline-is-too-deep" : "editor-block-pasted-outline-was-refused"), "error");
         return;
       }
-      const lastId = withUndoUnit(tag, [pageAtPaste], () => {
-        commit(rawAtPaste);
-        const host = docNode(props.id);
-        const wasEmpty = rawAtPaste.trim() === "" && isEditorEmpty(host.raw, hideFn(), pageFmt()) && host.children.length === 0;
-        return (wasEmpty
-          ? replaceEmptyBlockWithOutline(props.id, prepared)
-          : insertOutlineAfter(props.id, prepared)) ?? false;
-      });
-      if (!lastId) { pushToast(msg("editor-block-pasted-outline-was-refused"), "error"); return; }
-      if (docNode(lastId)) runGridOutline(sheetCell, () => startEditing(lastId, docNode(lastId).raw.length));
+      const lastId = result.inserted;
+      if (!asChildren && lastId && docNode(lastId)) runGridOutline(sheetCell, () => startEditing(lastId, docNode(lastId).raw.length));
     };
     const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);
     if (prepared instanceof Promise) void prepared.then(insert);

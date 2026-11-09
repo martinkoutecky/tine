@@ -90,6 +90,7 @@ insertEmptyChildBlock
 insertOutlineAfter
 insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
 insertOutlineChildren
+insertOutlineWithEdit  # why: a template completion or a multi-line paste writes its text edit and inserts the outline as one gesture, asking the kernel before it writes; batch-og-enter-family-1109
 insertSiblingAfterSubtree  # why: Alt+Enter adds a block after the current block's whole subtree (GH #818); batch-og-merge-sibling-764-818
 installAliasDraftRouteHandler
 installExternalChangeUiHandler
