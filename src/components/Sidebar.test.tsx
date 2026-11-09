@@ -63,7 +63,7 @@ it("GH #335: All pages opens the full view directly", () => {
     entry.click();
     expect(route()).toMatchObject({ kind: "all-pages" });
     expect(entry.hasAttribute("aria-expanded")).toBe(false);
-    const guide = readFileSync("crates/tine-core/src/templates/where-things-are.md", "utf8");
+    const guide = readFileSync("crates/tine-guide/src/templates/where-things-are.md", "utf8");
     expect(guide).toContain("**All pages** entry opens");
   } finally { dispose(); }
 });

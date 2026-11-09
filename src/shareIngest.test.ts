@@ -186,7 +186,7 @@ it("does not navigate if the graph changes during the final acknowledgement", as
 });
 
 it("the mobile Guide explains the share landing and preserves in-app capture context", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/platforms-and-mobile.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/platforms-and-mobile.md", "utf8");
   for (const outcome of ["reveals the shared block", "last item in the batch", "Retries leave your current page open", "In-app quick capture keeps the page you are editing open"]) {
     expect(guide).toContain(outcome);
   }

@@ -15,7 +15,7 @@ import { settings } from "./components/settingDefinitions";
 // Exemplar for the shape: src/editableEmojiFont.test.ts.
 
 const CONTRACT = "docs/contracts/theme-tokens.md";
-const GUIDE = "crates/tine-core/src/templates/customize-look.md";
+const GUIDE = "crates/tine-guide/src/templates/customize-look.md";
 const RULE = `Public theming tokens are a stability promise (${CONTRACT}): document a token there in the same commit that adds, renames or removes it, and add the CHANGELOG entry.`;
 
 function walk(dir: string, accept: (file: string) => boolean, out: string[] = []): string[] {

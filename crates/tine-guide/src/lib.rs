@@ -1,9 +1,13 @@
-//! Bundled Guide content: the canonical Guide pages, the demo-graph config and
-//! the embedded assets. Pure data; the store (`tine_store::onboarding`) writes it.
+//! Bundled Guide content: the canonical Guide pages and the embedded assets.
+//! Pure data; `tine_graph_features::guide` writes it into a graph. It sits
+//! downstream of `tine-core` so that editing a Guide page rebuilds only this
+//! crate and its consumers. The new-graph `logseq/config.edn` is not Guide
+//! content: the store writes it for every new graph
+//! (`tine_core::config::NEW_GRAPH_CONFIG_EDN`).
 
-use crate::model::PageDto;
-use crate::projection::markdown_page_dto;
 use std::collections::HashMap;
+use tine_core::model::PageDto;
+use tine_core::projection::markdown_page_dto;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GuidePage {
@@ -27,10 +31,6 @@ pub fn bundled_guide_pages() -> Vec<GuidePage> {
         })
         .collect()
 }
-
-/// `logseq/config.edn` for the demo graph (triple-lowbar namespace filenames,
-/// the welcome page pinned as a favorite).
-pub const CONFIG_EDN: &str = include_str!("templates/config.edn");
 
 /// The capture-window screenshot embedded by the quick-capture page.
 pub const QUICK_CAPTURE_PNG: &[u8] = include_bytes!("templates/assets/quick-capture.png");
@@ -196,7 +196,7 @@ pub fn guide_link_renames() -> HashMap<String, String> {
         .iter()
         .map(|template| {
             (
-                crate::refs::page_key(template.title),
+                tine_core::refs::page_key(template.title),
                 guide_copy_page_name(template.title),
             )
         })
@@ -205,11 +205,11 @@ pub fn guide_link_renames() -> HashMap<String, String> {
 
 pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>) -> String {
     // Markdown has no `file:` page links, so the filename format is not consulted.
-    crate::refs::rename_rewrite_keyed(
+    tine_core::refs::rename_rewrite_keyed(
         markdown,
         false,
         renames,
-        crate::config::FileNameFormat::TripleLowbar,
+        tine_core::config::FileNameFormat::TripleLowbar,
     )
 }
 
@@ -827,11 +827,11 @@ mod search_guide_tests {
                 }
                 None => continue,
             };
-            let (query, _) = crate::query::parse_query_input(
+            let (query, _) = tine_core::query::parse_query_input(
                 &text,
-                crate::query::QueryInput::Tql,
-                crate::date::JournalDate::from_ordinal(20261018),
-                crate::query::registry::Registry::none(),
+                tine_core::query::QueryInput::Tql,
+                tine_core::date::JournalDate::from_ordinal(20261018),
+                tine_core::query::registry::Registry::none(),
             );
             assert!(!query.is_invalid(), "{text}: {:?}", query.diagnostics);
             checked += 1;
@@ -1844,11 +1844,16 @@ mod query_guide_tests {
             .expect("the Guide shows an advanced query");
         let example = &workflow.markdown[start + 1..];
         let example = &example[..example.find('`').expect("closed code span")];
-        let today = crate::date::JournalDate::today();
-        let (query, _) = crate::query::parse_query_source(example, today);
-        let result = crate::query::resolve_for_execution(
+        let today = tine_core::date::JournalDate::today();
+        let (query, _) = tine_core::query::parse_query_input(
+            example,
+            tine_core::query::QueryInput::Og,
+            today,
+            tine_core::query::registry::Registry::none(),
+        );
+        let result = tine_core::query::resolve_for_execution(
             &query,
-            &crate::query::ir::ExecutionContext::none(),
+            &tine_core::query::ir::ExecutionContext::none(),
             today,
         );
         assert!(result.report().supported, "{example}");
@@ -2604,7 +2609,7 @@ mod i2_guide_sentence_tests {
 
     #[test]
     fn search_guide_mark_examples_are_what_search_does() {
-        use crate::search_query::canonical_fold;
+        use tine_core::search_query::canonical_fold;
         let page = include_str!("templates/pages-links-references-search.md");
         for (query, text) in [
             ("cafe", "café"),

@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const page = readFileSync("crates/tine-core/src/templates/files-external-edits-backups.md", "utf8");
+const page = readFileSync("crates/tine-guide/src/templates/files-external-edits-backups.md", "utf8");
 
 it("explains that recovered text is put back and saved at the next start, named, and never written over a changed file", () => {
   expect(page).toMatch(/next start Tine puts it back on the page and saves it[^\n]*Recovered unsaved edits[^\n]*changed on disk[^\n]*nothing is written over unseen/);

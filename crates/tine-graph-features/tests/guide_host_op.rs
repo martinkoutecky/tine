@@ -43,7 +43,7 @@ fn hosted(files: &[(&str, &str)]) -> Hosted {
 
 /// The copy of the Guide's first page, "Tine Guide": its name and file.
 fn first_copy() -> (String, String) {
-    let name = tine_core::guide::guide_copy_page_name("Tine Guide");
+    let name = tine_guide::guide_copy_page_name("Tine Guide");
     let format = tine_core::config::Config::parse(CONFIG).file_name_format;
     let rel = format!(
         "pages/{}.md",
@@ -68,7 +68,7 @@ fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
     assert_eq!(copied.skipped_pages, [name]);
     assert_eq!(
         copied.created_pages.len() + 1,
-        tine_core::guide::GUIDE_TEMPLATES.len(),
+        tine_guide::GUIDE_TEMPLATES.len(),
         "{copied:?}"
     );
     assert!(copied.created);
@@ -87,10 +87,7 @@ fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
     let again = guide::copy_guide_into_graph(&g.store, &g.host, "Tine Guide").unwrap();
     assert!(again.created_pages.is_empty(), "{again:?}");
     assert!(!again.created, "{again:?}");
-    assert_eq!(
-        again.skipped_pages.len(),
-        tine_core::guide::GUIDE_TEMPLATES.len()
-    );
+    assert_eq!(again.skipped_pages.len(), tine_guide::GUIDE_TEMPLATES.len());
 }
 
 /// DESIGN §3.1, the create shape: the copy plans the first page's copy over

@@ -112,7 +112,7 @@ fn settings_modern_write_preserves_legacy_key_and_wins_after_reopen() {
 #[test]
 fn bundled_guide_explains_legacy_precedence_and_weekday_choices() {
     let _integration_guard = crate::integration_lock();
-    let pages = tine_core::guide::bundled_guide_pages();
+    let pages = tine_guide::bundled_guide_pages();
     let page = pages
         .iter()
         .find(|p| p.title == "Reference/Journals, tasks, and scheduling")

@@ -527,7 +527,7 @@ fn the_guide_copy_waits_for_a_reservation_of_its_page() {
     let page = format!(
         "pages/{}.md",
         tine_core::model::encode_page_name(
-            &tine_core::guide::guide_copy_page_name("Tine Guide"),
+            &tine_guide::guide_copy_page_name("Tine Guide"),
             tine_core::config::Config::parse(CONFIG).file_name_format
         )
     );

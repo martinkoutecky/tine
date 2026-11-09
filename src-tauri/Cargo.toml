@@ -54,6 +54,7 @@ dirs = "6"
 # (ADR 0068 on master; the hand-rolled parser split those across three places).
 clap = { version = "4.5", features = ["derive", "env"] }
 tine-core = { path = "../crates/tine-core" }
+tine-guide = { path = "../crates/tine-guide" }
 # The logbook's local timestamp for a command-line marker transition (as the window's Date).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tine-store = { path = "../crates/tine-store" }

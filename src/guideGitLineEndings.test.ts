@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
 it("onboards a converted checkout by saving edits before disabling conversion and replacing files", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/files-external-edits-backups.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/files-external-edits-backups.md", "utf8");
   const section = guide.split("## Git line endings on Windows")[1].split("## Git: what changed")[0];
   const steps = ["git status --short", "git add --all", 'git commit -m "Save notes before changing line endings"', "git status --porcelain", "git config --local core.autocrlf false", "git reset --hard HEAD"];
   let at = -1;

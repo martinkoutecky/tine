@@ -45,7 +45,7 @@ by integration" failure), so this toggle must be flipped by hand once.
 ## Regenerating the Guide
 
 `website/guide/` is built from the onboarding demo templates
-(`crates/tine-core/src/templates/`) as Tine's read-only published app. The same
+(`crates/tine-guide/src/templates/`) as Tine's read-only published app. The same
 folder retains the HTML export as its no-JavaScript and `?static` fallback.
 The published site follows **stable**: regenerate on `master` at a stable cut,
 not on the Beta line (`og`), where Guide changes land only in the templates and

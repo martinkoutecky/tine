@@ -9,17 +9,6 @@ const SECOND: &str = r#"(fn [result] (sort-by (juxt (fn [h] (get h :block/priori
                             (fn [h] (get h :block/content))) result))"#;
 
 #[test]
-fn gh852_recognised_result_sorts_are_in_the_onboarding_guide() {
-    let model = include_str!("../templates/query-model.md");
-    assert!(model.contains(FIRST));
-    assert!(model.contains("(get h :block/scheduled (get h :block/deadline))"));
-    assert!(model.contains("full raw block text, including properties"));
-    assert!(model.contains("UTF-16 code units"));
-    assert!(model.contains("even one unsupported key or default refuses the whole query"));
-    assert!(include_str!("../templates/queries.md").contains("a `juxt` of `get` functions"));
-}
-
-#[test]
 fn gh852_first_literal_reporter_transform_is_recognised_whole() {
     recognised(FIRST, &["priority", "content"]);
 }

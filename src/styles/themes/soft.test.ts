@@ -237,7 +237,7 @@ describe("Soft palette (GH #649)", () => {
   });
 
   it("the Guide describes the coordinated middle-range surfaces and warm highlights", () => {
-    const guide = readFileSync("crates/tine-core/src/templates/customize-look.md", "utf8");
+    const guide = readFileSync("crates/tine-guide/src/templates/customize-look.md", "utf8");
     expect(guide).toContain("warm gray in light mode and lifted slate gray in dark mode");
     expect(guide).toContain("warm highlights and quiet active tabs");
     expect(guide).toContain("page, sidebars, menus, and code surfaces move together");

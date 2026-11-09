@@ -5,25 +5,6 @@ use tine_core::query::registry::Registry;
 use tine_core::query::{parse_query_input, resolve_for_execution, QueryInput};
 
 #[test]
-fn audit_rn_b_guide_names_binding_refusal_edn_strings_and_static_notices() {
-    let page = tine_core::guide::bundled_guide_pages()
-        .into_iter()
-        .find(|page| page.title == "Reference/Tine query model")
-        .expect("the query model is bundled for onboarding");
-    let guide = page.markdown;
-    for required in [
-        "Entity bindings are not guessed",
-        "Tine does not translate these pairs, even with a page join",
-        "[?b :block/page ?b]",
-        "Quoted operands use EDN string escapes",
-        "Print and static exports keep query refusal notices",
-        "Only a successfully answered query with no results",
-    ] {
-        assert!(guide.contains(required), "Guide must explain {required}");
-    }
-}
-
-#[test]
 fn audit_l7s1_03_decoded_strings_keep_authored_source_and_filter_meaning() {
     let today = JournalDate::today();
     for (encoded, decoded) in [

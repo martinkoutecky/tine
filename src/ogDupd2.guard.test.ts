@@ -47,6 +47,6 @@ it("I-12 D19: repeaters and schedule reads use parser planning.date; imitate edi
 });
 
 it("Guide describes literal export cleanup and timed repeater preservation", () => {
-  expect(readFileSync("crates/tine-core/src/templates/files-external-edits-backups.md","utf8")).toContain("inline code and fenced code stays literal");
-  expect(readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md","utf8")).toContain("advances to the next date while keeping `09:00`");
+  expect(readFileSync("crates/tine-guide/src/templates/files-external-edits-backups.md","utf8")).toContain("inline code and fenced code stays literal");
+  expect(readFileSync("crates/tine-guide/src/templates/journals-tasks-scheduling.md","utf8")).toContain("advances to the next date while keeping `09:00`");
 });

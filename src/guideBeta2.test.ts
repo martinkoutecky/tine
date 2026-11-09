@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
+const guide = (page: string) => readFileSync(`crates/tine-guide/src/templates/${page}.md`, "utf8");
 
 it("the PDF Guide explains desktop outside-file opens and their read-only boundary (GH #732)", () => {
   for (const detail of ["![label](file:///absolute/path/paper.pdf)", "[[file:///absolute/path/paper.pdf][label]]",

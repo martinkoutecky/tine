@@ -1,4 +1,4 @@
-use tine_core::guide::bundled_guide_pages;
+use tine_guide::bundled_guide_pages;
 
 #[test]
 fn guide_explains_existing_code_block_deletion_paths() {

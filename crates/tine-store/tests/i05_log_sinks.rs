@@ -168,6 +168,7 @@ fn production_crates_write_stderr_only_through_diagnostic_line() {
     let mut found = Vec::new();
     for krate in [
         "crates/tine-core/src",
+        "crates/tine-guide/src",
         "crates/tine-store/src",
         "crates/tine-graph-features/src",
     ] {

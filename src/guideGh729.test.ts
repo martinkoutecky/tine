@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
+const guide = (page: string) => readFileSync(`crates/tine-guide/src/templates/${page}.md`, "utf8");
 
 it("the Guide says a page can be a template through its own property header (discussion #729)", () => {
   const journals = guide("journals-tasks-scheduling");

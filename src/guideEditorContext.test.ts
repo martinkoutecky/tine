@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
 it("the search tour teaches pointer and keyboard activation in the focused split", () => {
-  const page = readFileSync("crates/tine-core/src/templates/find-and-revisit.md", "utf8");
+  const page = readFileSync("crates/tine-guide/src/templates/find-and-revisit.md", "utf8");
   expect(page).toContain("Click or tap a result to open it in the pane you were using");
   expect(page).toContain("click or tap a command, or highlight it and press **Enter**");
   expect(page).toContain("Search and Commands keep your focused split pane");
@@ -10,7 +10,7 @@ it("the search tour teaches pointer and keyboard activation in the focused split
 });
 
 it("the guide teaches code Escape in both editors and pane surfaces", () => {
-  const page = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  const page = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
   expect(page).toContain("including the Markdown fences or Org source delimiters");
   expect(page).toContain("classic and CodeMirror editors, including split panes and the right sidebar");
   expect(page).toContain("source stays visible until you leave editing");
@@ -18,14 +18,14 @@ it("the guide teaches code Escape in both editors and pane surfaces", () => {
 });
 
 it("the code tour explains raw source entry on desktop and mobile", () => {
-  const page = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  const page = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
   expect(page).toContain("To edit the language or add text before or after the code");
   expect(page).toContain("the whole bullet opens as source, including its fences");
   expect(page).toContain("These paths work on desktop and mobile");
 });
 
 it("the canonical context tour teaches pinned ancestor navigation and selecting an embed host", () => {
-  const page = readFileSync("crates/tine-core/src/templates/keep-context-visible.md", "utf8");
+  const page = readFileSync("crates/tine-guide/src/templates/keep-context-visible.md", "utf8");
   expect(page).toContain("Click a pinned ancestor to scroll back to its block");
   expect(page).toContain("desktop and mobile");
   expect(page).toContain("Select embedding block");
@@ -37,7 +37,7 @@ it("the canonical context tour teaches pinned ancestor navigation and selecting 
 });
 
 it("the context tour distinguishes top splits from tab-strip reordering", () => {
-  const page = readFileSync("crates/tine-core/src/templates/keep-context-visible.md", "utf8");
+  const page = readFileSync("crates/tine-guide/src/templates/keep-context-visible.md", "utf8");
   expect(page).toContain("To split above a pane, drag just below its tab strip");
   expect(page).toContain("nearest edge wins");
   expect(page).toContain("preview shows where the new pane will open");

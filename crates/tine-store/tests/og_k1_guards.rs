@@ -87,7 +87,8 @@ fn fixed_byte_prefixes_are_checked_throughout_core_and_store() {
     let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut violations = Vec::new();
-    for source in ["tine-core/src", "tine-store/src"] {
+    // tine-guide holds code that moved out of tine-core and stays under its guard.
+    for source in ["tine-core/src", "tine-guide/src", "tine-store/src"] {
         scan(&root.join(source), &mut violations);
     }
     assert!(violations.is_empty(), "I-4/I-22: byte length does not prove a UTF-8 boundary; \

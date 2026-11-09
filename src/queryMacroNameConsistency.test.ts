@@ -56,7 +56,7 @@ const DATA_FILES: readonly { file: string; why: string }[] = [
     why: "the browser dev-preview's sample graph: block bodies, the same as any user's notes.",
   },
   {
-    file: "crates/tine-core/src/guide.rs",
+    file: "crates/tine-guide/src/lib.rs",
     why: "the shipped Guide pages' Markdown, plus the assertions that they copy verbatim.",
   },
   {

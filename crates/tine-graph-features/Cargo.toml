@@ -12,6 +12,7 @@ test-faults = ["tine-store/test-faults"]
 
 [dependencies]
 tine-core = { path = "../tine-core" }
+tine-guide = { path = "../tine-guide" }
 tine-store = { path = "../tine-store" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -39,7 +39,7 @@ it("preserves empty blocks and removes properties only on request", () => {
 });
 
 it("the canonical onboarding Guide explains resolved exports and property controls", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/files-external-edits-backups.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/files-external-edits-backups.md", "utf8");
   for (const detail of ["resolve block references", "expand page and block embeds", "formatting preserved", "five nested embeds", "`key:: value`", "**Remove properties**"]) expect(guide).toContain(detail);
 });
 it("block refs splice target inlines rather than their heading or task prefix", () => {

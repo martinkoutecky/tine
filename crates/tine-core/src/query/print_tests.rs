@@ -287,62 +287,6 @@ fn every_tql_shape_round_trips() {
     }
 }
 
-/// Every `{{query …}}` shipped in the repository — the templates the app
-/// installs and the parser fixture — parsed as OG, printed as TQL, and
-/// re-parsed. This is the corpus round-trip §4.3 asks for; the private
-/// anonymized graph contains no `{{query}}` at all, so it cannot supply one.
-#[test]
-fn the_shipped_query_corpus_round_trips_through_the_tql_printer() {
-    const CORPUS: &[&str] = &[
-        include_str!("../templates/showcase.md"),
-        include_str!("../templates/sheets.md"),
-    ];
-    let mut seen = 0usize;
-    for text in CORPUS {
-        for source in macro_arguments(text) {
-            let (query, _) = og(&source);
-            assert!(
-                !query.is_invalid(),
-                "shipped query {source:?} does not parse: {:?}",
-                query.diagnostics
-            );
-            let printed = print_tql(&query);
-            let again = tql(&printed);
-            assert!(
-                !again.is_invalid(),
-                "{source:?} printed as {printed:?}, which does not parse: {:?}",
-                again.diagnostics
-            );
-            assert_eq!(
-                again.normalized().filter,
-                query.normalized().filter,
-                "{source:?} printed as {printed:?}"
-            );
-            seen += 1;
-        }
-    }
-    // og ships five `{{query}}` macros (showcase + sheets); master's larger
-    // Guide corpus pinned ten. A scan that finds fewer lost a template.
-    assert!(seen >= 5, "the corpus scan found only {seen} queries");
-}
-
-/// Every `{{query …}}` argument in one document, brace-balanced so a
-/// trailing options map stays inside the macro.
-fn macro_arguments(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(at) = rest.find("{{query") {
-        let after = &rest[at + "{{query".len()..];
-        let Some(end) = after.find("}}") else { break };
-        let argument = after[..end].trim();
-        if !argument.is_empty() {
-            out.push(argument.to_string());
-        }
-        rest = &after[end + 2..];
-    }
-    out
-}
-
 #[test]
 fn adjacent_root_off_siblings_print_as_two_dash_runs() {
     let query = tql("-- #x\n--\n-- and #y");
