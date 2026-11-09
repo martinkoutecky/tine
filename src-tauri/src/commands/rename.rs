@@ -71,6 +71,13 @@ pub(crate) async fn rename_page(
                     choice,
                     unsaved_paths.as_deref().unwrap_or_default(),
                 )
+                // Page files moved and the config.edn write then failed: the
+                // rename happened, so the window refreshes and says that home
+                // and favorites did not follow (`config_skipped`), never
+                // "Rename failed".
+                .or_else(|e| {
+                    tine_graph_features::pages::RenameReport::with_config_failure(&e).ok_or(e)
+                })
                 .map_err(|e| e.to_string())
             },
         )

@@ -1154,6 +1154,18 @@ impl RenameReport {
             .map(|error| &error.report)
     }
 
+    /// [`Self::applied_before_error`] for a caller that has a window to refresh
+    /// and no command line to inspect (the app's rename): the same report with
+    /// the failed config write's cause in `config_skipped`. The rename happened;
+    /// home and favorites did not follow, and the window says so.
+    pub fn with_config_failure(error: &io::Error) -> Option<Self> {
+        let incomplete = error.get_ref()?.downcast_ref::<IncompleteRename>()?;
+        Some(Self {
+            config_skipped: Some(incomplete.source.to_string()),
+            ..incomplete.report.clone()
+        })
+    }
+
     fn unchanged() -> Self {
         Self {
             outcome: RenameOutcome::Unchanged,

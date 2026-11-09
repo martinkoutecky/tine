@@ -314,16 +314,6 @@ note = "Store/host transaction API; no raw graph filesystem access. PagePlan::pa
 mutations = ".create=1"
 
 [[site]]
-file = "crates/tine-graph-features/src/publish.rs"
-fn = "publish_html"
-domain = "graph"
-guard = "crates/tine-store/src/publish.rs#Store::publish_site_at"
-test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"
-oracle = false
-note = "SiteWriter/Store publication (graph site or user-selected external output); stage handles and graph setup contain the writes. Outside HostIo oracle."
-mutations = ".publish=1, .write=1"
-
-[[site]]
 file = "crates/tine-graph-features/src/publish_query.rs"
 fn = "commit"
 domain = "graph"

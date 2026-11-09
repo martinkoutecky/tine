@@ -530,12 +530,19 @@ fn bench_publish(root: &Path) -> io::Result<(f64, usize)> {
         let store = open_store(root)?;
         let page_count = page_count(&store);
         black_box(page_count);
+        let parent = tempfile::tempdir()?;
         let started = Instant::now();
-        let (out, count) = tine_graph_features::publish::publish_html(&store)?;
+        let receipt = tine_graph_features::publish_query::publish_static(
+            &store,
+            parent.path(),
+            "site",
+            store.config().all_pages_public,
+        )?;
         durations.push(started.elapsed());
-        assert!(count > 0, "publish_graph returned no pages");
+        let count = receipt.pages;
+        assert!(count > 0, "publish_static returned no pages");
         publish_pages = count;
-        black_box(out.len());
+        black_box(receipt.path.len());
         black_box(count);
     }
     Ok((ms(median(&durations)), publish_pages))

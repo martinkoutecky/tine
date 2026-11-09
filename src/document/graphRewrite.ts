@@ -2,7 +2,7 @@ import { msg } from "../i18n";
 import { batch } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "../owned";
-import type { PageTarget } from "../router";
+import type { PageFollower, PageTarget } from "../router";
 import { endEdit } from "../editorController";
 import { flushAll, unpublishedPages } from "./host/wiring";
 import { forgetPage, reloadDisposition, reloadPageIfStillSafe } from "./workingSet";
@@ -17,11 +17,12 @@ import { graphMeta, setGraphMeta } from "../graphSession";
 import { adoptRenamedFavorites } from "../favorites";
 import { activeElement, isHTMLElementNode } from "../windowRealm";
 
-let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget, preserveRoutes?: boolean) => void) | null = null;
+type RenameRefresh = (from: string, to: string, target?: PageTarget, preserveRoutes?: boolean, follow?: PageFollower) => void;
+let refreshRenamedNavigation: RenameRefresh | null = null;
 
 /** The app supplies route/index effects; the document intent owns the flush,
  * edit freeze, disk rewrite and the refresh of the pages it touched. */
-export function installRenameRefreshHandler(handler: (from: string, to: string, target?: PageTarget, preserveRoutes?: boolean) => void): void {
+export function installRenameRefreshHandler(handler: RenameRefresh): void {
   refreshRenamedNavigation = handler;
 }
 
@@ -127,13 +128,36 @@ async function refreshAfterRename(from: string, to: string, target: PageTarget |
     const skipped = report.skipped_conflicted_referrers ?? [];
     if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
     adoptConfigStep(from, report);
+    const follow = movedDescendants(from, to, report.touched);
     const reloads = batch(() => {
       const pages = forgetMovedPages(report.touched);
-      refreshRenamedNavigation?.(from, to, target, preserveRoutes);
+      refreshRenamedNavigation?.(from, to, target, preserveRoutes, follow);
       onRefreshed?.(graphOwner());
       return pages;
     });
     await reloadRewrittenPages(reloads);
+}
+
+/** Where the rename moved the namespace descendants of `from` (the renamed page
+ * itself is the caller's exact target): a page under `from/` whose file
+ * `touched` lists as moved now lives under `to`, with the tail the backend gave
+ * it. A view pinned to a file that did not move, and a loaded descendant that
+ * has no file of its own (reference-only: the rename leaves it and its
+ * references alone), stay. The backend reports paths, not names, so the new name
+ * is `to` plus the descendant's tail (`namespace_suffix`, pages.rs). O(loaded pages). */
+function movedDescendants(from: string, to: string, touched: readonly RenameTouchedPage[]): PageFollower {
+  const fromKey = pageIdentityKey(from);
+  const moved = new Set(touched.filter((page) => page.moved).map((page) => page.path));
+  const under = (name: string) => pageIdentityKey(name).startsWith(`${fromKey}/`);
+  const staying = new Set(doc.pages
+    .filter((page) => page.kind === "page" && under(page.name) && !moved.has(page.id ?? ""))
+    .map((page) => pageIdentityKey(page.name)));
+  return (page) => {
+    if (page.pageKind !== "page" || !under(page.name) || staying.has(pageIdentityKey(page.name))) return null;
+    if (page.path !== undefined && !moved.has(page.path)) return null;
+    const tail = page.name.trim().replace(/^\//, "").split("/").slice(fromKey.split("/").length);
+    return { name: [to, ...tail].join("/"), pageKind: "page" };
+  };
 }
 
 /** Save every pending edit. The rename reads referring pages from disk, so an

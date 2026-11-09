@@ -7,15 +7,15 @@ import { backend, type CustomCssChange, type GraphConfigChange } from "./backend
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
-import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
+import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
 import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
-import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
-import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes } from "./panes";
+import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
+import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes, rewritePagesAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
 import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
@@ -452,8 +452,12 @@ async function reportLegacyDrafts(): Promise<void> {
 /** Refresh frontend state after a successful page rename. The backend rename
  *  rewrites `[[refs]]` across many files through the self-write guard. The
  *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
- *  app's navigation and graph-derived views, then navigate to the new name. */
-export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget, preserveRoutes = false): void {
+ *  app's navigation and graph-derived views, then navigate to the new name.
+ *  `follow` answers for the namespace descendants the rename moved: every pane
+ *  (main, split, sidebar), tab history and Recent entry showing one follows it,
+ *  whoever started the rename (OG `rename-page-aux` re-keys Recent for each
+ *  moved child; its sidebar holds the page entity, which survives the move). */
+export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget, preserveRoutes = false, follow?: PageFollower): void {
   if (exactTarget) {
     if (preserveRoutes) {
       // A CLI rename has no initiating control to reopen the destination.
@@ -465,6 +469,10 @@ export function refreshAfterRename(from: string, to: string, exactTarget?: PageT
     renamePageInNavigation(exactTarget, { name: to, pageKind: exactTarget.pageKind });
   } else {
     renamePageInNavigation(from, to);
+  }
+  if (follow) {
+    rewritePagesAcrossPanes(follow);
+    followPagesInNavigation(follow);
   }
   // The epoch bump refreshes the page index (`pageIndex.ts`).
   resetPageIndex();

@@ -114,6 +114,25 @@ it("names the referrers a rename left untouched because they are mid-merge (og 2
   setToasts([]);
 });
 
+it("says the rename happened when only the config.edn step failed after the page files moved", async () => {
+  // The app's rename command answers this case with the applied report and the
+  // cause in `config_skipped` (`RenameReport::with_config_failure`), not with an error.
+  setToasts([]);
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [{ path: "pages/A.md", moved: true }],
+    config_skipped: "Permission denied (os error 13)" });
+  const refreshed = vi.fn();
+  installRenameRefreshHandler(refreshed);
+  expect(await renamePageOnDisk("A", "B")).toBe("renamed");
+  expect(refreshed).toHaveBeenCalledOnce();
+  const note = toasts().at(-1)!;
+  expect(note).toMatchObject({ kind: "warn", sticky: true });
+  expect(note.message).toContain("was renamed");
+  expect(note.message).toContain("Permission denied");
+  expect(note.message).toContain("home page and favorites");
+  expect(toasts().some((toast) => toast.message.includes("Rename failed"))).toBe(false);
+  setToasts([]);
+});
+
 it("takes in the home page a rename moved with it (og 22b, OG rename-page-aux)", async () => {
   setGraphMeta({ root: "/g", default_home: "Start" } as GraphMeta);
   vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [], home_page: "Begin" });
