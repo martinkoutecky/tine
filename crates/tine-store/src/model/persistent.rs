@@ -274,6 +274,35 @@ impl<K: Ord, V> Map<K, V> {
         }
         it
     }
+    /// Keys strictly below `key`, descending; O(log N) seek, O(1) amortized next.
+    pub(crate) fn rev_before(&self, key: &K) -> RevIter<'_, K, V> {
+        let mut it = RevIter { stack: Vec::new() };
+        let mut node = self.root.as_deref();
+        while let Some(n) = node {
+            if n.entry.0 < *key {
+                it.stack.push(n);
+                node = n.right.as_deref();
+            } else {
+                node = n.left.as_deref();
+            }
+        }
+        it
+    }
+}
+pub(crate) struct RevIter<'a, K, V> {
+    stack: Vec<&'a Node<K, V>>,
+}
+impl<'a, K, V> Iterator for RevIter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.stack.pop()?;
+        let mut left = node.left.as_deref();
+        while let Some(n) = left {
+            self.stack.push(n);
+            left = n.right.as_deref();
+        }
+        Some((&node.entry.0, &node.entry.1))
+    }
 }
 pub(crate) struct Iter<'a, K, V> {
     stack: Vec<&'a Node<K, V>>,
@@ -499,8 +528,25 @@ impl EntryList {
         }
     }
     /// One journal entry per day, ascending by day. O(J) to iterate.
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn journal_days(&self) -> impl Iterator<Item = &PageEntry> {
-        self.days.iter().filter_map(|(_, slot)| self.rows.get(slot))
+        self.days
+            .iter()
+            .inspect(|_| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::journal_day_visit();
+            })
+            .filter_map(|(_, slot)| self.rows.get(slot))
+    }
+    /// A descending day window: O(log J) seek plus O(log P) slot lookup per day.
+    pub(crate) fn journal_days_before(&self, before: i64) -> impl Iterator<Item = &PageEntry> {
+        self.days
+            .rev_before(&before)
+            .inspect(|_| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::journal_day_visit();
+            })
+            .filter_map(|(_, slot)| self.rows.get(slot))
     }
     pub(crate) fn remove_day(&mut self, day: i64) {
         if let Some(path) = self
@@ -647,6 +693,11 @@ mod tests {
                 tree.iter_from(&from).collect::<Vec<_>>(),
                 oracle.range(from..).collect::<Vec<_>>(),
                 "iter_from({from})"
+            );
+            assert_eq!(
+                tree.rev_before(&from).collect::<Vec<_>>(),
+                oracle.range(..from).rev().collect::<Vec<_>>(),
+                "rev_before({from})"
             );
         }
         let bulk: Map<_, _> = [(1, 2), (1, 3), (0, 4)].into_iter().collect();

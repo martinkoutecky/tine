@@ -4283,13 +4283,7 @@ impl Graph {
         }
         let stem = path.file_stem().and_then(|s| s.to_str())?;
         let entry = if path.starts_with(self.journals_path()) {
-            let (name, date_key) = match self.current_journal_format().parse(stem) {
-                Some(d) => (
-                    self.current_journal_format().title(d),
-                    Some(d.ordinal_key()),
-                ),
-                None => (stem.to_string(), None),
-            };
+            let (name, date_key) = journal_stem_name(&self.current_journal_format(), stem);
             PageEntry {
                 name,
                 kind: PageKind::Journal,
@@ -5065,6 +5059,16 @@ fn count_cache_linear_scan(n: usize) {
     CACHE_LINEAR_SCAN_STEPS.with(|steps| steps.set(steps.get() + n));
 }
 
+/// A journal file's page name and day from its filename stem, the one rule
+/// the file list names journal files by: a stem the format cannot parse names
+/// itself and claims no day.
+pub(crate) fn journal_stem_name(fmt: &JournalFormat, stem: &str) -> (String, Option<i64>) {
+    match fmt.parse(stem) {
+        Some(d) => (fmt.title(d), Some(d.ordinal_key())),
+        None => (stem.to_string(), None),
+    }
+}
+
 #[cfg(test)]
 fn list_md(
     dir: &Path,
@@ -5082,10 +5086,7 @@ fn list_md(
             return; // sync-tool conflict copy — not a page (see list_sync_conflicts)
         }
         let (name, date_key) = match kind {
-            PageKind::Journal => match fmt.parse(stem) {
-                Some(d) => (fmt.title(d), Some(d.ordinal_key())),
-                None => (stem.to_string(), None),
-            },
+            PageKind::Journal => journal_stem_name(fmt, stem),
             PageKind::Page => (effective_page_name(&path, stem, name_fmt).unwrap(), None),
         };
         out.push(PageEntry {

@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
+- Scrolling the Journals feed loads each next set of days from a bounded slice of the day index instead of re-sorting every journal day, with the same days, referenced-only days and order (REG-JOURNAL-STEP-WINDOW).
 - Printed and published pages list a `{{namespace X}}` macro's pages by page identity, as the live macro and Logseq do, so `project/y` appears under `{{namespace Project}}`; printing such a page no longer copies or sorts the whole graph (REG-PRINT-NAMESPACE-COST).
 - An empty page now opens itself instead of jumping to the page that lists it as an alias. Renaming onto it targets that page too (REG-CM-REAL-FILE-FIRST, UI-CM-REAL-FILE-FIRST).
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
