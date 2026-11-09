@@ -105,9 +105,11 @@ P        = gzip (RFC 1952) of the UTF-8 share document
 - Block `id` values are runtime ids, fresh on every share, except for a block
   with an `id::` property (`has_id: true`), whose id is that uuid. Links use
   only `id::` uuids.
-- Known gap (generation 1, additive to fix): a `{{query}}` inside page
-  properties has no baked record, so the reader shows its static-export
-  notice there.
+- A query macro inside page properties has a baked record like a block's
+  (`publish_query::baked_queries`, the one function for shares and query
+  exports): `host` the page, `context` the page, and no `properties`, because
+  the page header renders it with no host block, so the reader asks with none.
+  It counts toward the 256-query cap.
 - `answers` (optional; see "Published answers" below): the name answers the
   reader looks up. A document without it, or with an `answers.v` the viewer
   does not read, is read as before the field existed.
@@ -214,12 +216,18 @@ the share.
 
 Writer (refused at prepare, with the reason): 200 shared pages; document JSON
 32 MiB; `P` 6 MiB; envelope text 8 MiB. Prepare also runs the viewer's
-admission checks, so a share a viewer would refuse is never created.
+admission checks, so a share a viewer would refuse is never created. JSON depth
+counts nested containers, a block costing two (its object and its `children`):
+prepare counts them without recursion before it reads the document back, so a
+page up to 253 blocks deep is shared, which is every page the app opens (128
+levels), and a deeper document is refused as nesting too deeply.
 
 Viewer (enforced while reading): envelope text 8.5 MiB; decoded envelope
-6.4 MiB; gunzip aborts at 32 MiB of output; gist API answer 16 MiB; JSON depth
-512; 201 snapshot pages (200 plus the home list); 256 queries; 200,000 blocks;
+6.4 MiB; gunzip aborts at 32 MiB of output; gist API answer 16 MiB; 201 snapshot
+pages (200 plus the home list); 256 queries; 200,000 blocks;
 any string or object key anywhere in the document, the title included, 1 MiB.
+The viewer does not count JSON depth: depth 512 is the writer's bound, and the
+viewer reads with its JSON parser's own limit.
 
 Unverified: that GitHub accepts an 8 MiB gist create. The first trial measures
 it, and the writer cap is lowered if it fails.
@@ -235,12 +243,14 @@ block, a query in page properties, page-property backlinks, dotted and
 duplicate property keys, `id::` uuids with reference counts, an Org page, a
 journal, a Unicode name, an empty page, a private page left out) and `one-page`,
 both frozen before `answers`; `answers` (the `pages` selection written with
-`answers` v1). The frozen-document comparison ignores only `answers`, and only
-for a frozen document written without it; `writer.json` pins `answers`
-exactly. Order (design Q13): the viewer that reads `answers` is deployed with
-the new fixture as current, old builds retained, before a writer emitting it
-creates shares; the build gate's fixture digest enforces that (a writer built
-with the new fixture stays off until a viewer that passes it is deployed).
+`answers` v1); `page-queries` (`Dashboard` and `Notes ü`, written with the query
+in `Dashboard`'s page properties baked). The frozen-document comparison ignores
+only `answers` and that page-property query record, each only for a frozen
+document written without it; `writer.json` pins both exactly. Order (design
+Q13): the viewer that passes a new case is deployed with the new fixture as
+current, old builds retained, before a writer emitting it creates shares; the
+build gate's fixture digest enforces that (a writer built with the new fixture
+stays off until a viewer that passes it is deployed).
 
 ## Writer side: GitHub, device records, commands (phase 2)
 

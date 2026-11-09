@@ -112,6 +112,16 @@ the old name is therefore not what the definition shares.
 - Not rewritten, deliberately: `like`, `namespace` and property comparisons; a
   selector naming an alias; a macro whose new argument would no longer be one
   macro (a new name containing `}`), which stays as it was.
+- Code is literal. A macro inside an inline code span, a fence or an Org
+  `=…=`/`~…~` span is no macro, in a block's text and in a property's value
+  (the outline parser keeps a property line as one node, so
+  `refs_rename::in_property_value_code` asks the parser for the value read as
+  text, the way the app shows it); the same macro outside code follows.
+- A name in **double quotes** is not a name in TQL: as in SQLite, `"Old"` is
+  an identifier, so `name = "Old"` is an invalid query (it shares nothing) and
+  has no literal to follow. The selector's spelling is the single-quoted one
+  above; the OG DSL's quoted `(page "Old")` is a string there and follows in
+  its own spelling.
 
 Unit cost: no new persisted record, file or transport record; a rename writes
 the pages whose query arguments change, through the existing rename

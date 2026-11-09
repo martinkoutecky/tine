@@ -15,6 +15,8 @@
 //! a `[[x]]` in the argument of any other macro but `embed` (cloze, renderer,
 //! plugin macros; manager ruling Q2), and the stem of an Org `file:` link
 //! (`reference_evidence::rename_targets`). Plain query search text is neither.
+//! A query macro inside code stays as written, whether the code is in the
+//! block's text, a fence, or a property's value (`query_edits`).
 //!
 //! **Intentional OG differences** (manager ruling Q2/Q3/Q4, 2026-11-03; a veto
 //! item for Martin). OG's `replace-page-ref!` replaces a literal `[[old]]`
@@ -352,7 +354,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
             _ => {}
         }
     }
-    edits.extend(query_edits(raw, &projection.regions, renames));
+    edits.extend(query_edits(raw, &projection.regions, is_org, renames));
     // Rewrite targets need the parse again; only a block that can hold one
     // pays for it.
     if raw.contains("{{") || (is_org && raw.contains("[[file:")) {
@@ -434,14 +436,38 @@ fn link_edits(
     }
 }
 
+/// Whether `at` is inside code (a backtick span, an Org `=…=` or `~…~` span)
+/// written in a property's value. The outline parser reads a property line as
+/// one `Properties` node and keeps each value as text, which is why its
+/// literal regions end at the node; the app shows the value as inline text
+/// (`PagePropertyValue`), so the same value parsed on its own, as the parser
+/// would read it as text, says what is code there. One small parse, only for a
+/// macro that sits inside a property value.
+fn in_property_value_code(
+    raw: &str,
+    regions: &crate::block_regions::BlockRegions,
+    at: usize,
+    is_org: bool,
+) -> bool {
+    regions
+        .properties
+        .iter()
+        .find(|property| property.value_range.contains(at))
+        .is_some_and(|property| {
+            crate::block_regions::parse(property.value_range.slice(raw), is_org)
+                .literal_at(at - property.value_range.0)
+        })
+}
+
 /// The page-name arguments of each query macro in `raw` (D-20261031-CMQ):
 /// what the OG DSL parse reads as a page name, and each TQL page-name literal.
 /// A macro whose rewritten argument would not read back as the same macro (a
 /// new name with a `}`) keeps its old bytes, and one inside parser-owned
-/// literal text (code) is no macro.
+/// literal text (code, in the text or in a property's value) is no macro.
 fn query_edits(
     raw: &str,
     regions: &crate::block_regions::BlockRegions,
+    is_org: bool,
     renames: &Renames<'_>,
 ) -> Vec<Edit> {
     let mut edits = Vec::new();
@@ -449,7 +475,9 @@ fn query_edits(
         return edits;
     }
     for extent in query_macro_extents(raw) {
-        if regions.literal_at(extent.start) {
+        if regions.literal_at(extent.start)
+            || in_property_value_code(raw, regions, extent.start, is_org)
+        {
             continue;
         }
         let family = FormFamily::for_macro_name(&extent.name);

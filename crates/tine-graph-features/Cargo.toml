@@ -15,7 +15,9 @@ tine-core = { path = "../tine-core" }
 tine-guide = { path = "../tine-guide" }
 tine-store = { path = "../tine-store" }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `unbounded_depth`: quick share's `validate_document` reads a document nested
+# deeper than serde's default 128 containers, after bounding it itself.
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 sha2 = "0.10"
 tempfile = "3"
 # Quick share (docs/contracts/quick-share.md): HKDF + AES-256-GCM, gzip,
