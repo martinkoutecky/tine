@@ -1486,3 +1486,31 @@ fn advanced_next_query_prints_query_text_that_reads_back() {
         canonical
     );
 }
+
+/// Item 2 of qs-leftovers-1109: in TQL a double-quoted word is an identifier
+/// (SQLite's rule, the dialect this grammar uses), not a string. A comparison
+/// against `"Old"` is a diagnosed, invalid query that shares nothing, so there
+/// is no page name in it for a rename to follow; only the single-quoted
+/// spelling is a name. If the language ever reads `"…"` as text, this test
+/// is the place that says `page_name_literals` must report it too.
+#[test]
+fn a_double_quoted_operand_is_no_page_name_literal() {
+    for source in [
+        "@page and name = \"Old\"",
+        "@page and name in (\"Old\", \"Keep\")",
+    ] {
+        let query = parse(source);
+        assert!(query.is_invalid(), "{source}");
+        assert!(
+            query
+                .diagnostics
+                .iter()
+                .any(|d| d.kind == DiagnosticKind::Syntax
+                    && d.message
+                        .contains("is not a value the query language compares against")),
+            "{source}: {:?}",
+            query.diagnostics
+        );
+        assert!(page_name_literals(source).is_empty(), "{source}");
+    }
+}

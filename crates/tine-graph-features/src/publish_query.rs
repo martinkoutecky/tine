@@ -590,6 +590,10 @@ fn legacy_table_property(key: &str) -> bool {
     )
 }
 
+/// One record for each query macro the reader can show: those in blocks, with
+/// their host block's `tine.*` properties, and those in a page's properties
+/// (the page header, which the reader renders with no host block and so no
+/// properties).
 fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<Vec<Value>> {
     let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
     let names: HashSet<_> = corpus
@@ -600,15 +604,13 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
     let mut records = Vec::new();
     let registry = ir_registry(graph)?;
     for page in &corpus.pages {
-        let mut stack: Vec<_> = page.document.roots.iter().collect();
-        while let Some(block) = stack.pop() {
-            stack.extend(block.children.iter());
+        let mut bake = |raw: &str, properties: Vec<(String, String)>| -> io::Result<()> {
             // The raw-extent reader is quadratic with many malformed starts;
             // bound its input before calling it (I-22).
-            if block.raw().len() > tine_core::query::QUERY_SOURCE_MAX_BYTES {
-                continue;
+            if raw.len() > tine_core::query::QUERY_SOURCE_MAX_BYTES {
+                return Ok(());
             }
-            for extent in query_macro_extents(block.raw()) {
+            for extent in query_macro_extents(raw) {
                 if records.len() >= 256 {
                     return Err(refusal("too many queries in published pages"));
                 }
@@ -617,10 +619,10 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
                 } else {
                     QueryTextDialect::MacroQuery
                 };
-                let properties: Vec<_> = block
-                    .properties()
-                    .into_iter()
+                let properties: Vec<_> = properties
+                    .iter()
                     .filter(|(key, _)| query_parse_property(key))
+                    .cloned()
                     .collect();
                 let context = ExecutionContext {
                     current_page: Some(page.name.clone()),
@@ -641,6 +643,18 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
                 }
                 records.push(record);
             }
+            Ok(())
+        };
+        if let Some(pre) = &page.document.pre_block {
+            let is_org = tine_core::page_properties::page_document_is_org(&page.document);
+            for (_, value) in tine_core::page_properties::page_property_lines(pre, is_org) {
+                bake(&value, Vec::new())?;
+            }
+        }
+        let mut stack: Vec<_> = page.document.roots.iter().collect();
+        while let Some(block) = stack.pop() {
+            stack.extend(block.children.iter());
+            bake(block.raw(), block.properties())?;
         }
     }
     Ok(records)
