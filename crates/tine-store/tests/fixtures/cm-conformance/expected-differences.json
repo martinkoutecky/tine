@@ -1603,6 +1603,34 @@
       ],
       "r13-query-output: A -> B: offers/automatic": [],
       "r13-query-output: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "r13-rename-onto-date-iso-free: Foo -> 2026-11-02: offers/automatic": [],
+      "r13-rename-onto-date-iso-free: Foo -> 2026-11-02: {\"destination\":\"2026-11-02\",\"survivor\":null}": [],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-11-02\",\"survivor\":null},{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}], Tine [{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}]"
+      ],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"2026-11-02\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [
+        "G3/B4: ordered file projection pages/r.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Nov 2nd, 2026\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"2026_11_02\"],[\"link\",\"2026-11-02\"],[\"link\",\"Nov 2nd, 2026\"]],\"stored\":[]}],\"name\":\"r\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-11-02\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"2026_11_02\"],[\"link\",\"2026-11-02\"],[\"link\",\"Nov 2nd, 2026\"]],\"stored\":[]}],\"name\":\"r\"}"
+      ],
+      "r13-rename-onto-date-title-free: Foo -> Nov 2nd, 2026: offers/automatic": [],
+      "r13-rename-onto-date-title-free: Foo -> Nov 2nd, 2026: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":null}": [],
+      "r13-rename-onto-date-title-journal: Foo -> Nov 2nd, 2026: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-rename-onto-date-title-journal: Foo -> Nov 2nd, 2026: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [],
+      "r13-rename-onto-date-underscore-free: Foo -> 2026_11_02: offers/automatic": [],
+      "r13-rename-onto-date-underscore-free: Foo -> 2026_11_02: {\"destination\":\"2026_11_02\",\"survivor\":null}": [],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026_11_02\",\"survivor\":null},{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}], Tine [{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}]"
+      ],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"2026_11_02\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [
+        "G3/B4: ordered file projection pages/r.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Nov 2nd, 2026\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"2026_11_02\"],[\"link\",\"2026-11-02\"],[\"link\",\"Nov 2nd, 2026\"]],\"stored\":[]}],\"name\":\"r\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026_11_02\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"2026_11_02\"],[\"link\",\"2026-11-02\"],[\"link\",\"Nov 2nd, 2026\"]],\"stored\":[]}],\"name\":\"r\"}"
+      ],
       "r13-same-key-nested-org: Alpha -> ALPHA: offers/automatic": [],
       "r13-same-key-nested-org: Alpha -> ALPHA: {\"destination\":\"ALPHA\",\"survivor\":null}": [
         "G6/B3: physical output paths: model [\"pages/nested/physical.org\"], Tine [\"pages/nested/ALPHA.org\"]"
