@@ -49,7 +49,8 @@ fn measure_journal_scroll_work() {
 }
 
 fn measure(enforce_cost: bool) {
-    // The cost counters and the allocation count are process-wide: no other case may run beside it.
+    // The allocation count and journal work are per thread; the I/O snapshot is process-wide, so no other
+    // case may run beside it (every case holds the shared lock; scripts/test-rust-integration-layout.mjs).
     let _guard = crate::exclusive_integration_lock();
     for journals in [300_i64, 3000] {
         // The timing guard uses a small reference fixture; the measurement

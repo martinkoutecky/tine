@@ -177,6 +177,7 @@ fn properties_only_first_root_is_searchable_too() {
 
 #[test]
 fn runtime_search_memos_do_not_change_checkpoint_bytes() {
+    let _guard = crate::integration_lock();
     for count in [1, 60] {
         let blocks: Vec<_> = (0..count)
             .map(|_| tine_core::doc::DocBlock::new("Body\nreviewer:: Café\nid:: hiddenidentity"))

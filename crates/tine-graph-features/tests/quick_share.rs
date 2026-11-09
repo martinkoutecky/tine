@@ -129,6 +129,7 @@ fn document(
 
 #[test]
 fn quick_share_envelope_round_trips_and_refuses_damage() {
+    let _integration_guard = crate::integration_lock();
     let payload = b"the share document";
     let envelope = seal(payload, &KEY, &SHARE_ID, &NONCE);
     assert_eq!(open(&envelope, &KEY).unwrap(), payload);
