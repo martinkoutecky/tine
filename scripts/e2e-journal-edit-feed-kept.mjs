@@ -4,6 +4,10 @@
 // both shown and saved. Before the fix, the edit's change summary carried the
 // `days` hint, so ending the edit restarted the feed at its first page.
 //
+// UI-FEED-FIRST-CHANGE-RESTART: the edit is the session's first change. The
+// window takes its change-summary baseline from the open answer, so that
+// first summary is a delta; without it, it read as full and restarted the feed.
+//
 // "Nothing happened" has no event of its own. The settle point is a later,
 // ordered one: after the edit is saved, ticking a task on the same day saves
 // again, and the day's `(task DONE)` query shows that task only once the
@@ -96,18 +100,6 @@ try {
   await assertAppLease(account);
   await openPageByName(browser, "Other");
   await openJournals(browser);
-
-  // The session's first publication carries no baseline revision, so the
-  // frontend treats it as full (changeSummary.ts) and the feed restarts once.
-  // Spend it before scrolling: tick today's task and wait for today's DONE
-  // query to list it; the scroll below takes several more round trips.
-  journey = "first publication of the session";
-  const today = await browser.execute(() => document.querySelector("[data-feed-day]")?.getAttribute("data-feed-day"));
-  await browser.$(`[data-feed-day="${today}"] .block-task-checkbox`).click();
-  await waitForFileText(days[0], (text) => text.includes("DONE Feed day 0 row 5"));
-  await browser.waitUntil(() => browser.execute((name) =>
-    [...document.querySelectorAll(`[data-feed-day="${name}"] .query-block .block-content`)].some((el) => el.textContent.includes("Feed day 0 row 5")),
-  today), { timeout: 20000, interval: 100, timeoutMsg: "today's DONE query never showed the ticked task" });
 
   journey = "scroll the Journals feed past its first page to an older day";
   for (let before = await state(); before.names.length < Math.min(EDITED + 3, DAYS); before = await state()) {
