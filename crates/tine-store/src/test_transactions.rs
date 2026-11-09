@@ -1,9 +1,14 @@
 //! Direct page-commit regression tests live inside tine-store. Feature crates
 //! can only construct PagePlan and hand it to the host.
 use crate::Store;
-fn integration_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+// The moved integration cases share one lock: a cost case takes it
+// exclusively, every other case shares it and runs in parallel.
+static INTEGRATION_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+fn integration_lock() -> std::sync::RwLockReadGuard<'static, ()> {
+    INTEGRATION_LOCK.read().unwrap_or_else(|e| e.into_inner())
+}
+fn exclusive_integration_lock() -> std::sync::RwLockWriteGuard<'static, ()> {
+    INTEGRATION_LOCK.write().unwrap_or_else(|e| e.into_inner())
 }
 
 // The alias cost probe uses process-global counters. Its old integration

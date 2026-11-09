@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,6 +61,34 @@ function legacyState() {
   };
 }
 
+// Nothing here waits on a clock: a run is ~45 short-lived fake `gh`/`curl`
+// processes (a shell and a Node start each), and one scenario below is three
+// runs. The scenarios do not share anything (each has its own temp dir and state
+// file), so they run side by side, at most SLOTS runs at a time, instead of one
+// after another. `npm test` ends with this file, so its wall time is every
+// gate's; the total CPU work and every assertion are unchanged.
+const SLOTS = Math.max(2, Math.min(os.availableParallelism(), 6));
+let freeSlots = SLOTS;
+const queued = [];
+async function inSlot(task) {
+  if (freeSlots > 0) freeSlots -= 1;
+  else await new Promise((resolve) => queued.push(resolve));
+  try {
+    return await task();
+  } finally {
+    const next = queued.shift();
+    if (next) next();
+    else freeSlots += 1;
+  }
+}
+
+/** Await every promise (so each scenario cleans its temp dir), then report the first failure. */
+async function allScenarios(scenarios) {
+  const results = await Promise.allSettled(scenarios);
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
 function harness(initial = legacyState()) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "retire-beta-test-"));
   for (const tool of ["gh", "curl"]) {
@@ -68,11 +96,19 @@ function harness(initial = legacyState()) {
   }
   const file = path.join(dir, "state.json");
   fs.writeFileSync(file, JSON.stringify(initial));
-  const run = (args, faults = {}) => spawnSync(process.execPath, ["scripts/retire-beta-tag.mjs", target, ...args], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FAKE_GITHUB_STATE: file, GITHUB_REPOSITORY: repository,
-      FAKE_GITHUB_FAIL_AT: faults.failAt ?? "", FAKE_GITHUB_PARTIAL: faults.partial ?? "", FAKE_GITHUB_FAIL_READ: faults.failRead ?? "" },
-  });
+  const run = (args, faults = {}) => inSlot(() => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["scripts/retire-beta-tag.mjs", target, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, FAKE_GITHUB_STATE: file, GITHUB_REPOSITORY: repository,
+        FAKE_GITHUB_FAIL_AT: faults.failAt ?? "", FAKE_GITHUB_PARTIAL: faults.partial ?? "", FAKE_GITHUB_FAIL_READ: faults.failRead ?? "" },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  }));
   return { run, state: () => JSON.parse(fs.readFileSync(file, "utf8")), done: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -91,16 +127,16 @@ function assertBridged(state) {
 }
 
 /** Run once with `faults` (expected to fail), then until done; a further run changes nothing. */
-function recovers(faults, initial) {
+async function recovers(faults, initial) {
   const github = harness(initial);
   try {
-    const first = github.run(["--execute"], faults);
+    const first = await github.run(["--execute"], faults);
     assert.notEqual(first.status, 0, `${JSON.stringify(faults)} was not reported`);
-    const rerun = github.run(["--execute"]);
+    const rerun = await github.run(["--execute"]);
     assert.equal(rerun.status, 0, `rerun after ${JSON.stringify(faults)}:\n${rerun.stderr}`);
     assertBridged(github.state());
     const before = github.state().mutations;
-    const again = github.run(["--execute"]);
+    const again = await github.run(["--execute"]);
     assert.equal(again.status, 0, again.stderr);
     assert.equal(github.state().mutations, before, `a completed bridge was changed again after ${JSON.stringify(faults)}`);
   } finally {
@@ -108,10 +144,10 @@ function recovers(faults, initial) {
   }
 }
 
-test("a dry run reports the plan and changes nothing", () => {
+test("a dry run reports the plan and changes nothing", async () => {
   const github = harness();
   try {
-    const run = github.run([]);
+    const run = await github.run([]);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /PLAN move the 0\.8\.0-beta\.2 release/);
     assert.match(run.stdout, /Dry run only/);
@@ -121,44 +157,47 @@ test("a dry run reports the plan and changes nothing", () => {
   }
 });
 
-test("an execute run that fails at any GitHub mutation completes on a rerun, and a further rerun changes nothing", () => {
-  const clean = harness();
-  try {
-    const run = clean.run(["--execute"]);
-    assert.equal(run.status, 0, run.stderr);
-    assert.equal(clean.state().mutations, 5);
-    assertBridged(clean.state());
-  } finally {
-    clean.done();
-  }
-  for (let failAt = 1; failAt <= 5; failAt++) recovers({ failAt: String(failAt) });
+test("an execute run that fails at any GitHub mutation completes on a rerun, and a further rerun changes nothing", async () => {
+  const cleanRun = async () => {
+    const clean = harness();
+    try {
+      const run = await clean.run(["--execute"]);
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(clean.state().mutations, 5);
+      assertBridged(clean.state());
+    } finally {
+      clean.done();
+    }
+  };
+  await allScenarios([cleanRun(), ...[1, 2, 3, 4, 5].map((failAt) => recovers({ failAt: String(failAt) }))]);
 });
 
-test("a failed upload that leaves any mix of complete, empty (starter) and missing files is repaired", () => {
+test("a failed upload that leaves any mix of complete, empty (starter) and missing files is repaired", async () => {
   // Mutation 4 is the bridge upload of latest.json and both zsync files.
-  for (const partial of ["complete,starter,absent", "starter,complete,complete", "starter,starter,starter", "absent,complete,starter"]) {
-    recovers({ failAt: "4", partial });
-  }
+  await allScenarios(["complete,starter,absent", "starter,complete,complete", "starter,starter,starter", "absent,complete,starter"]
+    .map((partial) => recovers({ failAt: "4", partial })));
 });
 
-test("a failed read of the beta tag stops the run instead of leaving the bridge on the old commit", () => {
-  // Reads of commits/beta: before the move, before re-creating, before publishing, in the final check.
-  for (const nth of [1, 2, 3, 4]) recovers({ failRead: `commits/beta:${nth}` });
-  // The release lookups at beta: an outage there must not read as "no release".
-  for (const nth of [1, 2, 3]) recovers({ failRead: `releases/tags/beta:${nth}` });
-  for (const nth of [1, 2]) recovers({ failRead: `releases?per_page:${nth}` });
-  // Re-review S1: an outage at the first release lookup, then a failed create.
-  recovers({ failRead: "releases/tags/beta:1", failAt: "2" });
+test("a failed read of the beta tag stops the run instead of leaving the bridge on the old commit", async () => {
+  await allScenarios([
+    // Reads of commits/beta: before the move, before re-creating, before publishing, in the final check.
+    ...[1, 2, 3, 4].map((nth) => recovers({ failRead: `commits/beta:${nth}` })),
+    // The release lookups at beta: an outage there must not read as "no release".
+    ...[1, 2, 3].map((nth) => recovers({ failRead: `releases/tags/beta:${nth}` })),
+    ...[1, 2].map((nth) => recovers({ failRead: `releases?per_page:${nth}` })),
+    // Re-review S1: an outage at the first release lookup, then a failed create.
+    recovers({ failRead: "releases/tags/beta:1", failAt: "2" }),
+  ]);
 });
 
-test("a draft bridge left on the old beta tag is published at the new Beta's commit", () => {
+test("a draft bridge left on the old beta tag is published at the new Beta's commit", async () => {
   const state = legacyState();
   const legacy = state.releases.find((release) => release.tagName === "beta");
   legacy.tagName = "v0.8.0-beta.2";
   state.releases.push({ tagName: "beta", name: `${IDENTITY.productName} update bridge`, isDraft: true, isPrerelease: true, target: "c2", notes: "", assets: {} });
   const github = harness(state);
   try {
-    const run = github.run(["--execute"]);
+    const run = await github.run(["--execute"]);
     assert.equal(run.status, 0, run.stderr);
     assertBridged(github.state());
   } finally {
@@ -166,13 +205,13 @@ test("a draft bridge left on the old beta tag is published at the new Beta's com
   }
 });
 
-test("refuses, before any change, a target whose manual downloads are missing, and a bridge frozen at another Beta", () => {
+test("refuses, before any change, a target whose manual downloads are missing, and a bridge frozen at another Beta", async () => {
   const missing = legacyState();
   const assets = missing.releases.find((release) => release.tagName === target).assets;
   for (const name of Object.keys(assets)) if (/_universal\.dmg$|_x86-setup\.exe$/.test(name)) delete assets[name];
   const github = harness(missing);
   try {
-    const run = github.run(["--execute"]);
+    const run = await github.run(["--execute"]);
     assert.notEqual(run.status, 0);
     assert.match(run.stderr, /_universal\.dmg answers 404/);
     assert.match(run.stderr, /_x86-setup\.exe answers 404/);
@@ -188,11 +227,32 @@ test("refuses, before any change, a target whose manual downloads are missing, a
   frozen.tags.beta = "c3";
   const bridged = harness(frozen);
   try {
-    const run = bridged.run(["--execute"]);
+    const run = await bridged.run(["--execute"]);
     assert.notEqual(run.status, 0);
     assert.match(run.stderr, /frozen at 0\.8\.0-beta\.4/);
     assert.equal(bridged.state().mutations, 0);
   } finally {
     bridged.done();
+  }
+});
+
+test("a bridge tag that is not the new Beta's commit after publishing fails the run, on every run", async () => {
+  // Mutation 5 is the publish. A tag moved right after it (a concurrent retag) must
+  // not be reported as a finished bridge: only the final check of commits/beta sees it.
+  const state = legacyState();
+  state.moveTag = { tag: "beta", to: "c9", after: 5 };
+  const github = harness(state);
+  try {
+    const first = await github.run(["--execute"]);
+    assert.notEqual(first.status, 0, "a bridge tag at another commit was reported as done");
+    assert.match(first.stderr, /tag beta is at c9, not c3/);
+    assert.doesNotMatch(first.stdout, /Bridge OK/);
+    const mutations = github.state().mutations;
+    const again = await github.run(["--execute"]);
+    assert.notEqual(again.status, 0, "a rerun reported the wrong bridge tag as done");
+    assert.match(again.stderr, /tag beta is at c9, not c3/);
+    assert.equal(github.state().mutations, mutations, "a rerun changed GitHub although the tag is not repairable by it");
+  } finally {
+    github.done();
   }
 });

@@ -113,6 +113,13 @@ impl PageHost {
     /// which would read as owing nothing). `Pending` at `bound`, also when
     /// the driver did not answer by then: never success at a bound (S1);
     /// the window asks again.
+    ///
+    /// `bound` is what the barrier wait gets (L2-06); `Pending` at it is held
+    /// by `q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk`. Once
+    /// the pages are published and their witnesses read, one last read asks
+    /// the driver whether the session is still current and the host alive,
+    /// with a new `bound` of its own. No test holds that second wait, so the
+    /// call's whole length is not promised to be `bound`.
     pub fn wait_published(
         &self,
         session: u64,
@@ -159,8 +166,8 @@ impl PageHost {
                     let live = move |state: &State<ProductionIo, SystemClock>| {
                         state.book.session == session && state.progress.host.alive
                     };
-                    // Bounded too: a liveness check the driver does not
-                    // answer within one more `bound` is pending.
+                    // A second, fresh `bound` (see the doc): a liveness check
+                    // the driver does not answer within it is pending.
                     let by = Deadline::At(std::time::Instant::now() + bound);
                     return match self.driver.shared.read_by(by, live) {
                         Ok(true) => PageOperation::Applied,

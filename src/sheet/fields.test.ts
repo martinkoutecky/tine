@@ -112,7 +112,7 @@ describe("sheet fields", () => {
       ["maybe", "if(points > 2, null, points)"],
       ["broken", "points + true"],
     ]);
-    const now = new Date(Date.UTC(2026, 6, 7));
+    const now = new Date(2026, 6, 7);
 
     expect(groupKeysForBlock("a", "formula:big", { formulas, now })).toEqual(["true"]);
     expect(groupKeysForBlock("b", "formula:big", { formulas, now })).toEqual(["false"]);

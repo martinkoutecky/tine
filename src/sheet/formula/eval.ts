@@ -11,19 +11,33 @@ import {
   numberValue,
   parseDurationValue,
   textValue,
+  wallClockAsCalendarDate,
   type FormulaDateValue,
   type FormulaDurationValue,
   type FormulaErrorValue,
   type FormulaValue,
 } from "./value";
 
+/** The evaluator's clock: a fixed instant, or a function asked only when the
+ * formula reads the date (`today()`, `now()`, `.relative()`), at most once per
+ * `evaluate` call. A reactive caller puts its date dependency in that function
+ * so only evaluations that read the date are tracked by it. */
+export type FormulaClock = Date | (() => Date);
+
 export interface FormulaEvalContext {
   field(name: string): FormulaValue;
   formulaAst(name: string): Ast | null;
-  now: Date;
+  /** The clock as an instant whose LOCAL getters are the user's wall clock, as
+   *  `appNow()` returns it (or a thunk returning one). `evaluate` converts it once
+   *  (`wallClockAsCalendarDate`). */
+  now: FormulaClock;
 }
 
-interface EvaluationContext extends FormulaEvalContext { memo: Map<string, FormulaValue> }
+/** `now()` here is already in the calendar frame: UTC getters read the wall clock. */
+interface EvaluationContext extends Omit<FormulaEvalContext, "now"> {
+  memo: Map<string, FormulaValue>;
+  now(): Date;
+}
 
 type MemberHandler = (target: FormulaValue, args: readonly FormulaValue[] | null, ctx: EvaluationContext) => FormulaValue;
 type MemberTable = Partial<Record<FormulaValue["kind"], Record<string, MemberHandler>>>;
@@ -217,7 +231,8 @@ function formatDate(value: FormulaDateValue, fmt: string): string {
 
 function relativeDate(value: FormulaDateValue, ctx: EvaluationContext): FormulaValue {
   const target = utcCalendarMillis(value.value.y, value.value.m, value.value.d);
-  const today = utcCalendarMillis(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), ctx.now.getUTCDate());
+  const now = ctx.now();
+  const today = utcCalendarMillis(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = Math.round((target - today) / DAY_MS);
   if (days === 0) return textValue("today");
   return textValue(days > 0 ? `in ${days}d` : `${Math.abs(days)}d ago`);
@@ -453,7 +468,7 @@ function evalCall(name: string, args: readonly Ast[], ctx: EvaluationContext, vi
   }
   if (name === "now" || name === "today") {
     if (args.length !== 0) return errorValue(`${name} expects 0 arguments`);
-    return name === "now" ? dateValueFromDate(ctx.now, true) : dateValueFromDate(ctx.now, false);
+    return dateValueFromDate(ctx.now(), name === "now");
   }
   return errorValue(`Unknown function ${name}`);
 }
@@ -533,5 +548,10 @@ function evalAstValue(ast: Ast, ctx: EvaluationContext, visited: readonly string
  * long left-associative chains use an iterative walk, while excessive formula
  * or reference nesting returns a FormulaErrorValue. Callers need no stack budget. */
 export function evaluate(ast: Ast, ctx: FormulaEvalContext): FormulaValue {
-  return evalAst(ast, { ...ctx, memo: new Map() }, []);
+  // The one place the clock enters the evaluator: read lazily (so only cells that
+  // read the date depend on the day signal), converted once to the calendar frame.
+  const clock = ctx.now;
+  let read: Date | undefined;
+  const now = () => (read ??= wallClockAsCalendarDate(typeof clock === "function" ? clock() : clock));
+  return evalAst(ast, { field: ctx.field, formulaAst: ctx.formulaAst, now, memo: new Map() }, []);
 }

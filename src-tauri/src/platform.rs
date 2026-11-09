@@ -447,8 +447,9 @@ fn kill_and_reap(child: &mut std::process::Child) {
 }
 
 /// Write all of `bytes` without blocking, giving up once the reader has taken
-/// nothing for `stall`. The flag is on this end of the pipe only, so the tool's
-/// own reads are unaffected.
+/// nothing for `stall`. A full pipe is waited on with `poll`, so a reader that
+/// keeps up is fed as fast as it reads. The flag is on this end of the pipe
+/// only, so the tool's own reads are unaffected.
 #[cfg(target_os = "linux")]
 fn write_until_stalled(
     stdin: &mut std::process::ChildStdin,
@@ -473,13 +474,26 @@ fn write_until_stalled(
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if last_progress.elapsed() >= stall {
+                let idle = last_progress.elapsed();
+                if idle >= stall {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "the tool stopped reading",
                     ));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                // The pipe is full: sleep until the tool reads some (the kernel
+                // wakes us then) or the rest of the stall passes. Whatever ends
+                // the wait (room, the stall, a signal), the loop writes again and
+                // judges the stall itself; a closed reader also ends it, and the
+                // write then fails.
+                let mut waiting = libc::pollfd {
+                    fd,
+                    events: libc::POLLOUT,
+                    revents: 0,
+                };
+                let millis = (stall - idle).as_micros().div_ceil(1000);
+                // SAFETY: `waiting` is one valid pollfd, and the count says one.
+                unsafe { libc::poll(&mut waiting, 1, millis.min(i32::MAX as u128) as i32) };
             }
             Err(error) => return Err(error),
         }
@@ -1856,6 +1870,43 @@ mod clipboard_tool_tests {
             .expect("the copy must not block on a tool that never reads");
         assert!(result.is_ok(), "{result:?}");
         assert!(!lingers(pid_of(dir.path(), "pid")));
+    }
+
+    // R-F1: a full pipe is waited on with `poll`, so a tool that reads promptly is
+    // fed at its own pace. Sleeping 5 ms per full pipe capped the copy near 13 MB/s
+    // (64 MiB took about 5 s). The yardstick is a blocking write of the same bytes
+    // to the same kind of reader, so the bound moves with the load on this host.
+    #[test]
+    fn a_prompt_reader_is_fed_at_its_own_pace() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let dir = tempfile::tempdir().unwrap();
+        let (sink, args) = script(dir.path(), "sink", "cat >/dev/null");
+        let image = vec![0u8; 16 << 20];
+        let feed = |polling: bool| {
+            let mut child = Command::new(&sink)
+                .args(&args)
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut stdin = child.stdin.take().unwrap();
+            let started = Instant::now();
+            if polling {
+                write_until_stalled(&mut stdin, &image, Duration::from_secs(5)).unwrap();
+            } else {
+                stdin.write_all(&image).unwrap();
+            }
+            drop(stdin);
+            let took = started.elapsed();
+            assert!(child.wait().unwrap().success());
+            took
+        };
+        let blocking = feed(false);
+        let polling = feed(true);
+        assert!(
+            polling < blocking * 4 + Duration::from_millis(250),
+            "16 MiB took {polling:?} to a prompt reader; a blocking write took {blocking:?}"
+        );
     }
 
     #[test]

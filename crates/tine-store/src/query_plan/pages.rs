@@ -19,14 +19,6 @@ pub(super) struct ScoredPage {
     pub(super) content_text: Option<String>,
 }
 
-impl ScoredPage {
-    /// Strictly better than `other`. Derived from [`Ord::cmp`] so the heap
-    /// eviction order, this predicate and the final sort are ONE comparator.
-    fn is_better_than(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Less
-    }
-}
-
 impl PartialEq for ScoredPage {
     fn eq(&self, other: &Self) -> bool {
         self.from_content == other.from_content
@@ -55,15 +47,52 @@ impl Ord for ScoredPage {
     }
 }
 
-pub(super) fn push_page(heap: &mut BinaryHeap<ScoredPage>, limit: usize, candidate: ScoredPage) {
-    if heap.len() < limit {
-        heap.push(candidate);
-    } else if heap
-        .peek()
-        .is_some_and(|worst| candidate.is_better_than(worst))
-    {
-        *heap.peek_mut().unwrap() = candidate;
+/// A page candidate with the authored sort keys of a sorted search (in
+/// `ascending`'s directions), so the heap keeps the best `limit` by the sort
+/// itself (audit L7s3-02). With no sort, `ascending` is empty and the
+/// candidate's own order decides.
+pub(super) struct RankedPage<'a> {
+    pub(super) page: ScoredPage,
+    pub(super) keys: Vec<SortDecor>,
+    pub(super) ascending: &'a [bool],
+}
+
+impl PartialEq for RankedPage<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
     }
+}
+impl Eq for RankedPage<'_> {}
+impl PartialOrd for RankedPage<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for RankedPage<'_> {
+    /// The result order, as [`ScoredPage`]'s: "less" is better, the heap root
+    /// is the worst. The tie key is never reversed by a descending sort key.
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.ascending.is_empty() {
+            return self.page.cmp(&other.page);
+        }
+        compare_sort_decorations(&self.keys, &other.keys, self.ascending)
+            .then_with(|| self.page.tie_key.cmp(&other.page.tie_key))
+    }
+}
+
+/// Keep the best `limit` of what is pushed.
+pub(super) fn push_page<T: Ord>(heap: &mut BinaryHeap<T>, limit: usize, candidate: T) {
+    let full = heap.len() >= limit;
+    if full && !heap.peek().is_some_and(|worst| candidate < *worst) {
+        return;
+    }
+    if full {
+        *heap.peek_mut().unwrap() = candidate;
+    } else {
+        heap.push(candidate);
+    }
+    #[cfg(test)]
+    super::PAGE_SELECTION.with(|c| c.set((c.get().0 + 1, c.get().1.max(heap.len()))));
 }
 
 /// Match + page relevance in one cached-lowercase pass. AND takes the best
@@ -298,14 +327,40 @@ pub(super) fn execute_pages(
             .or_default()
             .push(alias);
     }
+    let sort = friendly_sort_fields(plan.page_view.as_ref());
+    let ascending: Vec<bool> = sort.iter().map(|(_, asc)| *asc).collect();
+    // A candidate's sort keys: a file page's from its own preamble (an alias
+    // candidate sorts as its owner), a referenced name's from the name alone.
+    let ranked = |page: ScoredPage| {
+        let keys = match &page.candidate {
+            _ if sort.is_empty() => Vec::new(),
+            PageCandidate::File(index) => {
+                let entry = &file_pages[*index];
+                graph.with_pages(|pages| {
+                    let properties = (pages.positions.get(entry.rel_path_str()))
+                        .and_then(|slot| pages.get(*slot))
+                        .map(|(_, doc)| crate::query::page_facets(doc).0)
+                        .unwrap_or_default();
+                    sort.iter()
+                        .map(|(field, _)| {
+                            crate::query::exec::page_sort_decor(field, entry, &properties, 0)
+                        })
+                        .collect()
+                })
+            }
+            PageCandidate::Referenced(entry) => sort
+                .iter()
+                .map(|(field, _)| crate::query::exec::page_sort_decor(field, entry, &[], 0))
+                .collect(),
+        };
+        RankedPage {
+            page,
+            keys,
+            ascending: &ascending,
+        }
+    };
     let mut heap = BinaryHeap::new();
     let mut has_more = false;
-    let sort = friendly_sort_fields(plan.page_view.as_ref());
-    let selection_limit = if sort.is_empty() {
-        branch.limit
-    } else {
-        usize::MAX
-    };
     let mut completion_names: HashSet<String> =
         file_pages.iter().map(|page| page_key(&page.name)).collect();
     for (index, page) in file_pages.iter().enumerate() {
@@ -342,11 +397,11 @@ pub(super) fn execute_pages(
                     })
                 })
         {
-            has_more |= heap.len() >= selection_limit;
+            has_more |= heap.len() >= branch.limit;
             push_page(
                 &mut heap,
-                selection_limit,
-                ScoredPage {
+                branch.limit,
+                ranked(ScoredPage {
                     from_content: content_text.is_some(),
                     score: base_score - page.name.len() as i32,
                     match_class,
@@ -355,7 +410,7 @@ pub(super) fn execute_pages(
                     tie_key: page.rel_path_str().to_owned(),
                     candidate: PageCandidate::File(index),
                     content_text,
-                },
+                }),
             );
         }
         if plan.separate_aliases {
@@ -367,11 +422,11 @@ pub(super) fn execute_pages(
                 if let Some((base_score, match_class, matched_text, _)) =
                     best_page_match(plan, &branch.predicate, alias, &[])
                 {
-                    has_more |= heap.len() >= selection_limit;
+                    has_more |= heap.len() >= branch.limit;
                     push_page(
                         &mut heap,
-                        selection_limit,
-                        ScoredPage {
+                        branch.limit,
+                        ranked(ScoredPage {
                             from_content: false,
                             score: base_score - alias.len() as i32,
                             match_class,
@@ -380,7 +435,7 @@ pub(super) fn execute_pages(
                             tie_key: format!("{}:{}", page_key(alias), page.rel_path_str()),
                             candidate: PageCandidate::File(index),
                             content_text: None,
-                        },
+                        }),
                     );
                 }
             }
@@ -433,12 +488,12 @@ pub(super) fn execute_pages(
         if let Some((base_score, match_class, matched_text, matched_alias)) =
             best_page_match(plan, &branch.predicate, &name, &[])
         {
-            has_more |= heap.len() >= selection_limit;
+            has_more |= heap.len() >= branch.limit;
             let score = base_score - name.len() as i32;
             push_page(
                 &mut heap,
-                selection_limit,
-                ScoredPage {
+                branch.limit,
+                ranked(ScoredPage {
                     from_content: false,
                     score,
                     match_class,
@@ -453,74 +508,13 @@ pub(super) fn execute_pages(
                         path: std::path::PathBuf::new(),
                     }),
                     content_text: None,
-                },
+                }),
             );
         }
     }
-    let mut winners = heap.into_vec();
-    if sort.is_empty() {
-        winners.sort();
-    } else {
-        let wanted: HashSet<&str> = winners
-            .iter()
-            .filter_map(|winner| match winner.candidate {
-                PageCandidate::File(index) => Some(file_pages[index].rel_path_str()),
-                PageCandidate::Referenced(_) => None,
-            })
-            .collect();
-        let keys = graph.with_pages(|pages| {
-            pages
-                .iter()
-                .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
-                .map(|(entry, doc)| {
-                    let (properties, _) = crate::query::page_facets(doc);
-                    (
-                        entry.rel_path_str().to_owned(),
-                        sort.iter()
-                            .map(|(field, _)| {
-                                crate::query::exec::page_sort_decor(field, entry, &properties, 0)
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect::<HashMap<_, _>>()
-        });
-        let ascending: Vec<bool> = sort.iter().map(|(_, asc)| *asc).collect();
-        let mut decorated: Vec<_> = winners
-            .into_iter()
-            .map(|winner| {
-                let key = match &winner.candidate {
-                    PageCandidate::File(index) => keys
-                        .get(file_pages[*index].rel_path_str())
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            sort.iter()
-                                .map(|(field, _)| {
-                                    crate::query::exec::page_sort_decor(
-                                        field,
-                                        &file_pages[*index],
-                                        &[],
-                                        0,
-                                    )
-                                })
-                                .collect()
-                        }),
-                    PageCandidate::Referenced(page) => sort
-                        .iter()
-                        .map(|(field, _)| crate::query::exec::page_sort_decor(field, page, &[], 0))
-                        .collect(),
-                };
-                (key, winner)
-            })
-            .collect();
-        decorated.sort_by(|a, b| {
-            tine_core::query::sort::compare_sort_decorations(&a.0, &b.0, &ascending)
-                .then_with(|| a.1.tie_key.cmp(&b.1.tie_key))
-        });
-        winners = decorated.into_iter().map(|(_, winner)| winner).collect();
-        has_more = winners.len() > branch.limit;
-        winners.truncate(branch.limit);
-    }
+    let winners: Vec<ScoredPage> = (heap.into_sorted_vec().into_iter())
+        .map(|ranked| ranked.page)
+        .collect();
     // Hydrate only admitted physical pages through the shared preamble reader.
     // Search rows do not need the graph-wide block facts or property registry.
     let wanted: HashSet<&str> = winners
@@ -678,11 +672,11 @@ mod page_order_tests {
         }
     }
 
-    /// The bounded heap evicts by `Ord` (root = worst) and admits by
-    /// `is_better_than`; they must be one order (checkpoint-5 L02 B3, I-12).
-    /// Before, `Ord` ranked a content match BETTER than a name match while
-    /// `is_better_than` and the result sort ranked it worse, so a full heap
-    /// evicted the best name match and kept a content match.
+    /// The bounded heap evicts by `Ord` (root = worst) and admits by the same
+    /// order (checkpoint-5 L02 B3, I-12). Before, `Ord` ranked a content match
+    /// BETTER than a name match while admission and the result sort ranked it
+    /// worse, so a full heap evicted the best name match and kept a content
+    /// match.
     #[test]
     fn page_heap_keeps_the_best_name_matches_over_content_matches() {
         use ObjectiveMatchClass::*;
@@ -696,24 +690,50 @@ mod page_order_tests {
         assert_eq!(kept, ["a", "c"], "the content match is the one evicted");
     }
 
+    /// Admission and eviction are one order, `Ord` itself: whatever order the
+    /// candidates arrive in, a full heap holds exactly the first `limit` of the
+    /// sorted pool (checkpoint-5 L02 B3, I-12).
     #[test]
-    fn page_order_and_better_than_agree_for_every_pair() {
+    fn page_heap_keeps_the_first_limit_of_the_sorted_pool_in_any_arrival_order() {
         use ObjectiveMatchClass::*;
-        let mut all = Vec::new();
-        for content in [false, true] {
-            for class in [Exact, Prefix, Substring, Fuzzy] {
-                for score in [1, 2] {
-                    for tie in ["x", "y"] {
-                        all.push(page(content, class, score, tie));
+        let pool = || {
+            let mut all = Vec::new();
+            for content in [false, true] {
+                for class in [Exact, Prefix, Substring, Fuzzy] {
+                    for score in [1, 2] {
+                        for tie in ["x", "y"] {
+                            all.push(page(content, class, score, tie));
+                        }
                     }
                 }
             }
-        }
-        for a in &all {
-            for b in &all {
-                assert_eq!(a.is_better_than(b), a.cmp(b) == Ordering::Less);
-                if a.is_better_than(b) {
-                    assert!(!b.is_better_than(a));
+            all
+        };
+        let id = |p: &ScoredPage| {
+            (
+                p.from_content,
+                p.match_class.rank(),
+                p.score,
+                p.tie_key.clone(),
+            )
+        };
+        let mut sorted = pool();
+        sorted.sort();
+        let sorted: Vec<_> = sorted.iter().map(id).collect();
+        for limit in [1, 3, 8, 31] {
+            for rotation in 0..sorted.len() {
+                for reverse in [false, true] {
+                    let mut arrival = pool();
+                    arrival.rotate_left(rotation);
+                    if reverse {
+                        arrival.reverse();
+                    }
+                    let mut heap = BinaryHeap::new();
+                    for candidate in arrival {
+                        push_page(&mut heap, limit, candidate);
+                    }
+                    let kept: Vec<_> = heap.into_sorted_vec().iter().map(id).collect();
+                    assert_eq!(kept, sorted[..limit], "limit {limit} rotation {rotation}");
                 }
             }
         }
