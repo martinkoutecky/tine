@@ -11,6 +11,7 @@ use tine_core::doc::DocBlock;
 use tine_core::model::{PageEntry, PageKind};
 use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::ir::{SortDir, ViewSettings};
+use tine_core::query::sort::{compare_sort_decorations, SortDecor};
 use tine_core::query_plan::{
     ExplainNode, MatchEvidence, MatchSpan, ObjectiveMatchClass, QueryDiagnostic, QueryExecution,
     QueryExplanation, QueryHasMore, QueryHit, TextField, TextMatchMode,
@@ -23,9 +24,22 @@ pub(crate) mod completion;
 #[cfg(test)]
 thread_local! { pub(crate) static COMPLETION_SCORES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 #[cfg(test)]
+thread_local! {
+    /// (admissions, peak retained) of the last block selection: how many
+    /// candidates paid for an ancestor path, and the most any moment held (PC-3).
+    pub(crate) static BLOCK_SELECTION: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+#[cfg(test)]
+thread_local! {
+    /// The same for the last page selection.
+    pub(crate) static PAGE_SELECTION: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+#[cfg(test)]
 mod completion_bench_tests;
 #[cfg(test)]
 mod completion_tests;
+#[cfg(test)]
+mod sort_tests;
 
 const MAX_EVIDENCE_SPANS: usize = 32;
 
@@ -943,25 +957,19 @@ struct ScoredBlock<'a> {
     index: usize,
     page: &'a PageEntry,
     block: &'a DocBlock,
-    /// Borrowed, so a candidate that loses costs one pointer per ancestor; the
-    /// labels are built for winners only (audit L7s3-02).
+    /// The authored sort keys of a sorted search, with their directions in
+    /// `ascending`. With no sort, `ascending` is empty and relevance orders.
+    keys: Vec<SortDecor>,
+    ascending: &'a [bool],
+    /// Borrowed, so a candidate costs one pointer per ancestor; the labels are
+    /// built for winners only. Filled by [`push_block`] on admission: a
+    /// candidate that loses copies nothing (audit L7s3-02).
     ancestors: Vec<&'a DocBlock>,
-}
-
-impl ScoredBlock<'_> {
-    fn is_better_than(&self, other: &Self) -> bool {
-        let quality = self.relevance.cmp_quality(&other.relevance);
-        quality == Ordering::Greater
-            || (quality == Ordering::Equal
-                && (self.page.rel_path_str(), self.index)
-                    < (other.page.rel_path_str(), other.index))
-    }
 }
 
 impl PartialEq for ScoredBlock<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.relevance.cmp_quality(&other.relevance) == Ordering::Equal
-            && (self.page.rel_path_str(), self.index) == (other.page.rel_path_str(), other.index)
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl Eq for ScoredBlock<'_> {}
@@ -971,27 +979,42 @@ impl PartialOrd for ScoredBlock<'_> {
     }
 }
 impl Ord for ScoredBlock<'_> {
+    /// The result order: "less" is better. The max-heap root is therefore the
+    /// WORST retained candidate, ready for eviction, and the final sort of the
+    /// winners is this same comparator. The path and position tie is never
+    /// reversed by a descending sort key.
     fn cmp(&self, other: &Self) -> Ordering {
-        // Max-heap root is the WORST retained candidate, ready for eviction.
-        other.relevance.cmp_quality(&self.relevance).then_with(|| {
+        let by = if self.ascending.is_empty() {
+            other.relevance.cmp_quality(&self.relevance)
+        } else {
+            compare_sort_decorations(&self.keys, &other.keys, self.ascending)
+        };
+        by.then_with(|| {
             (self.page.rel_path_str(), self.index).cmp(&(other.page.rel_path_str(), other.index))
         })
     }
 }
 
+/// Keep the best `limit` candidates. `path` (the candidate's ancestors) is
+/// copied only if the candidate is kept.
 fn push_block<'a>(
     heap: &mut BinaryHeap<ScoredBlock<'a>>,
     limit: usize,
-    candidate: ScoredBlock<'a>,
+    mut candidate: ScoredBlock<'a>,
+    path: &[&'a DocBlock],
 ) {
-    if heap.len() < limit {
-        heap.push(candidate);
-    } else if heap
-        .peek()
-        .is_some_and(|worst| candidate.is_better_than(worst))
-    {
-        *heap.peek_mut().unwrap() = candidate;
+    let full = heap.len() >= limit;
+    if full && !heap.peek().is_some_and(|worst| candidate < *worst) {
+        return;
     }
+    candidate.ancestors = path.to_vec();
+    if full {
+        *heap.peek_mut().unwrap() = candidate;
+    } else {
+        heap.push(candidate);
+    }
+    #[cfg(test)]
+    BLOCK_SELECTION.with(|c| c.set((c.get().0 + 1, c.get().1.max(heap.len()))));
 }
 
 fn starts_at_word_boundary(value: &str, byte_offset: usize) -> bool {

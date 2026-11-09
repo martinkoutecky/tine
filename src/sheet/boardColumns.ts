@@ -3,6 +3,7 @@ import { formatForPage } from "../document";
 import { t } from "../i18n";
 import { MARKERS } from "../markers";
 import type { FieldSpec } from "./config";
+import type { FormulaClock } from "./formula";
 import { groupKeysForBlock, isFieldId, isFormulaField, type FieldId } from "./fields";
 import { liveFormulaRowNode, readFormulaRowField, type FormulaEvalRow } from "./formulaEval";
 import { readField } from "./fields";
@@ -41,7 +42,7 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
   rows: readonly R[],
   groupBy: FieldId,
   schema: readonly FieldSpec[],
-  opts: { formulas?: ReadonlyMap<string, string>; now?: Date; workflow: "todo" | "now"; onRow?: (rowId: string) => void;
+  opts: { formulas?: ReadonlyMap<string, string>; now?: FormulaClock; workflow: "todo" | "now"; onRow?: (rowId: string) => void;
     rowKeys?: (row: R) => (string | null)[] }
 ): BoardColumn<R>[] {
   const rowsByKey = new Map<string | null, R[]>();

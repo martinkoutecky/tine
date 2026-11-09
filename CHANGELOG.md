@@ -10,8 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
 - Scrolling the Journals feed loads each next set of days from a bounded slice of the day index instead of re-sorting every journal day, with the same days, referenced-only days and order (REG-JOURNAL-STEP-WINDOW).
+- Editing a journal no longer makes the Journals feed re-read its first days and referenced days once you stop typing (except for the first change after the graph opens, which still does once); the feed re-reads only when the edit writes or removes a day reference or a scheduled/deadline date (internal: REG-COST-JOURNAL-EDIT-NO-FEED-RESTART; D-20261102-PERF).
+- Property queries such as `(property tine.export)`, and the Exports page's list of export and share definitions built on them, look only at the pages that hold the property instead of every block in the graph, with the same results (internal: REG-COST-PROPERTY-KEY-NARROWING; D-20261102-PERF).
 - Printed and published pages list a `{{namespace X}}` macro's pages by page identity, as the live macro and Logseq do, so `project/y` appears under `{{namespace Project}}`; printing such a page no longer copies or sorts the whole graph (REG-PRINT-NAMESPACE-COST).
 - An empty page now opens itself instead of jumping to the page that lists it as an alias. Renaming onto it targets that page too (REG-CM-REAL-FILE-FIRST, UI-CM-REAL-FILE-FIRST).
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
@@ -20,6 +23,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).
+- An IME composition cancelled by losing focus (the window switched away, a picker took focus) no longer leaves the editor, or Quick Capture's File capture, ignoring what you type next (internal: UI-OG-L9-18-IME-BLUR-ABANDONED; OG audit L9-18).
+- Copying a large image or text through a Linux clipboard tool no longer pauses 5 ms each time the pipe fills, so a big copy to a tool that reads promptly finishes in a fraction of the time; a tool that stops reading is still given up on after the same stall (internal: REG-OG-RF1-CLIPBOARD-POLL; OG audit R-F1).
+- A parser failure during Enter, Tab or another outline edit now leaves the outline and the block's text unchanged and says so; the next edit works. Before, the edit failed silently and the CodeMirror editor also inserted the Enter into the block's text. Errors raised inside a parser call no longer build up over a session until an ordinary edit fails. Pressing Enter over selected text in the CodeMirror editor no longer deletes the selection when the edit then fails, and a failed double Enter out of a code, calc, fence, math or page-properties block (either editor) no longer trims the block's blank last line (internal: REG-WASM-UNWOUND-EXCEPTION-POISON, REG-CM6-STRUCTURAL-KEY-THROW, REG-CM6-ENTER-SELECTION-REFUSED, REG-EDITOR-MULTILINE-EXIT-REFUSED).
 - `tine add --page` and `tine page create` resolve a name no page claims yet the way the app does: two spellings of one new page named at once (`Foo` and `foo`) write one page instead of one command being refused with an internal `Twin` message, and a date such as `2026_11_02` or `Nov 2nd, 2026` creates that day's journal instead of a second file under `pages/` (internal: REG-CLI-SPELL-ABSENT-TWINS-PARALLEL, REG-CLI-SPELL-DATE-NAME-IS-JOURNAL).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
@@ -108,6 +115,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - After merging a page through an alias (renaming ML notes to ML, where Machine Learning has `alias:: ML`), a query that named the old page, such as `{{query (page "ML notes")}}`, now names Machine Learning, the page that remains. Before, it named `ML`. Links keep the name you typed (REG-CM-R11-ALIAS-MERGE-QUERY-SURVIVOR).
 - Renaming a page onto a used name inside its own namespace, such as `Foo` to `Foo/bar` when `Foo/bar` is a page or an alias, is refused with the reason and changes nothing. Before, Tine merged `Foo` into `Foo/bar`, a page that moves with `Foo` (REG-CM-R12-OWN-CHILD-REFUSED, UI-CM-OWN-CHILD-REFUSAL-REASON).
 - A rename that only changes capitalization onto a file another page already uses now says which page holds that file. Before, it failed with "page changed repeatedly during rename", as if trying again could help; nothing was written then or now (REG-CM-R14-CASE-ONLY-FILE-TAKEN).
+- A table, board or filter whose formulas use `today()` or `now()` now shows the new day's values when the date changes in a window left open overnight, instead of keeping yesterday's until a row is edited. Sheets whose formulas never read the date are not recalculated, and `now()` moves with the day, not by the minute (internal: UI-CBENA-SHEET-FORMULAS-FOLLOW-THE-DATE).
 
 ### Changed
 

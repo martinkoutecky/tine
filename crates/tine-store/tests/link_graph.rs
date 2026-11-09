@@ -453,7 +453,7 @@ fn links_match_the_linked_references_panel_on_the_hand_graph_and_kitchen_sink() 
 #[test]
 #[ignore = "needs ~/research/tine-test and ~/research/logseq-anonymized"]
 fn links_match_the_panel_on_corpora() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let home = std::env::var("HOME").unwrap();
     for corpus in ["research/tine-test", "research/logseq-anonymized"] {
         let source = Path::new(&home).join(corpus);
@@ -484,7 +484,7 @@ fn rss_kib(field: &str) -> u64 {
 #[test]
 #[ignore = "needs TINE_LINKS_BENCH_GRAPH (scripts/generate-realistic-graph.mjs)"]
 fn links_near_k2_on_the_realistic_graph() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let root = std::env::var("TINE_LINKS_BENCH_GRAPH").expect("TINE_LINKS_BENCH_GRAPH");
     let (_store, graph) = open(Path::new(&root));
     let names: Vec<String> = graph

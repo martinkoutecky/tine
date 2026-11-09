@@ -101,6 +101,13 @@
       "nonRequirements": ["Exact pixels; automatic retargeting of an explicitly pinned missing sidebar file; reporter attachments, real Syncthing or macOS/Windows runtime certification. Malformed checkpoint coverage is tested at the store layer."],
       "stability":"burn-in"
     },
+    "scripts/e2e-embed-enter-loop.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"In one app session, on three host pages, Enter at the end of a page embed's last source block, typing and Tab add the text once, as a child of that block, in the source file and in the embed, with no parser-failure toast; repeated over fresh sessions to measure how often a parser trap occurs.","blocking":false,"authority":"og-wasm-enter-trap; REG-WASM-UNWOUND-EXCEPTION-POISON; REG-CM6-STRUCTURAL-KEY-THROW"}],
+      "acceptableVariations": ["Theme, window size, click timing and save latency may vary; the source file may indent with tabs or spaces."],
+      "nonRequirements": ["No exact pixels, caret geometry or editor engine; the trap rate is recorded, not required to be zero within a fixed number of sessions."],
+      "variants": ["E2E_SESSIONS=N fresh sessions (default 1)", "E2E_PAGES=N host/source pairs per session (default 3)", "E2E_DRIVER_PORT (default 4974; the native port is the next one)"],
+      "stability": "burn-in"
+    },
     "scripts/e2e-gh868-embed-outline.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"On a routed host page, expand a page embed, open a nested task's references, enter and leave the preceding TODO, then edit embedded siblings: the source outline retains its order, depth, folded branches and editable rows. E2E_FOLDS=1 opens the source alongside the embed, folds descendants through the indent guide, checks source collapsed:: bytes and both views, then adds a visible sibling with Enter and retains it through indent/outdent. Embedded and source bullet arrows synchronize in both directions.","blocking":false,"authority":"GH #868 comments 4–6; UI-GH868-EMBED-OUTLINE; UI-GH868-PAGE-EMBED-SOURCE-FOLDS"}],
       "acceptableVariations": ["Theme, spacing, window size, reference panel placement and rendering latency may vary."],
@@ -367,6 +374,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"Scrolling a long Journals feed down and back releases offscreen documents, preserves the visible scroll position on retirement/reload, saves edits in a reloaded day with sibling content intact, and Find reports retired days while searching loaded documents only.","blocking":true,"authority":"L10-03; D-20261022-JN/JE"}],
       "acceptableVariations": ["Read and render latency; a few pixels of layout rounding; additional loaded days held by editing, selection, routes or nearby viewports."],
       "nonRequirements": ["Exact DOM nesting or palette; certification outside Linux WebKitGTK; full graph searching within Find; green-suite burn-in, which belongs to the manager."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-journal-edit-feed-kept.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART"}],
+      "acceptableVariations": ["Read, save, watcher and render latency; extra days loaded by infinite scroll while settling; the edited day moving by less than a quarter of the viewport."],
+      "nonRequirements": ["Exact pixels, DOM nesting or scroll offsets; day references and planning (Rust change-summary tests); external journal changes, which keep their own feed restart; certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-rn-cf-org-body.mjs": {
@@ -1111,8 +1124,14 @@
       "nonRequirements": ["Any end-user product workflow by itself."],
       "stability": "stable"
     },
+    "scripts/e2e-ime-blur.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed page, with the textarea editor and with the CodeMirror editor (the Settings choice), a composition that is open when focus leaves the editor without a compositionend neither loses nor duplicates the composing text, and ordinary typing afterwards is saved after it. Focus leaves twice: a real pointer click on the window outside any block, and another application's window taking native X11 focus while the editor stays in edit mode. The composition events (compositionstart, a composing beforeinput, the preedit text, compositionupdate, a composing input) are synthetic WebDriver-injected events in the real webview, not a real IME; the focus loss and the typing are real.","blocking":false,"authority":"OG audit L9-18; UI-OG-L9-18-IME-BLUR-ABANDONED"}],
+      "acceptableVariations": ["Window geometry, focus-change latency, the exact pixels of the editor and the window manager's decoration may vary; the saved bytes are material."],
+      "nonRequirements": ["No real IME (a candidate window, a platform input method), no composition that ends normally (the editor journeys and component tests cover it), no platform other than Linux WebKitGTK under openbox, no burn-in beyond the three runs recorded in the receipt."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart. A composition left open when another window takes native focus (Quick Capture dismisses itself and keeps the draft, no compositionend) does not block ordinary typing or File capture after Quick Capture is reopened; the composition events are synthetic, the focus loss is real.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

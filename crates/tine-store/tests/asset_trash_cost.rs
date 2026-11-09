@@ -204,7 +204,7 @@ fn run(pages: usize) -> Vec<(&'static str, (u64, u64))> {
 /// writer is held, do not grow with the graph.
 #[test]
 fn one_asset_trash_scans_no_graph_under_the_writer() {
-    let _integration_guard = crate::test_transactions::integration_lock();
+    let _integration_guard = crate::test_transactions::exclusive_integration_lock();
     if crate::test_transactions::isolated_cost_case(
         "test_transactions::asset_trash_cost::one_asset_trash_scans_no_graph_under_the_writer",
     ) {
