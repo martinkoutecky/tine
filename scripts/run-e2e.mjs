@@ -70,8 +70,9 @@ if (portableX11Deps) {
   baseProcessEnv.PATH = `${path.join(portableX11Deps, "usr/bin")}${path.delimiter}${baseProcessEnv.PATH || ""}`;
 }
 
-// A scenario marked BY_NAME (a fourth element) runs only when dispatched by its
-// id; it is left out of the suite's default fan-out (`--fan-out`).
+// A scenario marked BY_NAME (a fourth element) is left out of the suite's
+// workflow fan-out (`--fan-out`), so a workflow runs it only when dispatched by
+// its id. A local run of the whole suite still includes it.
 const BY_NAME = "by-name";
 
 // This table is the one owner of which scenarios exist and which of them a suite
