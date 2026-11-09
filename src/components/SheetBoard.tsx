@@ -44,7 +44,7 @@ import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { formulaReferenceName, boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
 import { createRecordFieldsMemo, sameItems, recordFacets, rowRaw } from "../sheet/tableFields";
-import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
+import { createFormulaFilterMemo, formulaRowKey, liveFormulaClock, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { graphEpoch } from "../graphSession";
 import { openDatePicker, openSheetContextMenu, workflow } from "../ui";
@@ -56,7 +56,6 @@ import { isBareTagName } from "../tags";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 import { registerTransientLayer } from "../transientLayers";
 
-import { appNow } from "../journal";
 import { elementFromPointIn, windowOf } from "../windowRealm";
 interface RowRecord extends FormulaEvalRow {}
 
@@ -171,15 +170,14 @@ export function SheetBoard(props: {
   });
 
   const observedFields = createRecordFieldsMemo(rows, () => props.rowSource === "query");
+  const clock = liveFormulaClock();
   const groupedRows = mapArray(rows, row => ({ row, keys: createMemo(() => groupKeysForBlock(row, groupBy(), {
-    formulas: formulas(), now: appNow(),
+    formulas: formulas(), now: clock,
   }), undefined, { equals: sameItems }) }));
   const baseColumns = createMemo<BoardColumn[]>(() => {
     if (ungrouped()) return [{ key: null, label: t("sheet-sheet-board-all-results"), rows: rows() }];
-    const now = appNow();
     return buildBoardColumns(rows(), groupBy(), schemaFields(), {
       formulas: formulas(),
-      now,
       workflow: workflow(),
       onRow: __sheetBoardTestHooks.onGroupingRowWalk,
       rowKeys: (() => {

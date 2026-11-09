@@ -606,12 +606,31 @@ fn day_and_template_hints_are_edit_scoped_and_cover_removal() {
         }
         previous = next;
     }
-    let wire = edit(&store, "journals/2026_10_22.md", |doc| {
-        doc.blocks[0].raw = "".into()
-    });
-    assert_eq!(wire["summary"]["days"], true);
-    assert_eq!(wire["summary"]["journals"], true);
-    check(&previous, &answers(&store, dir.path()), &wire["summary"]).unwrap();
+    // Editing an existing journal's text alone leaves the feed's days and
+    // Upcoming as they were (cost audit row 9, D-20261102-PERF): `journals`
+    // fires for the calendar dots, `days` does not, so the Journals feed is
+    // not re-read from its first day. A day reference or planning written in
+    // a journal still fires `days`, on adding and on removing it.
+    for (raw, days) in [
+        ("", false),
+        ("edited journal text", false),
+        ("[[2026-10-31]]", true),
+        ("reference removed", true),
+        ("TODO planned\nSCHEDULED: <2026-10-31 Sat>", true),
+        ("planning removed", true),
+        ("plain again", false),
+    ] {
+        let wire = edit(&store, "journals/2026_10_22.md", |doc| {
+            doc.blocks[0].raw = raw.into()
+        });
+        let summary = &wire["summary"];
+        assert_eq!(summary["full"], false, "{raw}");
+        assert_eq!(summary["days"], days, "{raw}");
+        assert_eq!(summary["journals"], true, "{raw}");
+        let next = answers(&store, dir.path());
+        check(&previous, &next, summary).unwrap();
+        previous = next;
+    }
 }
 
 #[test]

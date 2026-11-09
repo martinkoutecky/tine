@@ -13,6 +13,7 @@ import { tagRef } from "../tags";
 import { literalBlockOfLine } from "../editor/literalLines";
 import { parseIsoDateLike } from "./typed";
 import { evaluateFormulaForRow, formulaValueText, liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
+import type { FormulaClock } from "./formula";
 
 import { appNow } from "../journal";
 import { pushToast } from "../toasts";
@@ -60,7 +61,7 @@ function facetsForBlock(id: string): Facets | null {
 type GroupKeyInput = string | FormulaEvalRow;
 interface GroupKeysOptions {
   formulas?: ReadonlyMap<string, string>;
-  now?: Date;
+  now?: FormulaClock;
 }
 
 function facetsForInput(input: GroupKeyInput): Facets | null {

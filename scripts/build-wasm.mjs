@@ -133,7 +133,10 @@ export function __tineReinstantiate() {
 // every other door took the whole page down with the next call. Wrap EVERY export so a trap
 // (or a stack overflow) reinstantiates a fresh instance and surfaces as an ordinary Error
 // carrying the panic message (see `last_panic` in crates/lsdoc-wasm), never as a poisoned
-// instance. The rename keeps the generated bindings byte-identical underneath.
+// instance. A JS exception thrown from inside a call (an import that threw) poisons the instance
+// the same way, only slowly (og-wasm-enter-trap): it also gets a fresh instance, and keeps its own
+// identity for the caller. A Rust `Err` (a string, thrown after the call returned) does not.
+// The rename keeps the generated bindings byte-identical underneath.
 const exported = [...glue.matchAll(/^export function (\w+)\(/gm)].map((m) => m[1]).filter((n) => n !== "__tineReinstantiate");
 if (!exported.includes("last_panic")) {
   throw new Error("build-wasm: last_panic export missing from glue — crates/lsdoc-wasm lost its panic hook.");
@@ -141,19 +144,41 @@ if (!exported.includes("last_panic")) {
 for (const name of exported) glue = glue.replace(new RegExp(`^export function ${name}\\(`, "m"), `function __tine_raw_${name}(`);
 glue +=
   `
+let __tineCalls = 0; // calls on the current instance
+let __tineResets = 0; // fresh instances this session (traps and unwound exceptions)
+function __tineReset() {
+  __tineReinstantiate();
+  __tineCalls = 0;
+  __tineResets++;
+}
+// The shape of a trapping call, for its error message: types and lengths only (I-5: no page text).
+function __tineArgShape(args) {
+  return args.map((a) => (typeof a === 'string' ? 'string:' + a.length : a === null ? 'null' : typeof a)).join(', ');
+}
 function __tineGuard(name, raw) { // Tine trap isolation: one guarded export per wasm-bindgen export.
   return function (...args) {
+    __tineCalls++;
     try {
       return raw.apply(this, args);
     } catch (e) {
+      // A Rust \`Err\` is a string the glue throws after the call returned: the instance is intact.
+      if (typeof e === 'string') throw e;
       const trapped =
         (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
         (e instanceof RangeError && /call stack/i.test(String(e.message)));
-      if (!trapped) throw e;
+      if (!trapped) {
+        // Any other exception may have been thrown from inside the call (an import that threw), which
+        // skips the Rust epilogues: the shadow stack and externref slots it unwound stay leaked, and
+        // enough of them make a later, ordinary call trap. Start fresh; the caller keeps its error.
+        __tineReset();
+        throw e;
+      }
       let panic = '';
       try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
-      __tineReinstantiate();
-      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message), { cause: e });
+      const state = ' [instance: ' + (__tineCalls - 1) + ' calls, ' + __tineResets + ' resets, ' +
+        (wasm.memory.buffer.byteLength >>> 16) + ' pages; args ' + __tineArgShape(args) + ']';
+      __tineReset();
+      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message) + state, { cause: e });
     }
   };
 }

@@ -129,6 +129,8 @@ const suites = {
     ["custom-css", "scripts/e2e-custom-css.mjs", {}],
     ["find-replace", "scripts/e2e-find-replace.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
+    ["ime-blur-cm6", "scripts/e2e-ime-blur.mjs", { E2E_EDITOR: "cm6", E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
+    ["ime-blur-textarea", "scripts/e2e-ime-blur.mjs", { E2E_EDITOR: "textarea", E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
     ["native-titlebar", "scripts/e2e-native-titlebar.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["page-file-actions", "scripts/e2e-page-file-actions.mjs", {}],
     ["print-security", "scripts/e2e-print-security.mjs", {}],

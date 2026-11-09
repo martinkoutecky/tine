@@ -117,8 +117,12 @@ const windowState = () => ({
 });
 const waitForWindow = async (wanted, timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
-  let state = windowState();
-  while (Date.now() < deadline) {
+  let state;
+  // Always look at least once: reading the state spawns xdotool several times,
+  // which on a busy host can outlast a short timeout, and a loop guarded by the
+  // clock alone then reports "never received focus" without ever checking the
+  // state it prints (it printed the focused window).
+  do {
     state = windowState();
     if (matchesWindowName(state.active.name, wanted)) return state;
     // Openbox under GitHub's nested Xvfb occasionally leaves
@@ -130,7 +134,7 @@ const waitForWindow = async (wanted, timeoutMs) => {
       return state;
     }
     await sleep(50);
-  }
+  } while (Date.now() < deadline);
   throw new Error(`${wanted} never received native focus; state=${JSON.stringify(state)} windows=${JSON.stringify(namedWindows(wanted))}`);
 };
 const waitForForwarderExit = (child, timeoutMs) => new Promise((resolve, reject) => {
@@ -578,6 +582,73 @@ try {
   await browser.keys(["Backspace"]);
   await expectWorkflow(["TODO", "DOING"]);
   console.log("PASS: capture uses both workflows after Settings changes, reopen and process restart");
+
+  // UI-OG-L9-18-IME-BLUR-ABANDONED in Quick Capture, in the real webview. A real
+  // IME cannot be driven on Xvfb: the composition events below are synthetic
+  // (compositionstart, a composing beforeinput, the preedit text, compositionupdate,
+  // a composing input) and no compositionend ever follows. The focus loss is real:
+  // another window takes native X11 focus, so Quick Capture dismisses itself (it
+  // keeps the draft). Reopened, ordinary typing and File capture must still work.
+  const CANCELLED = "ime-abandon-ok";
+  const PREEDIT = "việt"; // as a Telex IME composes it (the host has no CJK font for the screenshots)
+  const AFTER = "xyz";
+  const captureVisible = () => {
+    try { return xdo("search", "--onlyvisible", "--name", "Quick Capture").length > 0; } catch { return false; }
+  };
+  const mainWindowId = namedWindows("Tine").find(window => matchesWindowName(window.name ?? "", "Tine"))?.id;
+  if (!mainWindowId) throw new Error(`no main window to take focus: ${JSON.stringify(namedWindows("Tine"))}`);
+  await browser.switchToWindow(restartedCapture);
+  // The earlier restart stage left its "did not close cleanly" notice over the
+  // text; close it so the screenshots below show the whole line.
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast").forEach(toast => {
+    if (toast.textContent?.includes("did not close cleanly")) toast.querySelector(".toast-close")?.click();
+  }));
+  await expectAutocompleteValue("", "the capture editor was not empty before the cancelled composition");
+  for (const key of CANCELLED) await browser.keys([key]);
+  await expectAutocompleteValue(CANCELLED, "Quick Capture did not take the text typed before the composition");
+  const inserted = await browser.execute((preedit) => {
+    const el = document.activeElement;
+    // Evidence for the receipt: which DOM focus events the webview delivers
+    // when another window takes native focus.
+    window.__imeFocusLog = [];
+    for (const type of ["focusin", "focusout", "blur", "focus", "visibilitychange"]) {
+      (type === "visibilitychange" ? document : window).addEventListener(type, (event) => {
+        window.__imeFocusLog.push(`${type}:${event.target?.tagName ?? event.target?.nodeName ?? "?"}:hasFocus=${document.hasFocus()}`);
+      }, true);
+    }
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+    el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertCompositionText", data: preedit, isComposing: true }));
+    const done = document.execCommand("insertText", false, preedit);
+    el.dispatchEvent(new CompositionEvent("compositionupdate", { bubbles: true, data: preedit }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", data: preedit, isComposing: true }));
+    return done;
+  }, PREEDIT);
+  if (!inserted) throw new Error("the webview did not support composition DOM insertion");
+  await expectAutocompleteValue(`${CANCELLED}${PREEDIT}`, "the preedit is not in the capture editor");
+  await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-ime-1-preedit.png"));
+  // The user switches to another window. No compositionend is sent.
+  xdo("windowactivate", mainWindowId);
+  await waitForWindow("Tine", 10_000);
+  const hideDeadline = Date.now() + 10_000;
+  while (captureVisible() && Date.now() < hideDeadline) await sleep(50);
+  if (captureVisible()) throw new Error("Quick Capture stayed visible after another window took native focus");
+  const imeReopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(imeReopen, 5_000);
+  imeReopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(restartedCapture);
+  await expectAutocompleteValue(`${CANCELLED}${PREEDIT}`, "the draft was not kept when Quick Capture was dismissed mid-composition");
+  console.log(`INFO: DOM focus events seen across the native dismissal: ${JSON.stringify(await browser.execute(() => window.__imeFocusLog ?? null))}`);
+  for (const key of AFTER) await browser.keys([key]);
+  await expectAutocompleteValue(`${CANCELLED}${PREEDIT}${AFTER}`, "ordinary typing after the cancelled composition did not reach Quick Capture");
+  await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-ime-2-reopened-typed.png"));
+  await browser.keys(["Control", "Shift", "Enter"]);
+  const filed = await waitForFileText(journalPath, text => text.includes(`${CANCELLED}${PREEDIT}${AFTER}`)).catch(async (error) => {
+    const page = await browser.execute(() => document.body.innerText).catch(() => "?");
+    throw new Error(`${error.message}; capture window text: ${JSON.stringify(page)}`);
+  });
+  if (filed.split(CANCELLED).length !== 2) throw new Error("the capture after a cancelled composition was filed more than once");
+  console.log("PASS: Quick Capture filed its text after a composition cancelled by losing native focus (synthetic composition events, real focus loss)");
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(ARTIFACT_DIR, "failure.png")); } catch {}
