@@ -1352,15 +1352,15 @@ impl Store {
         self.changes.close();
     }
 
-    /// Poison the writer lock, as a writer that panicked while holding it does.
+    /// Poison the writer lock, as a writer that panicked while holding it does
+    /// (on the calling thread: a panic unwinding past the guard poisons it).
     #[cfg(any(test, feature = "test-faults"))]
     pub fn poison_writer_for_tests(&self) {
-        let writer = Arc::clone(&self.writer);
-        let _ = std::thread::spawn(move || {
-            let _held = writer.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = self.writer.lock().unwrap_or_else(|e| e.into_inner());
             panic!("test writer panicked while holding the writer lock");
-        })
-        .join();
+        }));
+        debug_assert!(self.writer.is_poisoned());
     }
 
     /// Start the sole app-wide change stream without replay. A second
