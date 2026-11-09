@@ -59,6 +59,8 @@ thread_local! {
     pub(super) static NARROW_BY_KEYS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Candidate pages handed to the row loop since the last reset.
     pub(super) static CANDIDATE_PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Fileless rows enumerated (`reference_only_pages`) since the last reset.
+    pub(super) static FILELESS_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) struct Candidates<'a> {
@@ -156,14 +158,19 @@ impl<'a> Candidates<'a> {
             .and_then(|needs| select(graph, pages, needs, index.as_deref()));
         let index = index.or_else(|| selected.is_none().then(|| graph.query_index()));
         let (selected, names) = selected.unzip();
-        let reference_only = if plan.anchor == Anchor::Page {
+        // A fileless row has no properties, so it meets only a name need. A
+        // narrowing with no name need (property presence alone) leaves none of
+        // them a candidate: skip the walk of every referenced name.
+        let fileless_possible = names.as_ref().is_none_or(|names| !names.is_empty());
+        let reference_only = if plan.anchor == Anchor::Page && fileless_possible {
             let wanted: Option<std::collections::HashSet<&str>> = names
                 .as_ref()
                 .map(|names| names.iter().map(String::as_str).collect());
             let empty = Arc::new(Document::default());
-            graph
-                .reference_only_pages()
-                .into_iter()
+            let rows = graph.reference_only_pages();
+            #[cfg(test)]
+            FILELESS_ROWS.with(|count| count.set(count.get() + rows.len()));
+            rows.into_iter()
                 .filter(|answer| {
                     wanted
                         .as_ref()

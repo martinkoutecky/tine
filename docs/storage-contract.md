@@ -1963,7 +1963,24 @@ which still scan every page; so the export-definitions query
 (`tine.export`/`tine.share`) visits only the pages holding a definition. The
 answer equals the full scan's (`query/exec_key_tests.rs`). FORMAT 29 discards
 older checkpointed tables, which lacked the `tine.*` keys; the body schema is
-unchanged.
+unchanged. A page-anchored presence query builds no fileless rows: a page
+without a file has no properties, so only a name need keeps them.
+
+Unit cost (PC-7, I-25) of the `tine.*` keys in that table: one digest entry and
+one posting member per (page, `tine.*` key) pair, whatever the number of
+blocks on the page holding it (a 1-block and a 60-block page cost the same);
+about 49 B in the uncompressed checkpoint body, about 12 B compressed, and
+about 94 B retained (slot sizes plus key and path bytes; persistent-map nodes
+not counted). An edit adding or removing such a key changes one pair; it adds
+no file, and no transport bytes (the table never leaves the store). The
+checkpoint is still written whole, on its own cadence. Measured by
+`query/index_checkpoint.rs::tine_key_table_unit_cost` (ignored probe) on the
+realistic 10k generator (`scripts/generate-realistic-graph.mjs`, 7,000 pages,
+3,000 journals, seed 543, plus one Exports page). That graph has 2 pairs: 103 B
+encoded and 234 B retained, against a 2.34 MB encoded index and a 45.3 MB
+checkpoint file. With view settings (`tine.view`, `tine.columns`) added to
+1,000 pages the graph has 2,002 pairs: 98.8 kB encoded, 24.6 kB compressed
+and 188 kB retained (+0.07% of the 142 MB checkpoint body).
 
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;

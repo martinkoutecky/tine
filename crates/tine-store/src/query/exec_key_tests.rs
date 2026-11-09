@@ -8,9 +8,21 @@ use super::*;
 /// first block, Org drawer, Org `#+KEY:`, a journal), keys spelled with other
 /// case or `-`/`_`, and the unindexed keys (`id::`, `tine.type::`).
 fn open(unrelated: usize) -> (tempfile::TempDir, crate::Store) {
+    open_with(unrelated, 0)
+}
+
+/// [`open`] plus one page referencing `ghosts` pages that have no file
+/// (fileless rows of a page-anchored query).
+fn open_with(unrelated: usize, ghosts: usize) -> (tempfile::TempDir, crate::Store) {
     let dir = tempfile::tempdir().unwrap();
     for sub in ["pages", "journals"] {
         std::fs::create_dir(dir.path().join(sub)).unwrap();
+    }
+    if ghosts > 0 {
+        let refs: String = (0..ghosts)
+            .map(|n| format!("- see [[Ghost {n}]]\n"))
+            .collect();
+        std::fs::write(dir.path().join("pages/Refs.md"), refs).unwrap();
     }
     for n in 0..unrelated {
         std::fs::write(
@@ -202,6 +214,56 @@ fn export_definitions_visit_only_the_pages_holding_the_key() {
             .collect::<Vec<_>>(),
         [5 + 8, 50 + 8],
         "an unindexed key (`id::`) scans every page"
+    );
+}
+
+/// PC-1/PC-3: a page-anchored property-presence query enumerates no
+/// fileless rows (a page without a file has no properties), however many
+/// unrelated fileless references the graph holds, and answers as the scan.
+#[test]
+fn page_property_presence_enumerates_no_fileless_rows() {
+    let fileless = |graph: &ReadSnapshot, source: &str, dialect, narrow| {
+        candidates::FILELESS_ROWS.with(|count| count.set(0));
+        let (answer, _) = run(graph, source, dialect, narrow);
+        (answer, candidates::FILELESS_ROWS.with(|count| count.get()))
+    };
+    let mut enumerated = Vec::new();
+    for ghosts in [3, 30] {
+        let (_dir, store) = open_with(5, ghosts);
+        let whole = store.whole_graph().unwrap();
+        let graph: &ReadSnapshot = &whole.graph;
+        let mut counts = Vec::new();
+        for (source, dialect) in [
+            ("(page-property tine.export)", QueryDialect::Og),
+            ("(page-property tine.share)", QueryDialect::Og),
+            (
+                "@page and prop('tine.export') is not null",
+                QueryDialect::Tql,
+            ),
+        ] {
+            let (narrowed, rows) = fileless(graph, source, dialect, true);
+            let (scanned, _) = fileless(graph, source, dialect, false);
+            assert_eq!(narrowed, scanned, "{source}");
+            assert!(!narrowed.contains("Ghost"), "{source}: {narrowed}");
+            counts.push(rows);
+        }
+        // The counter is live: a page query without a necessary condition
+        // walks every fileless row.
+        let (_, all) = fileless(
+            graph,
+            "(not (page-property tine.export))",
+            QueryDialect::Og,
+            true,
+        );
+        assert!(all >= ghosts, "{all} fileless rows for {ghosts} ghosts");
+        enumerated.push(counts);
+        drop(whole);
+        store.close();
+    }
+    assert_eq!(
+        enumerated,
+        [[0, 0, 0], [0, 0, 0]],
+        "PC-1: property presence builds no fileless rows"
     );
 }
 

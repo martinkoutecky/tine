@@ -369,6 +369,12 @@
       "nonRequirements": ["Exact DOM nesting or palette; certification outside Linux WebKitGTK; full graph searching within Find; green-suite burn-in, which belongs to the manager."],
       "stability":"burn-in"
     },
+    "scripts/e2e-journal-edit-feed-kept.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART"}],
+      "acceptableVariations": ["Read, save, watcher and render latency; extra days loaded by infinite scroll while settling; the edited day moving by less than a quarter of the viewport."],
+      "nonRequirements": ["Exact pixels, DOM nesting or scroll offsets; day references and planning (Rust change-summary tests); external journal changes, which keep their own feed restart; certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-rn-cf-org-body.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"An unloaded uppercase-extension Org block's Note:: body remains visible in a routed Markdown page's bare block reference and in Foo's linked references, while the Org source remains byte-identical. Extending a bare running task retains one clock; completing it with its checkbox closes that clock in the saved file.","blocking":false,"authority":"RN-C/F; audits L3-04 and L3-07"}],
       "acceptableVariations": ["Rendering and inventory arrival latency; whitespace around inline links."],
