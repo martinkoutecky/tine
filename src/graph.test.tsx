@@ -230,6 +230,29 @@ it("keeps canonical graph identity and an open workspace when reopening the curr
   expect(workspaceVisible).toBe(true);
 });
 
+// UI-FEED-FIRST-CHANGE-RESTART: the open answer's published revision is the
+// window's change-summary baseline, so the session's first change summary is
+// read as a delta (a full one restarts a scrolled Journals feed).
+it("graph open takes the change-summary baseline from the open answer", async () => {
+  const harness = await loadHarness(null);
+  harness.api.loadGraph.mockResolvedValue({ kind: "loaded", meta: META, binding_generation: 1, published_rev: "41" });
+  await harness.loadGraphPath(META.root);
+  const { applyChangeSummary, changeSummary } = await import("./changeSummary");
+  const first = { rev: "42", full: false, pages: ["a"], blocks: [], linksTo: [], props: {}, inventoryChanged: false };
+  applyChangeSummary(first);
+  expect(changeSummary()).toEqual(first);
+  applyChangeSummary({ ...first, rev: "44" });
+  expect(changeSummary()?.full).toBe(true);
+});
+
+it("graph open without a published revision keeps the first summary full", async () => {
+  const harness = await loadHarness(null);
+  await harness.loadGraphPath(META.root);
+  const { applyChangeSummary, changeSummary } = await import("./changeSummary");
+  applyChangeSummary({ rev: "42", full: false, pages: ["a"], blocks: [], linksTo: [], props: {}, inventoryChanged: false });
+  expect(changeSummary()?.full).toBe(true);
+});
+
 // Ported from master graph.test.tsx "mobile graph folder picker" (027b5ae15,
 // fa78c7b74): iOS opens and creates graphs only inside the app's own
 // On My iPhone / iCloud Drive containers, prepared natively first.

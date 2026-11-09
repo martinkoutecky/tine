@@ -377,7 +377,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-journal-edit-feed-kept.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"After scrolling the Journals feed past its first page and editing an older journal's text, ending the edit keeps every loaded day loaded and the edited day where the reader left it; the feed shows and the file holds the edited body, with no feed restart, even when the edit is the session's first change.","blocking":true,"authority":"D-20261102-PERF; REG-COST-JOURNAL-EDIT-NO-FEED-RESTART; UI-FEED-FIRST-CHANGE-RESTART"}],
       "acceptableVariations": ["Read, save, watcher and render latency; extra days loaded by infinite scroll while settling; the edited day moving by less than a quarter of the viewport."],
       "nonRequirements": ["Exact pixels, DOM nesting or scroll offsets; day references and planning (Rust change-summary tests); external journal changes, which keep their own feed restart; certification outside Linux WebKitGTK."],
       "stability":"burn-in"

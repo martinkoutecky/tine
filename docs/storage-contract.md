@@ -1916,9 +1916,18 @@ index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own
 publication has no external page-reload entries: its answers arrive in an
 empty `graph-changed-bulk` envelope. External publications attach the answers
-once, on their first `graph-changed` entry or their bulk envelope. The frontend
-receiver also treats its first summary after binding and revision gaps as
-`full`, and ignores duplicate/older revisions. S3's shared key layer releases
+once, on their first `graph-changed` entry or their bulk envelope. The
+`load_graph` answer (`loaded` and `already_current`) carries `published_rev`:
+the last publication whose window events the binding's dispatch thread had
+emitted when the answer was made (`RescanCursor::emitted`, seeded with the
+subscription's `start_rev`; O(1), no extra IPC). Every later publication's
+summary follows on the event channel, and the window's readers fetch after the
+answer, so the frontend receiver takes it as its baseline at graph open (in
+the binding's new epoch) and reads the next consecutive summary as the delta
+it is (UI-FEED-FIRST-CHANGE-RESTART). Without a baseline (an older host, an
+epoch bump, a store reset) it treats its first summary as `full`; a revision
+gap (a summary missed) is always `full`, and duplicate/older revisions,
+including those at or below the baseline, are ignored. S3's shared key layer releases
 these invalidations at the existing publication/refresh-hold boundary; result
 retention is unchanged. Legacy summaries lacking S2 fields conservatively
 refresh their reader families. No new state is persisted or save path changed.
