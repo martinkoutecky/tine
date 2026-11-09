@@ -45,14 +45,10 @@ pub(super) fn execute_blocks(
         if cancelled() {
             return None;
         }
+        let sort = friendly_sort_fields(plan.block_view.as_ref());
+        let ascending: Vec<bool> = sort.iter().map(|(_, asc)| *asc).collect();
         let mut heap = BinaryHeap::new();
         let mut has_more = false;
-        let sort = friendly_sort_fields(plan.block_view.as_ref());
-        let selection_limit = if sort.is_empty() {
-            branch.limit
-        } else {
-            usize::MAX
-        };
         let mut index = 0usize;
         for (page_index, (entry, doc)) in pages.iter().enumerate() {
             if cancelled() {
@@ -79,27 +75,25 @@ pub(super) fn execute_blocks(
                     if let Some(relevance) =
                         block_relevance(plan, &branch.predicate, &text.original, &text.folded)
                     {
-                        has_more |= heap.len() >= selection_limit;
-                        let retain = heap.len() < selection_limit
-                            || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
-                                relevance.cmp_quality(&worst.relevance) == Ordering::Greater
-                                    || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
-                                        && (entry.rel_path_str(), candidate_index)
-                                            < (worst.page.rel_path_str(), worst.index))
-                            });
-                        if retain {
-                            push_block(
-                                &mut heap,
-                                selection_limit,
-                                ScoredBlock {
-                                    relevance,
-                                    index: candidate_index,
-                                    page: entry,
-                                    block,
-                                    ancestors: path.to_vec(),
-                                },
-                            );
-                        }
+                        has_more |= heap.len() >= branch.limit;
+                        // The key is read from the candidate, so every match
+                        // pays for it; only a kept one is retained.
+                        let keys = sort
+                            .iter()
+                            .map(|(field, _)| {
+                                crate::query::exec::block_sort_decor(field, entry, block, || 0)
+                            })
+                            .collect();
+                        let candidate = ScoredBlock {
+                            relevance,
+                            index: candidate_index,
+                            page: entry,
+                            block,
+                            keys,
+                            ascending: &ascending,
+                            ancestors: Vec::new(),
+                        };
+                        push_block(&mut heap, branch.limit, candidate, path);
                     }
                     true
                 });
@@ -108,44 +102,7 @@ pub(super) fn execute_blocks(
                 return None;
             }
         }
-        let mut winners = heap.into_vec();
-        if sort.is_empty() {
-            winners.sort_by(|a, b| {
-                b.relevance.cmp_quality(&a.relevance).then_with(|| {
-                    (a.page.rel_path_str(), a.index).cmp(&(b.page.rel_path_str(), b.index))
-                })
-            });
-        } else {
-            let ascending: Vec<bool> = sort.iter().map(|(_, asc)| *asc).collect();
-            let mut decorated: Vec<_> = winners
-                .into_iter()
-                .map(|winner| {
-                    let keys = sort
-                        .iter()
-                        .map(|(field, _)| {
-                            crate::query::exec::block_sort_decor(
-                                field,
-                                winner.page,
-                                winner.block,
-                                || 0,
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    (keys, winner)
-                })
-                .collect();
-            decorated.sort_by(|a, b| {
-                tine_core::query::sort::compare_sort_decorations(&a.0, &b.0, &ascending).then_with(
-                    || {
-                        (a.1.page.rel_path_str(), a.1.index)
-                            .cmp(&(b.1.page.rel_path_str(), b.1.index))
-                    },
-                )
-            });
-            winners = decorated.into_iter().map(|(_, winner)| winner).collect();
-            has_more = winners.len() > branch.limit;
-            winners.truncate(branch.limit);
-        }
+        let winners = heap.into_sorted_vec();
         Some((
             winners
                 .into_iter()

@@ -195,3 +195,17 @@ it("A1: a refused old binding keeps text on Esc and files next in the current bi
   expect(next).toMatchObject({ bindingGeneration: 19 });
   await ack(next.id, { ok: true });
 });
+
+it("L9-18: focus leaving a composing field ends the composition, so File capture is not refused for good", async () => {
+  setRaw(roots()[0], "typed before the IME was cancelled");
+  const title = document.querySelector<HTMLInputElement>(".capture-title")!;
+  title.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+  const filed = h.requests.length;
+  h.api!.submit();
+  await Promise.resolve();
+  expect(h.requests.length).toBe(filed); // refused while a composition is open
+  title.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); // cancelled by blur: no compositionend
+  const request = await submit();
+  expect(request.text).toContain("typed before the IME was cancelled");
+  await ack(request.id, { ok: true });
+});

@@ -372,6 +372,10 @@ function Capture() {
   let scratchRevision = 0;
   let composing = false;
   let afterComposition: (() => void) | undefined;
+  const endComposition = () => {
+    composing = false;
+    queueMicrotask(() => { const consume = afterComposition; afterComposition = undefined; consume?.(); });
+  };
   const scratchNodes = (): Array<{ id: string; raw: string }> => {
     const nodes: Array<{ id: string; raw: string }> = [];
     const visit = (id: string) => {
@@ -713,10 +717,9 @@ function Capture() {
   return (
     <CaptureCtx.Provider value={captureApi}>
       <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { composing = true; scratchRevision++; }}
-        onCompositionEnd={() => {
-          composing = false;
-          queueMicrotask(() => { const consume = afterComposition; afterComposition = undefined; consume?.(); });
-        }}>
+        onCompositionEnd={endComposition}
+        // An IME cancelled by focus loss may send no compositionend (L9-18).
+        onFocusOut={() => { if (composing) endComposition(); }}>
         <Show when={ready()}>
           {/* Optional page title. Filled → the capture becomes a NEW page; empty →
               appended to today. Plain Enter drops into the bullet; the submit

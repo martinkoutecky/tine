@@ -113,6 +113,18 @@ impl PageHost {
     /// which would read as owing nothing). `Pending` at `bound`, also when
     /// the driver did not answer by then: never success at a bound (S1);
     /// the window asks again.
+    ///
+    /// `bound` is not the call's length (L2-06). It limits each of two
+    /// driver waits separately: the barrier wait, then, once the pages are
+    /// published, the final liveness read, which starts a fresh `bound`. The
+    /// witnesses are parsed between the two, on this thread and inside
+    /// neither, and a wait the driver is mid-ask on at its deadline gets
+    /// `ASK_GRACE` more. So the call can take longer than `bound`: a caller
+    /// that budgets time for it (the adapter's slot lock) counts both waits
+    /// and the parse. `Pending` at the barrier's bound is held by
+    /// `q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk`. No test
+    /// holds the liveness read's own `bound`: that needs a driver stall
+    /// between the two waits, a seam this does not add.
     pub fn wait_published(
         &self,
         session: u64,
@@ -159,8 +171,8 @@ impl PageHost {
                     let live = move |state: &State<ProductionIo, SystemClock>| {
                         state.book.session == session && state.progress.host.alive
                     };
-                    // Bounded too: a liveness check the driver does not
-                    // answer within one more `bound` is pending.
+                    // A second, fresh `bound` (see the doc): a liveness check
+                    // the driver does not answer within it is pending.
                     let by = Deadline::At(std::time::Instant::now() + bound);
                     return match self.driver.shared.read_by(by, live) {
                         Ok(true) => PageOperation::Applied,

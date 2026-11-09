@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
 - Scrolling the Journals feed loads each next set of days from a bounded slice of the day index instead of re-sorting every journal day, with the same days, referenced-only days and order (REG-JOURNAL-STEP-WINDOW).
 - Printed and published pages list a `{{namespace X}}` macro's pages by page identity, as the live macro and Logseq do, so `project/y` appears under `{{namespace Project}}`; printing such a page no longer copies or sorts the whole graph (REG-PRINT-NAMESPACE-COST).
@@ -20,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- An IME composition cancelled by losing focus (the window switched away, a picker took focus) no longer leaves the editor, or Quick Capture's File capture, ignoring what you type next (internal: UI-OG-L9-18-IME-BLUR-ABANDONED; OG audit L9-18).
+- Copying a large image or text through a Linux clipboard tool no longer pauses 5 ms each time the pipe fills, so a big copy to a tool that reads promptly finishes in a fraction of the time; a tool that stops reading is still given up on after the same stall (internal: REG-OG-RF1-CLIPBOARD-POLL; OG audit R-F1).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).

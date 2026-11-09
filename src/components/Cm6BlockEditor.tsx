@@ -301,6 +301,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           focus: () => { noteSurfaceFocused(props.surface); registerCommandBridge(); return false; },
           blur: (event, v) => {
             clipboard.dispose();
+            // An IME cancelled by blur may send no compositionend, and CM never clears its own composing flag
+            // without one: end the preedit as the IME would, so the next ordinary edit is not swallowed (L9-18).
+            if (typing.active() && !typing.settling()) v.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
             const intentIsCurrent = captureEditIntent();
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
