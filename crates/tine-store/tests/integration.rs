@@ -301,6 +301,9 @@ mod scan_area;
 #[path = "shallow_ratchet.rs"]
 mod shallow_ratchet;
 
+#[path = "sorted_search_budget.rs"]
+mod sorted_search_budget;
+
 #[path = "whole_graph.rs"]
 mod whole_graph;
 

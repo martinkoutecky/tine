@@ -561,6 +561,14 @@ impl QueryIndex {
         })
     }
 
+    /// How many pages [`Self::pages_with_key`] lists for `normalized`,
+    /// without walking them; `None` when the key is not an [`indexed_key`].
+    /// O(log keys).
+    pub(crate) fn key_holders(&self, normalized: &str) -> Option<usize> {
+        indexed_key(normalized, &self.parse_config)
+            .then(|| self.key_pages.get(normalized).map_or(0, |set| set.len()))
+    }
+
     /// The property registry of this generation, built (or patched from the
     /// inherited one) on first use.
     pub(crate) fn registry(&self, pages: &Pages) -> Arc<Registry> {

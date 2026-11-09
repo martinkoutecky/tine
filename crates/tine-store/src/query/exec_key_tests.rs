@@ -267,11 +267,122 @@ fn page_property_presence_enumerates_no_fileless_rows() {
     );
 }
 
+/// PC-1/PC-4: a conjunction narrows by its tightest constraint, never by the
+/// evaluation order `cheapest_first` gives it. A property conjunct (indexed
+/// `status::` on every unrelated page, or unindexed `id::`) beside a page
+/// constraint, plain or an OR of page-anchored branches, in either order,
+/// visits only the named pages; a rare key beside a wide OR visits only its
+/// holders. Every answer equals the full scan.
+#[test]
+fn conjunction_narrows_by_its_tightest_constraint() {
+    const COMPOUND: &str = r#"(or (and (page "U1") "unrelated") (and (page "U2") "more"))"#;
+    // (query, dialect, candidate pages, a page the answer holds)
+    let cases: [(String, QueryDialect, usize, &str); 11] = [
+        (
+            format!("(and (property id) {COMPOUND})"),
+            QueryDialect::Og,
+            2,
+            "U1",
+        ),
+        (
+            format!("(and {COMPOUND} (property id))"),
+            QueryDialect::Og,
+            2,
+            "U1",
+        ),
+        (
+            format!("(and (property status) {COMPOUND})"),
+            QueryDialect::Og,
+            2,
+            "U1",
+        ),
+        (
+            format!("(and {COMPOUND} (property status))"),
+            QueryDialect::Og,
+            2,
+            "U1",
+        ),
+        (
+            r#"(and (property status) (page "U1"))"#.into(),
+            QueryDialect::Og,
+            1,
+            "U1",
+        ),
+        (
+            r#"(and (page "U1") (property status))"#.into(),
+            QueryDialect::Og,
+            1,
+            "U1",
+        ),
+        (
+            r#"(and (property id) (page "U1"))"#.into(),
+            QueryDialect::Og,
+            1,
+            "U1",
+        ),
+        // Page-anchored: the unindexed `tine.type::` and the indexed
+        // `tine.export::` (four holders) beside two names.
+        (
+            "@page and prop('tine.type') is not null and (name = 'Typed' or name = 'U1')".into(),
+            QueryDialect::Tql,
+            2,
+            "Typed",
+        ),
+        (
+            "@page and (name = 'Typed' or name = 'U1') and prop('tine.type') is not null".into(),
+            QueryDialect::Tql,
+            2,
+            "Typed",
+        ),
+        (
+            "@page and prop('tine.export') is not null and (name = 'Header' or name = 'U1')".into(),
+            QueryDialect::Tql,
+            2,
+            "Header",
+        ),
+        // The key is the tighter constraint: its one holder, not the OR's 3.
+        (
+            r#"(and (or (page "U1") (page "U2") (page "Spelled")) (property due-date))"#.into(),
+            QueryDialect::Og,
+            1,
+            "Spelled",
+        ),
+    ];
+    let mut counts = Vec::new();
+    for unrelated in [5, 50] {
+        let (_dir, store) = open_with(unrelated, 3);
+        let whole = store.whole_graph().unwrap();
+        let graph: &ReadSnapshot = &whole.graph;
+        let mut row = Vec::new();
+        for (source, dialect, _, holds) in &cases {
+            candidates::FILELESS_ROWS.with(|count| count.set(0));
+            let (narrowed, visited) = run(graph, source, *dialect, true);
+            let fileless = candidates::FILELESS_ROWS.with(|count| count.get());
+            let (scanned, _) = run(graph, source, *dialect, false);
+            assert_eq!(narrowed, scanned, "{source}");
+            assert!(narrowed.contains(holds), "{source}: {narrowed}");
+            row.push((visited, fileless));
+        }
+        counts.push(row);
+        drop(whole);
+        store.close();
+    }
+    // A fileless row holds no property: a property conjunct walks none.
+    let expected: Vec<(usize, usize)> =
+        cases.iter().map(|(_, _, visits, _)| (*visits, 0)).collect();
+    assert_eq!(
+        counts,
+        [expected.clone(), expected],
+        "PC-1: a conjunction visits its tightest constraint's pages, (pages, fileless rows) per case"
+    );
+}
+
 /// Timing probe for the receipt. Ignored: `TINE_KEY_PROBE_ROOT=<copy of a
-/// generated 10k graph>` (`TINE_KEY_PROBE_ROUNDS`, default 7), `--release`,
-/// run alone. Prints the median wall time of the export-definitions query
-/// scanning every page (the path before narrowing) and narrowed, rounds
-/// interleaved, with the candidate pages of each.
+/// generated 10k graph>` (`TINE_KEY_PROBE_ROUNDS`, default 7;
+/// `TINE_KEY_PROBE_QUERY`, an OG query, default the export definitions),
+/// `--release`, run alone. Prints the median wall time of the query scanning
+/// every page (the path before narrowing) and narrowed, rounds interleaved,
+/// with the candidate pages of each.
 #[test]
 #[ignore]
 fn definitions_query_at_scale() {
@@ -283,7 +394,8 @@ fn definitions_query_at_scale() {
     let store = crate::Store::open(&root, Default::default()).unwrap().0;
     let whole = store.whole_graph().unwrap();
     let graph: &ReadSnapshot = &whole.graph;
-    let source = tine_core::export_definition::definitions_query();
+    let source = std::env::var("TINE_KEY_PROBE_QUERY")
+        .unwrap_or_else(|_| tine_core::export_definition::definitions_query());
     let (first, _) = run(graph, &source, QueryDialect::Og, true);
     let (mut scan, mut narrow) = (Vec::new(), Vec::new());
     let mut visited = (0, 0);
