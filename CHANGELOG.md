@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (REG-AUDIT1109-FLIGHT-LOCK-ANDROID).
 - If the page host fails with an internal error while publishing a save, the graph's other writes continue, its open pages go back to file watching, and closing the graph no longer crashes Tine (REG-AUDIT1109-DRIVER-PANIC-WRITER).
+- After such a page host failure, closing its window now finishes closing the graph: Tine can quit, the command line can use the graph again, and reopening it starts a working page host that recovers any crash-recovery copies (REG-AUDIT1109-RETIRE-ENDED-HOST).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).

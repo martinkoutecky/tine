@@ -1096,7 +1096,18 @@ ended, the host is down or its state is poisoned. A down host dropped its
 pages, which would otherwise read as owing nothing. A driver that ends on a panic (a host bug) releases the store writer before
 unwinding and the host's drop hands its pages back to the watcher, so the
 Store's other writers and `Store::close` go on (s3b O6; proof
-`binding_tests.rs` `a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable`). Proofs
+`binding_tests.rs` `a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable`).
+Retiring such a host is terminal on every stop path (window close, graph
+switch, overlap release, app exit, `tine serve`): its stop answers `Ended`,
+`PageHost::stop_finish` joins it and hands its pages back to the watcher, its
+drafts stay on disk for the next host's recovery, and the Store closes, the
+slot leaves the retirement and the owner lease is released, even when the
+close panics. A reopen never adopts it: it ends that retirement itself and
+starts a fresh host. A restore's stop over it aborts. Proofs
+`host_retirement.rs` `r1_a_window_closed_after_a_driver_panic_retires_its_host_for_good`,
+`r1_a_reopen_never_adopts_a_host_whose_driver_ended`,
+`r1_a_graph_switch_after_a_driver_panic_retires_the_old_host_for_good` and
+`binding_tests.rs` `an_ended_host_retires_for_good_and_hands_its_pages_back`. Proofs
 `src/document/host/client.test.ts` "keeps a page open while a version the host
 took from it is unpublished (J6)", "lets go when the session ends (J6)", the
 B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`
