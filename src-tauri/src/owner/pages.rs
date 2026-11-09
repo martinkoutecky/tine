@@ -6,7 +6,7 @@ use tine_core::block_regions::{self, Edit};
 use tine_core::model::{Format, PageDto};
 use tine_store::{EditKind, HostReadError, PageId, PageOperation, Resolved};
 
-use super::verbs::{parse, resolve_write_page, whole_graph, write_claimant};
+use super::verbs::{parse, resolve_write_page, whole_graph, write_claimant, Named};
 use super::wire::{ok, ErrorBody};
 use super::write::{self, apply_refused, host_failed, refused, store_refused, Planned};
 use crate::state::GraphSlot;
@@ -31,32 +31,36 @@ fn name_valid(name: &str) -> Result<(), ErrorBody> {
 /// Unlike a read's preferred claimant, a mutation must not choose among twins
 /// (`verbs::write_claimant`, CLI-DUPNAME).
 fn unique_page(slot: &GraphSlot, name: &str) -> Result<PageId, ErrorBody> {
-    resolve_write_page(&whole_graph(slot)?, name)
+    resolve_write_page(slot, &whole_graph(slot)?, name)
 }
 
 /// A rename can also start from a reference-only name or fileless namespace.
 fn unique_source(slot: &GraphSlot, name: &str) -> Result<Option<PageId>, ErrorBody> {
-    write_claimant(&whole_graph(slot)?, name)
+    write_claimant(slot, &whole_graph(slot)?, name)
 }
 
 pub(super) fn create_named_page(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     let args: PageArgs = parse(args)?;
     name_valid(&args.name)?;
-    let graph = whole_graph(slot)?;
-    let Resolved::Absent { id } = graph.resolve(args.name.trim(), false) else {
+    // Created under the whole graph's turn, in which the name is resolved again:
+    // of two spellings of one new page the second finds the first (`page-exists`).
+    let (Named::New(id), Some(turn)) =
+        write::creation_turn(slot, &mut whole_graph(slot)?, args.name.trim())?
+    else {
         return Err(refused(
             "page-exists",
             None,
             "a page or alias already owns this name; nothing changed",
         ));
     };
-    write::write_page_with_create(
+    write::write_page_in_turn(
         slot,
+        turn,
         &id,
         EditKind::CreatePage,
         args.rev.as_deref(),
         true,
-        |doc, _| {
+        |doc, _, _, _| {
             Ok(Planned {
                 doc: doc.clone(),
                 changed: vec![],
@@ -263,13 +267,16 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
     // This inventory check proves an occupied destination refusal before
     // entering the shared operation. Errors from that operation alone do not
     // establish whether it already published files.
+    // The holder is the rename planner's own answer, so a journal holds
+    // every spelling of its day here as in the app's dialog (M-Q7).
     let graph = whole_graph(slot)?;
-    let occupied = match graph.resolve(new, false) {
-        Resolved::Existing { id, others } => page.as_ref() != Some(&id) || !others.is_empty(),
-        Resolved::Alias { owners } => owners.iter().any(|id| page.as_ref() != Some(id)),
-        Resolved::Absent { .. } => false,
-    };
-    if occupied {
+    let holders = tine_graph_features::pages::rename_destination_holders(
+        &slot.store,
+        &graph,
+        new,
+        page.as_ref(),
+    );
+    if !holders.is_empty() {
         return Err(refused(
             "page-exists",
             page.as_ref(),

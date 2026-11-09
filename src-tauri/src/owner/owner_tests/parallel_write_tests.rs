@@ -9,16 +9,16 @@ use serde_json::{json, Value};
 use super::super::client::Failure;
 use super::{block_handle, verb, Graph};
 
-const WRITERS: usize = 6;
-const ROUNDS: usize = 12;
+pub(super) const WRITERS: usize = 6;
+pub(super) const ROUNDS: usize = 12;
 
-fn disk(graph: &Graph, path: &str) -> String {
+pub(super) fn disk(graph: &Graph, path: &str) -> String {
     std::fs::read_to_string(graph.root.join(path)).unwrap()
 }
 
 /// One verb per argument set, released together, each on its own connection
 /// as separate `tine` processes are.
-fn at_once(graph: &Graph, verb: &str, args: &[Value]) -> Vec<Result<Value, Failure>> {
+pub(super) fn at_once(graph: &Graph, verb: &str, args: &[Value]) -> Vec<Result<Value, Failure>> {
     let start = Barrier::new(args.len());
     std::thread::scope(|scope| {
         let threads: Vec<_> = args
@@ -36,12 +36,12 @@ fn at_once(graph: &Graph, verb: &str, args: &[Value]) -> Vec<Result<Value, Failu
     })
 }
 
-fn all_landed(results: &[Result<Value, Failure>], what: &str) {
+pub(super) fn all_landed(results: &[Result<Value, Failure>], what: &str) {
     let failed: Vec<_> = results.iter().filter(|r| r.is_err()).collect();
     assert!(failed.is_empty(), "{what}: {failed:?}");
 }
 
-fn failure_code(result: &Result<Value, Failure>) -> &str {
+pub(super) fn failure_code(result: &Result<Value, Failure>) -> &str {
     match result {
         Err(Failure::Owner(body)) => &body.code,
         other => panic!("expected an owner error, got {other:?}"),
