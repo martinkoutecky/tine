@@ -11,6 +11,7 @@ import {
   numberValue,
   parseDurationValue,
   textValue,
+  wallClockAsCalendarDate,
   type FormulaDateValue,
   type FormulaDurationValue,
   type FormulaErrorValue,
@@ -26,9 +27,13 @@ export type FormulaClock = Date | (() => Date);
 export interface FormulaEvalContext {
   field(name: string): FormulaValue;
   formulaAst(name: string): Ast | null;
+  /** The clock as an instant whose LOCAL getters are the user's wall clock, as
+   *  `appNow()` returns it (or a thunk returning one). `evaluate` converts it once
+   *  (`wallClockAsCalendarDate`). */
   now: FormulaClock;
 }
 
+/** `now()` here is already in the calendar frame: UTC getters read the wall clock. */
 interface EvaluationContext extends Omit<FormulaEvalContext, "now"> {
   memo: Map<string, FormulaValue>;
   now(): Date;
@@ -543,8 +548,10 @@ function evalAstValue(ast: Ast, ctx: EvaluationContext, visited: readonly string
  * long left-associative chains use an iterative walk, while excessive formula
  * or reference nesting returns a FormulaErrorValue. Callers need no stack budget. */
 export function evaluate(ast: Ast, ctx: FormulaEvalContext): FormulaValue {
+  // The one place the clock enters the evaluator: read lazily (so only cells that
+  // read the date depend on the day signal), converted once to the calendar frame.
   const clock = ctx.now;
   let read: Date | undefined;
-  const now = typeof clock === "function" ? () => (read ??= clock()) : () => clock;
+  const now = () => (read ??= wallClockAsCalendarDate(typeof clock === "function" ? clock() : clock));
   return evalAst(ast, { field: ctx.field, formulaAst: ctx.formulaAst, now, memo: new Map() }, []);
 }
