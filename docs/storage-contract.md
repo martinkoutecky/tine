@@ -1948,6 +1948,18 @@ same evaluator and page-fact producer. OR and negation remain conservative;
 property coercions and used-as-tag retain their global facts. This changes no
 stored index, cache, checkpoint format, query membership or save protocol.
 
+A property presence (`(property k)`, `(page-property k)`, TQL `prop('k') is not
+null`, any `any`/`every` over `k`'s atoms) narrows the scanned pages the same
+way, to the pages the generation's query index lists for `k` (its key -> pages
+table, patched per edit; normalized key, so case and `-`/`_` spellings meet).
+The table holds every property key except the `tine.type` declaration and the
+built-in and configured hidden keys outside `tine.` (`id::`, `collapsed::`),
+which still scan every page; so the export-definitions query
+(`tine.export`/`tine.share`) visits only the pages holding a definition. The
+answer equals the full scan's (`query/exec_key_tests.rs`). FORMAT 29 discards
+older checkpointed tables, which lacked the `tine.*` keys; the body schema is
+unchanged.
+
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;
 the reviewer traces the path and records the scenario here before accepting it.
