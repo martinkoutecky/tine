@@ -665,6 +665,106 @@
     ],
     "queries": [
       {
+        "argument": "(page-property type note)",
+        "context": {
+          "current_page": "Dashboard"
+        },
+        "dialect": "macro_query",
+        "executed_context": {
+          "current_page": "Dashboard"
+        },
+        "host": "Dashboard",
+        "parsed": {
+          "query": {
+            "anchor": "page",
+            "diagnostics": [],
+            "filter": {
+              "kind": "leaf",
+              "leaf": {
+                "kind": "rel",
+                "pred": {
+                  "items": [
+                    {
+                      "kind": "leaf",
+                      "leaf": {
+                        "attr": "key",
+                        "kind": "attr",
+                        "op": "eq",
+                        "value": {
+                          "kind": "text",
+                          "text": "type"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "leaf",
+                      "leaf": {
+                        "attr": "value",
+                        "kind": "attr",
+                        "op": "eq",
+                        "value": {
+                          "kind": "text",
+                          "text": "note"
+                        }
+                      }
+                    }
+                  ],
+                  "kind": "and"
+                },
+                "quant": "any",
+                "rel": "props"
+              }
+            },
+            "source": {
+              "kind": "og",
+              "og_options": "",
+              "original": "(page-property type note)"
+            }
+          },
+          "view": {
+            "aggregates": [],
+            "columns": [],
+            "sort": []
+          }
+        },
+        "properties": [],
+        "result": {
+          "anchor": "page",
+          "diagnostics": [],
+          "exceeded": false,
+          "matched_total": 1,
+          "pages": [
+            {
+              "kind": "page",
+              "name": "Notes ü",
+              "path": "pages/Notes ü.md",
+              "properties": [
+                [
+                  "type",
+                  "note"
+                ],
+                [
+                  "related",
+                  "[[Project]]"
+                ]
+              ]
+            }
+          ],
+          "report": {
+            "ignored": [],
+            "ran": [],
+            "supported": true
+          },
+          "total": 1
+        },
+        "view": {
+          "aggregates": [],
+          "columns": [],
+          "sort": [],
+          "view": "list"
+        }
+      },
+      {
         "argument": "(task TODO)",
         "context": {
           "current_page": "Dashboard"
