@@ -48,8 +48,10 @@ function skewFor(clock: BackendClock): number {
   }
 }
 
-export function appNow(): Date {
-  return new Date(Date.now() + zoneSkewMs);
+/** Calendar callers use corrected local getters. Persisted UTC instants must
+ * use the unshifted clock: a zone-rule correction is not elapsed time. */
+export function appNow(clock: "calendar" | "instant" = "calendar"): Date {
+  return new Date(Date.now() + (clock === "calendar" ? zoneSkewMs : 0));
 }
 
 /** Adopt a fresh backend clock sample and re-derive the reactive day key. The

@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
-import { blockRegions, initParser } from "../render/parse";
+import { blockRegions, initParser, editBlock } from "../render/parse";
 import { node as docNode, resetStore, setRaw, undo } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { pageByName } from "../document/model";
@@ -34,7 +34,7 @@ function page(blocks: BlockDto[]): PageDto {
   return { name: PAGE, kind: "page", title: PAGE, pre_block: null, blocks };
 }
 
-function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): { root: HTMLDivElement; dispose: () => void } {
+function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): { root: HTMLElement; dispose: () => void } {
   loadSingle({ ...page(blocks), format });
   if (edit) startEditing(edit, 0);
   const root = document.createElement("div");
@@ -42,7 +42,9 @@ function mount(blocks: BlockDto[], edit?: string, format: "md" | "org" = "md"): 
   const dispose = render((): JSX.Element => (
     <For each={pageByName(PAGE)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  return { root, dispose };
+  // Existing card assertions now exercise the live popover reached by its chip.
+  if (!edit) root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return { root: document.body, dispose };
 }
 
 function ctrlR(ta: EditorDriver | HTMLTextAreaElement): KeyboardEvent {
@@ -113,18 +115,19 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
         return element!;
       });
       expect(root.querySelector(".margin-column")).toBeNull();
-      const card = zoom.querySelector('[data-block-id="c"]')!;
+      zoom.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      const card = document.querySelector('[data-block-id="c"]')!;
       expect(card.textContent).toContain("My view");
       expect(card.textContent).toContain("Earlier reply");
       const draft = card.querySelector<HTMLTextAreaElement>(".comment-composer textarea")!;
       expect(draft).not.toBeNull();
       draft.value = "Reply from zoom";
       draft.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
       const reply = docNode(docNode("c")!.children.at(-1)!)!;
       expect(reply.parent).toBe("c");
       expect(reply.raw).toContain("Reply from zoom");
-      expect(zoom.textContent).toContain("Reply from zoom");
+      expect(document.body.textContent).toContain("Reply from zoom");
     } finally { dispose(); }
   });
 
@@ -183,7 +186,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode(id)!.raw).toContain("tine.quote:: these words");
       expect(editingId()).toBe(id);
       expect(docNode("p")!.children).toEqual(["existing", id]); // ADR 0075 file order
-      expect([...root.querySelectorAll('[data-block-id="p"] .ls-block')].map(el => el.getAttribute("data-block-id"))).toEqual([id, "existing"]);
+      expect([...root.querySelectorAll('[data-block-id="p"] .ls-block')].map(el => el.getAttribute("data-block-id"))).toEqual(["existing"]);
+      expect(root.querySelector(`.comment-thread-popup [data-block-id="${id}"]`)).not.toBeNull();
     } finally { dispose(); }
   });
 
@@ -213,7 +217,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode("c")!.children).toEqual(["r"]);
       draft!.value = "A considered reply";
       draft!.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      draft!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      draft!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
       const id = docNode("c")!.children.at(-1)!;
       expect(docNode(id)!.raw).toContain("A considered reply");
       expect(docNode(id)!.parent).toBe("c");
@@ -242,7 +246,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       draft.setSelectionRange(5, 13);
       expect(ctrlR(draft).defaultPrevented).toBe(true);
       const reply = docNode(docNode("c")!.children[0])!;
-      expect(reply.raw).toBe("This deserves thought");
+      expect(editBlock(reply.raw, format, { kind: "property", key: "tine.date", value: null })).toBe("This deserves thought");
       const child = docNode(docNode("c")!.children[1])!;
       expect(reply.children).toEqual([]);
       expect(child.parent).toBe("c");
@@ -285,7 +289,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(children).toHaveLength(2);
       expect(children[0]).toBe("old");
       const comment = children[1];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
       expect(docNode("p")!.raw).toBe("An agent wrote a phrase worth disputing here.");
       expect(editingId()).toBe(comment);
       await Promise.resolve();
@@ -306,7 +310,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       ta.select(second, second + 7);
       ctrlR(ta);
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: the cat\ntine.quote-prefix:: the cat sat; then\ntine.quote-suffix:: ran");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: the cat\ntine.quote-prefix:: the cat sat; then\ntine.quote-suffix:: ran");
     } finally {
       dispose();
     }
@@ -336,7 +340,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       const event = ctrlR(ta);
       expect(event.defaultPrevented).toBe(true);
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: ");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: ");
       expect(editingId()).toBe(comment);
     } finally {
       dispose();
@@ -354,7 +358,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       endEdit("page-navigation"); // opening the palette blurs the editor
       commentOnPaletteSelection();
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for\ntine.quote-suffix:: ");
+      expect(editBlock(docNode(comment)!.raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase\ntine.quote-prefix:: Palette path for\ntine.quote-suffix:: ");
     } finally {
       dispose();
     }

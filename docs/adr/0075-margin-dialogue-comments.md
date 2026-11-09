@@ -1,5 +1,14 @@
 # 0075. Margin dialogue: a comment is an ordinary child block with `quote::`
 
+Amendment D-20261107-MC3 §§4,9 (0.10): resolution is `tine.resolved:: true`
+on the root only, removed by Reopen or a new reply; it is never a task marker.
+Resolved cards are hidden by default, revealed greyed by a per-page count, and
+excluded from passage highlights and open counts. New comments and replies
+receive a creation-only UTC minute `tine.date` displayed in the local language.
+Dates never sort messages or stamp ordinary blocks. Both properties use the
+existing property writer, guarded whole-file save and undo. No side file or
+transport is introduced. See `docs/contracts/margin-comments.md`.
+
 - **Status:** Accepted (Martin, 2026-10-18, D-20261018-MC2) with the amendment below: context is always written.
 - **Date:** 2026-10-17
 

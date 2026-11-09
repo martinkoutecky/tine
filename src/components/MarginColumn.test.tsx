@@ -144,9 +144,9 @@ describe("the margin column on a wide main pane", () => {
     ])]);
     try {
       expect([...column(pane)!.querySelectorAll<HTMLElement>(".margin-thread")].map(el => el.dataset.threadId))
-        .toEqual(["early", "tie", "late"]);
-      expect(pane.querySelector(".margin-marker")!.textContent).toBe("3");
-      expect(pane.querySelectorAll(".margin-marker")).toHaveLength(1);
+        .toEqual(["early", "late"]);
+      expect([...thread(pane, "early")!.querySelectorAll<HTMLElement>(".comment-card")].map(el => el.dataset.blockId)).toEqual(["early", "tie"]);
+      expect(pane.querySelectorAll("button.margin-marker")).toHaveLength(0);
     } finally { dispose(); }
   });
 
@@ -165,7 +165,7 @@ describe("the margin column on a wide main pane", () => {
       expect(blockEl(thread(pane, "c1")!, "r1")).not.toBeNull();
       expect(blockEl(thread(pane, "c2")!, "c2")).not.toBeNull();
       const marker = blockEl(outline(pane), "p")!.querySelector(":scope > .block-main > .margin-marker")!;
-      expect(marker.textContent).toBe("2");
+      expect(marker).toBeNull(); // MC3 §7: no badge beside visible wide threads.
       // The quoted passages stay marked in the parent, named by their comment.
       const marks = [...blockEl(outline(pane), "p")!.querySelectorAll<HTMLElement>(".comment-quote-anchor")];
       expect(marks.map((m) => [m.dataset.commentId, m.textContent])).toEqual([["c1", "converges here because"], ["c2", "the step size"]]);
@@ -197,14 +197,16 @@ describe("the margin column on a wide main pane", () => {
     }
   });
 
-  it("keeps slice 1's inline threads on a narrow pane and off the main pane's single-page view", () => {
+  it("opens a live popover on a narrow pane or a surface without a margin reservation", () => {
     for (const [width, eligible] of [[800, true], [1400, false]] as const) {
       const { pane, dispose } = mount(commented(), width, () => <Host eligible={eligible} />);
       try {
         expect(column(pane)).toBeNull();
-        expect(blockEl(outline(pane), "c1")).not.toBeNull();
-        expect(blockEl(outline(pane), "r1")).not.toBeNull();
-        expect(pane.querySelector(".margin-marker")).toBeNull();
+        expect(blockEl(outline(pane), "c1")).toBeNull();
+        expect(blockEl(outline(pane), "r1")).toBeNull();
+        const chip = pane.querySelector<HTMLButtonElement>(".margin-marker")!;
+        expect(chip.textContent).toBe("2"); chip.click();
+        expect(document.querySelector(".comment-thread-popup")?.textContent).toContain("Only if the loss is convex");
       } finally {
         dispose();
         document.body.innerHTML = "";
@@ -213,7 +215,7 @@ describe("the margin column on a wide main pane", () => {
     }
   });
 
-  it("an embed of the commented block inside a margin page keeps its comments inline", () => {
+  it("an embed keeps its own thread entry point instead of borrowing the host margin", () => {
     const { pane, dispose } = mount(commented(), 1400, () => {
       let ref: HTMLDivElement | undefined;
       const margin = createMarginSurface({ page: () => pageByName(PAGE), eligible: () => true, outline: () => ref });
@@ -232,9 +234,10 @@ describe("the margin column on a wide main pane", () => {
     try {
       const embed = pane.querySelector(".test-embed") as HTMLElement;
       expect(column(pane)).not.toBeNull();
-      expect(blockEl(embed, "c1")).not.toBeNull();
-      expect(blockEl(embed, "r1")).not.toBeNull();
-      expect(embed.querySelector(".margin-marker")).toBeNull();
+      expect(blockEl(embed, "c1")).toBeNull();
+      expect(blockEl(embed, "r1")).toBeNull();
+      embed.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      expect(document.querySelector(".comment-thread-popup")?.textContent).toContain("Only if the loss is convex");
     } finally {
       dispose();
     }
@@ -272,24 +275,24 @@ describe("the margin column on a wide main pane", () => {
     }
   });
 
-  it("on a narrow pane draws a block's comments right under it, before its other children (GH #110)", () => {
+  it("on a narrow pane leaves only ordinary children in the body outline (GH #110)", () => {
     const { pane, dispose } = mount(commented(), 800);
     try {
       const p = blockEl(outline(pane), "p")!;
       const rows = [...p.querySelectorAll<HTMLElement>(":scope > .block-children-container .ls-block")].map((el) => el.dataset.blockId);
-      expect(rows).toEqual(["c1", "r1", "c2", "kid"]);
+      expect(rows).toEqual(["kid"]); // Threads are annotations in every tier.
     } finally {
       dispose();
     }
   });
 
   it("someone else's comment or reply has a background of its own; yours keep the card's", () => {
-    const { pane, dispose } = mount(commented(), 800);
+    const { pane, dispose } = mount(commented(), 1400);
     try {
-      const tinted = (id: string) => [...blockEl(outline(pane), id)!.classList].filter((c) => c.startsWith("author-tint-"));
+      const tinted = (id: string) => [...blockEl(column(pane)!, id)!.classList].filter((c) => c.startsWith("author-tint-"));
       expect(tinted("r1")).toHaveLength(1);
       expect(tinted("c1")).toEqual([]);
-      const chip = blockEl(outline(pane), "r1")!.querySelector(".author-chip")!;
+      const chip = blockEl(column(pane)!, "r1")!.querySelector(".author-chip")!;
       expect(chip.classList.contains(tinted("r1")[0])).toBe(true);
     } finally {
       dispose();
@@ -386,7 +389,7 @@ describe("editing in the margin", () => {
     }
   });
 
-  it("Enter in a comment's text adds a reply inside its thread and keeps the quote on the comment", async () => {
+  it("Enter in a comment's text inserts a line without a reply and keeps the quote", async () => {
     const { pane, dispose } = mount(commented());
     try {
       startEditing("c2", "Which step size?".length);
@@ -395,13 +398,12 @@ describe("editing in the margin", () => {
       expect(ta.value().startsWith("Which step size?")).toBe(true);
       ta.select("Which step size?".length, "Which step size?".length);
       key(ta, "Enter");
-      const reply = docNode("c2")!.children[0];
-      expect(reply).toBeDefined();
-      expect(docNode(reply)!.raw).toBe("");
-      expect(docNode("c2")!.raw).toBe("Which step size?\ntine.quote:: the step size");
-      expect(editingId()).toBe(reply);
-      await Promise.resolve();
-      expect(editor(thread(pane, "c2")!)!.element.closest<HTMLElement>(".ls-block")!.dataset.blockId).toBe(reply);
+      expect(docNode("c2")!.children).toEqual([]);
+      expect(ta.value()).toBe("Which step size?\n");
+      expect(editingId()).toBe("c2");
+      ta.keydown({ key: "Enter", ctrlKey: true });
+      expect(docNode("c2")!.raw).toContain("tine.quote:: the step size");
+      expect(editingId()).toBeNull();
     } finally {
       dispose();
     }

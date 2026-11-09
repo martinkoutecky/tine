@@ -142,14 +142,15 @@ describe("hiding waits for work in the thread", () => {
     const dispose = render(() => <PageView />, root);
     try {
       const area = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLTextAreaElement>('[data-block-id="c"] .comment-composer textarea');
+        if (!document.querySelector(".comment-thread-popup")) root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+        const el = document.querySelector<HTMLTextAreaElement>('[data-block-id="c"] .comment-composer textarea');
         expect(el).not.toBeNull();
         return el!;
       });
       area.value = "unsent";
       area.dispatchEvent(new InputEvent("input", { bubbles: true }));
       expect(setCommentMarginVisible(false)).toBe(false);
-      expect(root.querySelector('[data-block-id="c"]')).not.toBeNull();
+      expect(document.querySelector('[data-block-id="c"]')).not.toBeNull();
       area.value = "";
       area.dispatchEvent(new InputEvent("input", { bubbles: true }));
       expect(setCommentMarginVisible(false)).toBe(true);

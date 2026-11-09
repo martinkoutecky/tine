@@ -4,7 +4,7 @@
 // current raw text; nothing is stored.
 
 import { createContext, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
-import { anchorQuote, quoteSelectorOf, type QuoteSelector } from "../comments";
+import { anchorQuote, quoteSelectorOf, resolvedOf, type QuoteSelector } from "../comments";
 import { node as docNode, onBlockRawChanged } from "../document";
 import { facetsOf } from "./facets";
 import { utf8ByteLength } from "./spans";
@@ -21,6 +21,11 @@ export interface QuoteHighlight {
 
 export const QuoteHighlightContext = createContext<QuoteHighlight | null>(null);
 
+function openSelector(raw: string, format: Format): QuoteSelector | null {
+  const properties = facetsOf(raw, format).properties;
+  return resolvedOf(properties) ? null : quoteSelectorOf(properties);
+}
+
 /** Where the passages quoted by `parentId`'s comment children sit in the parse
  * source of its raw text (`"- "` + raw without leading whitespace, the form the
  * inline spans count in). A stale or whole-block quote contributes nothing.
@@ -32,7 +37,7 @@ export function quotedSourceRanges(parentId: string, format: Format): QuotedRang
   for (const childId of parent.children) {
     const child = docNode(childId);
     if (!child) continue;
-    const selector = quoteSelectorOf(facetsOf(child.raw, format).properties);
+    const selector = openSelector(child.raw, format);
     if (!selector) continue;
     selectors.push([childId, selector]);
   }
@@ -64,13 +69,13 @@ export function createQuotedSourceRanges(parentId: Accessor<string | null>, form
     for (const childId of parent?.children ?? []) {
       positions.set(childId, positions.size);
       const child = docNode(childId);
-      const selector = child && untrack(() => quoteSelectorOf(facetsOf(child.raw, fmt).properties));
+      const selector = child && untrack(() => openSelector(child.raw, fmt));
       if (selector) selectors.set(childId, selector);
     }
     const current = { positions, selectors, fmt };
     onCleanup(onBlockRawChanged(id => {
       const child = docNode(id);
-      const selector = child ? quoteSelectorOf(facetsOf(child.raw, current.fmt).properties) : null;
+      const selector = child ? openSelector(child.raw, current.fmt) : null;
       const previous = current.selectors.get(id);
       if ((!selector && !previous) || selector && previous && selector.quote === previous.quote
         && selector.prefix === previous.prefix && selector.suffix === previous.suffix) return;

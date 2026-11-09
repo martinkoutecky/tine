@@ -1125,7 +1125,7 @@ describe("zoomed block view", () => {
     }
   });
 
-  it("zooming into a commented block keeps its thread and replies inline", async () => {
+  it("zooming into a commented block keeps its thread and replies reachable through its chip", async () => {
     const dto = {
       name: "Comment zoom", kind: "page" as const, title: "Comment zoom", pre_block: null,
       blocks: [{
@@ -1144,10 +1144,12 @@ describe("zoomed block view", () => {
     try {
       await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
       const zoom = root.querySelector(".zoomed-block")!;
-      expect(zoom.querySelector('[data-block-id="comment"].comment-card')).not.toBeNull();
-      expect(zoom.querySelector('[data-block-id="reply"]')?.textContent).toContain("A reply.");
+      expect(zoom.querySelector('[data-block-id="comment"].comment-card')).toBeNull();
+      zoom.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+      expect(document.querySelector('.comment-thread-popup [data-block-id="comment"].comment-card')).not.toBeNull();
+      expect(document.querySelector('.comment-thread-popup [data-block-id="reply"]')?.textContent).toContain("A reply.");
       expect(root.querySelector(".margin-column")).toBeNull();
-      expect(root.querySelector(".margin-marker")).toBeNull();
+      expect(root.querySelector(".margin-marker")?.textContent).toBe("1");
     } finally {
       dispose();
     }

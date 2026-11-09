@@ -8,9 +8,9 @@ import { Block } from "./components/Block";
 import { CommentNameSetting } from "./components/CommentNameSetting";
 import { backend } from "./backend";
 import { commentRaw, replyRaw } from "./comments";
-import { createComment, replyOnEnter } from "./commentActions";
+import { createComment, submitReply } from "./commentActions";
 import { AUTHOR_TINTS, authorTint, commentAuthorName, isOwnAuthor, normalizeAuthorName, resetCommentAuthorNameForTests, initCommentIdentity } from "./commentIdentity";
-import { blockRegions, initParser } from "./render/parse";
+import { blockRegions, initParser, editBlock } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
 import { pageByName, resetStore, undo } from "./document";
@@ -27,7 +27,7 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
-function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
+function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
   loadSingle({ name: PAGE, kind: "page", title: PAGE, format: "md", pre_block: null, blocks });
   setGraphMeta({ root: "/fixture" } as any);
   const root = document.createElement("div");
@@ -38,7 +38,8 @@ function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
       {extra?.()}
     </>
   ), root);
-  return root;
+  root.querySelector<HTMLButtonElement>(".margin-marker")?.click();
+  return document.body;
 }
 
 beforeAll(() => initParser());
@@ -90,27 +91,26 @@ describe("what is written", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     resetCommentAuthorNameForTests("Ada");
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.\ntine.author:: Ada");
-    expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
-    const reply = doc.byId[comment].children[0];
-    expect(doc.byId[reply].raw).toBe("\ntine.author:: Ada");
+    expect(editBlock(doc.byId[comment].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.\ntine.author:: Ada");
+    const reply = submitReply(comment, "Response")!;
+    expect(editBlock(doc.byId[reply].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("Response\ntine.author:: Ada");
     undo();
     expect(doc.byId[comment].children).toHaveLength(0);
     undo();
     expect(doc.byId["p"].children).toHaveLength(0);
   });
 
-  it("without a name nothing changes: no tine.author:: on the comment or the reply", () => {
+  it("without a name neither the comment nor the reply carries tine.author::", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
-    expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
-    expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("");
+    expect(editBlock(doc.byId[comment].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
+    const reply = submitReply(comment, "Response")!;
+    expect(editBlock(doc.byId[reply].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("Response");
   });
 });
 
 describe("what is shown", () => {
-  const chips = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>(".author-chip")].map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
+  const chips = (root: HTMLElement) => ["c", "d", "e"].map(id => root.querySelector<HTMLElement>(`[data-block-id="${id}"] > .comment-header .author-chip`)!).map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
   const fixture = () => [block("p", "A passage to discuss.", [
     block("c", "Mine.\ntine.quote:: passage\ntine.author:: Ada"),
     block("d", "Theirs.\ntine.quote:: discuss\ntine.author:: claude"),
