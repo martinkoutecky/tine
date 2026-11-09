@@ -1195,11 +1195,17 @@ pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &
 
 impl Drop for PageHost {
     /// Stop and join the driver (its last step's results have been
-    /// delivered), then hand every held page's index back to the watcher.
+    /// delivered), then hand every held page's index back to the watcher,
+    /// which rereads them from disk. A driver that panicked (a host bug)
+    /// hands them back too, before its panic goes on (s3b O6).
     fn drop(&mut self) {
-        self.driver.join();
-        let _writer = self.store.writer.lock().unwrap();
+        let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.join()));
+        let writer = self.store.writer.lock().unwrap();
         self.store.watch.release_holds();
+        drop(writer);
+        if let Err(panic) = joined {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
 
