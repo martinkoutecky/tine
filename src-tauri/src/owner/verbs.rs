@@ -480,6 +480,33 @@ pub(super) fn write_claimant(graph: &WholeGraph, name: &str) -> Result<Option<Pa
     Ok(candidates.pop())
 }
 
+/// The id a page created by `name` would get, `None` when something claims the
+/// name (a file, a journal, an alias). A name that is a date in the graph's
+/// journal format, claimed by nothing, creates that day's journal, as the app
+/// opens `[[name]]` (`JournalFormat::absent_link_is_journal`, the rule
+/// `WholeGraph::link_target` uses; OG files such a name under `journals/`:
+/// `transact-file-tx-if-not-exists!`). Any other name creates an ordinary
+/// page. A name claimed by an ordinary page of exactly that spelling keeps that
+/// page (D-20261107-KD), as `resolve` answers it. One lookup when something
+/// claims the name; the journal format is read only for a name nothing claims.
+pub(super) fn absent_page_id(slot: &GraphSlot, graph: &WholeGraph, name: &str) -> Option<PageId> {
+    let Resolved::Absent { id } = graph.resolve(name, false) else {
+        return None;
+    };
+    if !slot
+        .store
+        .config()
+        .journal_format()
+        .absent_link_is_journal(name)
+    {
+        return Some(id);
+    }
+    match graph.resolve(name, true) {
+        Resolved::Absent { id } => Some(id),
+        _ => None,
+    }
+}
+
 /// [`write_claimant`] for a write that needs an existing page.
 pub(super) fn resolve_write_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     write_claimant(graph, name)?.ok_or_else(|| not_found(format!("no page is named `{name}`")))

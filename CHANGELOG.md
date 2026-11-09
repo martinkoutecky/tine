@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- `tine add --page` and `tine page create` resolve a name no page claims yet the way the app does: two spellings of one new page named at once (`Foo` and `foo`) write one page instead of one command being refused with an internal `Twin` message, and a date such as `2026_11_02` or `Nov 2nd, 2026` creates that day's journal instead of a second file under `pages/` (internal: REG-CLI-SPELL-ABSENT-TWINS-PARALLEL, REG-CLI-SPELL-DATE-NAME-IS-JOURNAL).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).

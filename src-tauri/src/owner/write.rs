@@ -580,6 +580,29 @@ pub(super) fn graph_turn(slot: &GraphSlot) -> Result<PageTurn<'static>, ErrorBod
         })
 }
 
+/// The turn for a command that creates a page named `name`, with the id the new
+/// page gets; `None` when something already claims the name (a file, a journal,
+/// an alias), with no turn held. `graph` is the caller's view. A name nothing
+/// claims is resolved a second time under the whole graph's turn, in a fresh
+/// view that replaces `graph`, so a command ahead in line that created the page
+/// (`Foo`) is seen by the one behind it (`foo`): two spellings of one new page
+/// get one id, not two ids on two page turns (a page's own turn can only be
+/// taken once its name is resolved). Cost: one graph turn instead of the page
+/// turn, one more graph view and one more lookup; a name something claims pays
+/// nothing.
+pub(super) fn creation_turn(
+    slot: &GraphSlot,
+    graph: &mut tine_store::WholeGraph,
+    name: &str,
+) -> Result<Option<(PageId, PageTurn<'static>)>, ErrorBody> {
+    if super::verbs::absent_page_id(slot, graph, name).is_none() {
+        return Ok(None);
+    }
+    let turn = graph_turn(slot)?;
+    *graph = whole_graph(slot)?;
+    Ok(super::verbs::absent_page_id(slot, graph, name).map(|id| (id, turn)))
+}
+
 /// One write: wait for the page's turn, flush, read through the host, compute,
 /// plan through the store's serializer, reparse, apply (design §1). Another
 /// command cannot move the page meanwhile; a page that an outside writer changed
@@ -590,20 +613,9 @@ pub(crate) fn write_page(
     page: &PageId,
     kind: EditKind,
     rev: Option<&str>,
-    compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
-) -> Result<Value, ErrorBody> {
-    write_page_with_create(slot, page, kind, rev, false, compute)
-}
-
-pub(super) fn write_page_with_create(
-    slot: &GraphSlot,
-    page: &PageId,
-    kind: EditKind,
-    rev: Option<&str>,
-    create: bool,
     mut compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    write_page_from_bytes(slot, page, kind, rev, create, |doc, page, _| {
+    write_page_from_bytes(slot, page, kind, rev, false, |doc, page, _| {
         compute(doc, page)
     })
 }
@@ -680,9 +692,24 @@ pub(super) fn write_page_from_source(
     kind: EditKind,
     rev: Option<&str>,
     create: bool,
+    compute: impl FnMut(&PageDto, &PageId, &[u8], bool) -> Result<Planned, ErrorBody>,
+) -> Result<Value, ErrorBody> {
+    let turn = page_turn(slot, page)?;
+    write_page_in_turn(slot, turn, page, kind, rev, create, compute)
+}
+
+/// [`write_page_from_source`] for a caller that already holds the turn: `page`'s
+/// own, or the whole graph's ([`creation_turn`]). The turn is held until the
+/// write has landed or failed.
+pub(super) fn write_page_in_turn(
+    slot: &GraphSlot,
+    _turn: PageTurn<'static>,
+    page: &PageId,
+    kind: EditKind,
+    rev: Option<&str>,
+    create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8], bool) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    let _turn = page_turn(slot, page)?;
     if RUN.with(|r| r.borrow().is_some()) {
         super::git_run::check_page(slot, page)?;
     }

@@ -41,6 +41,9 @@ mod cm_favorites;
 #[path = "owner_tests/parallel_write_tests.rs"]
 mod parallel_writes;
 
+#[path = "owner_tests/spelling_tests.rs"]
+mod spelling;
+
 #[cfg(desktop)]
 #[path = "owner_tests/git_run_tests.rs"]
 mod git_run;
