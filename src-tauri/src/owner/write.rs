@@ -20,7 +20,8 @@ use tine_store::{
 };
 
 use super::endpoint::busy;
-use super::verbs::{internal, resolve_write_page, whole_graph, Diag};
+use super::op_counts::{count, Op};
+use super::verbs::{internal, named_page, resolve_write_page, whole_graph, Diag, Named};
 use super::wire::{ok, ErrorBody};
 use crate::state::GraphSlot;
 
@@ -303,11 +304,11 @@ pub(crate) fn resolve_on(
 pub(super) fn handle_page(slot: &GraphSlot, handle: &Handle) -> Result<PageId, ErrorBody> {
     let graph = whole_graph(slot)?;
     match handle {
-        Handle::At { page, .. } => resolve_write_page(&graph, page),
+        Handle::At { page, .. } => resolve_write_page(slot, &graph, page),
         // Graph-wide: an id on two pages is `ambiguous`, never the first match
         // (review 5 B1; design §2).
         Handle::Uuid(uuid) => match graph.block_pages(uuid).as_slice() {
-            [page] => resolve_write_page(&graph, page),
+            [page] => resolve_write_page(slot, &graph, page),
             [] => Err(ErrorBody::new(
                 "not-found",
                 format!("no block has id:: {uuid}"),
@@ -483,6 +484,7 @@ impl PageTurns {
     /// Wait until no earlier writer overlaps `scope`; `None` past `wait`, out
     /// of the line.
     fn wait_turn(&self, graph: PathBuf, scope: TurnScope, wait: Duration) -> Option<PageTurn<'_>> {
+        count(&graph, Op::Turn);
         let ticket = self.next.fetch_add(1, Ordering::Relaxed);
         let deadline = Instant::now() + wait;
         let mut lines = self.lines.lock().unwrap_or_else(|e| e.into_inner());
@@ -580,6 +582,31 @@ pub(super) fn graph_turn(slot: &GraphSlot) -> Result<PageTurn<'static>, ErrorBod
         })
 }
 
+/// The turn for a command that writes to the page `name` names and creates it
+/// when nothing claims it (`add --page`, `page create`), with what the name
+/// names in that turn. A name something claims in the caller's view `graph`
+/// comes back at once with no turn: the caller takes that page's own. Else the
+/// command takes the whole graph's turn and resolves the name again in a fresh
+/// view that replaces `graph`, so a command ahead in line that created the page
+/// (`Foo`) is seen by the one behind it (`foo`): one page, not two ids on two
+/// page turns (a page's turn can only be taken once its name is resolved). The
+/// one behind writes to that page in the graph's turn it holds, which covers
+/// every page. Cost (`owner_tests::write_cost`): a claimed name, one lookup; a
+/// new name, or one created ahead in line, one turn, one more view, two lookups.
+pub(super) fn creation_turn(
+    slot: &GraphSlot,
+    graph: &mut tine_store::WholeGraph,
+    name: &str,
+) -> Result<(Named, Option<PageTurn<'static>>), ErrorBody> {
+    let named = named_page(slot, graph, name);
+    if let Named::Claimed { .. } = named {
+        return Ok((named, None));
+    }
+    let turn = graph_turn(slot)?;
+    *graph = whole_graph(slot)?;
+    Ok((named_page(slot, graph, name), Some(turn)))
+}
+
 /// One write: wait for the page's turn, flush, read through the host, compute,
 /// plan through the store's serializer, reparse, apply (design §1). Another
 /// command cannot move the page meanwhile; a page that an outside writer changed
@@ -590,20 +617,9 @@ pub(crate) fn write_page(
     page: &PageId,
     kind: EditKind,
     rev: Option<&str>,
-    compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
-) -> Result<Value, ErrorBody> {
-    write_page_with_create(slot, page, kind, rev, false, compute)
-}
-
-pub(super) fn write_page_with_create(
-    slot: &GraphSlot,
-    page: &PageId,
-    kind: EditKind,
-    rev: Option<&str>,
-    create: bool,
     mut compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    write_page_from_bytes(slot, page, kind, rev, create, |doc, page, _| {
+    write_page_from_bytes(slot, page, kind, rev, false, |doc, page, _| {
         compute(doc, page)
     })
 }
@@ -680,13 +696,29 @@ pub(super) fn write_page_from_source(
     kind: EditKind,
     rev: Option<&str>,
     create: bool,
+    compute: impl FnMut(&PageDto, &PageId, &[u8], bool) -> Result<Planned, ErrorBody>,
+) -> Result<Value, ErrorBody> {
+    let turn = page_turn(slot, page)?;
+    write_page_in_turn(slot, turn, page, kind, rev, create, compute)
+}
+
+/// [`write_page_from_source`] for a caller that already holds the turn: `page`'s
+/// own, or the whole graph's ([`creation_turn`]). The turn is held until the
+/// write has landed or failed.
+pub(super) fn write_page_in_turn(
+    slot: &GraphSlot,
+    _turn: PageTurn<'static>,
+    page: &PageId,
+    kind: EditKind,
+    rev: Option<&str>,
+    create: bool,
     mut compute: impl FnMut(&PageDto, &PageId, &[u8], bool) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    let _turn = page_turn(slot, page)?;
     if RUN.with(|r| r.borrow().is_some()) {
         super::git_run::check_page(slot, page)?;
     }
     let flush = || {
+        count(&slot.root_key, Op::Flush);
         crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
             .map_err(host_failed)?
             .map_err(|refusal| apply_refused(refusal, page))
@@ -698,6 +730,7 @@ pub(super) fn write_page_from_source(
     let mut window = slot.window.get();
     let mut attempts = 0;
     while attempts < 2 {
+        count(&slot.root_key, Op::Read);
         let read = crate::page_commands::with_host(slot, |host| host.read(page))
             .map_err(host_failed)?
             .map_err(|error| match error {
@@ -835,6 +868,7 @@ pub(super) fn write_page_from_source(
             ));
         }
         op.policy = Input::Flush;
+        count(&slot.root_key, Op::Write);
         match crate::page_commands::with_host(slot, |host| host.apply(op)).map_err(host_failed)? {
             Ok(()) => {
                 // A window that displays the page without holding it gets no
