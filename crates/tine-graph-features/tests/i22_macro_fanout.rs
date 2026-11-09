@@ -38,7 +38,7 @@ const ID: &str = "6a1c0c3e-0000-4000-8000-000000000001";
 
 #[test]
 fn self_embedding_fan_out_is_cut_with_a_visible_marker() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let embeds = format!("{{{{embed (({ID}))}}}} ").repeat(24);
     let root = graph(
         "hostile",

@@ -6,7 +6,17 @@ may tag, publish, comment, and close issues.
 
 ## Every release
 
-1. Freeze the candidate and finish the version/changelog update.
+1. Freeze the candidate and finish the version/changelog update. The release
+prep commit is what makes a version releasable: it moves `[Unreleased]` to the
+dated section, adds `docs/releases/vX.Y.Z-impact.json` (step 2) and writes the
+F-Droid text `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`
+(at most 500 characters, in the style of the existing files, one per Beta or
+stable; `<versionCode>` is `bundle.android.versionCode` in
+`src-tauri/tauri.conf.json`). Between cuts, development already carries the
+next version without any of the three, so `check-release-readiness.mjs` fails on
+exactly those items there; development-purpose CI and the development preflight
+skip it (`docs/CI.md`). Do not write a placeholder to silence it: it must pass
+on the prep commit with the real text.
 2. Generate `docs/releases/vX.Y.Z-impact.json` from every Added, Changed, and
    Fixed changelog bullet. For each item record regression coverage and its
    Guide/docs, website, and blog disposition (`update`, `current`,

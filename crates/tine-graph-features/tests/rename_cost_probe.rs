@@ -45,7 +45,7 @@ fn bytes_read() -> u64 {
 #[test]
 #[ignore]
 fn rename_cost_at_scale() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let root = std::path::PathBuf::from(std::env::var("TINE_RENAME_PROBE_ROOT").unwrap());
     let old = std::env::var("TINE_RENAME_PROBE_OLD").unwrap();
     let new = format!("{old} renamed");
@@ -97,7 +97,7 @@ fn median(mut samples: Vec<u128>) -> u128 {
 #[ignore]
 fn rename_and_delete_walks_at_scale() {
     use tine_core::query::ir::{ExecutionContext, ViewSettings};
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let root = std::path::PathBuf::from(std::env::var("TINE_RENAME_PROBE_ROOT").unwrap());
     let old = std::env::var("TINE_RENAME_PROBE_OLD").unwrap();
     let rounds: usize = std::env::var("TINE_RENAME_PROBE_ROUNDS")
@@ -199,7 +199,7 @@ fn rename_and_delete_walks_at_scale() {
 #[test]
 #[ignore]
 fn reference_build_at_scale() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let root = std::path::PathBuf::from(std::env::var("TINE_RENAME_PROBE_ROOT").unwrap());
     let rounds: usize = std::env::var("TINE_RENAME_PROBE_ROUNDS")
         .ok()

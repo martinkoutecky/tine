@@ -122,7 +122,7 @@ fn measure<T>(f: impl FnOnce() -> T) -> (T, u64, Counts) {
 #[test]
 #[ignore = "explicit PERF-RESIDUE whole-page submit allocation measurement"]
 fn one_character_host_submit_at_60_and_1000_blocks() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     for blocks in [60, 1000] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("graph");
@@ -341,7 +341,7 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
 
 #[test]
 fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     if crate::isolated_case("query_unit_cost::a_query_side_edit_cost_does_not_grow_with_the_graph")
     {
         return;
@@ -426,7 +426,7 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
 /// probe on a text edit reads no page at all).
 #[test]
 fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     if crate::isolated_case(
         "query_unit_cost::a_property_edit_patches_the_registry_per_page_not_per_graph",
     ) {
@@ -476,7 +476,7 @@ fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
 /// `status::` is held by all 9,999 other pages of this fixture.
 #[test]
 fn a_popular_property_edit_does_not_copy_the_key_postings() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     if crate::isolated_case(
         "query_unit_cost::a_popular_property_edit_does_not_copy_the_key_postings",
     ) {
@@ -519,7 +519,7 @@ fn a_popular_property_edit_does_not_copy_the_key_postings() {
 /// a key that declares none).
 #[test]
 fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     if crate::isolated_case(
         "query_unit_cost::a_save_that_moves_no_alias_does_not_copy_the_alias_list",
     ) {
@@ -632,7 +632,7 @@ fn names_table_first_build_probe() {
     let Ok(dir) = std::env::var("TINE_NAMES_PROBE") else {
         return;
     };
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let root = std::path::Path::new(&dir);
     fn run<T>(f: impl FnOnce() -> T) -> (std::time::Duration, u64, i64) {
         OWN.store(0, Ordering::Relaxed);

@@ -3,12 +3,25 @@
 mod host_only_writer;
 mod search_properties;
 
-// Store cost/fault probes are process-global. Every case takes this lock so
-// ordinary graph activity cannot contaminate a measurement in another suite.
+// Store cost probes are process-global: the cost counters and the process's
+// thread, file-descriptor and allocation totals. A case that reads them takes
+// `exclusive_integration_lock`, so no other case's graph activity runs beside
+// its measurement. Every other case takes the shared `integration_lock` and
+// runs in parallel with the rest. Fault plants are per thread
+// (`host_faults`), so they need no lock.
 // Child workers start a fresh executable and therefore have their own lock.
-fn integration_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+static INTEGRATION_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+fn integration_lock() -> std::sync::RwLockReadGuard<'static, ()> {
+    INTEGRATION_LOCK
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn exclusive_integration_lock() -> std::sync::RwLockWriteGuard<'static, ()> {
+    INTEGRATION_LOCK
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[path = "../src/test_cfg.rs"]

@@ -50,7 +50,7 @@ fn print_counts(unrelated: usize) -> cost_counters::Counts {
 /// every graph file to find out what it was asked to print.
 #[test]
 fn single_page_print_does_no_graph_wide_disk_work() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let few = print_counts(20);
     let many = print_counts(200);
     eprintln!("print cost: 20 pages {few:?}\n200 pages {many:?}");
@@ -106,7 +106,7 @@ fn full_print_counts(unrelated: usize) -> (cost_counters::Counts, String) {
 /// of every graph file or a copy of every page.
 #[test]
 fn whole_print_flow_with_embeds_does_no_graph_wide_work() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (few, few_html) = full_print_counts(20);
     let (many, many_html) = full_print_counts(200);
     eprintln!("full print cost: 20 pages {few:?}\n200 pages {many:?}");
@@ -174,7 +174,7 @@ fn namespace_print(unrelated: usize) -> (cost_counters::Counts, String) {
 
 #[test]
 fn namespace_print_cost_is_bounded() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (few, few_html) = namespace_print(20);
     let (many, many_html) = namespace_print(200);
     assert_eq!(
