@@ -107,6 +107,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - After merging a page through an alias (renaming ML notes to ML, where Machine Learning has `alias:: ML`), a query that named the old page, such as `{{query (page "ML notes")}}`, now names Machine Learning, the page that remains. Before, it named `ML`. Links keep the name you typed (REG-CM-R11-ALIAS-MERGE-QUERY-SURVIVOR).
 - Renaming a page onto a used name inside its own namespace, such as `Foo` to `Foo/bar` when `Foo/bar` is a page or an alias, is refused with the reason and changes nothing. Before, Tine merged `Foo` into `Foo/bar`, a page that moves with `Foo` (REG-CM-R12-OWN-CHILD-REFUSED, UI-CM-OWN-CHILD-REFUSAL-REASON).
 - A rename that only changes capitalization onto a file another page already uses now says which page holds that file. Before, it failed with "page changed repeatedly during rename", as if trying again could help; nothing was written then or now (REG-CM-R14-CASE-ONLY-FILE-TAKEN).
+- A table, board or filter whose formulas use `today()` or `now()` now shows the new day's values when the date changes in a window left open overnight, instead of keeping yesterday's until a row is edited. Sheets whose formulas never read the date are not recalculated, and `now()` moves with the day, not by the minute (internal: UI-CBENA-SHEET-FORMULAS-FOLLOW-THE-DATE).
 
 ### Changed
 
