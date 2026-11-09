@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Creating, deleting or renaming a page, or changing its `title::`, now refreshes only the views and queries that depend on that page. Before, every open query and reference panel recomputed (D-20261102-PERF row 3, REG-PERF-PAGE-LIFECYCLE-PRECISE-SUMMARY).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
 - Scrolling the Journals feed loads each next set of days from a bounded slice of the day index instead of re-sorting every journal day, with the same days, referenced-only days and order (REG-JOURNAL-STEP-WINDOW).
 - Printed and published pages list a `{{namespace X}}` macro's pages by page identity, as the live macro and Logseq do, so `project/y` appears under `{{namespace Project}}`; printing such a page no longer copies or sorts the whole graph (REG-PRINT-NAMESPACE-COST).

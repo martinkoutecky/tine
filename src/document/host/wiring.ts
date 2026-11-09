@@ -805,8 +805,9 @@ export async function createPage(name: string, dto: PageDto,
       : `Couldn't save “${name}”.`);
   }
   if (pageInstanceGeneration(name) === generation && pageByName(name) && !pageByName(name)!.id) setPageId(name, created.key);
+  // Readers follow the create's precise publication summary through the
+  // host-mail data revision, as for any save (D-20261102-PERF row 3).
   bumpPageInventoryRev();
-  bumpDataRev();
   return baseRev.get(name) ?? null;
 }
 

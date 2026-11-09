@@ -320,6 +320,19 @@ impl Plan {
         self.registry.as_ref()
     }
 
+    /// Whether a page whose name spells a journal day (`day_keys`, page keys)
+    /// appearing or leaving can reshape this plan's reference classes
+    /// ([`Self::ref_classes`], read in `graph`, the generation the plan
+    /// answers for): only then must a mounted reader renew the plan.
+    pub(crate) fn reference_classes_reshaped_by(
+        &self,
+        graph: &ReadSnapshot,
+        day_keys: &[String],
+    ) -> bool {
+        super::eval::ref_classes::has_reference_operands(&self.filter)
+            && self.ref_classes(graph).reshaped_by(day_keys)
+    }
+
     fn ctx<'a>(
         &'a self,
         entry: &'a PageEntry,

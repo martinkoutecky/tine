@@ -1891,9 +1891,28 @@ page; this can over-invalidate an unrelated edit within that source, but keeps
 ancestor edits live without a graph walk or a second Markdown parser.
 
 Initial publication, rebuild, a change of a build-relevant config setting
-(`checkpoint::config_key`), alias change, create/rename/delete,
-unavailable old/new pages, unreadable-inventory changes, more than 32 edited
-pages, or a day change since the previous publication set `full`. Any other
+(`checkpoint::config_key`), alias change, a named file that is active on
+neither side (a losing case twin), unavailable old/new pages,
+unreadable-inventory changes, more than 32 edited pages, or a day change since
+the previous publication set `full`. A publication that moves a page name
+(create, delete, rename, a `title::` change, a twin promoted or demoted) is
+precise (D-20261102-PERF row 3): `ReadSnapshot::page_changes` reads both sides
+of each changed path only, and the summary treats each side as an edit from or
+to the empty document, so it names that page's own blocks, references, tags,
+properties and templates, the moved key in `pages`, and, in `linksTo`,
+`textTo` and `tagsTo`, the moved name's reference-invalidation spellings in the
+old and new graph (namespace ancestors, journal-day spellings). A moved
+journal or date-spelling name sets `days` and `journals` and renews plans
+whose reference classes have a day or that name (`Plan::reference_classes_reshaped_by`);
+a moved name with an alias neighbour on either side stays `full`. Queries are
+named by the usual `touches_edit` rule on those synthetic edits. Unrelated
+mounted queries do not rerun: proof
+`crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario and a
+counter at N = 8 and 64) and steps 60–62 of the random reader oracle in
+`crates/tine-store/tests/change_summary.rs`. The frontend create and delete
+paths no longer add a full refresh of their own; they bump only
+`pageInventoryRev` and leave readers to the publication summary, as rename
+already did. Any other
 config change (favorites, templates, display settings) rebuilds no name or
 index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own

@@ -94,7 +94,39 @@ impl ReadSnapshot {
         }
         Some(edits)
     }
+
+    /// Both sides of each of `changed_paths` for a publication that moved a
+    /// page name (create, delete, rename, a `title::` change, a twin promoted
+    /// or demoted): the active page the path held in `old` and holds here,
+    /// `None` on a side where it was not an active page. A path with neither
+    /// side (a losing twin, a non-page file) is left out. The change summary
+    /// derives precise invalidation from these (one producer with
+    /// [`Self::edited_pages`]); reads only the changed paths.
+    pub(crate) fn page_changes(&self, old: &Self, changed_paths: &[String]) -> Vec<PageChange> {
+        let side = |graph: &Self, path: &str| {
+            let positions = Arc::clone(&graph.reference_candidate_index.read().unwrap().positions);
+            positions
+                .get(path)
+                .and_then(|&i| graph.pages.get(i))
+                .filter(|(e, _)| e.rel_path_str() == path)
+                .map(|(entry, doc)| (entry.clone(), Arc::clone(doc)))
+        };
+        changed_paths
+            .iter()
+            .filter_map(|path| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::memo_page_probes(2);
+                let change = (side(old, path), side(self, path));
+                (change.0.is_some() || change.1.is_some()).then_some(change)
+            })
+            .collect()
+    }
 }
+
+/// One path's active page before and after a publication; see
+/// [`ReadSnapshot::page_changes`].
+type PageChange = (Option<PageSide>, Option<PageSide>);
+type PageSide = (tine_core::model::PageEntry, Arc<Document>);
 
 #[cfg(test)]
 mod tests {
