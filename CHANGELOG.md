@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A parser failure during Enter, Tab or another outline edit now leaves the outline and the block's text unchanged and says so; the next edit works. Before, the edit failed silently and the CodeMirror editor also inserted the Enter into the block's text. Errors raised inside a parser call no longer build up over a session until an ordinary edit fails (internal: REG-WASM-UNWOUND-EXCEPTION-POISON, REG-CM6-STRUCTURAL-KEY-THROW).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).

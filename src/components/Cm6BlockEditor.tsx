@@ -400,7 +400,18 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       const s = view.state.selection.main;
       const leave = codeView.leaveRange(event, view.state.doc.toString(), s.from, s.to);
       if (leave) showText(view, visible(), leave.anchor, leave.head);
-      if (runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(event, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view!))) {
+      let handled: boolean;
+      try {
+        handled = !!runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(event, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view!));
+      } catch (error) {
+        // A command that threw (a refused commit, a parser trap before the kernel answered) still
+        // owns its key: CodeMirror's own binding would put the Enter or Tab into the text, and the
+        // next keystroke would act on that instead (og-wasm-enter-trap). The error stays uncaught.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        throw error;
+      }
+      if (handled) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }

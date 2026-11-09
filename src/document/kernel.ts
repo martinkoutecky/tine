@@ -137,6 +137,11 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
   };
 }
 
+/** A parser call (outline_reads_json, outline_apply_json) that threw: the kernel answered nothing. */
+class OutlineParserFault extends Error {
+  constructor(cause: unknown) { super("outline parser call failed", { cause }); }
+}
+
 /** Ask the kernel for `verb` over the named pages. Pure: nothing is applied.
  *  The pages go as the verb's read set; a kernel that finds it incomplete
  *  (a store whose parent links disagree with its children lists, or a read
@@ -146,15 +151,30 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
   if (!bodyVerb) return { refused: "no_outline_step" };
   verb = bodyVerb;
   const names = [...new Set(pageNames)];
+  // The two parser calls. A failure there (a wasm trap; the glue already started a fresh
+  // instance) computed nothing, so nothing changes: every caller sees an ordinary refusal and
+  // consumes its gesture, instead of an exception that lets the key fall through to the text
+  // editor (og-wasm-enter-trap). Any other error (marshalling, reading the answer) stays an exception.
+  const parser = (call: () => string): string => {
+    try { return call(); } catch (error) { throw new OutlineParserFault(error); }
+  };
   const ask = (reads: readonly OutlineRead[] | null) => {
     const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
-    return JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() })));
+    return JSON.parse(parser(() => outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() }))));
   };
-  const reads = outlineMarshal.whole || verb.verb === "insert_outline" ? null : (JSON.parse(outlineReads(JSON.stringify(verb))) as OutlineRead[]);
-  let answer = ask(reads);
-  if (reads && answer.refused === "incomplete") {
-    outlineMarshal.fallbacks++;
-    answer = ask(null);
+  let answer;
+  try {
+    const reads = outlineMarshal.whole || verb.verb === "insert_outline" ? null : (JSON.parse(parser(() => outlineReads(JSON.stringify(verb)))) as OutlineRead[]);
+    answer = ask(reads);
+    if (reads && answer.refused === "incomplete") {
+      outlineMarshal.fallbacks++;
+      answer = ask(null);
+    }
+  } catch (error) {
+    if (!(error instanceof OutlineParserFault)) throw error;
+    const cause = error.cause as Error | string;
+    pushToastUnique(msg("kernel-outline-edit-failed", { detail: String((cause as Error)?.message ?? cause) }), "error");
+    return { refused: "unparseable" };
   }
   if (answer.refused) return { refused: answer.refused as OutlineRefusal };
   const change = answer.ok as { pages: PagePatch[]; focus: { key: string; raw_offset: number | null } | null; notices: OutlineNotice[]; keys_used: number; transfers?: [string, string][] };
