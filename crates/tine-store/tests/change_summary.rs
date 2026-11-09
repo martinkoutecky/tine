@@ -645,8 +645,14 @@ fn change_summary_random_reader_oracle() {
                     )
                     .unwrap();
                     store.refresh(crate::Depth::Stamps).unwrap();
-                    serde_json::to_value(sub.try_recv().unwrap().expect("external publication"))
+                    // A prior save may still own the page while it retires;
+                    // refresh forwards that page's observation to its host.
+                    crate::test_host_writer::HostWriter::for_store(&store).settle();
+                    let change = sub
+                        .try_recv()
                         .unwrap()
+                        .unwrap_or_else(|| panic!("seed={seed} step={step}: external publication"));
+                    serde_json::to_value(change).unwrap()
                 }
                 59 => {
                     let mut a = store.page(&PageId::from("pages/A.md")).unwrap();

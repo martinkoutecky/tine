@@ -132,7 +132,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
   it("refuses Make a template when its name inventory cannot be read", async () => {
     load();
-    vi.spyOn(backend(), "listTemplates").mockRejectedValue(new Error("io:PermissionDenied"));
+    vi.spyOn(backend(), "listTemplateNames").mockRejectedValue(new Error("io:PermissionDenied"));
     const dispose = mount(() => <ContextMenu />);
     openContextMenu(10, 10, "leaf");
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
@@ -146,10 +146,26 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it("refuses a duplicate template name without requesting insertion bodies", async () => {
+    load();
+    vi.spyOn(backend(), "listTemplateNames").mockResolvedValue(["Existing"]);
+    const bodies = vi.spyOn(backend(), "listTemplates");
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find(item => item.textContent?.includes("Make a template"))!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "existing"; input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    await vi.waitFor(() => expect(toasts().some(t => t.kind === "error")).toBe(true));
+    expect(blockProperty("leaf", "template")).toBeNull();
+    expect(bodies).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("rechecks writability after reading names before Make a template", async () => {
     load();
     let finish!: (templates: []) => void;
-    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    vi.spyOn(backend(), "listTemplateNames").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const dispose = mount(() => <ContextMenu />);
     openContextMenu(10, 10, "leaf");
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
@@ -169,7 +185,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   it("I-20: finishes Make a template for the submitted block after its menu closed", async () => {
     load();
     let finish!: (templates: []) => void;
-    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    vi.spyOn(backend(), "listTemplateNames").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const dispose = mount(() => <ContextMenu />);
     openContextMenu(10, 10, "leaf");
     [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
@@ -188,8 +204,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
   it("does not mark a colliding block in the new graph as a template", async () => {
     load();
-    let finish!: (templates: Awaited<ReturnType<ReturnType<typeof backend>["listTemplates"]>>) => void;
-    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let finish!: (templates: Awaited<ReturnType<ReturnType<typeof backend>["listTemplateNames"]>>) => void;
+    vi.spyOn(backend(), "listTemplateNames").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const dispose = mount(() => <ContextMenu />);
     openContextMenu(10, 10, "leaf");
     const make = [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"));

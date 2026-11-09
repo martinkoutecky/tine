@@ -7,6 +7,26 @@ use std::sync::Arc;
 use tine_core::model::TemplateDto;
 use tine_graph_features::templates::{named_template_from_files, NamedTemplate};
 
+/// Names only, in discovery order. Same fallible graph load as the full listing.
+#[tauri::command]
+pub(crate) async fn list_template_names(
+    state: super::GraphContext<'_>,
+) -> Result<Vec<String>, String> {
+    super::off_ui_graph_read(&state, |view| Ok(view.template_names())).await
+}
+
+/// All insertion DTOs, or the first template with the exact given name.
+#[tauri::command]
+pub(crate) async fn list_templates(
+    name: Option<String>,
+    state: super::GraphContext<'_>,
+) -> Result<Vec<TemplateDto>, String> {
+    let Some(name) = name else {
+        return super::off_ui_graph_read(&state, |view| Ok(view.templates())).await;
+    };
+    named_template(super::slot_for_context(&state)?, name).await
+}
+
 /// Whether this binding's launch warm already holds a graph view (a served
 /// launch checkpoint or the loaded graph; `graph::warm_cache_async` sets it
 /// once `whole_graph` returned). The early file answers stand down then: the

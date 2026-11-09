@@ -3,11 +3,13 @@
 //! members of one alias group.
 use super::*;
 
-/// Physical names, aliases, and names that occur only in references, sorted by
-/// the graph's page identity key. A physical page has one entry per decoded
+/// Physical names, aliases, and names that occur only in references. Inventory
+/// scopes order by page identity key, except descending journal-day windows.
+/// A physical page has one entry per decoded
 /// spelling, and each entry's target is exactly what [`WholeGraph::resolve`]
 /// returns for that name: the canonical claimant, then every other file
-/// claiming the same normalized name.
+/// claiming the same normalized name. `ActiveFilesUnder` and `ConflictingFiles`
+/// instead target the listed physical file directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InventoryEntry {
     /// Decoded file name, alias, or referenced name.
@@ -214,7 +216,8 @@ fn with_link(
     entry
 }
 
-/// Graph inventory entries in page-key order.
+/// Graph inventory entries in the requested scope's order: page keys, or
+/// descending days for a bounded journal window.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Inventory(pub Vec<InventoryEntry>);
 
@@ -237,8 +240,16 @@ pub(crate) struct InventoryDelta {
 /// Which names a [`WholeGraph::inventory`] lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InventoryScope<'a> {
+    /// Active parsed file owners whose identity starts with this prefix.
+    /// One row per identity, targeting the active file; no alias resolution,
+    /// `link` or `parent` (callers read names only).
+    ActiveFilesUnder(&'a str),
     /// The file-claimed name of this page in this view, if present.
     File(&'a PageId),
+    /// This journal file's row in the view's day index, as `JournalFiles`
+    /// lists it, also when the file failed to read: empty unless the file is
+    /// a journal and its name's opening claimant.
+    JournalFile(&'a PageId),
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
     /// Physical files in conflicting claim buckets, opening file first in
@@ -261,7 +272,16 @@ pub enum InventoryScope<'a> {
     AliasGroup(&'a str),
     /// Every journal day a file claims in this view, once per day: the
     /// view's day index, not a directory listing.
+    #[cfg(any(test, feature = "test-faults"))]
     JournalFiles,
+    /// At most `limit` file-claimed days strictly before `before`, newest first.
+    /// Same identities as `JournalFiles`; bounded traversal of its existing index.
+    JournalFilesBefore {
+        /// Exclusive upper day boundary.
+        before: Day,
+        /// Maximum returned file-claimed days.
+        limit: usize,
+    },
 }
 
 impl WholeGraph {
@@ -302,6 +322,14 @@ impl WholeGraph {
     /// indexed once per snapshot instead of rescanned for every name.
     /// The result is stable in this view.
     ///
+    /// [`InventoryScope::ActiveFilesUnder`] normalizes a literal name prefix,
+    /// retaining a terminal slash as the descendant boundary,
+    /// and ranges the existing real-name tree. It returns the semantic owner's
+    /// stored spelling and file target, once per identity, in identity order.
+    /// It includes journals and excludes alias-only and reference-only names.
+    /// Cost O(log P + C) for C matching stored claimants (including twins),
+    /// with no document traversal, filesystem access or new index.
+    ///
     /// [`InventoryScope::FilesAtOrUnder`] returns only the file-claimed
     /// entries (pages and journals, `is_journal` telling them apart) whose
     /// page key is the given key or lies under `key/` with a namespace name
@@ -327,18 +355,82 @@ impl WholeGraph {
     /// nothing. The page header shows them (D-20261019-AL2). Cost
     /// O(component log P) over the snapshot's alias edges and real-name
     /// table; no parse and no disk access.
-    /// [`InventoryScope::JournalFiles`] lists one entry per journal day that a
-    /// file claims in this view (duplicate-day strays are `others` of the
-    /// day's target, as in `All`), from the view's day index, which
-    /// publications keep per file: O(J log J) for J journal days, no parse and
-    /// no disk access (cost audit 2026-11-02 row 8: the Journals feed pages
-    /// through it instead of listing the journals directory per step).
+    ///
+    /// [`InventoryScope::JournalFilesBefore`] lists at most `limit` file-claimed
+    /// days below an exclusive cursor, in descending order, from the existing
+    /// day index (duplicate-day strays are `others`, as in `All`). The day
+    /// tree seek costs O(log J); selected slots and claimant buckets use their
+    /// existing tree lookups and claimant spelling deduplication
+    /// (O(log P + C²) per candidate, C same-name claimants).
+    /// Masked days must be examined and skipped. No new index or disk access.
+    ///
+    /// [`InventoryScope::JournalFile`] names the file by its filename stem, as
+    /// the file list does (so a file that failed to read keeps its day), then
+    /// resolves that name as `JournalFiles` does: O(log P + C²) for C name
+    /// claimants, no parse and no disk access.
     ///
     /// [`InventoryScope::File`] uses the existing page-position map and
     /// resolves its name in this view: O(log P + C) for C name claimants,
     /// with no document traversal or file reads. An absent page returns empty.
     pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
         match scope {
+            InventoryScope::ActiveFilesUnder(prefix) => {
+                let prefix = prefix.strip_suffix('/').map_or_else(
+                    || tine_core::refs::page_key(prefix),
+                    |parent| format!("{}/", tine_core::refs::page_key(parent)),
+                );
+                let owners = self.graph.real_page_owners();
+                Arc::new(Inventory(
+                    owners
+                        .under(&prefix)
+                        .filter_map(|entry| {
+                            Some(InventoryEntry {
+                                name: entry.name.clone(),
+                                target: Resolved::Existing {
+                                    id: entry.rel_path.clone()?,
+                                    others: Vec::new(),
+                                },
+                                is_journal: entry.kind == PageKind::Journal,
+                                day: entry.date_key.map(Day),
+                                link: None,
+                                namespace_parent: false,
+                                parent: None,
+                                empty_alias: false,
+                            })
+                        })
+                        .collect(),
+                ))
+            }
+            InventoryScope::JournalFilesBefore { before, limit } => Arc::new(Inventory(
+                self.list
+                    .journal_days_before(before.0)
+                    .filter_map(|page| {
+                        self.claimed_entries(page, tine_core::refs::page_key(&page.name))
+                            .into_iter()
+                            .next()
+                            // A lossy title can make several source days open
+                            // one winner day. Emit it at its own indexed day.
+                            .filter(|entry| entry.day == page.date_key.map(Day))
+                    })
+                    .filter(|entry| entry.is_journal)
+                    .take(limit)
+                    .collect(),
+            )),
+            InventoryScope::JournalFile(id) => {
+                let stem = std::path::Path::new(id.as_str())
+                    .file_stem()
+                    .and_then(|stem| stem.to_str());
+                let entry = stem.and_then(|stem| {
+                    let (name, _) = crate::model::journal_stem_name(&self.journal_format, stem);
+                    let claimants = self.all_name_claimants(&name);
+                    let winner = claimants.first()?;
+                    (winner.kind == PageKind::Journal && winner.rel_path.as_ref() == Some(id))
+                        .then(|| self.claimed_entries(winner, tine_core::refs::page_key(&name)))?
+                        .into_iter()
+                        .next()
+                });
+                Arc::new(Inventory(entry.into_iter().collect()))
+            }
             InventoryScope::File(id) => Arc::new(Inventory(
                 self.graph
                     .physical_pages
@@ -438,6 +530,7 @@ impl WholeGraph {
                 Arc::new(Inventory(self.page_files_at_or_under(key)))
             }
             InventoryScope::AliasGroup(name) => Arc::new(Inventory(self.alias_group(name))),
+            #[cfg(any(test, feature = "test-faults"))]
             InventoryScope::JournalFiles => {
                 let mut entries: Vec<_> = self
                     .list
@@ -793,6 +886,8 @@ pub(crate) fn proposed_page_id(config: &tine_core::config::Config, name: &str) -
 }
 
 fn sort_inventory(entries: &mut [InventoryEntry]) {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::inventory_sort();
     entries
         .sort_by_cached_key(|entry| (tine_core::refs::page_key(&entry.name), entry.name.clone()));
 }

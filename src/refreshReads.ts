@@ -11,7 +11,7 @@
  * loads (`get_page`) and the search panel (`search`) are not refresh reads. */
 export const REFRESH_READ_COMMANDS: ReadonlySet<string> = new Set([
   "get_backlinks", "get_unlinked_refs", "page_icons", "resolve_blocks", "preview_block", "query_parse", "query_run",
-  "query_registry", "run_graph_search", "journal_feed_page", "journal_content_days", "list_templates",
+  "query_registry", "run_graph_search", "journal_feed_page", "journal_content_days", "list_templates", "list_template_names",
   "block_referrers", "get_backlink_filter_context", "page_backlink_counts", "page_modified",
 ]);
 

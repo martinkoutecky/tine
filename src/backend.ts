@@ -609,6 +609,7 @@ class TauriBackend implements Backend {
   listTemplates(name?: string) {
     return this.call<TemplateDto[]>("list_templates", name === undefined ? undefined : { name });
   }
+  listTemplateNames() { return this.call<string[]>("list_template_names"); }
   resolveBlock(uuid: string) {
     return this.call<RefGroup | null>("resolve_block", { uuid });
   }

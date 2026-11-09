@@ -733,13 +733,13 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
     const owner = bindingOwner();
     let existing;
     try {
-      existing = await readOwned(owner, backend().listTemplates());
+      existing = await readOwned(owner, backend().listTemplateNames());
     } catch (error) {
       if (owner()) reportUiFailure("template-read", error);
       return;
     }
     if (existing.kind === "stale") return;
-    if (existing.value.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
+    if (existing.value.some((name) => name.toLowerCase() === title.toLowerCase())) {
       pushToast(msg("context-menu-ui-a-template-named-already-exists", { title: title }), "error");
       return;
     }

@@ -67,6 +67,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         include_str!("rename_would_change.rs"),
         include_str!("commands/concord.rs"),
         include_str!("commands/rename.rs"),
+        include_str!("commands/templates.rs"),
         include_str!("backup.rs"),
         include_str!("backup/restore.rs"),
         include_str!("settings.rs"),
@@ -74,11 +75,12 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         include_str!("plugins.rs"),
         include_str!("lib.rs"),
     ];
-    let all = listed
+    let all: Vec<_> = listed
         .iter()
         .cloned()
-        .chain(other_sources.iter().flat_map(|source| commands(source)));
-    for (name, asynchronous, body) in all {
+        .chain(other_sources.iter().flat_map(|source| commands(source)))
+        .collect();
+    for (name, asynchronous, body) in all.iter().cloned() {
         if reaches_load_wait(&body) {
             assert!(asynchronous, "I-13 / OG-RULES Rule 4: {name} reaches the initial graph-load wait; a synchronous Tauri command blocks the UI thread. Make it async and use the blocking pool; exemplar resolve_blocks");
             assert!(body.contains("spawn_blocking(") || body.contains("off_ui_graph_read(") || body.contains("off_ui("),
@@ -110,6 +112,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
     }
     for name in [
         "list_templates",
+        "list_template_names",
         "journal_content_days",
         "resolve_block",
         "resolve_blocks",
@@ -125,8 +128,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "get_page_by_path",
     ] {
         assert!(
-            listed
-                .iter()
+            all.iter()
                 .any(|(found, asynchronous, _)| found == name && *asynchronous),
             "I-13 / OG-RULES Rule 4: {name} must stay an asynchronous load-waiting Tauri command"
         );

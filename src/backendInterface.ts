@@ -492,6 +492,8 @@ export interface Backend {
   /** Every template; with `name`, at most the one graph-wide discovery picks
    * for that exact name, answered early when the graph's files settle it. */
   listTemplates(name?: string): Promise<TemplateDto[]>;
+  /** Template names in discovery order, duplicates included; no insertion bodies. */
+  listTemplateNames(): Promise<string[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */
