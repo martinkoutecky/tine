@@ -1101,8 +1101,11 @@ Retiring such a host is terminal on every stop path (window close, graph
 switch, overlap release, app exit, `tine serve`): its stop answers `Ended`,
 `PageHost::stop_finish` joins it and hands its pages back to the watcher, its
 drafts stay on disk for the next host's recovery, and the Store closes, the
-slot leaves the retirement and the owner lease is released, even when the
-close panics. A reopen never adopts it: it ends that retirement itself and
+slot leaves the retirement and the owner lease is released. `Store::close`
+never panics: it takes over a lock a panicked writer poisoned, and so does
+every later close (the slot's and the Store's drops); proofs
+`host_retirement.rs` `a_retirement_after_a_writer_panicked_closes_and_releases_the_root`
+and `panic_isolation_tests.rs` `close_after_a_writer_panicked_completes_and_drops`. A reopen never adopts it: it ends that retirement itself and
 starts a fresh host. A restore's stop over it aborts. Proofs
 `host_retirement.rs` `r1_a_window_closed_after_a_driver_panic_retires_its_host_for_good`,
 `r1_a_reopen_never_adopts_a_host_whose_driver_ended`,

@@ -160,18 +160,17 @@ impl HostRetirement {
 
     /// The end of `slot`'s retirement, once its host stopped (`host` is its
     /// held host lock): the Store closes, the slot leaves this map, and the
-    /// owner lease goes. Every step runs even when the close panics, so app
-    /// exit and a reopen never wait on this slot again.
+    /// owner lease goes. `Store::close` never panics (it takes over a lock a
+    /// panicked writer poisoned), so every step runs, and app exit and a
+    /// reopen never wait on this slot again
+    /// (`a_retirement_after_a_writer_panicked_closes_and_releases_the_root`).
     fn close_stopped(
         &self,
         slot: &Arc<GraphSlot>,
         host: std::sync::RwLockWriteGuard<'_, PageHostSlot>,
     ) {
         let lease = slot.owner.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let closed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.store.close()));
-        if closed.is_err() {
-            crate::debug::diag("page-host-retirement-close-panicked");
-        }
+        slot.store.close();
         {
             let mut retiring = self.0.retiring.lock().unwrap_or_else(|e| e.into_inner());
             if retiring
@@ -1338,5 +1337,29 @@ mod tests {
         host.running().unwrap().crash_driver_for_tests();
         assert_eq!(stop_pass(&mut host, &mut Duration::from_secs(1)), None);
         assert!(matches!(host, PageHostSlot::Off));
+    }
+
+    /// Review R1 of 6dce7d383: a writer that panicked leaves the Store's
+    /// writer lock poisoned. Retiring the slot still closes the Store, takes
+    /// the slot out of the retirement and releases the owner lease, and
+    /// dropping the last slot and Store references (each closes again) does
+    /// not panic or abort.
+    #[test]
+    fn a_retirement_after_a_writer_panicked_closes_and_releases_the_root() {
+        let f = Fixture::new("writer-poisoned");
+        let state = app_state();
+        let slot = f.bind(&mut state.graphs.write().unwrap(), "graph-1");
+        let lock = lease(&f, &slot);
+        f.store.poison_writer_for_tests();
+        drop(slot);
+        assert!(crate::state::release_window_graph(&state.graphs, "graph-1"));
+        let retirement = state.graphs.read().unwrap().retirement.clone();
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+        assert!(f.closed(), "the Store closed");
+        wait_for("the owner lease was never released", || lease_free(&lock));
+        drop(retirement);
+        drop(state);
+        f.store.close();
+        assert!(f.closed());
     }
 }

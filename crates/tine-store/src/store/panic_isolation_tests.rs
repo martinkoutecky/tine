@@ -568,3 +568,19 @@ fn an_own_create_a_capture_missed_is_named_after_refresh() {
         let _ = fs::remove_dir_all(&root);
     }
 }
+
+/// A writer that panicked poisons the writer lock. `close` still completes
+/// (the store reads as closed and refuses I/O), and `Drop`, which closes
+/// again, neither panics nor aborts (review R1 of audit-storage-1109).
+#[test]
+fn close_after_a_writer_panicked_completes_and_drops() {
+    let (root, store) = ready_graph_without_watcher("close-poisoned-writer");
+    store.poison_writer_for_tests();
+    assert!(store.writer.is_poisoned());
+    store.close();
+    assert!(store.is_closed());
+    assert!(matches!(store.is_graph_ready(), Err(LoadError::Closed)));
+    store.close();
+    drop(Arc::try_unwrap(store).ok().expect("the only reference"));
+    let _ = fs::remove_dir_all(&root);
+}

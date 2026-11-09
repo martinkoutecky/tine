@@ -1202,10 +1202,12 @@ impl Drop for PageHost {
     /// Stop and join the driver (its last step's results have been
     /// delivered), then hand every held page's index back to the watcher,
     /// which rereads them from disk. A driver that panicked (a host bug)
-    /// hands them back too, before its panic goes on (s3b O6).
+    /// hands them back too, before its panic goes on (s3b O6). A writer lock
+    /// another writer's panic poisoned is taken over: handing pages back
+    /// writes nothing, and a panic here while unwinding would abort.
     fn drop(&mut self) {
         let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.join()));
-        let writer = self.store.writer.lock().unwrap();
+        let writer = self.store.writer.lock().unwrap_or_else(|e| e.into_inner());
         self.store.watch.release_holds();
         drop(writer);
         if let Err(panic) = joined {
