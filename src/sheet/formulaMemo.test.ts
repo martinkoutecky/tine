@@ -74,7 +74,7 @@ it("one live row edit evaluates F cells, not N × F", () => {
 // Card CBEnA: past midnight only the cells whose evaluation read the date are
 // computed again (a row whose `if` never reached today() is not), with no
 // injected clock, as in the app.
-it("a day change recomputes exactly the formula cells that read the date", () => {
+it("a day change recomputes exactly the rows whose formulas read the date", () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2030, 6, 15, 23, 0));
   setCurrentDayKeyForTest(localDayKey());
