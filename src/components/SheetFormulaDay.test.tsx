@@ -19,7 +19,9 @@ import { localDayKey, resyncCurrentDayForTest, setCurrentDayKeyForTest } from ".
 
 const FIRST = new Date(2030, 6, 15, 23, 0);
 const SECOND = new Date(FIRST.getTime() + 26 * 60 * 60 * 1000);
-const day = (instant: Date) => instant.toISOString().slice(0, 10);
+// The local calendar day, as today() shows it (REG-FORMULA-LOCAL-DATE).
+const day = (instant: Date) =>
+  `${instant.getFullYear()}-${String(instant.getMonth() + 1).padStart(2, "0")}-${String(instant.getDate()).padStart(2, "0")}`;
 
 beforeAll(initParser);
 beforeEach(() => {
