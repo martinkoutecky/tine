@@ -5,7 +5,7 @@ use tine_store::{cost_counters, EditKind, PageId, SaveBase, Store};
 
 #[test]
 fn ordinary_host_save_plans_two_parses_and_publishes_the_written_tree() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     for blocks in [1, 60] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();

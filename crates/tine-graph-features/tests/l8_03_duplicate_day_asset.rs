@@ -311,7 +311,7 @@ fn l8_03_org_stray_uses_its_format_parser_for_preamble_and_block_references() {
 
 #[test]
 fn l8_03_inventory_only_reads_and_parses_set_aside_files() {
-    let _guard = crate::integration_lock();
+    let _guard = crate::exclusive_integration_lock();
     let (_root, store) = cold(&[
         (KEEPER, "- the day\n"),
         ("pages/A.md", "- indexed\n"),

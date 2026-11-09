@@ -116,7 +116,7 @@ fn names_read(label: &str) -> (u64, u64) {
 
 #[test]
 fn creates_and_a_favourite_toggle_list_and_open_no_other_page() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (root, store) = graph();
     let writer = HostWriter::start(&store);
     // The first lookup of an absent name of each kind after launch still
@@ -174,7 +174,7 @@ fn creates_and_a_favourite_toggle_list_and_open_no_other_page() {
 /// (`:hidden`) still rescans and drops the hidden page.
 #[test]
 fn an_outside_favourite_edit_rescans_nothing_but_a_hidden_edit_does() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (root, store) = graph();
     let subscription = store.subscribe();
     // Let the watcher install its OS subscription before the outside write.
