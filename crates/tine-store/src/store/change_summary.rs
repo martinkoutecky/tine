@@ -446,7 +446,14 @@ impl Snapshot {
             let key = page_key(&entry.name);
             summary.pages.insert(key.clone());
             summary.journals |= entry.kind == PageKind::Journal;
-            summary.days |= summary.journals;
+            // `days` is the feed's day set and Upcoming (files listed, days
+            // referenced, planning). Editing an existing journal changes none
+            // of them by itself; its body reaches a loaded feed day through
+            // the page's own reload (D-20261102-PERF, audit row 9). A journal
+            // create or delete changes the listed days: it publishes `full`
+            // above today, and must fire `days` if it ever gets a precise
+            // summary.
+            //
             // Inspect parsed facts of this edited page only, on both sides so
             // removing planning/template metadata invalidates its old answer.
             for doc in [before, after] {
