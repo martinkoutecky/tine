@@ -1539,6 +1539,15 @@ export interface MessageArgs {
   "pdf-export-print-note": {};
   "pdf-export-small": {};
   "pdf-export-wide": {};
+  "pdf-external-desktop-only": {};
+  "pdf-external-invalid-link": {};
+  "pdf-external-load-failed": { "detail": string | number };
+  "pdf-external-not-pdf": {};
+  "pdf-external-not-regular": {};
+  "pdf-external-read-only": {};
+  "pdf-external-reopen-link": {};
+  "pdf-external-too-large": {};
+  "pdf-external-unsupported-url": {};
   "pdf-find-count": { "count": string | number; "index": string | number; "truncatedSuffix": string | number };
   "pdf-find-in-document": {};
   "pdf-find-in-document-ctrl-f": {};

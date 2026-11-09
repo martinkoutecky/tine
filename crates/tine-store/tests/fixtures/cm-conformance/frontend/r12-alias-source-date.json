@@ -35,23 +35,6 @@
     {
       "day": null,
       "is_journal": false,
-      "key": "2026-10-26",
-      "link": {
-        "kind": "page",
-        "name": "owner"
-      },
-      "name": "2026-10-26",
-      "namespace_excluded": true,
-      "target": {
-        "kind": "alias",
-        "owners": [
-          "pages/owner.md"
-        ]
-      }
-    },
-    {
-      "day": null,
-      "is_journal": false,
       "key": "c",
       "name": "c",
       "target": {
@@ -78,6 +61,23 @@
       }
     },
     {
+      "day": 20261026,
+      "is_journal": true,
+      "key": "oct 26th, 2026",
+      "link": {
+        "kind": "page",
+        "name": "owner"
+      },
+      "name": "Oct 26th, 2026",
+      "namespace_excluded": true,
+      "target": {
+        "kind": "alias",
+        "owners": [
+          "pages/owner.md"
+        ]
+      }
+    },
+    {
       "day": null,
       "is_journal": false,
       "key": "owner",
@@ -92,8 +92,8 @@
   "journalFileFormat": null,
   "journalTitleFormat": null,
   "keyOf": {
-    "2026-10-26": "oct 26th, 2026",
     "ML": "ml",
+    "Oct 26th, 2026": "oct 26th, 2026",
     "c": "c",
     "owner": "owner"
   },
@@ -102,8 +102,8 @@
   "open": {
     "2026-10-26": {
       "journal": [
-        "journal",
-        "oct 26th, 2026"
+        "page",
+        "owner"
       ],
       "page": [
         "page",
@@ -114,6 +114,16 @@
       "journal": [
         "journal",
         "ml"
+      ],
+      "page": [
+        "page",
+        "owner"
+      ]
+    },
+    "Oct 26th, 2026": {
+      "journal": [
+        "page",
+        "owner"
       ],
       "page": [
         "page",
@@ -143,11 +153,15 @@
   },
   "owner": {
     "2026-10-26": {
-      "journal": null,
+      "journal": "pages/owner.md",
       "page": "pages/owner.md"
     },
     "ML": {
       "journal": null,
+      "page": "pages/owner.md"
+    },
+    "Oct 26th, 2026": {
+      "journal": "pages/owner.md",
       "page": "pages/owner.md"
     },
     "c": {

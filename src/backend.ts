@@ -629,6 +629,9 @@ class TauriBackend implements Backend {
     return { length: info.length, read: async (begin: number, end: number) => new Uint8Array(
       await this.assetCall<ArrayBuffer>("read_asset_range", { name, maxBytes, begin, end, version: info.version }, bindingGeneration)) };
   }
+  async readExternalPdf(url: string, bindingGeneration: number) {
+    return new Uint8Array(await this.assetCall<ArrayBuffer>("read_external_pdf", { url }, bindingGeneration));
+  }
   async streamAsset(name: string) {
     const path = await this.call<string>("stream_asset_path", { name });
     return this.convertFileSrc(path, "tine-media");

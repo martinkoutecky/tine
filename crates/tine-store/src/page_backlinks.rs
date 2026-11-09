@@ -12,7 +12,8 @@ impl WholeGraph {
     ///   non-owner twin has no row, so All pages shows a dash for it
     ///   (D-20261102-CM4 A13): its name opens the owner's panel.
     /// - `references`: one row per reference-only page (`inventory(All)`'s
-    ///   absent entries without a `link`), by that entry's name.
+    ///   absent entries), by that entry's canonical name. An absent journal's
+    ///   link can retain an unclaimed spelling beside an ordinary same-title file.
     ///
     /// One forward walk per call, O(P + B + R + T + F) (F the (block, panel)
     /// pairs reached; panels registered under their names, never a forward
@@ -24,7 +25,11 @@ impl WholeGraph {
     /// forward target map (D3).
     pub fn page_backlink_counts(&self) -> (Vec<(String, usize)>, Vec<(String, usize)>) {
         let counts = crate::query::page_counts::referring_block_counts(&self.graph);
-        let count = |name: &str| counts.get(&refs::page_key(name)).map_or(0, |&n| n as usize);
+        let count = |name: &str, journal: bool| {
+            counts
+                .get(&(journal, refs::page_key(name)))
+                .map_or(0, |&n| n as usize)
+        };
         let mut files = Vec::new();
         for entry in self.list.iter() {
             let Some(path) = entry.rel_path.as_ref() else {
@@ -37,14 +42,17 @@ impl WholeGraph {
             if owner.as_str() != path.as_str() {
                 continue;
             }
-            files.push((path.to_string(), count(&entry.name)));
+            files.push((
+                path.to_string(),
+                count(&entry.name, entry.kind == PageKind::Journal),
+            ));
         }
         let references = self
             .graph
             .reference_only_pages()
             .into_iter()
             .map(|answer| {
-                let value = count(&answer.name);
+                let value = count(&answer.name, answer.day.is_some());
                 (answer.name, value)
             })
             .collect();
@@ -176,7 +184,10 @@ mod tests {
         for (path, count) in &files {
             let key = tine_core::refs::page_key(&names[path]);
             assert_eq!(
-                counts.get(&key).copied().unwrap_or(0) as usize,
+                counts
+                    .get(&(path.starts_with("journals/"), key.clone()))
+                    .copied()
+                    .unwrap_or(0) as usize,
                 *count,
                 "{key}"
             );

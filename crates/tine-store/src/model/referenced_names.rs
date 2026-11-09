@@ -155,6 +155,8 @@ impl ReferencedNameTable {
     }
 
     pub(crate) fn get(&self, key: &str) -> Option<&KeyReferrers> {
+        #[cfg(test)]
+        NAME_LOOKUPS.with(|count| count.set(count.get() + 1));
         self.keys.get(key)
     }
 
@@ -170,9 +172,80 @@ impl ReferencedNameTable {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static NAME_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn name_lookups() -> usize {
+    NAME_LOOKUPS.with(std::cell::Cell::get)
+}
+
+/// Authored spellings for explicit keys, retaining a folded key when no
+/// authored row exists. Join the resident indexes in O(E log 64 + V) merge
+/// work, plus existing active-referrer checks. The spelling table is only
+/// needed for digit-bearing keys; no new index is built.
+pub(crate) fn explicit_reference_spellings(graph: &ReadSnapshot) -> impl Iterator<Item = &str> {
+    use std::cmp::Reverse;
+    use std::collections::binary_heap::PeekMut;
+    let mut shards: Vec<_> = graph.explicit_reference_name_shards().collect();
+    let mut heads: std::collections::BinaryHeap<_> = shards
+        .iter_mut()
+        .enumerate()
+        .filter_map(|(at, shard)| shard.next().map(|name| Reverse((name, at))))
+        .collect();
+    let ordered = std::iter::from_fn(move || {
+        let mut head = heads.peek_mut()?;
+        let Reverse((name, at)) = *head;
+        if let Some(next) = shards[at].next() {
+            *head = Reverse((next, at));
+        } else {
+            PeekMut::pop(head);
+        }
+        Some(name)
+    });
+    let mut spellings = None;
+    ordered.map(move |key| {
+        if !key.bytes().any(|byte| byte.is_ascii_digit()) {
+            return key;
+        }
+        let spellings =
+            spellings.get_or_insert_with(|| graph.referenced_name_table().iter().peekable());
+        while spellings
+            .peek()
+            .is_some_and(|(name, _)| name.as_str() < key)
+        {
+            spellings.next();
+        }
+        spellings
+            .peek()
+            .filter(|(name, _)| name.as_str() == key)
+            .map_or(key, |(_, name)| name.spelling.as_str())
+    })
+}
+
 /// The table and its readers (moved beside the table to keep `model.rs`
 /// within its size ratchet).
 impl ReadSnapshot {
+    /// Explicit keys with active referrers: O(E) traversal plus the existing
+    /// active-owner checks. Ordering stays private to the resident index.
+    pub(crate) fn explicit_reference_names(&self) -> impl Iterator<Item = &str> {
+        self.explicit_reference_name_shards().flatten()
+    }
+
+    /// Explicit-key shards, each in name order, with only active referrers.
+    /// Flattening costs O(E) traversal plus the existing active-owner checks;
+    /// authored-spelling readers can merge the same fixed 64 streams.
+    fn explicit_reference_name_shards(&self) -> impl Iterator<Item = impl Iterator<Item = &str>> {
+        self.explicit_index.shards.iter().map(|shard| {
+            shard
+                .iter()
+                .filter(|(_, paths)| paths.iter().any(|(path, _)| self.is_active_path(path)))
+                .map(|(name, _)| name.as_str())
+        })
+    }
+
     /// The graph-wide referenced-name table, built on first use (O(P + R))
     /// and inherited by later generations through per-page patches.
     pub(crate) fn referenced_name_table(&self) -> &ReferencedNameTable {

@@ -42,6 +42,7 @@ pub(crate) struct RefClass {
     /// (`PageFacts::may_reference`), built once rather than per page.
     list: Vec<String>,
     days: Vec<i64>,
+    real: crate::query::RealPageOwners,
     /// Per day, the day of month and the year mod 100 in decimal: the digit
     /// runs every accepted spelling of that day contains
     /// (`JournalFormat::may_spell_day`), so most names skip the date parse.
@@ -64,7 +65,15 @@ impl RefClass {
     /// Whether the reference key `name` (a page key) is a name of this class.
     pub(crate) fn holds(&self, name: &str, day: impl FnOnce(&str) -> Option<i64>) -> bool {
         self.keys.contains(name)
-            || (self.may_spell_a_day(name) && day(name).is_some_and(|day| self.days.contains(&day)))
+            || (self.may_spell_a_day(name)
+                && !self
+                    .real
+                    .opening_entry(name)
+                    .is_some_and(|entry| entry.kind == tine_core::model::PageKind::Page)
+                // Days are used only by conservative plan touch/memo probes.
+                // A normalized key can lose a configured literal's case;
+                // execution uses exact authored spelling keys with no days.
+                && day(name).is_none_or(|day| self.days.contains(&day)))
     }
 
     fn may_spell_a_day(&self, name: &str) -> bool {
@@ -78,9 +87,16 @@ impl RefClass {
 pub(crate) struct RefClasses {
     by_key: HashMap<String, Arc<RefClass>>,
     by_text: HashMap<String, Arc<RefClass>>,
+    real: Option<crate::query::RealPageOwners>,
 }
 
 impl RefClasses {
+    pub(crate) fn ordinary_claim(&self, key: &str) -> bool {
+        self.real
+            .as_ref()
+            .and_then(|real| real.opening_entry(key))
+            .is_some_and(|entry| entry.kind == tine_core::model::PageKind::Page)
+    }
     /// The empty table: every operand compares literally. Only plans with no
     /// reference leaf, or test plans built without a graph, read it.
     pub(crate) fn none() -> &'static RefClasses {
@@ -125,12 +141,17 @@ impl RefClasses {
                 keys,
                 list,
                 days,
+                real: graph.real_page_owners(),
                 needles,
             });
             by_text.insert(operand, Arc::clone(&class));
             by_key.insert(key, class);
         }
-        RefClasses { by_key, by_text }
+        RefClasses {
+            by_key,
+            by_text,
+            real: Some(graph.real_page_owners()),
+        }
     }
 
     /// The class of operand `name`; `None` when it was not collected.

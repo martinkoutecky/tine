@@ -19,7 +19,9 @@ vi.mock("./backend", () => ({ backend: () => holder.api }));
 
 async function load(snapshot: PublishedSnapshot) {
   await (await import("./render/parse")).initParser();
-  const { publishedBackend } = await import("./publishedBackend");
+  const published = await import("./publishedBackend");
+  vi.spyOn(published, "isPublishedExport").mockReturnValue(true);
+  const { publishedBackend } = published;
   holder.api = publishedBackend(async () => snapshot);
   const api = holder.api as ReturnType<typeof publishedBackend>;
   const { setJournalFormats } = await import("./journal");
@@ -42,6 +44,10 @@ beforeEach(() => {
 });
 
 describe("published answers: links open what they open in the app", () => {
+  it("new publications open an empty real file while frozen v1 answers keep their stored redirect", async () => {
+    const { open } = await load(fixture("cases-real-file-first"));
+    expect((await open("ML"))?.id).toBe("pages/ML.md");
+  });
   it("D1: a link to an empty page named like an alias opens the alias owner", async () => {
     const { open } = await load(fixture("cases"));
     const page = await open("ML");

@@ -3,6 +3,13 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the PDF Guide explains desktop outside-file opens and their read-only boundary (GH #732)", () => {
+  for (const detail of ["![label](file:///absolute/path/paper.pdf)", "[[file:///absolute/path/paper.pdf][label]]",
+    "**read-only**", "without copying", "select/copy text", "iOS and Android", "open the original link again", "256 MiB"]) {
+    expect(guide("pdf")).toContain(detail);
+  }
+});
+
 it("the PDF Guide explains citing an area image (GH #869)", () => {
   for (const detail of ["clipped image", "`((block reference))`", "**Copy ref**", "Click the image to open the PDF at that highlight", "asset placeholder"]) expect(guide("pdf")).toContain(detail);
 });

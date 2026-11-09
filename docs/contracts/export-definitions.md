@@ -1,5 +1,13 @@
 # Export definitions
 
+In printed pages and static HTML, `{{namespace X}}` lists stored page names
+whose page identity starts with the identity of `X` followed by `/`, at any depth. Each
+identity appears once, using its active file owner's spelling; links retain
+that spelling and sort by displayed-name byte order. Alias-only and
+reference-only names are absent. Static HTML applies the export's page
+admission filter to the list. Namespace lookup ranges the existing store
+name tree; it does not copy the corpus or visit unrelated page names.
+
 An export definition is an ordinary query block (`{{query …}}` or
 `{{tine-query …}}`) that carries a destination property on the block:
 `tine.export:: <folder>` or `tine.share:: <login>/<gist_id>`. It can live on any

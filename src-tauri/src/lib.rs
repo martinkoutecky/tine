@@ -32,6 +32,7 @@ mod drafts;
 mod edit_kind_guard_tests;
 #[cfg(desktop)]
 mod experiment_config_seed;
+mod external_pdf;
 mod file_lock;
 mod flight;
 mod flight_store;
@@ -1163,6 +1164,7 @@ pub fn run() {
             write_highlights,
             save_pdf_area_image,
             rollback_pdf_area_image,
+            external_pdf::read_external_pdf,
             get_backup_keep,
             set_backup_keep,
             get_capture_enter_files,

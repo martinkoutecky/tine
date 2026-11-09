@@ -51,7 +51,7 @@ fn a_literal_real_date_page_opens_before_a_journal_in_cold_and_ready_reads() {
             );
             assert!(matches!(
                 view.resolve("Oct 27th, 2026", true),
-                Resolved::Absent { .. }
+                Resolved::Alias { .. }
             ));
             assert!(matches!(
                 view.resolve("Oct 27th, 2026", false),

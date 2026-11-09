@@ -21,13 +21,15 @@
         "is_journal": false,
         "key": "2026-10-22",
         "link": {
-          "kind": "journal",
-          "name": "2026_22_10"
+          "kind": "page",
+          "name": "Owner"
         },
         "name": "2026-10-22",
         "target": {
-          "id": "pages/2026-10-22.md",
-          "kind": "absent"
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
         }
       },
       {
@@ -62,13 +64,15 @@
         "is_journal": false,
         "key": "22.10.2026",
         "link": {
-          "kind": "journal",
-          "name": "2026_22_10"
+          "kind": "page",
+          "name": "Owner"
         },
         "name": "22.10.2026",
         "target": {
-          "id": "pages/22%2E10%2E2026.md",
-          "kind": "absent"
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
         }
       },
       {
@@ -97,13 +101,15 @@
         "is_journal": false,
         "key": "oct 22nd, 2026",
         "link": {
-          "kind": "journal",
-          "name": "2026_22_10"
+          "kind": "page",
+          "name": "Owner"
         },
         "name": "Oct 22nd, 2026",
         "target": {
-          "id": "pages/Oct 22nd, 2026.md",
-          "kind": "absent"
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
         }
       },
       {
@@ -133,7 +139,48 @@
       "file_name_format": "dd.MM.yyyy",
       "title_format": "yyyy_dd_MM"
     },
-    "resolve": [],
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026-10-22",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "2026_22_10",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "22.10.2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
+        }
+      },
+      {
+        "kind": "journal",
+        "name": "Oct 22nd, 2026",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Owner.md"
+          ]
+        }
+      }
+    ],
     "v": 1
   },
   "backlinks": {},

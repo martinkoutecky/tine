@@ -266,6 +266,7 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
  *  absent so the browser fallbacks in `backend.ts` take over. */
 export const OPTIONAL_METHODS = new Set([
   "pdfAssetSource", // Native asset IPC only; published PDFs use the browser byte loader.
+  "readExternalPdf", // Outside files require an explicit desktop host link open.
   "ownerProtectionStatus",
   "retryOwnerProtection",
   // Device-local graph relocation/recovery has no namespace in a published site.

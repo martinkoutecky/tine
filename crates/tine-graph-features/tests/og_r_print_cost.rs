@@ -126,3 +126,88 @@ fn whole_print_flow_with_embeds_does_no_graph_wide_work() {
         "a one-page print must not copy every page into a corpus"
     );
 }
+
+fn namespace_print(unrelated: usize) -> (cost_counters::Counts, String) {
+    let mut all: Vec<_> = (0..unrelated)
+        .map(|i| (format!("Other{i:04}.md"), "- unrelated\n".to_owned()))
+        .collect();
+    all.extend([
+        ("Target.md".into(), "- {{namespace Project}}\n".into()),
+        ("Child.md".into(), "title:: Project/Child\n- child\n".into()),
+        ("Lower.md".into(), "title:: project/y\n- lower\n".into()),
+    ]);
+    let dir = graph(&all);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    for (file, _) in &all {
+        fs::File::options()
+            .write(true)
+            .open(dir.join("pages").join(file))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let store = Store::open(&dir, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    cost_counters::reset();
+    let html = print::page_print_html(&store, "Target", Default::default())
+        .unwrap()
+        .unwrap();
+    let counts = cost_counters::snapshot();
+    // Time the waited print operation, excluding fixture construction and launch.
+    let started = std::time::Instant::now();
+    for _ in 0..30 {
+        print::page_print_html(&store, "Target", Default::default())
+            .unwrap()
+            .unwrap();
+    }
+    let elapsed = started.elapsed();
+    eprintln!("namespace print {unrelated}: {counts:?}; 30 prints {elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "30 namespace prints exceeded the timing budget: {elapsed:?}"
+    );
+    store.close();
+    let _ = fs::remove_dir_all(dir);
+    (counts, html)
+}
+
+#[test]
+fn namespace_print_cost_is_bounded() {
+    let _integration_guard = crate::integration_lock();
+    let (few, few_html) = namespace_print(20);
+    let (many, many_html) = namespace_print(200);
+    assert_eq!(
+        (few.corpus, many.corpus),
+        (0, 0),
+        "namespace printing must not copy the corpus"
+    );
+    assert_eq!(
+        (few.namespace_name_visits, many.namespace_name_visits),
+        (2, 2),
+        "only matching stored names are visited"
+    );
+    assert_eq!(
+        (few.full_reads, many.full_reads),
+        (1, 1),
+        "only the printed target is read"
+    );
+    assert_eq!(
+        (
+            few.files_written,
+            many.files_written,
+            few.fsyncs,
+            many.fsyncs
+        ),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(few.stamps_by_path, many.stamps_by_path);
+    assert_eq!(few.readdir, many.readdir);
+    for html in [few_html, many_html] {
+        assert!(html.contains(">Project/Child</a>"));
+        assert!(
+            html.contains(">project/y</a>"),
+            "identity membership is case insensitive"
+        );
+    }
+}

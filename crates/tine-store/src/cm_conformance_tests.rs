@@ -97,8 +97,8 @@ fn link_pairs(
         diffs.push(Diff::new("harness: link table not built", "link table"));
         return BTreeSet::new();
     };
-    // The table keys nodes by `page_key` of the page name; the model by the
-    // date-folding key. Map through every spelling in play.
+    // This historical model uses untyped date-folding keys. Visit either
+    // kind of the live table's typed key through every spelling in play.
     let mut model_key: BTreeMap<String, String> = BTreeMap::new();
     for (s, k) in input["keys"].as_object().unwrap() {
         model_key
@@ -107,9 +107,11 @@ fn link_pairs(
     }
     let mut node_key: BTreeMap<u32, String> = BTreeMap::new();
     for (pk, mk) in &model_key {
-        if let Some(n) = table.node(pk) {
-            if (n as usize) < table.physical() {
-                node_key.entry(n).or_insert_with(|| mk.clone());
+        for journal in [false, true] {
+            if let Some(n) = table.node(pk, journal) {
+                if (n as usize) < table.physical() {
+                    node_key.entry(n).or_insert_with(|| mk.clone());
+                }
             }
         }
     }
@@ -359,7 +361,10 @@ fn compare_owner_answers(
     let spellings: BTreeSet<String> = ctx.files.values().flat_map(|f| f.aliases.clone()).collect();
     for s in spellings {
         let key = page_key(&s);
-        let Some(owners) = snapshot.alias_owner_paths(&key).filter(|o| !o.is_empty()) else {
+        let Some(owners) = snapshot
+            .alias_owner_paths(&key, None)
+            .filter(|o| !o.is_empty())
+        else {
             continue;
         };
         let mut sorted = owners.clone();

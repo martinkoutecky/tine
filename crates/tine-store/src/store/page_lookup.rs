@@ -106,6 +106,31 @@ mod tests {
             assert_eq!(keyed, scanned, "{name}");
         }
         let active = view.corpus(None, true);
+        // The prefix inventory uses the same semantic owners as the active
+        // corpus, including journals and duplicate physical claimants.
+        for prefix in ["", "t", "Oct", "Absent"] {
+            let key = tine_core::refs::page_key(prefix);
+            let mut expected: Vec<_> = active
+                .pages
+                .iter()
+                .filter(|page| tine_core::refs::page_key(&page.name).starts_with(&key))
+                .map(|page| (page.name.clone(), page.id.clone()))
+                .collect();
+            expected.sort_by_key(|(name, _)| tine_core::refs::page_key(name));
+            let inventory = view.inventory(InventoryScope::ActiveFilesUnder(prefix));
+            let actual: Vec<_> = inventory
+                .0
+                .iter()
+                .map(|entry| {
+                    let Resolved::Existing { id, others } = &entry.target else {
+                        panic!("active file target")
+                    };
+                    assert!(others.is_empty());
+                    (entry.name.clone(), id.clone())
+                })
+                .collect();
+            assert_eq!(actual, expected, "prefix {prefix:?}");
+        }
         let first = active
             .pages
             .iter()

@@ -86,6 +86,15 @@ pdf-pdf-settings = PDF 设置
 pdf-reader-tools = 阅读工具
 
 pdf-area-highlight = 区域高亮
+pdf-external-read-only = 外部 PDF · 只读；无法添加高亮或截取区域。
+pdf-external-reopen-link = 请重新打开原始 PDF 链接，以允许读取此外部文件。
+pdf-external-desktop-only = 外部 PDF 需要使用桌面应用。
+pdf-external-not-pdf = 此文件不是 PDF（缺少 %PDF- 文件头）。
+pdf-external-not-regular = 此路径不是常规文件。
+pdf-external-too-large = 此 PDF 超过 256 MiB，无法安全打开。
+pdf-external-invalid-link = 需要使用绝对路径的 file:// PDF 链接。
+pdf-external-unsupported-url = 此平台不支持此文件 URL。
+pdf-external-load-failed = 无法加载此 PDF。（{ $detail }）
 
 pdf-theme = 主题
 

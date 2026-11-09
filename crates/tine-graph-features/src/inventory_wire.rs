@@ -55,9 +55,11 @@ pub struct PageInventoryEntryWire {
     /// prefixes.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub namespace_parent: bool,
-    /// EMPTY-ALIAS (D-20261103-CMA): this name's file has no real content and
-    /// the name is an alias, so `link` is the owner and a named route opens
-    /// it too (`InventoryEntry::empty_alias`). Sent only when true.
+    /// Canonical typed immediate parent, independently of alias navigation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<LinkWire>,
+    /// Retired live flag (always false). Frozen published v1 rows retain
+    /// their stored content-dependent opening answer.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub empty_alias: bool,
     /// The name has a `/` but is no namespace name (`./x`, `../x/y`, a URL
@@ -91,6 +93,10 @@ pub fn entry_wire(entry: &InventoryEntry) -> PageInventoryEntryWire {
             kind: if link.is_journal { "journal" } else { "page" },
         }),
         namespace_parent: entry.namespace_parent,
+        parent: entry.parent.as_ref().map(|parent| LinkWire {
+            name: parent.name.clone(),
+            kind: if parent.is_journal { "journal" } else { "page" },
+        }),
         empty_alias: entry.empty_alias,
         not_namespace: entry.name.contains('/') && !tine_core::refs::is_namespace_name(&entry.name),
         namespace_excluded: matches!(entry.target, Resolved::Alias { .. }),

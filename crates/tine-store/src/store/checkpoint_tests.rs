@@ -378,7 +378,11 @@ fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
     let view = store.whole_graph_reconciled().unwrap();
     assert_eq!(load_outcome(&store), "format");
     assert!(parse_passes(&store) > 0, "old derived state must rebuild");
-    assert!(!view.graph.alias_owner_paths("buzz").unwrap().is_empty());
+    assert!(!view
+        .graph
+        .alias_owner_paths("buzz", None)
+        .unwrap()
+        .is_empty());
     let crate::QueryResult::Simple(groups) = view
         .query("(page-tags eng)", crate::QueryDialect::Simple)
         .unwrap()
@@ -605,7 +609,7 @@ fn warm(store: &Store) {
     graph.block_owner_page("x", true);
     graph.referenced_page_names();
     graph.page_aliases_with_owners();
-    graph.alias_owner_paths("bee");
+    graph.alias_owner_paths("bee", None);
     graph.query_index().registry(&graph.pages);
     answers(store);
 }
@@ -1246,7 +1250,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (27, GOLDEN),
+        (28, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

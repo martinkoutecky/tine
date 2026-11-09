@@ -1,0 +1,942 @@
+{
+  "aliases": [
+    [
+      "launch day",
+      "Oct 26th, 2026"
+    ]
+  ],
+  "answers": {
+    "alias_groups": [
+      {
+        "aliases": [
+          "Shared"
+        ],
+        "name": "Alpha",
+        "pages": [
+          "Beta"
+        ]
+      },
+      {
+        "aliases": [
+          "Shared"
+        ],
+        "name": "Beta",
+        "pages": [
+          "Alpha"
+        ]
+      },
+      {
+        "aliases": [],
+        "name": "Group A",
+        "pages": [
+          "Group B"
+        ]
+      },
+      {
+        "aliases": [],
+        "name": "Group B",
+        "pages": [
+          "Group A"
+        ]
+      },
+      {
+        "aliases": [],
+        "name": "ML",
+        "pages": [
+          "Machine Learning"
+        ]
+      },
+      {
+        "aliases": [],
+        "name": "Machine Learning",
+        "pages": [
+          "ML"
+        ]
+      },
+      {
+        "aliases": [
+          "launch day"
+        ],
+        "name": "Oct 26th, 2026",
+        "pages": []
+      }
+    ],
+    "inventory": [
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "2026-10-26",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 26th, 2026"
+        },
+        "name": "2026-10-26",
+        "target": {
+          "id": "pages/2026-10-26.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "alpha",
+        "name": "Alpha",
+        "target": {
+          "id": "pages/Alpha.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "beta",
+        "name": "Beta",
+        "target": {
+          "id": "pages/Beta.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "group a",
+        "name": "Group A",
+        "target": {
+          "id": "pages/Group A.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "group b",
+        "name": "Group B",
+        "target": {
+          "id": "pages/Group B.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "launch day",
+        "link": {
+          "kind": "journal",
+          "name": "Oct 26th, 2026"
+        },
+        "name": "launch day",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "journals/2026_10_26.md"
+          ]
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "links",
+        "name": "Links",
+        "target": {
+          "id": "pages/Links.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "machine learning",
+        "name": "Machine Learning",
+        "target": {
+          "id": "pages/Machine Learning.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "ml",
+        "name": "ML",
+        "target": {
+          "id": "pages/ML.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "n",
+        "name": "n",
+        "namespace_parent": true,
+        "target": {
+          "id": "pages/n.md",
+          "kind": "absent"
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "n/y",
+        "name": "n/y",
+        "target": {
+          "id": "pages/n___y.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261026,
+        "is_journal": true,
+        "key": "oct 26th, 2026",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": 20261027,
+        "is_journal": true,
+        "key": "oct 27th, 2026",
+        "name": "Oct 27th, 2026",
+        "target": {
+          "id": "journals/2026_10_27.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "day": null,
+        "is_journal": false,
+        "key": "shared",
+        "link": {
+          "kind": "page",
+          "name": "Alpha"
+        },
+        "name": "Shared",
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Alpha.md",
+            "pages/Beta.md"
+          ]
+        }
+      }
+    ],
+    "journals": {
+      "content_days": [
+        20261026
+      ],
+      "file_name_format": "yyyy_MM_dd",
+      "title_format": "MMM do, yyyy"
+    },
+    "resolve": [
+      {
+        "kind": "journal",
+        "name": "2026-10-26",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
+      }
+    ],
+    "v": 1
+  },
+  "backlinks": {
+    "Alpha": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-0",
+            "page_property": true,
+            "properties": [
+              [
+                "alias",
+                "Shared"
+              ]
+            ],
+            "raw": "alias:: Shared"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-0",
+            "occurrences": [
+              {
+                "canonical": "Alpha",
+                "kind": "explicit",
+                "matched_name": "Shared",
+                "rule": "implicit_linkable_property",
+                "span": {
+                  "end": 14,
+                  "start": 8
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Beta"
+      },
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "Alpha",
+                "kind": "explicit",
+                "matched_name": "Shared",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 32,
+                  "start": 22
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ],
+    "Beta": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-2",
+            "page_property": true,
+            "properties": [
+              [
+                "alias",
+                "Shared"
+              ]
+            ],
+            "raw": "alias:: Shared"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-2",
+            "occurrences": [
+              {
+                "canonical": "Alpha",
+                "kind": "explicit",
+                "matched_name": "Shared",
+                "rule": "implicit_linkable_property",
+                "span": {
+                  "end": 14,
+                  "start": 8
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Alpha"
+      },
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "Alpha",
+                "kind": "explicit",
+                "matched_name": "Shared",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 32,
+                  "start": 22
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ],
+    "Group A": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-3",
+            "page_property": true,
+            "properties": [
+              [
+                "alias",
+                "Group A"
+              ]
+            ],
+            "raw": "alias:: Group A"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-3",
+            "occurrences": [
+              {
+                "canonical": "Group A",
+                "kind": "explicit",
+                "matched_name": "Group A",
+                "rule": "implicit_linkable_property",
+                "span": {
+                  "end": 15,
+                  "start": 8
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Group B"
+      },
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "Group A",
+                "kind": "explicit",
+                "matched_name": "Group A",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 59,
+                  "start": 48
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ],
+    "Group B": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "Group A",
+                "kind": "explicit",
+                "matched_name": "Group A",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 59,
+                  "start": 48
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ],
+    "ML": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "ML",
+                "kind": "explicit",
+                "matched_name": "ML",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 6,
+                  "start": 0
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      },
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-4",
+            "page_property": true,
+            "properties": [
+              [
+                "alias",
+                "ML"
+              ]
+            ],
+            "raw": "alias:: ML"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-4",
+            "occurrences": [
+              {
+                "canonical": "ML",
+                "kind": "explicit",
+                "matched_name": "ML",
+                "rule": "implicit_linkable_property",
+                "span": {
+                  "end": 10,
+                  "start": 8
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Machine Learning"
+      }
+    ],
+    "Machine Learning": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "ML",
+                "kind": "explicit",
+                "matched_name": "ML",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 6,
+                  "start": 0
+                }
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ],
+    "Oct 26th, 2026": [
+      {
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+          }
+        ],
+        "evidence": [
+          {
+            "block_id": "runtime-1",
+            "occurrences": [
+              {
+                "canonical": "Oct 26th, 2026",
+                "kind": "explicit",
+                "matched_name": "2026-10-26",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 21,
+                  "start": 7
+                }
+              },
+              {
+                "canonical": "Oct 26th, 2026",
+                "kind": "explicit",
+                "matched_name": "launch day",
+                "rule": "explicit_link",
+                "span": {
+                  "end": 47,
+                  "start": 33
+                }
+              }
+            ],
+            "total": 2
+          }
+        ],
+        "kind": "page",
+        "page": "Links"
+      }
+    ]
+  },
+  "block_ref_counts": {},
+  "entries": [
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Alpha",
+      "path": "pages/Alpha.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Beta",
+      "path": "pages/Beta.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Group A",
+      "path": "pages/Group A.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Group B",
+      "path": "pages/Group B.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Links",
+      "path": "pages/Links.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "ML",
+      "path": "pages/ML.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md"
+    },
+    {
+      "date_key": 20261026,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md"
+    },
+    {
+      "date_key": 20261027,
+      "kind": "journal",
+      "name": "Oct 27th, 2026",
+      "path": "journals/2026_10_27.md"
+    },
+    {
+      "date_key": null,
+      "kind": "page",
+      "name": "n/y",
+      "path": "pages/n___y.md"
+    }
+  ],
+  "exported_at": "",
+  "home": "Alpha",
+  "icons": {},
+  "name": "Site",
+  "pages": [
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-5",
+          "raw": "alpha body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Alpha",
+      "path": "pages/Alpha.md",
+      "pre_block": "alias:: Shared",
+      "read_only": true,
+      "rev": null,
+      "title": "Alpha"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-6",
+          "raw": "beta body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Beta",
+      "path": "pages/Beta.md",
+      "pre_block": "alias:: Shared",
+      "read_only": true,
+      "rev": null,
+      "title": "Beta"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-7",
+          "raw": "group a body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Group A",
+      "path": "pages/Group A.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "Group A"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-8",
+          "raw": "group b body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Group B",
+      "path": "pages/Group B.md",
+      "pre_block": "alias:: Group A",
+      "read_only": true,
+      "rev": null,
+      "title": "Group B"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-1",
+          "raw": "[[ML]] [[2026-10-26]] [[Shared]] [[launch day]] [[Group A]]"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Links",
+      "path": "pages/Links.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "Links"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-9",
+          "raw": ""
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "ML",
+      "path": "pages/ML.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "ML"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-10",
+          "raw": "ML body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "Machine Learning",
+      "path": "pages/Machine Learning.md",
+      "pre_block": "alias:: ML",
+      "read_only": true,
+      "rev": null,
+      "title": "Machine Learning"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-11",
+          "raw": "Launch journal body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "journal",
+      "name": "Oct 26th, 2026",
+      "path": "journals/2026_10_26.md",
+      "pre_block": "alias:: launch day",
+      "read_only": true,
+      "rev": null,
+      "title": "Oct 26th, 2026"
+    },
+    {
+      "activation": null,
+      "blocks": [],
+      "format": "md",
+      "guide": false,
+      "kind": "journal",
+      "name": "Oct 27th, 2026",
+      "path": "journals/2026_10_27.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "Oct 27th, 2026"
+    },
+    {
+      "activation": null,
+      "blocks": [
+        {
+          "breadcrumb": [],
+          "children": [],
+          "collapsed": false,
+          "has_id": false,
+          "id": "runtime-12",
+          "raw": "namespace child body"
+        }
+      ],
+      "format": "md",
+      "guide": false,
+      "kind": "page",
+      "name": "n/y",
+      "path": "pages/n___y.md",
+      "pre_block": null,
+      "read_only": true,
+      "rev": null,
+      "title": "n/y"
+    }
+  ],
+  "queries": [],
+  "schema": 1
+}
