@@ -4,7 +4,7 @@ import { propertyCompletionSession } from "./propertyCompletionSession";
 import { acceptBlockRefPick, blockPickItems } from "./blockRefPick";
 import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
-import { node, insertOutlineWithEdit, setHeading, withUndoUnit, type PendingEdit } from "../document";
+import { node, insertEditorOutline, setHeading, withUndoUnit, type PendingEdit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
 import { pinyinMatchingEnabled } from "../launcherRanking";
 import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
@@ -369,14 +369,8 @@ export function editorCompletions(props: CompletionAdapter) {
       // block (og-enter-family-1109, HONP4). A block the removal leaves empty is replaced by the template.
       const nodes = item.templateNodes.map(n => templateToOutline(n, node(props.id).page));
       closeAc();
-      const removal = props.stageDelete(t.start, t.end);
-      const empty = removal.raw.trim() === "" && node(props.id).children.length === 0;
-      const result = insertOutlineWithEdit(props.id, nodes, removal, `template:${props.id}`, empty ? "replace-empty" : "after");
-      if ("refused" in result) {
-        if (result.refused !== "told") pushToast(msg("editor-block-outline-is-too-deep-to-insert"), "error");
-        return;
-      }
-      const last = result.inserted;
+      const tooDeep = msg("editor-block-outline-is-too-deep-to-insert");
+      const last = insertEditorOutline(props.id, nodes, props.stageDelete(t.start, t.end), `template:${props.id}`, { tooDeep, refused: tooDeep });
       if (last && node(last)) startEditing(last, node(last).raw.length);
       return;
     }

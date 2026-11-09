@@ -27,7 +27,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertOutlineWithEdit, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -41,6 +41,7 @@ import {
   registerHistoryEditorTarget,
   startEditing,
   takeCaretFor,
+  type CaretPos,
   takeHistoryEditorSelectionFor,
 } from "../editorController";
 import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from "../editor/outline";
@@ -966,9 +967,13 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   createEffect(() => { textareaValue(); if (ref) autosize(); });
   onCleanup(() => autosizeRaf?.());
   createEffect(() => { codeWrapping(); if (ref && codeEditing()) autosize(); });
-  const focusNow = () => {
-    const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
-    const want = takeCaretFor(props.id);
+  /** `again`: a later request to this mounted editor (see focusMountedEditor), applied, not taken. */
+  const focusNow = (again?: { offset: CaretPos }) => {
+    // After its block took a calculator's text (a template in the empty block) the editor enters calc
+    // mode, as a fresh mount would.
+    if (!editingCalc() && calcSource(editorValue()) !== null) setEditingCalc(true);
+    const historySelection = again ? null : takeHistoryEditorSelectionFor(props.id, surfaceKey);
+    const want = again ? again.offset : takeCaretFor(props.id);
     const rawCaret = historySelection ? historySelection.start
       : want !== null && typeof want === "object" && "start" in want ? want.codeBodyStart ?? null
       : typeof want === "number" ? want : null;
@@ -2209,14 +2214,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (!prepared?.length || !ref.isConnected || ref.value !== rawAtPaste || docNode(props.id)?.page !== pageAtPaste) return;
       // One gesture (og-enter-family-1109): the text as typed and the pasted outline are written together,
       // once the kernel has answered; a refusal or a parser failure writes neither.
-      const typed = stage(rawAtPaste);
-      const empty = !asChildren && rawAtPaste.trim() === "" && isEditorEmpty(typed.raw, hideFn(), pageFmt()) && docNode(props.id).children.length === 0;
-      const result = insertOutlineWithEdit(props.id, prepared, typed, tag, asChildren ? "children" : empty ? "replace-empty" : "after");
-      if ("refused" in result) {
-        if (result.refused !== "told") pushToast(msg(result.refused === "too_deep" ? "editor-block-pasted-outline-is-too-deep" : "editor-block-pasted-outline-was-refused"), "error");
-        return;
-      }
-      const lastId = result.inserted;
+      const lastId = insertEditorOutline(props.id, prepared, stage(rawAtPaste), tag, { children: asChildren, hide: hideFn(),
+        tooDeep: msg("editor-block-pasted-outline-is-too-deep"), refused: msg("editor-block-pasted-outline-was-refused") });
       if (!asChildren && lastId && docNode(lastId)) runGridOutline(sheetCell, () => startEditing(lastId, docNode(lastId).raw.length));
     };
     const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);

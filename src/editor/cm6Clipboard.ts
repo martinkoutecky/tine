@@ -2,7 +2,7 @@ import { clipboardEventFlavors } from "./clipboardFlavors";
 import type { EditorView } from "@codemirror/view";
 import { guardedCommands } from "./cm6Commands";
 import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
-import { insertOutlineWithEdit, node, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, type PendingEdit } from "../document";
+import { insertEditorOutline, node, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, type PendingEdit } from "../document";
 import { startEditing } from "../editorController";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { copyBlockLink } from "../components/blockLinkCopy";
@@ -17,7 +17,7 @@ import { runGridOutline } from "../sheet/gridEditMove";
 import { caretInDisplayMath, caretInFence, caretOnOpeningFence } from "./fences";
 import { codeFenceOnly } from "./codeFence";
 import { calcSource } from "./calc";
-import { isEditorEmpty, type HidePolicy } from "./properties";
+import type { HidePolicy } from "./properties";
 import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from "./outline";
 import { structuredHtmlPaste } from "./htmlPaste";
 import { isPasteableUrl, videoPasteMacro, wrapLink } from "./format";
@@ -72,14 +72,8 @@ export function cm6Clipboard(ctx: ClipboardContext) {
       if (!prepared?.length || !owner()) return;
       // One gesture (og-enter-family-1109): the text as typed and the pasted outline are written together,
       // once the kernel has answered; a refusal or a parser failure writes neither.
-      const typed = ctx.stage(rawAtPaste);
-      const empty = !asChildren && rawAtPaste.trim() === "" && isEditorEmpty(typed.raw, ctx.hiddenProperties, ctx.format) && node(ctx.id).children.length === 0;
-      const result = insertOutlineWithEdit(ctx.id, prepared, typed, tag, asChildren ? "children" : empty ? "replace-empty" : "after");
-      if ("refused" in result) {
-        if (result.refused !== "told") pushToast(msg(result.refused === "too_deep" ? "editor-block-pasted-outline-is-too-deep" : "editor-block-pasted-outline-was-refused"), "error");
-        return;
-      }
-      const lastId = result.inserted;
+      const lastId = insertEditorOutline(ctx.id, prepared, ctx.stage(rawAtPaste), tag, { children: asChildren, hide: ctx.hiddenProperties,
+        tooDeep: msg("editor-block-pasted-outline-is-too-deep"), refused: msg("editor-block-pasted-outline-was-refused") });
       if (!asChildren && lastId && node(lastId)) runGridOutline(ctx.cell, () => startEditing(lastId, node(lastId).raw.length));
     };
     const prepared = sanitizeOutlineIdsForPaste(ctx.id, nodes);

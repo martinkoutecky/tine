@@ -1,4 +1,4 @@
-import { msg } from "../../i18n";
+import { msg, type Msg } from "../../i18n";
 import { blockWritable, pageWritable, writeCollapsed } from "./properties";
 import { queryOptionFolds, storedFold } from "./queryFoldOption";
 import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, pageByName } from "../model";
@@ -190,17 +190,9 @@ export function outlineFits(hostId: string, nodes: readonly OutlineNode[], level
 }
 
 /** Append parsed outline blocks as children of `parentId`; null means empty,
- *  read-only, missing parent, or over-depth refusal. Shared by editor and sheet paste. */
+ *  read-only, missing parent, over-depth or kernel refusal. Shared by editor and sheet paste. */
 export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
-  if (!nodes.length) return null;
-  const parent = doc.byId[parentId];
-  if (!parent || !blockWritable(parentId) || !outlineFits(parentId, nodes, 1)) return null;
-  const change = importedOutlineChange(parentId, nodes, { at: "last_child", key: parentId });
-  if ("refused" in change) return null;
-  pushUndo("paste-children", [parent.page]);
-  applyOutlineChange(change);
-  markOutlineDirty(change);
-  return change.focus?.key ?? null;
+  return insertedBlock(insertOutlineWithEdit(parentId, nodes, null, "paste-children", "children"));
 }
 
 /** Enter: split the block at `offset`, a caret in the editor's visible text
@@ -385,7 +377,7 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
 /** Insert parsed outline siblings after `afterId`. Returns the last inserted id
  *  for focus, or null for empty input, read-only, missing host or excess depth. */
 export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string | null {
-  return insertOutlineBeside(afterId, nodes, "after", "paste");
+  return insertedBlock(insertOutlineWithEdit(afterId, nodes, null, "paste", "after"));
 }
 
 /** Insert parsed outline siblings BEFORE `beforeId` — the only way to put a
@@ -393,68 +385,15 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
  *  GH #480). Returns the FIRST inserted id for focus, or null under the same
  *  refusals as `insertOutlineAfter`. One "insert-block" undo. */
 export function insertOutlineBefore(beforeId: string, nodes: OutlineNode[]): string | null {
-  return insertOutlineBeside(beforeId, nodes, "before", "insert-block");
-}
-
-/** The kernel's answer to an insert beside `anchorId`, or null when nothing may change: an empty outline,
- *  a read-only anchor, an outline past the depth cap, a refusal, or a parser failure (the kernel has
- *  already told the user the last two). Pure: nothing is written, pushed to undo or marked dirty, so a
- *  caller that has staged an edit (`pending`, read by the kernel as the anchor's text) writes it only
- *  when this returns a change. */
-function planInsertBeside(
-  anchorId: string,
-  nodes: OutlineNode[],
-  side: "before" | "after",
-  pending?: PendingEdit,
-): OutlineChange | null {
-  if (!nodes.length) return null;
-  // Read-only gate at the choke point — file drops (and any future caller)
-  // must not mutate a page the round-trip self-check marked read-only
-  // (Phase-6 review finding, validated).
-  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
-  const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId }, undefined, pending && { id: anchorId, raw: pending.raw });
-  if ("refused" in change) {
-    noteOutlineRefusal(change.refused);
-    return null;
-  }
-  return change;
-}
-
-/** Shared body of insertOutlineAfter/Before. Focus answer: the inserted block
- *  the reading order ends on beside the anchor — last after it, first before. */
-function insertOutlineBeside(
-  anchorId: string,
-  nodes: OutlineNode[],
-  side: "before" | "after",
-  undoLabel: string,
-): string | null {
-  const change = planInsertBeside(anchorId, nodes, side);
-  if (!change) return null;
-  pushUndo(undoLabel, [doc.byId[anchorId].page]);
-  applyOutlineChange(change);
-  markOutlineDirty(change);
-  return change.focus?.key ?? null;
+  return insertedBlock(insertOutlineWithEdit(beforeId, nodes, null, "insert-block", "before"));
 }
 
 /** The multiline exit: double Enter on the blank last line of a code, calc, fence, display-math or
- *  page-properties block. The gesture is one change: `trim` (the block's text without that line) is
- *  written and an empty sibling follows the block, as one undo unit, so one Undo restores the line and
- *  removes the sibling. The kernel is asked about the insert over the trimmed text before anything is
- *  written, so a refusal or a parser failure leaves the block, its editor, undo and the dirty bit
- *  exactly as they were. Returns the new block, or null when nothing changed (the unit is entered only
- *  once the kernel has answered, so a refusal never has to roll one back: a rollback replaces the
- *  block's node, and the mounted editor then no longer owns it). Cost: one kernel ask, O(the page's
- *  blocks) for the undo snapshot. */
+ *  page-properties block. `trim` (the block's text without that line) is written and an empty sibling
+ *  follows the block, as one undo unit, so one Undo restores the line and removes the sibling; a refusal
+ *  or a parser failure changes nothing (see `insertOutlineWithEdit`). Returns the new block, or null. */
 export function exitMultilineBlock(id: string, trim: PendingEdit): string | null {
-  const change = planInsertBeside(id, [{ raw: "", children: [] }], "after", trim);
-  if (!change) return null;
-  const sibling = withUndoUnit(`multiline-exit:${id}`, [doc.byId[id].page], () => {
-    trim.write();
-    applyOutlineChange(change);
-    markOutlineDirty(change);
-    return change.focus?.key ?? null;
-  });
-  return sibling ?? null;
+  return insertedBlock(insertOutlineWithEdit(id, [{ raw: "", children: [] }], trim, `multiline-exit:${id}`, "after"));
 }
 
 /** Why `insertOutlineWithEdit` changed nothing. `too_deep`: the outline would pass the depth cap.
@@ -462,59 +401,73 @@ export function exitMultilineBlock(id: string, trim: PendingEdit): string | null
  *  toast). `refused`: anything else (an empty outline, a read-only page, a host that is not empty for
  *  `replace-empty`); the caller says so. */
 export type EditedInsertRefusal = "too_deep" | "told" | "refused";
+type EditedInsert = { inserted: string | null } | { refused: EditedInsertRefusal };
+const insertedBlock = (result: EditedInsert): string | null => ("inserted" in result ? result.inserted : null);
 
-/** One gesture that edits a block's text and inserts an outline beside it: a template completed from
- *  the slash menu (`edit` removes the trigger text) or a multi-line paste (`edit` commits the text as
- *  typed). `place` is where the outline goes: after the block, as its last children, or in place of the
- *  block when the edit leaves it empty (its id is reused for the first root, as a paste into an empty
- *  block does). The kernel is asked over `edit.raw` before anything is written; on an answer `edit` and
- *  the patch are written as one undo unit `tag`, so one Undo restores the text and removes the outline.
- *  A refusal or a parser failure writes nothing and enters no unit (a rollback would replace the
- *  block's node under its mounted editor). Returns the block to focus (the last inserted root), or why
- *  nothing changed. Cost: one kernel ask; O(the page's blocks) for the undo snapshot on success. */
+/** Insert a parsed outline beside block `id`, with the edit to its text that belongs to the same
+ *  gesture: a template completed from the slash menu (`edit` removes the trigger text), a multi-line
+ *  paste (`edit` commits the text as typed), the multiline exit (`edit` trims the blank line). `edit` is
+ *  null when the gesture leaves the text alone (a drop, a sheet paste). Every imported outline goes
+ *  through here. `place` is where the outline goes: before or after the block, as its last children, or
+ *  in place of the block when the edit leaves it empty (its id and hidden properties are reused for the
+ *  first root, as a paste into an empty block does). The kernel is asked over `edit.raw` before anything
+ *  is written; on an answer `edit` and the patch are written as one undo unit `tag`, so one Undo restores
+ *  the text and removes the outline. A refusal or a parser failure writes nothing and enters no unit (a
+ *  rollback would replace the block's node under its mounted editor). Returns the block to focus (the
+ *  kernel's answer: the last root after or in place of the block, the first before it), or why nothing
+ *  changed. Cost: one kernel ask; O(the page's blocks) for the undo snapshot on success. */
 export function insertOutlineWithEdit(
   id: string,
   nodes: OutlineNode[],
-  edit: PendingEdit,
+  edit: PendingEdit | null,
   tag: string,
-  place: "after" | "children" | "replace-empty",
-): { inserted: string | null } | { refused: EditedInsertRefusal } {
+  place: "before" | "after" | "children" | "replace-empty",
+): EditedInsert {
   const host = doc.byId[id];
+  // Read-only gate at the choke point: file drops (and any future caller) must not mutate a page the
+  // round-trip self-check marked read-only (Phase-6 review finding, validated).
   if (!nodes.length || !host || !blockWritable(id)) return { refused: "refused" };
   if (!outlineFits(id, nodes, place === "children" ? 1 : 0)) return { refused: "too_deep" };
-  if (place === "replace-empty" && (host.children.length || !isEditorEmpty(edit.raw, BUILTIN_HIDE, formatForBlock(id)))) return { refused: "refused" };
+  if (place === "replace-empty" && (host.children.length || !isEditorEmpty(edit?.raw ?? host.raw, BUILTIN_HIDE, formatForBlock(id)))) return { refused: "refused" };
   const at: OutlinePlace = place === "children" ? { at: "last_child", key: id } : { at: place === "after" ? "after" : "before", key: id };
-  const change = importedOutlineChange(id, nodes, at, place === "replace-empty" ? id : undefined, { id, raw: edit.raw });
+  const change = importedOutlineChange(id, nodes, at, place === "replace-empty" ? id : undefined, edit ? { id, raw: edit.raw } : undefined);
   if ("refused" in change) {
     if (change.refused === "depth_cap") return { refused: "too_deep" };
     noteOutlineRefusal(change.refused);
     return { refused: change.refused === "unparseable" || change.refused === "header_root" ? "told" : "refused" };
   }
   const inserted = withUndoUnit(tag, [host.page], () => {
-    edit.write();
+    edit?.write();
     applyOutlineChange(change);
     markOutlineDirty(change);
     return change.focus?.key ?? null;
   });
-  return { inserted: inserted ?? null };
+  // A frozen graph rewrite skipped the unit: nothing was written.
+  return inserted === undefined ? { refused: "refused" } : { inserted };
 }
 
-/** Replace one empty leaf with a parsed outline in one transaction and undo
- * entry, reusing the host id for the first root and its hidden properties.
- * Returns the last root id, or null if the host is not empty/writable or the
- * outline exceeds the cap. */
-export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): string | null {
-  const current = doc.byId[id];
-  if (!nodes.length || !current || current.children.length || !blockWritable(id)) return null;
-  if (!outlineFits(id, nodes)) return null;
-  const format = formatForBlock(id);
-  if (!isEditorEmpty(current.raw, BUILTIN_HIDE, format)) return null;
-  const change = importedOutlineChange(id, nodes, { at: "before", key: id }, id);
-  if ("refused" in change) return null;
-  pushUndo("paste-replace-empty", [current.page]);
-  applyOutlineChange(change);
-  markOutlineDirty(change);
-  return change.focus?.key ?? null;
+/** An editor gesture's outline with its text edit: a template completed from the slash menu or a
+ *  multi-line paste. The outline goes in as the block's last children when `children`, else in place of
+ *  a block the edit leaves empty and childless (OG 6e7afa8eb `insert-blocks!` `replace-empty-target?`,
+ *  for both gestures), else after it. `hide` is the editor's hide policy: the block is empty when its
+ *  edited text shows nothing under it. Without one only a blank text is, so a template keeps a block that
+ *  holds hidden properties (an `id::` another block references) and goes after it. A refusal the user has
+ *  not been told about shows `tooDeep` or `refused` as the one error toast. Returns the block to focus,
+ *  or null when nothing changed. Cost: `insertOutlineWithEdit`'s, plus with `hide` the parser's emptiness check. */
+export function insertEditorOutline(
+  id: string,
+  nodes: OutlineNode[],
+  edit: PendingEdit,
+  tag: string,
+  opts: { children?: boolean; hide?: HidePolicy; tooDeep: Msg; refused: Msg },
+): string | null {
+  const host = doc.byId[id];
+  const empty = !opts.children && !!host && !host.children.length
+    && (opts.hide ? isEditorEmpty(edit.raw, opts.hide, formatForBlock(id)) : edit.raw.trim() === "");
+  const result = insertOutlineWithEdit(id, nodes, edit, tag, opts.children ? "children" : empty ? "replace-empty" : "after");
+  if ("inserted" in result) return result.inserted;
+  if (result.refused !== "told") pushToast(result.refused === "too_deep" ? opts.tooDeep : opts.refused, "error");
+  return null;
 }
 
 /** Remove a block and its subtree (outline::delete). */

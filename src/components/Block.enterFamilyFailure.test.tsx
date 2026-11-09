@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 
-const wasm = vi.hoisted(() => ({ failNextApply: false }));
+const wasm = vi.hoisted(() => ({ failNextApply: false, calls: {} as Record<string, number> }));
 const writes = vi.hoisted(() => ({ document: 0 }));
 // Every store write a gesture makes, counted at the one setter all document edits go through.
 vi.mock("../document/model", async (importOriginal) => {
@@ -27,9 +27,18 @@ vi.mock("../document/model", async (importOriginal) => {
 });
 vi.mock("../render/wasm/lsdoc_wasm.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../render/wasm/lsdoc_wasm.js")>();
+  // Every parser call by door, to pin what a gesture asks the parser.
+  const counted: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(real)) {
+    counted[name] = typeof value === "function" && !name.startsWith("__") && name !== "default" && name !== "initSync"
+      ? (...args: unknown[]) => { wasm.calls[name] = (wasm.calls[name] ?? 0) + 1; return (value as (...a: unknown[]) => unknown)(...args); }
+      : value;
+  }
   return {
     ...real,
+    ...counted,
     outline_apply_json: (request: string) => {
+      wasm.calls.outline_apply_json = (wasm.calls.outline_apply_json ?? 0) + 1;
       if (wasm.failNextApply) {
         wasm.failNextApply = false;
         // What the glue's guard throws after it reinstantiated a trapped instance.
@@ -60,6 +69,8 @@ const META: GraphMeta = {
   preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
   logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
 };
+
+
 
 describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family commits all of a gesture or none of it", (kind) => {
   useEditorKind(kind);
@@ -96,6 +107,9 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
   const texts = () => roots().map((id) => doc.byId[id].raw);
   const errors = () => toasts().filter((t) => t.kind === "error");
   const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  // The kernel's doors and the clock: what a gesture asks of the parser beyond rendering.
+  const kernelCalls = () => ({ reads: wasm.calls.outline_reads_json ?? 0, apply: wasm.calls.outline_apply_json ?? 0,
+    clock: wasm.calls.logbook_apply_marker_transition ?? 0 });
 
   /** What a refusal must leave: the editor, the block, the outline, history and the toast. */
   function expectUnchanged(editor: EditorDriver, before: { value: string; selection: [number, number]; raw: string; slot: unknown; undo: string | null; dirty: boolean }) {
@@ -158,11 +172,9 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
   });
 
   describe("template slash-completion (HONP4)", () => {
-    async function openTemplate(raw: string): Promise<EditorDriver> {
-      vi.spyOn(backend(), "listTemplates").mockResolvedValue([{
-        name: "Daily", page: "Templates", kind: "page",
-        blocks: [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }],
-      }]);
+    const DAILY = [{ id: "tpl", raw: "from template", collapsed: false, children: [{ id: "tpl-child", raw: "template child", collapsed: false, children: [] }] }];
+    async function openTemplate(raw: string, blocks = DAILY): Promise<EditorDriver> {
+      vi.spyOn(backend(), "listTemplates").mockResolvedValue([{ name: "Daily", page: "Templates", kind: "page", blocks }]);
       setGraphMeta(META); bumpGraphEpoch();
       const editor = mount(raw);
       editor.reportInput({ bubbles: true, inputType: "insertText", data: "y" });
@@ -190,10 +202,44 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
         const inserted = roots()[roots().length - 1];
         expect(doc.byId[inserted].children.map((id) => doc.byId[id].raw)).toEqual(["template child"]);
         expect(errors()).toHaveLength(0);
+        // The caret ends at the end of the template's text, in the block it inserted, as a freshly opened
+        // editor puts it (OG `insert-template!` → `edit-last-block-after-inserted!`, caret `:max`). In an
+        // empty block the template took the block's place, so its own editor is the one that shows it.
+        expect(editingId()).toBe(inserted);
+        const shown = editorIn(root, inserted);
+        expect(shown.value()).toBe("from template");
+        expect(shown.selection()).toEqual([13, 13]);
         // One Undo restores the trigger text and removes the template.
         expect(undo()).toBe(true);
         expect(texts()).toEqual(["first", raw]);
       });
+
+    it.each([["after text", "intro /Daily"], ["in an empty block", "/Daily"]] as const)(
+      "%s: a calculator template opens in calculator mode, with its results and the caret at its end", async (_, raw) => {
+        const editor = await openTemplate(raw, [{ id: "tpl", raw: "```calc\n1 + 1\n```", collapsed: false, children: [] }]);
+        enter(editor);
+        await settle();
+        const inserted = roots()[roots().length - 1];
+        expect(doc.byId[inserted].raw).toBe("```calc\n1 + 1\n```");
+        expect(editingId()).toBe(inserted);
+        const shown = editorIn(root, inserted);
+        // Calculator mode shows the expressions without their fence, and their results beside them.
+        expect(shown.value()).toBe("1 + 1");
+        expect(shown.selection()).toEqual([5, 5]);
+        expect(root.querySelector(".calc-results")?.textContent).toContain("2");
+      });
+
+    it("a completed template asks the kernel once and writes the trigger's removal and the outline once each", async () => {
+      const editor = await openTemplate("intro /Daily");
+      writes.document = 0; wasm.calls = {};
+      enter(editor);
+      await settle();
+      expect(texts()).toEqual(["first", "intro ", "from template"]);
+      // One kernel ask (insert_outline needs no read set), one clock transition for the staged removal,
+      // and one store write each for the removal and the outline.
+      expect(kernelCalls()).toEqual({ reads: 0, apply: 1, clock: 1 });
+      expect(writes.document).toBe(2);
+    });
   });
 
   describe("multi-line paste over a selection (HONP4)", () => {
@@ -206,6 +252,33 @@ describe.each<EditorKind>(["textarea", "cm6"])("%s editor: the Enter family comm
       quietly(() => editor.paste({ text: "- one\n- two" }));
       await settle();
       expectUnchanged(editor, before);
+    });
+
+    it("a one-root outline with children pasted into an empty block takes its place, the caret at the root's end", async () => {
+      const editor = mount("");
+      editor.paste({ text: "- one\n  - child" });
+      await settle();
+      // The paste reuses the empty block for its root (OG `paste-blocks`, `replace-empty-target?`).
+      expect(texts()).toEqual(["first", "one"]);
+      expect(roots()[1]).toBe("target");
+      expect(doc.byId.target.children.map((id) => doc.byId[id].raw)).toEqual(["child"]);
+      expect(editingId()).toBe("target");
+      const shown = editorIn(root, "target");
+      expect(shown.value()).toBe("one");
+      expect(shown.selection()).toEqual([3, 3]);
+      expect(errors()).toHaveLength(0);
+    });
+
+    it("a multi-line paste asks the kernel once and writes the text and the outline once each", async () => {
+      const editor = mount("alpha beta gamma");
+      editor.select(6, 10);
+      writes.document = 0; wasm.calls = {};
+      editor.paste({ text: "- one\n- two" });
+      await settle();
+      expect(texts()).toEqual(["first", "alpha beta gamma", "one", "two"]);
+      // One kernel ask and one store write, the outline's: the text as typed is unchanged, so it writes nothing.
+      expect(kernelCalls()).toEqual({ reads: 0, apply: 1, clock: 0 });
+      expect(writes.document).toBe(1);
     });
 
     it("a paste keeps the block's text, as Logseq does, inserts the blocks after it, and undoes as one step", async () => {

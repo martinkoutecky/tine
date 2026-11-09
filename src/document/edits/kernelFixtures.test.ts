@@ -48,7 +48,7 @@ import { BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../../editor/properties"
 import { doc, setDoc } from "../model";
 import { nextVisible } from "../tree";
 import { loadFeed, resetStore } from "../workingSet";
-import { deleteBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, replaceEmptyBlockWithOutline, mergeWithNext, outdentBlock, splitBlock } from "./blocks";
+import { deleteBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, insertOutlineWithEdit, mergeWithNext, outdentBlock, splitBlock } from "./blocks";
 import { outlineChange, applyOutlineChange, markOutlineDirty, type OutlineVerb } from "../kernel";
 import { installReferenceChangeCounter } from "../../toasts";
 import { moveBlock, moveBlocksRelative, moveItem, moveSelectionItems } from "./moves";
@@ -109,7 +109,10 @@ async function run(c: Case): Promise<Expect> {
   switch (v.verb) {
     case "insert_outline": {
       let key: string | null = null;
-      if (v.reuse) key = replaceEmptyBlockWithOutline(v.reuse, v.blocks);
+      if (v.reuse) {
+        const result = insertOutlineWithEdit(v.reuse, v.blocks, null, "paste", "replace-empty");
+        key = "inserted" in result ? result.inserted : null;
+      }
       else if (v.place.at === "after") key = insertOutlineAfter(v.place.key, v.blocks);
       else if (v.place.at === "before") key = insertOutlineBefore(v.place.key, v.blocks);
       else if (v.place.at === "last_child") key = insertOutlineChildren(v.place.key, v.blocks);
