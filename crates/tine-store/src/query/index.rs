@@ -74,11 +74,11 @@ pub(crate) struct PageFacts {
     /// (master's lsdoc preamble projection drops them).
     properties: Box<[(String, String)]>,
     tags: Box<[String]>,
-    /// For every registry-relevant property key (every non-internal key, plus
-    /// the `tine.type` declaration key), a digest of the rows this page holds
-    /// for it: owner, ordinal, spelling and value. Sorted by key. A key whose
-    /// digest differs between two generations of the page is a key the
-    /// registry must re-derive.
+    /// For every [`indexed_key`] and the `tine.type` declaration key, a
+    /// digest of the rows this page holds for it: owner, ordinal, spelling and
+    /// value. Sorted by key. A [`registry_key`] whose digest differs between
+    /// two generations of the page is a key the registry must re-derive; the
+    /// other `tine.*` keys are held only for `key_pages`.
     keys: Box<[(String, u64)]>,
     /// The page key a `tine.type::` on this page declares a type for (the
     /// page's own name); `None` when the page carries no declaration.
@@ -105,7 +105,7 @@ impl PageFacts {
         let mut note = |owner: &str, ordinal: usize, key: &str, value: &str, page_level: bool| {
             let normalized = property_key_norm(key);
             let declaration = page_level && normalized == DECLARED_TYPE_KEY;
-            if normalized.is_empty() || (!declaration && is_internal_key(&normalized, config)) {
+            if !declaration && !indexed_key(&normalized, config) {
                 return;
             }
             declares |= declaration;
@@ -175,7 +175,10 @@ impl PageFacts {
     /// Whether the registry rows this page holds differ from `other`'s: a
     /// property row of any registry-relevant key, or the declaration it makes.
     pub(crate) fn registry_rows_differ(&self, other: &PageFacts) -> bool {
-        self.keys != other.keys || self.declares != other.declares
+        fn rows(facts: &PageFacts) -> impl Iterator<Item = &(String, u64)> {
+            facts.keys.iter().filter(|(key, _)| registry_key(key))
+        }
+        !rows(self).eq(rows(other)) || self.declares != other.declares
     }
 
     /// Whether any block of this page (or the page itself, which is in every
@@ -207,6 +210,24 @@ impl PageFacts {
     pub(crate) fn tags(&self) -> &[String] {
         &self.tags
     }
+}
+
+/// Whether `key_pages` holds the pages carrying a row of `normalized` (a
+/// [`property_key_norm`] key): every key but the `tine.type` declaration key
+/// and the internal keys outside the `tine.` namespace (built-ins such as
+/// `id::` and the configured hidden keys, which sit on many pages and which no
+/// query narrows by). The `tine.*` keys are rare, and export definitions are
+/// selected by them (`tine_core::export_definition`).
+pub(crate) fn indexed_key(normalized: &str, config: &ParseConfig) -> bool {
+    !normalized.is_empty()
+        && normalized != DECLARED_TYPE_KEY
+        && (normalized.starts_with("tine.") || !is_internal_key(normalized, config))
+}
+
+/// Whether the registry reads a [`PageFacts::keys`] entry: every key but the
+/// `tine.*` ones, which are internal (§6.2 K15), except the declaration key.
+fn registry_key(normalized: &str) -> bool {
+    !normalized.starts_with("tine.") || normalized == DECLARED_TYPE_KEY
 }
 
 pub(crate) fn atom_format(entry: &PageEntry) -> AtomFormat {
@@ -330,7 +351,9 @@ impl RegistryDelta {
             if was == is || key == DECLARED_TYPE_KEY {
                 continue;
             }
-            self.keys.insert(key.clone());
+            if registry_key(key) {
+                self.keys.insert(key.clone());
+            }
             if was.is_none() || is.is_none() {
                 self.key_members
                     .push((key.clone(), path.to_owned(), is.is_some()));
@@ -374,8 +397,8 @@ struct Pending {
 /// The query facts of one snapshot generation.
 pub(crate) struct QueryIndex {
     facts: FactsMap,
-    /// Normalized property key -> pages holding a row of it (never the
-    /// declaration key).
+    /// [`indexed_key`] -> pages holding a row of it, page-level or on any
+    /// block (header, prose and outline blocks alike).
     key_pages: Postings,
     /// Page key -> pages whose `tine.type::` declares a type for it.
     declarers: Postings,
@@ -525,6 +548,17 @@ impl QueryIndex {
 
     pub(crate) fn parse_config(&self) -> &ParseConfig {
         &self.parse_config
+    }
+
+    /// The paths of the pages holding a row of `normalized` (a
+    /// [`property_key_norm`] key) on the page or on any block; `None` when the
+    /// key is not an [`indexed_key`]. O(log keys) to find, O(holders) to walk.
+    pub(crate) fn pages_with_key(&self, normalized: &str) -> Option<Vec<&str>> {
+        indexed_key(normalized, &self.parse_config).then(|| {
+            (self.key_pages.get(normalized).into_iter())
+                .flat_map(|set| set.iter().map(|(path, _)| path.as_str()))
+                .collect()
+        })
     }
 
     /// The property registry of this generation, built (or patched from the

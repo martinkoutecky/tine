@@ -454,3 +454,40 @@ fn realistic_graph_scroll_steps() {
     );
     store.close();
 }
+
+/// Audit row 9 numbers on a generated graph, never a real one: what one
+/// Journals feed restart costs, the reads `Page.tsx` `restartJournalFeed` and
+/// `completeJournalFeed` issue after a journal edit fired `days` (first page
+/// without references, then the reference-inclusive merge through the oldest
+/// loaded day). `TINE_PERF_GRAPH=<root> cargo test --release -p
+/// tine-graph-features --lib realistic_graph_feed_restart -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore = "measurement on a generated graph named by TINE_PERF_GRAPH"]
+fn realistic_graph_feed_restart() {
+    let Ok(root) = std::env::var("TINE_PERF_GRAPH") else {
+        return;
+    };
+    let store = Store::open(std::path::Path::new(&root), Default::default())
+        .unwrap()
+        .0;
+    store.whole_graph().unwrap();
+    let opened = feed_page_through(&store, 3, None, None, true).unwrap();
+    let oldest = opened.pages.last().map(|page| page.doc.name.clone());
+    let through = oldest
+        .and_then(|name| format(&store).parse(&name))
+        .map(|day| day.ordinal_key());
+    let rounds = 9;
+    let listed = journal_listings();
+    let t = std::time::Instant::now();
+    for _ in 0..rounds {
+        std::hint::black_box(feed_page_through(&store, 3, None, None, false).unwrap());
+        std::hint::black_box(feed_page_through(&store, 3, None, through, true).unwrap());
+    }
+    println!(
+        "9 feed restart: {:?}/restart (first page + reference merge), {} journal listings per restart",
+        t.elapsed() / rounds,
+        (journal_listings() - listed) / rounds as usize
+    );
+    store.close();
+}

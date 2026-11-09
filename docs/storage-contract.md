@@ -1908,12 +1908,17 @@ refresh their reader families. No new state is persisted or save path changed.
 
 S5 adds three conservative boolean hints, computed from the old and new edited
 documents, never a whole-graph scan: `journals` for journal content, `days` for
-journal content, explicit journal-date references (using the existing widened
-reference names and journal parser), or parsed scheduled/deadline facts, and
-`templates` for edits to a document containing a template, including its property
-header. Removal fires the old dependency too. Journal feeds and Upcoming use
-`days`; calendar dots use `journals`; the lazy slash-template cache uses
-`templates`. Missing hints from older hosts fire the corresponding family.
+explicit journal-date references (using the existing widened reference names
+and journal parser) or parsed scheduled/deadline facts, and `templates` for
+edits to a document containing a template, including its property header.
+Removal fires the old dependency too. Journal feeds and Upcoming use `days`;
+calendar dots use `journals`; the lazy slash-template cache uses `templates`.
+Editing an existing journal's text alone does not fire `days` (D-20261102-PERF,
+cost audit row 9): the feed's days are the listed journal files and the
+referenced days, which such an edit leaves as they were, and the edited day's
+body reaches a loaded feed through that page's own reload, so the feed is not
+re-read from its first day. Creating or deleting a journal changes the feed's
+days and must fire `days` (both publish `full` today). Missing hints from older hosts fire the corresponding family.
 Day rollover retains its existing frontend clock signal and host full fallback.
 
 All Pages metadata explicitly depends on every publication because its Updated
@@ -1947,6 +1952,35 @@ name claimant and page-position maps; simple, advanced and IR execution use the
 same evaluator and page-fact producer. OR and negation remain conservative;
 property coercions and used-as-tag retain their global facts. This changes no
 stored index, cache, checkpoint format, query membership or save protocol.
+
+A property presence (`(property k)`, `(page-property k)`, TQL `prop('k') is not
+null`, any `any`/`every` over `k`'s atoms) narrows the scanned pages the same
+way, to the pages the generation's query index lists for `k` (its key -> pages
+table, patched per edit; normalized key, so case and `-`/`_` spellings meet).
+The table holds every property key except the `tine.type` declaration and the
+built-in and configured hidden keys outside `tine.` (`id::`, `collapsed::`),
+which still scan every page; so the export-definitions query
+(`tine.export`/`tine.share`) visits only the pages holding a definition. The
+answer equals the full scan's (`query/exec_key_tests.rs`). FORMAT 29 discards
+older checkpointed tables, which lacked the `tine.*` keys; the body schema is
+unchanged. A page-anchored presence query builds no fileless rows: a page
+without a file has no properties, so only a name need keeps them.
+
+Unit cost (PC-7, I-25) of the `tine.*` keys in that table: one digest entry and
+one posting member per (page, `tine.*` key) pair, whatever the number of
+blocks on the page holding it (a 1-block and a 60-block page cost the same);
+about 49 B in the uncompressed checkpoint body, about 12 B compressed, and
+about 94 B retained (slot sizes plus key and path bytes; persistent-map nodes
+not counted). An edit adding or removing such a key changes one pair; it adds
+no file, and no transport bytes (the table never leaves the store). The
+checkpoint is still written whole, on its own cadence. Measured by
+`query/index_checkpoint.rs::tine_key_table_unit_cost` (ignored probe) on the
+realistic 10k generator (`scripts/generate-realistic-graph.mjs`, 7,000 pages,
+3,000 journals, seed 543, plus one Exports page). That graph has 2 pairs: 103 B
+encoded and 234 B retained, against a 2.34 MB encoded index and a 45.3 MB
+checkpoint file. With view settings (`tine.view`, `tine.columns`) added to
+1,000 pages the graph has 2,002 pairs: 98.8 kB encoded, 24.6 kB compressed
+and 188 kB retained (+0.07% of the 142 MB checkpoint body).
 
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;
