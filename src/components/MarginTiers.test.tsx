@@ -23,6 +23,7 @@ import { backend } from "../backend";
 import { AnnotationVisibilitySettings } from "./AnnotationVisibilitySettings";
 import { hoverHighlight, leaveHighlight, openCommentThread, tapHighlight } from "../tests/commentEntry";
 import { editingId } from "../editorController";
+import { consumeReplyFocus, focusCommentReply } from "../commentReplyFocus";
 
 let dispose: (() => void) | undefined;
 let keys: (() => void) | undefined;
@@ -178,6 +179,19 @@ it("opening a phone thread reveals its source in the visible text strip above an
   vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ x: 0, y: 200, top: 200, bottom: 218, left: 0, right: 20, width: 20, height: 18, toJSON() {} });
   anchor.click(); expect(pane.scrollTop).toBeGreaterThan(0);
   visible.height = innerHeight; visible.dispatchEvent(new Event("resize")); expect(popup()).not.toBeNull();
+});
+// The entry span is empty without chips or rails (MC8): a thread opened by a
+// request (new comment, Comment on existing, a link to it) sits below the
+// commented block's text instead of covering it.
+it.each([{ width: 800, display: "margin" }, { width: 1400, display: "popup" }] as const)("width $width ($display): a requested thread opens below the commented block's text", async ({ width, display }) => {
+  const pane = mount(width); if (display === "popup") chooseComments("popup");
+  const text = pane.querySelector<HTMLElement>('.ls-block[data-block-id="p"] > .block-main > .block-content-wrapper')!;
+  vi.spyOn(text, "getBoundingClientRect").mockReturnValue({ x: 40, y: 100, top: 100, bottom: 140, left: 40, right: 600, width: 560, height: 40, toJSON() {} });
+  focusCommentReply("two", null);
+  await vi.waitFor(() => expect(popup()?.style.top).not.toBe(""));
+  expect(parseFloat(popup().style.top)).toBeGreaterThanOrEqual(140);
+  expect(popup().textContent).toContain("Second thread");
+  consumeReplyFocus();
 });
 it.each(["sidebar:item", "ref:item", "embed:item"].flatMap(surface => [390, 800, 1400].map(width => ({ surface, width }))))("$surface uses its own width $width for the same tiers", ({ surface, width }) => {
   const pane = mount(width, surface);

@@ -73,6 +73,9 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   const resolvedLabel = () => t("comment-resolved-count", { count: resolvedComments().length });
   const label = () => selectedId() && !openComments().includes(selectedId()!) ? resolvedLabel() : openLabel();
   const open = (id: string, anchor: HTMLElement) => { setTarget({ id, anchor }); peek.hold(); };
+  // With no chip or rail (MC8) the entry span is empty: requests anchor the
+  // popover below the commented block's text so it never covers that text.
+  const blockText = () => (row ?? host.closest<HTMLElement>(".block-main"))?.querySelector<HTMLElement>(":scope > .block-content-wrapper") ?? host;
   const finishThreadEdit = () => {
     const id = editingId();
     if (id && (editingSurface() === null || editingSurface() === surface) && props.comments.includes(threadRootOf(id, formatForBlock(props.parentId)) ?? "")) endEdit("blur");
@@ -167,7 +170,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
     const edit = editingId();
     const id = request && (request.surface === null || request.surface === surface) ? request.id
       : edit && (editingSurface() === null || editingSurface() === surface) ? threadRootOf(edit, formatForBlock(props.parentId)) : null;
-    if (id && props.comments.includes(id) && (!opened() || !groups()[index()]?.includes(id))) open(id, host);
+    if (id && props.comments.includes(id) && (!opened() || !groups()[index()]?.includes(id))) open(id, blockText());
   });
   let touch: { x: number; y: number } | undefined;
   const content = () => <div class="comment-popup-content"

@@ -34,7 +34,10 @@ findings 1 and 2.
   an open thread with no resolvable highlight (its quote changed, matches more
   than once, or covers the whole block) gives its block one small glyph
   marker, labelled with the number of such threads, that opens the first of
-  them. Cards, replies and document mutations are the same components and door
+  them. A thread opened by a request rather than a pointer (a new comment,
+  Comment on existing, or an edit of one of its messages started elsewhere)
+  anchors below the commented block's text, never over it. Cards, replies and
+  document mutations are the same components and door
   as in the wide margin. Expanded wide blocks have no count badge.
 - At 480 px or less, highlight or chip tap opens a bottom sheet capped at 55% of
   the viewport height, leaving source text above; hover does not open at this
