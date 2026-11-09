@@ -1908,12 +1908,17 @@ refresh their reader families. No new state is persisted or save path changed.
 
 S5 adds three conservative boolean hints, computed from the old and new edited
 documents, never a whole-graph scan: `journals` for journal content, `days` for
-journal content, explicit journal-date references (using the existing widened
-reference names and journal parser), or parsed scheduled/deadline facts, and
-`templates` for edits to a document containing a template, including its property
-header. Removal fires the old dependency too. Journal feeds and Upcoming use
-`days`; calendar dots use `journals`; the lazy slash-template cache uses
-`templates`. Missing hints from older hosts fire the corresponding family.
+explicit journal-date references (using the existing widened reference names
+and journal parser) or parsed scheduled/deadline facts, and `templates` for
+edits to a document containing a template, including its property header.
+Removal fires the old dependency too. Journal feeds and Upcoming use `days`;
+calendar dots use `journals`; the lazy slash-template cache uses `templates`.
+Editing an existing journal's text alone does not fire `days` (D-20261102-PERF,
+cost audit row 9): the feed's days are the listed journal files and the
+referenced days, which such an edit leaves as they were, and the edited day's
+body reaches a loaded feed through that page's own reload, so the feed is not
+re-read from its first day. Creating or deleting a journal changes the feed's
+days and must fire `days` (both publish `full` today). Missing hints from older hosts fire the corresponding family.
 Day rollover retains its existing frontend clock signal and host full fallback.
 
 All Pages metadata explicitly depends on every publication because its Updated
