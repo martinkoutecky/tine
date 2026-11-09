@@ -18,7 +18,7 @@ function check(file: string, start: string, end: string, rules: RegExp[]) {
 
 describe("async ownership guard", () => {
   it("pins graph-bound component and module continuations", () => {
-    check("src/components/ContextMenu.tsx", "function MakeTemplate(", "function PageMenu(", [/bindingOwner\(\)/, /readOwned\(owner, backend\(\)\.listTemplates/, /existing\.kind === "stale"\) return/]);
+    check("src/components/ContextMenu.tsx", "function MakeTemplate(", "function PageMenu(", [/bindingOwner\(\)/, /readOwned\(owner, backend\(\)\.listTemplateNames/, /existing\.kind === "stale"\) return/]);
     check("src/components/blockGestures.ts", "export function beginDrag(", "// --- Click / drag gesture", [/captureBinding\(\)/, /bindingCurrent\(binding\) && dragMoved/]);
     // Every panel write (Field, bool, Remove, AddRow) goes through writeOne: graph session + subject instance.
     check("src/components/PageProps.tsx", "function writeOne(", "function scopeWritable(", [/bindingCurrent\(binding\)/, /subjectOf\(scope\) !== subject/]);

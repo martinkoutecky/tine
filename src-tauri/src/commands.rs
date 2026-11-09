@@ -1257,19 +1257,7 @@ pub(crate) async fn off_ui_graph_read<T: Send + 'static>(
     .map_err(|error| error.to_string())?
 }
 
-/// Every template, or with `name` at most the one graph-wide discovery picks
-/// for that exact name, answered early from the files when they settle it
-/// (BqbeQ; `templates::named_template`).
-#[tauri::command]
-pub(crate) async fn list_templates(
-    name: Option<String>,
-    state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::TemplateDto>, String> {
-    let Some(name) = name else {
-        return off_ui_graph_read(&state, |view| Ok(view.templates())).await;
-    };
-    templates::named_template(slot_for_context(&state)?, name).await
-}
+pub(crate) use templates::{list_template_names, list_templates};
 
 #[tauri::command]
 pub(crate) async fn journal_content_days(state: GraphContext<'_>) -> Result<Vec<i64>, String> {

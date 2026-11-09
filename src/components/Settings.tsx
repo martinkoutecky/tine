@@ -3,8 +3,7 @@ import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
-import { ResourceFailure } from "./ResourceFailure";
-import { reportUiFailure } from "../uiFailure";
+import { JournalTemplateField } from "./JournalTemplateField";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
@@ -18,7 +17,7 @@ import { toggleCommentMargin } from "../commentMargin";
 import { commentMarginHidden } from "../commentMarginPref";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
-import { setJournalTemplate, graphMeta } from "../graphSession";
+import { graphMeta } from "../graphSession";
 import { changedAny } from "../changeKeys";
 import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
@@ -680,53 +679,6 @@ function AppearanceTab(props: { search: string }): JSX.Element {
   );
 }
 
-function JournalTemplateField(): JSX.Element {
-  let alive = true; onCleanup(() => { alive = false; });
-  const [templatesResource, { refetch }] = createResource(async () => {
-    const owner = graphOwner(() => alive);
-    try { const result = await readOwned(owner, backend().listTemplates()); return result.kind === "current" ? result.value : undefined; }
-    catch (error) { if (owner()) reportUiFailure("template-read", error); throw error; }
-  });
-  const current = () => graphMeta()?.default_journal_template ?? "";
-  const list = () => readOr(templatesResource, undefined, "journal templates") ?? [];
-  const selected = () => list().find((t) => t.name === current());
-  const missing = () => templatesResource.error === undefined && !templatesResource.loading && current() !== "" && !list().some((t) => t.name === current());
-  return (
-    <Field
-      setting={settings["settings-ui-new-journal-template"]}
-      hint={
-        <><Rich message={settingHint(settings["settings-ui-new-journal-template"])} /></>
-      }
-    >
-      <div class="settings-jtmpl">
-        <ResourceFailure of={templatesResource} what="journal templates" onRetry={() => void refetch()} />
-        <select
-          class="settings-select"
-          value={current()}
-          disabled={templatesResource.error !== undefined || templatesResource.loading}
-          onChange={(e) => setJournalTemplate(e.currentTarget.value || null)}
-        >
-          <option value="">{t("settings-ui-none-blank-days")}</option>
-          <Show when={missing() || templatesResource.error !== undefined}>
-            <option value={current()}>{t("settings-journal-template-missing", { name: current(), state: templatesResource.error === undefined ? "missing" : "unavailable" })}</option>
-          </Show>
-          <For each={list()}>{(t) => <option value={t.name}>{t.name}</option>}</For>
-        </select>
-        <Show when={selected()}>
-          {(template) => (
-            <button
-              class="settings-link"
-              onClick={() => {
-                openPage(template().page, template().kind);
-                closeSettings();
-              }}
-            >{t("settings-ui-edit")}</button>
-          )}
-        </Show>
-      </div>
-    </Field>
-  );
-}
 
 /** Journal display-title format picker. Shows each pattern with a live example
  *  (today rendered in it). Includes the graph's current value even if it isn't

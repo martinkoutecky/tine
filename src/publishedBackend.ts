@@ -783,6 +783,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async listTemplates(_name?: string) {
       return [];
     },
+    async listTemplateNames() { return []; },
     async guidePages() {
       return [];
     },
