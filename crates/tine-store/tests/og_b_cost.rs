@@ -5,7 +5,7 @@ use tine_store::{cost_counters, EditKind, OpenOptions, PageId, SaveBase, Store};
 
 #[test]
 fn retained_views_bound_content_and_structural_publication_work() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE.lock().unwrap();
     for pages in [32, 256] {
         let dir = tempfile::tempdir().unwrap();
@@ -100,7 +100,7 @@ fn save_preparation_parses_old_document_once() {
 
 #[test]
 fn actual_save_old_source_parse_count() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();

@@ -115,7 +115,7 @@ fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts
 
 #[test]
 fn rename_planner_name_work_is_flat_in_graph_size() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let small = rename(60, 2);
     let large = rename(600, 2);
     assert_eq!(
@@ -129,7 +129,7 @@ fn rename_planner_name_work_is_flat_in_graph_size() {
 
 #[test]
 fn rename_rewrites_each_referrer_once_outside_the_writer() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let few = rename(60, 2);
     let many = rename(60, 30);
     assert_eq!(
@@ -142,7 +142,7 @@ fn rename_rewrites_each_referrer_once_outside_the_writer() {
 
 #[test]
 fn rename_reads_each_referrer_once_per_guard() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let few = rename(60, 2);
     let many = rename(60, 30);
     assert!(
@@ -173,7 +173,7 @@ fn rename_reads_each_referrer_once_per_guard() {
 /// successful read to bill as `observation_reads` (contract §5.4).
 #[test]
 fn rename_publication_reopens_no_referrer() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let few = rename_then(60, 2, Watcher::Stopped);
     let many = rename_then(60, 30, Watcher::Stopped);
     eprintln!("rename publication: few={few:?}; many={many:?}");
@@ -199,7 +199,7 @@ fn rename_publication_reopens_no_referrer() {
 /// Keep the live watcher's cost independent of the publication comparison.
 #[test]
 fn rename_watcher_echo_cost_is_linear_in_written_files() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let few = rename_then(60, 2, Watcher::Drained);
     let many = rename_then(60, 30, Watcher::Drained);
     // Linear in the files the operation wrote (`files_written`: each page
@@ -237,7 +237,7 @@ fn rename_watcher_echo_cost_is_linear_in_written_files() {
 /// the rename's measured window and broke its publishing bound.
 #[test]
 fn a_forwarded_echo_bills_as_an_observation_read() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("graph");
