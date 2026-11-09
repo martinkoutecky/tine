@@ -1,0 +1,88 @@
+name: Google Play administration
+
+# Reads the Google Play state of page.tine.app (tracks, releases, rollout) through the
+# Play Developer API. Authentication is Workload Identity Federation from this
+# workflow's OIDC token: no service-account key exists anywhere. The Google side
+# accepts only this repository (by id) in the `google-play` environment, whose
+# deployment policy allows master, release/* and v* tags. docs/ANDROID-RELEASE.md
+# describes the setup.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do (inspect reads tracks and releases; it changes nothing)
+        required: true
+        default: inspect
+        type: choice
+        options:
+          - inspect
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: google-play-administration
+  cancel-in-progress: false
+
+jobs:
+  play-admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: google-play
+    steps:
+      - name: Require the federation variables
+        env:
+          PLAY_WIF_PROVIDER: ${{ vars.PLAY_WIF_PROVIDER }}
+          PLAY_SERVICE_ACCOUNT: ${{ vars.PLAY_SERVICE_ACCOUNT }}
+          PLAY_PACKAGE_NAME: ${{ vars.PLAY_PACKAGE_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in PLAY_WIF_PROVIDER PLAY_SERVICE_ACCOUNT PLAY_PACKAGE_NAME; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::environment variable $name is missing in the google-play environment"
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google (Workload Identity Federation)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.PLAY_WIF_PROVIDER }}
+          service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          access_token_lifetime: 600s
+
+      - name: Inspect tracks and releases
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          PACKAGE: ${{ vars.PLAY_PACKAGE_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE"
+          auth=(-H "Authorization: Bearer $TOKEN")
+          # Reads go through a temporary edit, which is deleted again; it is never committed.
+          edit=$(curl -fsS -X POST "${auth[@]}" -H "Content-Type: application/json" -d '{}' "$api/edits" | jq -r .id)
+          trap 'curl -fsS -X DELETE "${auth[@]}" "$api/edits/$edit" >/dev/null || true' EXIT
+          curl -fsS "${auth[@]}" "$api/edits/$edit/tracks" \
+            | jq '[.tracks[] | {track, releases: [(.releases // [])[] | {name, status, versionCodes, userFraction}]}]' \
+            | tee play-state.json
+          {
+            echo "## Google Play: $PACKAGE"
+            echo
+            echo '| Track | Release | Status | Version codes | Rollout |'
+            echo '|---|---|---|---|---|'
+            jq -r '.[] | .track as $t | (if (.releases | length) == 0 then [{name: "", status: "(none)", versionCodes: [], userFraction: null}] else .releases end)[]
+              | "| \($t) | \(.name // "") | \(.status) | \((.versionCodes // []) | join(", ")) | \(if .userFraction then (.userFraction * 100 | tostring) + "%" else "" end) |"' play-state.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: play-state
+          path: play-state.json
+          retention-days: 7
