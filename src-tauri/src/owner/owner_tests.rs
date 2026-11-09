@@ -35,6 +35,9 @@ mod page_prop_tests;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;
 
+#[path = "owner_tests/rename_date_tests.rs"]
+mod rename_dates;
+
 #[path = "owner_tests/cm_favorites_tests.rs"]
 mod cm_favorites;
 
@@ -82,6 +85,12 @@ impl Graph {
     }
 
     fn watching(watch: tine_store::WatchMode) -> Self {
+        Self::seeded(watch, &[])
+    }
+
+    /// The standard graph plus `extra` files (graph-relative path, text),
+    /// written before the store opens so its first walk sees them.
+    fn seeded(watch: tine_store::WatchMode, extra: &[(&str, &str)]) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let graph = dir.path().join("graph");
         std::fs::create_dir_all(graph.join("pages")).unwrap();
@@ -103,6 +112,11 @@ impl Graph {
         .unwrap();
         std::fs::write(graph.join("pages/ns___child.md"), "- in a namespace\n").unwrap();
         std::fs::write(graph.join("pages/dup.md"), "- same\n- same\n").unwrap();
+        for (relative, text) in extra {
+            let path = graph.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
         let app_data = dir.path().join("app");
         let owners = dir.path().join("owners");
         std::fs::create_dir_all(&app_data).unwrap();
