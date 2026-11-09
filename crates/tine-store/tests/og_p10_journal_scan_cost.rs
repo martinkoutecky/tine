@@ -16,7 +16,7 @@ pub(super) fn count() {
 }
 #[test]
 fn journal_inventory_keeps_path_validation_allocation_bounded() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("journals")).unwrap();
     for index in 0..300 {

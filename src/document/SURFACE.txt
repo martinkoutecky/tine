@@ -10,6 +10,7 @@ PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file 
 PageMail  # why: backend wire type of the page host protocol; batch-og-s3b
 PageOperation  # why: backend wire type of the page host protocol; batch-og-s3b
 PageRefusal  # why: backend wire type of the page host protocol; batch-og-s3b
+PendingEdit  # why: a text edit staged by an editor and written only once the kernel answers; batch-og-wasm-enter-trap
 PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
@@ -65,6 +66,7 @@ ensurePageLoaded
 ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
 evictIfNeeded  # why: a query fold over many source pages trims the working set when it ends, since only a load evicts; batch-og-audit-hardening
 existingBlockId  # why: editor buffers reuse the shared parser-owned identity answer instead of a second seed lookup; batchog-p10b2
+exitMultilineBlock  # why: the double-Enter exit writes its trailing-line trim and inserts the sibling as one gesture, asking the kernel before it writes; batch-og-wasm-enter-trap
 expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
 expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor
@@ -145,6 +147,7 @@ prevVisible
 promotePagePreamble
 queryBlockRaw  # why: quick-share Delete recognises the definition appendQueryBlock wrote (D-20261026-QSD); batch-og-qs-delete-definition
 queryWorkspacePage
+rawToWrite  # why: the text an edit would write, so a structural gesture can ask the kernel before publishing it (a refused Enter over a selection changes nothing); batch-og-wasm-enter-trap
 readPageProperties  # why: list every page property for the GH #164 properties editor; batch14q5
 readPageProperty
 readSchedule

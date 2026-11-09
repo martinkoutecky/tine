@@ -61,6 +61,9 @@ export interface OutlineChange {
 interface OutlineRead { key: string; subtree: boolean }
 type Arena = Record<string, { raw: string; children: readonly string[] }>;
 
+/** A block's text as the gesture will have written it, not yet in the store. */
+interface EditedBlock { id: string; raw: string }
+
 /** How `outlineChange` marshals pages. `whole` sends every block (the oracle
  *  the read-set marshal is tested against); `fallbacks` counts asks the kernel
  *  found incomplete, which were asked again with whole pages. */
@@ -75,7 +78,7 @@ export const outlineMarshal = { whole: false, fallbacks: 0 };
  *  handler, and reading blocks through the store's proxies cost more than the
  *  kernel (outline-kernel gate 2). The arrays are serialized before anything
  *  else runs, so they are not copied. */
-function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
+function outlinePage(name: string, reads: readonly OutlineRead[] | null, edited?: EditedBlock) {
   const page = unwrap(pageByName(name));
   if (!page) return null;
   const byId = unwrap(doc.byId);
@@ -88,7 +91,7 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
     if (blocks[id]) return true;
     const node = byId[id];
     if (!node || node.page !== name) return false;
-    blocks[id] = { raw: node.raw, children: node.children };
+    blocks[id] = { raw: edited?.id === id ? edited.raw : node.raw, children: node.children };
     if (node.originatedFromPageHeader && headerRoot === null) headerRoot = id;
     return true;
   };
@@ -137,24 +140,46 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
   };
 }
 
+/** A parser call (outline_reads_json, outline_apply_json) that threw: the kernel answered nothing. */
+class OutlineParserFault extends Error {
+  constructor(cause: unknown) { super("outline parser call failed", { cause }); }
+}
+
 /** Ask the kernel for `verb` over the named pages. Pure: nothing is applied.
  *  The pages go as the verb's read set; a kernel that finds it incomplete
  *  (a store whose parent links disagree with its children lists, or a read
- *  set that missed a block) is asked again with whole pages. */
-export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): OutlineChange | { refused: OutlineRefusal } {
+ *  set that missed a block) is asked again with whole pages. `edited` names a
+ *  block whose text a same-gesture edit is about to write: the kernel reads
+ *  that text instead of the store's, so a refusal has written nothing. */
+export function outlineChange(verb: OutlineVerb, pageNames: readonly string[], edited?: EditedBlock): OutlineChange | { refused: OutlineRefusal } {
   const bodyVerb = bodyStructureVerb(verb);
   if (!bodyVerb) return { refused: "no_outline_step" };
   verb = bodyVerb;
   const names = [...new Set(pageNames)];
-  const ask = (reads: readonly OutlineRead[] | null) => {
-    const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
-    return JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() })));
+  // The two parser calls. A failure there (a wasm trap; the glue already started a fresh
+  // instance) computed nothing, so nothing changes: every caller sees an ordinary refusal and
+  // consumes its gesture, instead of an exception that lets the key fall through to the text
+  // editor (og-wasm-enter-trap). Any other error (marshalling, reading the answer) stays an exception.
+  const parser = (call: () => string): string => {
+    try { return call(); } catch (error) { throw new OutlineParserFault(error); }
   };
-  const reads = outlineMarshal.whole || verb.verb === "insert_outline" ? null : (JSON.parse(outlineReads(JSON.stringify(verb))) as OutlineRead[]);
-  let answer = ask(reads);
-  if (reads && answer.refused === "incomplete") {
-    outlineMarshal.fallbacks++;
-    answer = ask(null);
+  const ask = (reads: readonly OutlineRead[] | null) => {
+    const pages = names.map((name) => outlinePage(name, reads, edited)).filter((p) => p !== null);
+    return JSON.parse(parser(() => outlineApply(JSON.stringify({ pages, verb, keys: keySource(), hide: editorHidePolicy() }))));
+  };
+  let answer;
+  try {
+    const reads = outlineMarshal.whole || verb.verb === "insert_outline" ? null : (JSON.parse(parser(() => outlineReads(JSON.stringify(verb)))) as OutlineRead[]);
+    answer = ask(reads);
+    if (reads && answer.refused === "incomplete") {
+      outlineMarshal.fallbacks++;
+      answer = ask(null);
+    }
+  } catch (error) {
+    if (!(error instanceof OutlineParserFault)) throw error;
+    const cause = error.cause as Error | string;
+    pushToastUnique(msg("kernel-outline-edit-failed", { detail: String((cause as Error)?.message ?? cause) }), "error");
+    return { refused: "unparseable" };
   }
   if (answer.refused) return { refused: answer.refused as OutlineRefusal };
   const change = answer.ok as { pages: PagePatch[]; focus: { key: string; raw_offset: number | null } | null; notices: OutlineNotice[]; keys_used: number; transfers?: [string, string][] };

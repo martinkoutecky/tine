@@ -1303,6 +1303,7 @@ export interface MessageArgs {
   "journals-prose-tasks-today": { "count": number };
   "journals-upcoming": {};
   "kernel-block-cant-be-indented-under-page-properties": {};
+  "kernel-outline-edit-failed": { "detail": string | number };
   "kernel-page-properties-stay-at-the-top-of-the-page": {};
   "launcher-ranking-could-not-load-adaptive-launcher-ranking-preference": {};
   "link-depth-embed-depth-is-too-deep": {};
