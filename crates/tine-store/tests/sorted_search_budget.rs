@@ -82,7 +82,7 @@ fn median(mut samples: Vec<Duration>) -> Duration {
 // facts the sort key reads, so it is not the budgeted one.
 #[test]
 fn a_sorted_friendly_search_with_a_small_limit_stays_inside_its_budget() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let dir = tempfile::tempdir().unwrap();
     write_graph(dir.path());
     let (store, _, _) = Store::open(dir.path(), Default::default()).unwrap();
