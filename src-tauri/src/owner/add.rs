@@ -5,15 +5,13 @@ use serde_json::{json, Value};
 use tine_core::block_regions::{self, Edit};
 use tine_core::model::{BlockDto, Format};
 use tine_core::outline_kernel::{apply, KeySource, OutlineNode, Place, Verb};
-use tine_store::{EditKind, Resolved};
+use tine_store::EditKind;
 
-use super::verbs::{
-    internal, journal_day, journal_write_page, resolve_write_page, whole_graph, Diag,
-};
+use super::verbs::{internal, journal_day, journal_write_page, whole_graph, Diag};
 use super::wire::ErrorBody;
 use super::write::{
-    block_at_mut, handle_page, outline_refused, parse_handle, refused, resolve_on, store_refused,
-    write_page_from_source, Planned,
+    block_at_mut, creation_turn, handle_page, outline_refused, page_turn, parse_handle, refused,
+    resolve_on, store_refused, write_page_in_turn, Planned,
 };
 use crate::state::GraphSlot;
 
@@ -63,28 +61,33 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         .or(args.after.as_ref())
         .or(args.before.as_ref());
     let handle = anchor.map(|s| parse_handle(s)).transpose()?;
-    let graph = whole_graph(slot)?;
-    let page = if let Some(handle) = &handle {
-        handle_page(slot, handle)?
+    let mut graph = whole_graph(slot)?;
+    // A page named by a name nothing claimed is written under the whole graph's
+    // turn (`creation_turn`); any other target under its page's own.
+    let (page, held) = if let Some(handle) = &handle {
+        (handle_page(slot, handle)?, None)
     } else if let Some(name) = &args.page {
         if name.trim().is_empty() {
             return Err(ErrorBody::new("bad-args", "page name is empty", false));
         }
-        match graph.resolve(name, false) {
-            Resolved::Absent { id } => id,
-            _ => resolve_write_page(&graph, name)?,
-        }
+        let (named, held) = creation_turn(slot, &mut graph, name)?;
+        (named.page(name)?, held)
     } else {
         let day = journal_day(slot, args.journal.as_deref().filter(|d| !d.is_empty()))?;
-        journal_write_page(slot, &graph, day)?
+        (journal_write_page(slot, &graph, day)?, None)
+    };
+    let turn = match held {
+        Some(turn) => turn,
+        None => page_turn(slot, &page)?,
     };
     let author = args
         .author
         .clone()
         .or_else(|| std::env::var("TINE_AUTHOR").ok())
         .unwrap_or_else(|| "agent".into());
-    write_page_from_source(
+    write_page_in_turn(
         slot,
+        turn,
         &page,
         EditKind::InsertBlocks,
         args.rev.as_deref(),
