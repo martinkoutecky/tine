@@ -1117,8 +1117,14 @@
       "nonRequirements": ["Any end-user product workflow by itself."],
       "stability": "stable"
     },
+    "scripts/e2e-ime-blur.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"On a routed page, with the textarea editor and with the CodeMirror editor (the Settings choice), a composition that is open when focus leaves the editor without a compositionend neither loses nor duplicates the composing text, and ordinary typing afterwards is saved after it. Focus leaves twice: a real pointer click on the window outside any block, and another application's window taking native X11 focus while the editor stays in edit mode. The composition events (compositionstart, a composing beforeinput, the preedit text, compositionupdate, a composing input) are synthetic WebDriver-injected events in the real webview, not a real IME; the focus loss and the typing are real.","blocking":false,"authority":"OG audit L9-18; UI-OG-L9-18-IME-BLUR-ABANDONED"}],
+      "acceptableVariations": ["Window geometry, focus-change latency, the exact pixels of the editor and the window manager's decoration may vary; the saved bytes are material."],
+      "nonRequirements": ["No real IME (a candidate window, a platform input method), no composition that ends normally (the editor journeys and component tests cover it), no platform other than Linux WebKitGTK under openbox, no burn-in beyond the three runs recorded in the receipt."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing and page-reference completion without an error toast, saves the journal entry, supports a safe second-instance handoff, and uses the preferred task workflow across Settings changes, reopening and process restart. A composition left open when another window takes native focus (Quick Capture dismisses itself and keeps the draft, no compositionend) does not block ordinary typing or File capture after Quick Capture is reopened; the composition events are synthetic, the focus loss is real.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"

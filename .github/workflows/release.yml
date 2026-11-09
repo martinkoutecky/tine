@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
+      windows_scenarios: ${{ steps.windows-scenarios.outputs.list }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,6 +72,12 @@ jobs:
         # stays empty); it never blocks an ordinary release.
         continue-on-error: true
         run: node scripts/check-release-readiness.mjs --quick-share-only
+      - name: Read the advisory Windows scenario list from the E2E registry
+        id: windows-scenarios
+        # scripts/run-e2e.mjs owns which scenarios the windows-smoke job fans out to.
+        run: |
+          list=$(node scripts/run-e2e.mjs windows-smoke --fan-out)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Require updater signing key
         env:
           SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -522,16 +529,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario:
-          # og-parity-references stays a hard Linux gate; dropped from the advisory
-          # Windows suite only (unclassified WebView2 trailing-space, AGENTS.md §2b
-          # E2E stop-loss). See scripts/run-e2e.mjs windows-smoke suite for rationale.
-          - windows-core
-          - page-properties
-          - page-trailing-block
-          - pdf-logseq
-          - print-security
-          - tab-overflow
+        # The registry (scripts/run-e2e.mjs windows-smoke suite) owns this list, and
+        # the rationale for what it leaves out (og-parity-references, AGENTS.md §2b
+        # E2E stop-loss); preflight prints it.
+        scenario: ${{ fromJSON(needs.preflight.outputs.windows_scenarios) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
