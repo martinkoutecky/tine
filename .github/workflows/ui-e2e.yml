@@ -68,8 +68,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # The scenario registry (scripts/run-e2e.mjs) owns what "all" means for Windows;
+  # this job only reads it, so a new scenario cannot be missing from a copy here.
+  windows-scenarios:
+    name: Windows scenario list
+    if: ${{ inputs.linux_scenario == '' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.registry.outputs.all }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read the default Windows fan-out from the registry
+        id: registry
+        run: |
+          list=$(node scripts/run-e2e.mjs windows-smoke --fan-out)
+          echo "all=$list" >> "$GITHUB_OUTPUT"
+
   windows-smoke:
     name: Windows x64 ${{ matrix.scenario }} real-app smoke
+    needs: windows-scenarios
     if: ${{ inputs.linux_scenario == '' }}
     runs-on: windows-latest
     timeout-minutes: 45
@@ -78,7 +99,7 @@ jobs:
       matrix:
         # og-parity-references stays a hard Linux gate; dropped from the advisory Windows
         # suite only (unclassified WebView2 trailing-space, AGENTS.md §2b E2E stop-loss).
-        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && '["windows-core","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow","cm6-native","textarea-native"]' || format('["{0}"]', inputs.windows_scenario)) }}
+        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && needs.windows-scenarios.outputs.all || format('["{0}"]', inputs.windows_scenario)) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

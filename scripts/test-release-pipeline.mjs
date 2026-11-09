@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import "./test-macos-updater.mjs";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -65,16 +66,15 @@ const receiptHelper = fs.readFileSync(path.join(process.cwd(), "scripts/build-e2
 const buildInputs = fs.readFileSync(path.join(process.cwd(), "scripts/build-e2e-inputs.mjs"), "utf8");
 const printSecurity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-print-security.mjs"), "utf8");
 const referenceParity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-og-parity-references.mjs"), "utf8");
-const windowsScenarios = [
-  "e2e-windows-smoke.mjs",
-  "e2e-windows-portable.mjs",
-  "e2e-og-parity-references.mjs",
-  "e2e-page-properties.mjs",
-  "e2e-page-trailing-block.mjs",
-  "e2e-pdf-logseq.mjs",
-  "e2e-print-security.mjs",
-  "e2e-tab-overflow.mjs",
-];
+// The E2E registry in scripts/run-e2e.mjs is the one owner of which scenarios a
+// suite has and fans out to (AR-1); ask it instead of keeping a list here.
+function e2eRegistry(suite, query) {
+  const run = spawnSync(process.execPath, [path.join(process.cwd(), "scripts/run-e2e.mjs"), suite, query], { encoding: "utf8" });
+  assert.equal(run.status, 0, `run-e2e ${suite} ${query} failed: ${run.stderr}`);
+  return JSON.parse(run.stdout);
+}
+const windowsFanOut = e2eRegistry("windows-smoke", "--fan-out");
+const windowsScenarios = e2eRegistry("windows-smoke", "--scripts").map((script) => path.basename(script));
 
 const successfulFullCiRun = {
   id: 1234,
@@ -343,11 +343,36 @@ assert.match(
   /windows-smoke:\n    needs: \[preflight, build\][\s\S]*?if: \$\{\{ always\(\) && needs\.preflight\.result == 'success' && needs\.build\.result != 'cancelled' \}\}[\s\S]*?continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?name: release-e2e-frontend-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,
   "Windows advisory scenarios do not consume the staged app independently of assembly"
 );
+// No workflow keeps its own copy of the Windows fan-out: the focused UI workflow and
+// the release preflight read it from the registry, and the matrix takes that output.
+assert.ok(windowsFanOut.length > 0 && windowsFanOut.every((id) => typeof id === "string" && id));
 assert.match(
   uiE2eWorkflow,
-  /windows_scenario == 'all'[\s\S]*?\["windows-core","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"\]/,
-  "the focused UI workflow cannot fan out all Windows scenarios explicitly"
+  /windows-scenarios:[\s\S]*?outputs:\s+all: \$\{\{ steps\.registry\.outputs\.all \}\}[\s\S]*?id: registry\n\s+run: \|\n\s+list=\$\(node scripts\/run-e2e\.mjs windows-smoke --fan-out\)\n\s+echo "all=\$list" >> "\$GITHUB_OUTPUT"/,
+  "the focused UI workflow does not read the Windows fan-out from the E2E registry"
 );
+assert.match(
+  uiE2eWorkflow,
+  /windows-smoke:\n    name:[^\n]*\n    needs: windows-scenarios\n[\s\S]*?scenario: \$\{\{ fromJSON\(\(inputs\.windows_scenario == '' \|\| inputs\.windows_scenario == 'all'\) && needs\.windows-scenarios\.outputs\.all \|\| format\(/,
+  "the focused UI workflow cannot fan out all Windows scenarios from the registry's list"
+);
+assert.match(
+  releaseWorkflow,
+  /windows_scenarios: \$\{\{ steps\.windows-scenarios\.outputs\.list \}\}[\s\S]*?id: windows-scenarios\n[\s\S]*?run: \|\n\s+list=\$\(node scripts\/run-e2e\.mjs windows-smoke --fan-out\)\n\s+echo "list=\$list" >> "\$GITHUB_OUTPUT"/,
+  "the release preflight does not read the Windows fan-out from the E2E registry"
+);
+assert.match(
+  releaseWorkflow,
+  /windows-smoke:\n    needs: \[preflight, build\][\s\S]*?scenario: \$\{\{ fromJSON\(needs\.preflight\.outputs\.windows_scenarios\) \}\}/,
+  "the release Windows scenarios do not take the registry's list from preflight"
+);
+for (const file of fs.readdirSync(path.join(process.cwd(), ".github/workflows")).filter((name) => /\.ya?ml$/.test(name))) {
+  const text = fs.readFileSync(path.join(process.cwd(), ".github/workflows", file), "utf8");
+  for (const id of windowsFanOut) {
+    assert.ok(!text.includes(`"${id}"`) && !new RegExp(`^\\s*- ${id}\\s*$`, "m").test(text),
+      `${file} keeps its own copy of the Windows scenario ${id}; read it from scripts/run-e2e.mjs`);
+  }
+}
 assert.doesNotMatch(
   uiE2eWorkflow,
   /name: Run Windows WebView2 smoke\n\s+continue-on-error:/,
@@ -614,12 +639,15 @@ try {
   assert.ok(profileSnapshot.files.some((entry) => entry.path === "fixture-session/EBWebView/DevToolsActivePort"));
   if (priorWebviewRoot === undefined) delete process.env.E2E_WEBVIEW_USER_DATA_ROOT;
   else process.env.E2E_WEBVIEW_USER_DATA_ROOT = priorWebviewRoot;
+  // Every scenario the Windows suite lists (by name too) starts and stops the app
+  // through the same WebView2 helpers.
   for (const script of windowsScenarios) {
     const source = fs.readFileSync(path.join(process.cwd(), "scripts", script), "utf8");
-    assert.match(source, /import \{[^}]*tauriCapabilities[^}]*\} from "\.\/e2e-capabilities\.mjs";/);
-    assert.match(source, /startWebdriverApplication\(APP,/);
-    assert.match(source, /capabilities: tauriCapabilities\(APP,[^\n]*webviewTarget\.debuggerAddress/);
-    assert.match(source, /stopWebdriverApplication\(webviewTarget\)/);
+    const at = `${script} must attach to WebView2 through e2e-capabilities.mjs`;
+    assert.match(source, /import \{[^}]*tauriCapabilities[^}]*\} from "\.\/e2e-capabilities\.mjs";/, at);
+    assert.match(source, /startWebdriverApplication\(\w+,/, at);
+    assert.match(source, /capabilities: tauriCapabilities\(\w+,[^\n]*\.debuggerAddress/, at);
+    assert.match(source, /stopWebdriverApplication\(\w+\)/, at);
   }
 
   {
