@@ -1349,6 +1349,8 @@ mod tests {
         let f = Fixture::new("writer-poisoned");
         let state = app_state();
         let slot = f.bind(&mut state.graphs.write().unwrap(), "graph-1");
+        // The owner lease exists only on desktop; mobile keeps the close and retirement checks.
+        #[cfg(desktop)]
         let lock = lease(&f, &slot);
         f.store.poison_writer_for_tests();
         drop(slot);
@@ -1356,6 +1358,7 @@ mod tests {
         let retirement = state.graphs.read().unwrap().retirement.clone();
         assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
         assert!(f.closed(), "the Store closed");
+        #[cfg(desktop)]
         wait_for("the owner lease was never released", || lease_free(&lock));
         drop(retirement);
         drop(state);
