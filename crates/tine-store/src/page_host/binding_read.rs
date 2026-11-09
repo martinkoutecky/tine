@@ -1,11 +1,12 @@
 //! The host read (CLI PROTOCOL §5): a page's current text for a client that
 //! is not a window. It is several driver requests, not one: naming the page
-//! (`try_identify`) asks the driver for the registered candidates and then
-//! for the key, and `read` asks once more for the held-or-file choice and
-//! the bytes. Each is a `Shared::read` with no deadline, answered whenever
-//! the driver reaches it (a page the host does not hold is read from its
-//! file inside that last ask, on the driver). Nothing is held on the
-//! caller's thread between the asks.
+//! (`try_identify`) asks the driver for the registered candidates (as often
+//! as the identity check needs them) and then for the key, and `read` asks
+//! once more for the held-or-file choice and the bytes. Each is a
+//! `Shared::read` with no deadline, answered whenever the driver reaches it
+//! (a page the host does not hold is read from its file inside that last
+//! ask, on the driver). Nothing is held on the caller's thread between the
+//! asks.
 use super::*;
 use crate::StoreError;
 

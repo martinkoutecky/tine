@@ -53,6 +53,7 @@ describe("a composition abandoned by blur", () => {
     try {
       expect(doc.byId["ime-blur"].raw).toBe("");
       editor.reportBlur(); // blur without compositionend
+      expect(doc.byId["ime-blur"].raw).toBe("あ"); // the blur commits the live buffer first; ending the preedit must not defer or lose it
       await Promise.resolve(); // CM finishes the ended preedit in a microtask
       editor.input("あい", 2, { inputType: "insertText", data: "い" });
       expect(doc.byId["ime-blur"].raw).toBe("あい");

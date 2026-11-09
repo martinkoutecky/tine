@@ -1935,7 +1935,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
 
   const onBlur = (e: FocusEvent) => {
     plainPaste.dispose();
-    endCompositionHold(); // an IME cancelled by blur may send no compositionend (L9-18)
+    queueMicrotask(endCompositionHold); // an IME cancelled by blur may send no compositionend (L9-18); after the commits below
     // The palette must retain the source occurrence until its contextual
     // Select embedding block action runs. Blur still commits the draft.
     if (embedNavExit && (e.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) {
