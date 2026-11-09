@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Production source of `src-tauri/src`: test files and trailing test
-/// modules are left out.
-fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
+/// modules are left out. Also `file_lock`'s one-lock-module guard.
+pub(crate) fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
