@@ -1,5 +1,149 @@
 use super::*;
 
+/// REG-JOURNAL-STEP-WINDOW: the file's own day comes from its name,
+/// so a body that failed to read at load (invalid UTF-8) keeps it too.
+#[test]
+fn a_missing_file_keeps_the_full_unions_virtual_identity_with_a_short_year_format() {
+    for (references, expected, body) in [
+        ("- [[1920-01-01]]\n", None, &b"- body\n"[..]),
+        ("- [[1920-01-01]]\n", None, &b"- \xff\xfe body\n"[..]),
+        (
+            "- [[1920-01-01]] [[2020-01-01]]\n",
+            Some("Jan 1st, 2020"),
+            &b"- body\n"[..],
+        ),
+        (
+            "- [[1920-01-01]] [[2020-01-01]]\n",
+            Some("Jan 1st, 2020"),
+            &b"- \xff\xfe body\n"[..],
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["journals", "pages", "logseq"] {
+            std::fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        std::fs::write(
+            root.path().join("logseq/config.edn"),
+            "{:journal/file-name-format \"yy_MM_dd\"}\n",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("pages/Plan.md"), references).unwrap();
+        let path = root.path().join("journals/20_01_01.md");
+        std::fs::write(&path, body).unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        store.whole_graph().unwrap();
+        std::fs::remove_file(path).unwrap();
+        let page = feed_page_through(&store, 3, Some(20000101), None, true).unwrap();
+        assert_eq!(
+            page.pages
+                .iter()
+                .map(|p| p.doc.title.as_str())
+                .collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>()
+        );
+        assert!(page.done);
+        store.close();
+    }
+}
+
+#[test]
+fn bounded_day_inventory_matches_full_inventory_for_colliding_titles() {
+    for title_format in ["yyyy", "yyyy-MM", "EEEE, dd.MM.yyyy"] {
+        let root = tempfile::tempdir().unwrap();
+        for dir in ["journals", "logseq"] {
+            std::fs::create_dir(root.path().join(dir)).unwrap();
+        }
+        std::fs::write(
+            root.path().join("logseq/config.edn"),
+            format!("{{:journal/page-title-format \"{title_format}\"}}\n"),
+        )
+        .unwrap();
+        for day in [19990101, 19991231, 20000101, 20000102, 20000201] {
+            let date = JournalDate::from_ordinal(day);
+            std::fs::write(
+                root.path()
+                    .join(format!("journals/{}.md", date.file_stem())),
+                "- body\n",
+            )
+            .unwrap();
+        }
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        let graph = store.whole_graph().unwrap();
+        let full = indexed_days_through(&graph, Day(20010101));
+        for before in [19990101, 20000101, 20000102, 20010101] {
+            for limit in [0, 1, 3, 10] {
+                let actual: Vec<_> = graph
+                    .inventory(tine_store::InventoryScope::JournalFilesBefore {
+                        before: Day(before),
+                        limit,
+                    })
+                    .0
+                    .iter()
+                    .map(|entry| {
+                        let tine_store::Resolved::Existing { id, .. } = &entry.target else {
+                            panic!("file target");
+                        };
+                        (entry.day.unwrap(), id.clone())
+                    })
+                    .collect();
+                let expected: Vec<_> = full
+                    .iter()
+                    .filter(|(day, _)| day.0 < before)
+                    .take(limit)
+                    .cloned()
+                    .collect();
+                assert_eq!(
+                    actual, expected,
+                    "format={title_format} before={before} limit={limit}"
+                );
+            }
+        }
+        store.close();
+    }
+}
+
+#[test]
+fn scroll_refills_across_failed_windows_and_preserves_through_count() {
+    for through in [None, Some(20000108)] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("journals")).unwrap();
+        let path = |n| root.path().join(format!("journals/2000_01_{n:02}.md"));
+        for n in 1..=12 {
+            std::fs::write(path(n), "- body\n").unwrap();
+        }
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        store.whole_graph().unwrap();
+        for n in 8..=12 {
+            std::fs::write(path(n), [0xff]).unwrap();
+        }
+        std::fs::remove_file(path(7)).unwrap();
+        let page = feed_page_through(&store, 3, Some(20000113), through, true).unwrap();
+        let ids: Vec<_> = page.pages.iter().map(|p| p.id.as_str()).collect();
+        let expected = if through.is_some() {
+            vec![6, 5, 4, 3, 2]
+        } else {
+            vec![6, 5, 4]
+        };
+        assert_eq!(
+            ids,
+            expected
+                .iter()
+                .map(|n| format!("journals/2000_01_{n:02}.md"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(page.unreadable.len(), 5);
+        assert_eq!(
+            page.next_before_day,
+            Some(20000100 + expected.last().unwrap())
+        );
+        assert!(!page.done);
+        store.close();
+    }
+}
+
 #[test]
 fn gf4_ready_feed_matches_legacy_days_bodies_and_cursors() {
     let root = tempfile::tempdir().unwrap();
@@ -287,8 +431,13 @@ fn realistic_graph_scroll_steps() {
     let old_step = t.elapsed() / cursors.len() as u32;
     let graph = store.whole_graph().unwrap();
     let t = std::time::Instant::now();
-    for _ in &cursors {
-        std::hint::black_box(indexed_days_through(&graph, Day(as_of_day)));
+    for &before in &cursors {
+        std::hint::black_box(
+            graph.inventory(tine_store::InventoryScope::JournalFilesBefore {
+                before: Day(before),
+                limit: 4,
+            }),
+        );
     }
     let new_days = t.elapsed() / cursors.len() as u32;
     drop(graph);
