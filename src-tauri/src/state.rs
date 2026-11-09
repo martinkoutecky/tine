@@ -165,6 +165,12 @@ impl PageHostSlot {
             Self::Off | Self::Revoked => Err(NO_PAGE_HOST),
         }
     }
+
+    /// A running host whose driver ended (a host bug): it is never
+    /// adopted, only retired (`HostRetirement`).
+    pub(crate) fn ended(&self) -> bool {
+        matches!(self, Self::Running(host) if host.ended())
+    }
 }
 
 /// An off host's refusal of a page write (host-only-writer DESIGN §3.6).

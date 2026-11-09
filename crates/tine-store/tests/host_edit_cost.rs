@@ -233,6 +233,45 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
              (aged={aged}); exemplar page_host/binding_bridge.rs index()"
         );
         assert_eq!(large.files_written, 1, "the edit's one save");
+        // PC-3 (s3b O6): the delivery's and dispatch's writer sections run
+        // under `driver::under_writer`, whose unwind containment adds no
+        // read, write, stat, sync or parse. The exact path, from submit to
+        // publication: the save reads the page and its base (2 full reads,
+        // 2 stamps), parses old and new text plus the index's parse (3),
+        // writes one temp file and syncs it and the directory (2).
+        let io = |c: &Counts| {
+            [
+                ("full_reads", c.full_reads),
+                ("preamble_reads", c.preamble_reads),
+                ("hash_reads", c.hash_reads),
+                ("stamps_by_path", c.stamps_by_path),
+                ("readdir", c.readdir),
+                ("parses", c.parses),
+                ("store_reads", c.store_reads),
+                ("watcher_reads", c.watcher_reads),
+                ("observation_reads", c.observation_reads),
+                ("fsyncs", c.fsyncs),
+                ("files_written", c.files_written),
+            ]
+        };
+        let pinned = [
+            ("full_reads", 2),
+            ("preamble_reads", 0),
+            ("hash_reads", 0),
+            ("stamps_by_path", 2),
+            ("readdir", 0),
+            ("parses", 3),
+            ("store_reads", 0),
+            ("watcher_reads", 0),
+            ("observation_reads", 0),
+            ("fsyncs", 2),
+            ("files_written", 1),
+        ];
+        assert_eq!(
+            io(&small),
+            pinned,
+            "PC-3: a save's delivery costs exactly this (aged={aged})"
+        );
     }
 }
 
