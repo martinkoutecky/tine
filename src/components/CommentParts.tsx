@@ -18,7 +18,7 @@ import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { commentMarginHidden } from "../commentMarginPref";
 import { openContextMenu } from "../ui";
-import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
+import { QuoteHighlightContext, createQuotedSourceRanges, type QuoteCoverage, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
 import type { CommentChildren } from "../commentChildren";
 import { consumeReplyFocus, replyFocusRequest } from "../commentReplyFocus";
@@ -195,17 +195,25 @@ function sameRanges(a: readonly QuotedRange[], b: readonly QuotedRange[]): boole
   return a.length === b.length && a.every(([start, end, id], i) => start === b[i][0] && end === b[i][1] && id === b[i][2]);
 }
 
+function MountedRendering(props: { coverage?: QuoteCoverage }): JSX.Element {
+  props.coverage?.rendering();
+  return null;
+}
+
 /** Mark the passages `parentId`'s comment children quote inside the rendering
  * `children()` draws; a block with no children (`when` false) has none to mark
  * and draws it plainly, as does a hidden margin (GH #845). */
-export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; comments?: Accessor<CommentChildren>; children: () => JSX.Element }): JSX.Element {
+export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; comments?: Accessor<CommentChildren>; coverage?: QuoteCoverage; children: () => JSX.Element }): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
   // the parent's text runs. The block's own comment producer is shared.
   const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format, props.comments);
   const ranges = createMemo(observedRanges, [], { equals: sameRanges });
+  // The renderer reports what it marks; the entry point reads that (`QuoteCoverage`).
+  const coverage = props.coverage;
   return (
     <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
-      <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges }}>
+      <MountedRendering coverage={coverage} />
+      <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges, drew: coverage?.drew }}>
         {props.children()}
       </QuoteHighlightContext.Provider>
     </Show>

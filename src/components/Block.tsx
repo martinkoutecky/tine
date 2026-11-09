@@ -237,7 +237,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     return n ? propertySession.facets(n.raw, fmt()) : EMPTY_FACETS;
   });
-  const { outlineChildren, marginComments, commentChildren } = marginOutline(node, surfaceKey, fmt);
+  const { outlineChildren, marginComments, commentChildren, quoteCoverage } = marginOutline(node, surfaceKey, fmt);
   const groupedQuote = quoteInGroup(props.id);
   const hasChildren = () => outlineChildren().length > 0;
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
@@ -380,7 +380,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <Show
             when={editing() ? node() : undefined} keyed
             fallback={
-              <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0} comments={commentChildren}>
+              <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0} comments={commentChildren} coverage={quoteCoverage}>
                 {() => <Rendered
                   id={props.id}
                   node={node}
@@ -403,7 +403,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
           </Show>
         </div>
-        <MarginMarker parentId={props.id} comments={marginComments()} source={commentChildren} />
+        <MarginMarker parentId={props.id} comments={marginComments()} source={commentChildren} coverage={quoteCoverage} />
         <CommentBelowChip id={props.id} format={fmt()} collapsed={collapsed() && !props.forceExpanded && !bulletless()} expand={() => toggleViewFold(props.id, viewCollapseSurface(), true)} />
       </div>
       <SeenRemoved first={props.id} />

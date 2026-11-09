@@ -1,7 +1,7 @@
 // Test support: open a block's compact comment thread the way a touch tablet
 // does (tap on the highlight, D-20261108-MC7). A thread without a highlight
-// (quoted text changed, ambiguous, whole block) keeps a block marker (MC8),
-// which is used instead.
+// (quoted text changed, ambiguous, whole block, inside code or across markup)
+// keeps a block marker (MC8), which is used instead.
 export function openCommentThread(root: ParentNode, id?: string): void {
   const mark = root.querySelector<HTMLElement>(id ? `.comment-quote-anchor[data-comment-id="${id}"]` : ".comment-quote-anchor[data-comment-id]");
   if (mark) tapHighlight(mark);

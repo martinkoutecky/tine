@@ -94,3 +94,46 @@ it.each([
   // noise. The typing timing budget (p95 under 16 ms with 64 siblings) is
   // asserted natively by scripts/e2e-mc010-tiers.mjs.
 });
+
+// Review round 2 (PC-1/3/4/5): the "N below" count of a folded block follows
+// structure and comment membership, so typing in the folded block itself never
+// rescans its hidden descendants. The hidden thread sits one level down (a
+// direct child's thread is the block's own, not "below").
+function mountFolded(children: number, hiddenThreads: number) {
+  const kids = Array.from({ length: children }, (_, i) => b(`k${i}`, `Hidden child ${i}`,
+    i < hiddenThreads ? [b(`t${i}`, `Hidden thread ${i}\ntine.quote:: child ${i}`)] : []));
+  loadSingle({ name: "Folded", title: "Folded", kind: "page", pre_block: null, format: "md", blocks: [{ ...b("p", "A folded parent", kids), collapsed: true }] });
+  const pane = document.createElement("main"); pane.className = "main-content";
+  Object.defineProperty(pane, "clientWidth", { configurable: true, get: () => 800 }); document.body.append(pane);
+  dispose = render(() => <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Folded")?.roots ?? []} format="md">
+    <BlockList ids={pageByName("Folded")?.roots ?? []} />
+  </CommentResolutionScope></SurfaceContext.Provider>, pane);
+  return pane;
+}
+function typeInFolded(children: number, hiddenThreads: number) {
+  const pane = mountFolded(children, hiddenThreads);
+  const chip = () => pane.querySelector(".comment-below-chip")?.textContent ?? null;
+  expect(chip()).toBe(hiddenThreads ? `${hiddenThreads} below` : null);
+  let seq = 0;
+  const one = () => {
+    facetCalls.count = 0;
+    const m = measure("p", () => setDoc("byId", "p", "raw", `A folded parent ~${++seq}`));
+    return { foreignRaw: m.foreignRaw, facets: facetCalls.count, ms: m.ms };
+  };
+  one(); // warm caches
+  const runs = Array.from({ length: 5 }, one);
+  expect(chip(), "the count survives typing").toBe(hiddenThreads ? `${hiddenThreads} below` : null);
+  dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren();
+  return { foreignRaw: Math.max(...runs.map(r => r.foreignRaw)), facets: Math.max(...runs.map(r => r.facets)), ms: runs.map(r => r.ms).sort((x, y) => x - y)[2] };
+}
+it.each([0, 1])("typing in a folded block costs the same at 4, 16 and 64 hidden children (%s hidden threads)", hiddenThreads => {
+  const results = [4, 16, 64].map(n => ({ n, ...typeInFolded(n, hiddenThreads) }));
+  console.log(JSON.stringify({ measurement: "folded parent keystroke", hiddenThreads, results }));
+  for (const r of results) {
+    expect(r.foreignRaw, `foreign raw reads at ${r.n} hidden children`).toBe(results[0].foreignRaw);
+    expect(r.facets, `facet lookups at ${r.n} hidden children`).toBe(results[0].facets);
+  }
+  expect(results[2].foreignRaw, "no hidden descendant is read").toBe(0);
+  // Timing is asserted natively (scripts/e2e-mc010-tiers.mjs, folded-parent
+  // typing budget); jsdom milliseconds are only logged.
+});

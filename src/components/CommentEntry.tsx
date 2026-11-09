@@ -3,17 +3,18 @@
 // hovering a highlight opens its thread through the hover preview's own trigger,
 // delay and close rules (`createPeekBridge`); a mouse click places the caret; a
 // touch tap or Enter on the focused highlight opens it. No rail and no count: only
-// open threads without a highlight (quoted text changed, ambiguous, whole block)
-// put a marker on their block. Phones: highlight or chip (no count) opens the
-// bottom sheet. Only mounted annotated rows own observers. No document writes or
-// additional source loads; grouping runs only while a thread view is open.
+// open threads the renderer drew no highlight for (quoted text changed,
+// ambiguous, whole block, inside code or across markup) put a marker on their
+// block. Phones: highlight or chip (no count) opens the bottom sheet. Only
+// mounted annotated rows own observers. No document writes or additional source
+// loads; grouping runs only while a thread view is open.
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext, type Accessor, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { MarginContext, type MarginApi } from "./marginContext";
 import { CommentGroup } from "./CommentGroup";
 import { PeekPopup } from "../render/PeekPopup";
 import { createPeekBridge } from "../render/peekBridge";
-import { rangesForSelectors } from "../render/quoteHighlight";
+import type { QuoteCoverage } from "../render/quoteHighlight";
 import { commentTier } from "../margin";
 import { groupCommentEntries } from "../commentGroups";
 import { node, formatForBlock, threadRootOf } from "../document";
@@ -26,7 +27,7 @@ import { registerReplyDraft } from "../commentMargin";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { NO_COMMENT_CHILDREN, type CommentChildren } from "../commentChildren";
 
-export function MarginMarker(props: { parentId: string; comments: readonly string[]; source?: Accessor<CommentChildren> }): JSX.Element {
+export function MarginMarker(props: { parentId: string; comments: readonly string[]; source?: Accessor<CommentChildren>; coverage?: QuoteCoverage }): JSX.Element {
   return <Show when={props.comments.length > 0}><CommentEntry {...props} source={props.source ?? (() => NO_COMMENT_CHILDREN)} /></Show>;
 }
 
@@ -34,7 +35,7 @@ const HIGHLIGHT = ".comment-quote-anchor[data-comment-id]";
 const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
 const CommentGlyph = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z" /></svg>;
 
-function CommentEntry(props: { parentId: string; comments: readonly string[]; source: Accessor<CommentChildren> }): JSX.Element {
+function CommentEntry(props: { parentId: string; comments: readonly string[]; source: Accessor<CommentChildren>; coverage?: QuoteCoverage }): JSX.Element {
   useResolvedComments();
   const place = useContext(MarginContext);
   const surface = useContext(SurfaceContext);
@@ -51,12 +52,16 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   });
   const openComments = createMemo(() => entries().filter(entry => !entry.resolved).map(entry => entry.id), [], { equals: sameIds });
   const resolvedComments = createMemo(() => entries().filter(entry => entry.resolved).map(entry => entry.id), [], { equals: sameIds });
-  // Medium only: open threads with nothing to highlight keep a block marker.
-  const unanchored = createMemo(() => {
+  // Medium only: open threads the renderer drew no highlight for keep a block
+  // marker. One answer (review round 2, AR-1): the coverage the renderer
+  // reported, never a re-derivation from the source. While the block is edited
+  // nothing is rendered, so the last answer stays (minus closed threads).
+  const unanchored = createMemo<string[]>(previous => {
     if (wide() || phone()) return [];
-    const open = entries().filter(entry => !entry.resolved);
-    const marked = new Set(rangesForSelectors(node(props.parentId)?.raw ?? "", open.map(entry => [entry.id, entry.selector] as const), format()).map(range => range[2]));
-    return open.flatMap(entry => marked.has(entry.id) ? [] : [entry.id]);
+    const open = openComments();
+    const drawn = props.coverage?.drawn();
+    if (!drawn) return previous.filter(id => open.includes(id));
+    return open.filter(id => !drawn.has(id));
   }, [], { equals: sameIds });
   // One bridge per block: hover arms it, explicit entry (tap, Enter, marker) holds it open.
   const peek = createPeekBridge(wide);

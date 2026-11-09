@@ -170,7 +170,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       // Reactive only under a parent that may hold comments: a comment added,
       // edited or removed re-marks this run without re-rendering the block.
       if (quoted && quoted.blockId === blockId) {
-        return <>{renderQuotedPlain(s, quoted.ranges()) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
+        return <>{renderQuotedPlain(s, quoted.ranges(), quoted.drew) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
       }
       return renderPlain(s.text, s.span, s.span_map, spanMode);
     }

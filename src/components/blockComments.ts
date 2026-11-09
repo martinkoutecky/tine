@@ -15,6 +15,7 @@ import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
 import { createCommentChildren } from "../commentChildren";
+import { createQuoteCoverage } from "../render/quoteHighlight";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
@@ -95,7 +96,10 @@ export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt:
   }, [], { equals: sameIds });
   const marginComments = createMemo(() => (main() && !commentMarginHidden() ? comments().entries.flatMap(entry => entry.id !== heldBody()
     && (showResolved() || !entry.resolved) ? [entry.id] : []) : []), [], { equals: sameIds });
-  return { outlineChildren, marginComments, commentChildren: comments };
+  // What this instance's renderer highlights; outlives the rendering while the
+  // block is edited, so the entry point keeps its last answer (review round 2).
+  const quoteCoverage = createQuoteCoverage();
+  return { outlineChildren, marginComments, commentChildren: comments, quoteCoverage };
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {

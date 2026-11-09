@@ -3,7 +3,7 @@
 // them. Derived at render time from the children's `tine.quote::` and the parent's
 // current raw text; nothing is stored.
 
-import { createContext, createMemo, type Accessor } from "solid-js";
+import { createContext, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 import { anchorQuote, quoteSelectorOf, resolvedOf, type QuoteSelector } from "../comments";
 import { node as docNode } from "../document";
 import { createCommentChildren, type CommentChildren } from "../commentChildren";
@@ -18,6 +18,50 @@ export type QuotedRange = readonly [start: number, end: number, commentId: strin
 export interface QuoteHighlight {
   blockId: string;
   ranges: () => readonly QuotedRange[];
+  /** The renderer reports each comment it draws a mark for (`QuoteCoverage`). */
+  drew?: (commentId: string) => void;
+}
+
+/** Which comments the inline renderer actually highlighted in one Block
+ * instance (GH #891 review round 2, AR-1/UI-4). A quote that resolves in the
+ * source can still draw nothing (inside inline code, across markup), so entry
+ * points read this, never a re-derivation from the source. */
+export interface QuoteCoverage {
+  /** Renderer side: called inside the computation that draws the mark; the
+   * mark's disposal withdraws it. */
+  drew(commentId: string): void;
+  /** Provider side: a mounted rendering. */
+  rendering(): void;
+  /** Ids the mounted rendering highlights, or undefined while none is mounted
+   * (the block is being edited): readers keep their last answer then. */
+  drawn(): ReadonlySet<string> | undefined;
+}
+
+export function createQuoteCoverage(): QuoteCoverage {
+  const counts = new Map<string, number>();
+  let renderings = 0;
+  const [version, setVersion] = createSignal(0);
+  const changed = () => setVersion(value => value + 1);
+  return {
+    drew(commentId) {
+      counts.set(commentId, (counts.get(commentId) ?? 0) + 1);
+      changed();
+      onCleanup(() => {
+        const left = (counts.get(commentId) ?? 1) - 1;
+        if (left > 0) counts.set(commentId, left); else counts.delete(commentId);
+        changed();
+      });
+    },
+    rendering() {
+      renderings++;
+      changed();
+      onCleanup(() => { renderings--; changed(); });
+    },
+    drawn() {
+      version();
+      return renderings > 0 ? new Set(counts.keys()) : undefined;
+    },
+  };
 }
 
 export const QuoteHighlightContext = createContext<QuoteHighlight | null>(null);

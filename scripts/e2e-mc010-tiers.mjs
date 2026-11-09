@@ -1,5 +1,6 @@
 // D-20261107-MC3 §§6–7 / D-20261108-MC4, MC7, MC8: routed-page proof in both editors.
-// GH #891 finding 1: a native typing budget beside a commented block with many siblings.
+// GH #891 finding 1: a native typing budget beside a commented block with many siblings,
+// and (review round 2) in a folded block above many hidden children.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -48,6 +49,12 @@ const siblingSeed = prefix => `- A commented passage among many siblings
     tine.quote:: commented passage
 ${Array.from({ length: SIBLINGS }, (_, i) => `  - Sibling ${i}\n${i === TYPED ? `    id:: ${prefix}000000-0000-4000-8000-000000000032\n` : ""}`).join("")}`;
 for (const [mode, prefix] of [["textarea", "03"], ["cm6", "04"]]) fs.writeFileSync(path.join(graph, `pages/Siblings ${mode}.md`), siblingSeed(prefix));
+// Review round 2 (PC-3): typing in a folded block whose 64 hidden children hold one thread ("1 below").
+const foldedSeed = prefix => `- A folded block with many hidden children
+  id:: ${prefix}000000-0000-4000-8000-000000000001
+  collapsed:: true
+${Array.from({ length: SIBLINGS }, (_, i) => `  - Hidden ${i}\n${i === 0 ? "    - Hidden thread\n      tine.quote:: Hidden\n" : ""}`).join("")}`;
+for (const [mode, prefix] of [["textarea", "05"], ["cm6", "06"]]) fs.writeFileSync(path.join(graph, `pages/Folded ${mode}.md`), foldedSeed(prefix));
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
@@ -123,9 +130,10 @@ async function datedReply(file, text) {
   const saved = await waitForFileText(file, value => pattern.test(value));
   return `    - ${text}\n      tine.author:: Ada Test\n      tine.date:: ${saved.match(pattern)[1]}\n`;
 }
-// GH #891 finding 1: keystroke-to-paint latency while typing in one ordinary sibling.
-async function siblingTyping(mode, tier, count) {
-  await browser.$(`${row(siblingId)} > .block-main .block-content`).click();
+// GH #891 finding 1: keystroke-to-paint latency while typing in one ordinary sibling
+// (round 2: or in a folded block, `target`).
+async function siblingTyping(mode, tier, count, target = siblingId, measurement = "sibling typing") {
+  await browser.$(`${row(target)} > .block-main .block-content`).click();
   await browser.$(editorSelector).waitForExist();
   await keys("End");
   await browser.execute(() => {
@@ -138,8 +146,8 @@ async function siblingTyping(mode, tier, count) {
   const paint = await browser.execute(() => { const p = window.__siblingTyping; document.removeEventListener("keydown", p.key, true); return p.paint; });
   await keys("Escape");
   const sorted = [...paint].sort((a, b) => a - b), p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
-  const result = { mode, tier, siblings: SIBLINGS, samples: paint.length, p50: sorted[Math.floor(sorted.length / 2)], p95, load: fs.readFileSync("/proc/loadavg", "utf8").trim() };
-  proof.typing.push(result); console.log(JSON.stringify({ measurement: "sibling typing", ...result }));
+  const result = { mode, tier, case: measurement, siblings: SIBLINGS, samples: paint.length, p50: sorted[Math.floor(sorted.length / 2)], p95, load: fs.readFileSync("/proc/loadavg", "utf8").trim() };
+  proof.typing.push(result); console.log(JSON.stringify({ measurement, ...result }));
   assert.equal(paint.length, count);
 }
 async function commentsDisplay(choice) {
@@ -261,6 +269,17 @@ try {
     const typed = siblingSeed(mode === "cm6" ? "04" : "03").replace(`  - Sibling ${TYPED}\n`, `  - Sibling ${TYPED}${"x".repeat(24)}\n`);
     await waitForFileText(siblingsFile, text => text === typed);
     assert.equal(fs.readFileSync(siblingsFile, "utf8"), typed, "Typing beside many siblings saves exact Markdown");
+    stage = `${mode}: folded parent typing budget`;
+    const foldedPrefix = mode === "cm6" ? "06" : "05", foldedId = `${foldedPrefix}000000-0000-4000-8000-000000000001`;
+    const foldedFile = path.join(graph, `pages/Folded ${mode}.md`);
+    await openPageByName(browser, `Folded ${mode}`);
+    const below = await browser.$(`${row(foldedId)} > .block-main .comment-below-chip`);
+    await below.waitForDisplayed(); assert.equal(await below.getText(), "1 below", "The folded block counts its hidden thread");
+    await siblingTyping(mode, "medium", 12, foldedId, "folded parent typing");
+    assert.equal(await below.getText(), "1 below", "Typing in the folded block keeps its count");
+    const foldedTyped = foldedSeed(foldedPrefix).replace("- A folded block with many hidden children\n", `- A folded block with many hidden children${"x".repeat(12)}\n`);
+    await waitForFileText(foldedFile, text => text === foldedTyped);
+    assert.equal(fs.readFileSync(foldedFile, "utf8"), foldedTyped, "Typing in a folded block saves exact Markdown");
     await browser.setWindowSize(1700, 1000);
     await openPageByName(browser, `Comments ${mode}`);
     stage = `${mode}: wide`;
@@ -374,7 +393,7 @@ try {
   fixture.verify();
   stage = "sibling typing budget";
   const overBudget = proof.typing.filter(result => !(result.p95 < TYPING_P95_MS));
-  assert.deepEqual(overBudget, [], `Typing p95 beside ${SIBLINGS} siblings must stay under ${TYPING_P95_MS} ms`);
+  assert.deepEqual(overBudget, [], `Typing p95 beside ${SIBLINGS} siblings or above ${SIBLINGS} hidden children must stay under ${TYPING_P95_MS} ms`);
   if (process.env.MC010_LAYOUT_PROBE === "1") {
     stage = "baseline width assertions";
     const deviations = proof.outcomes.flatMap(({ mode, observations }) => observations.flatMap(state => {

@@ -31,10 +31,15 @@ findings 1 and 2.
   The thread opens in `PeekPopup`, sharing preview placement and outside-press,
   Escape, scroll and resize dismissal; it stays live and editable, and a
   focused comment editor or reply draft holds it open past pointer exit. Only
-  an open thread with no resolvable highlight (its quote changed, matches more
-  than once, or covers the whole block) gives its block one small glyph
-  marker, labelled with the number of such threads, that opens the first of
-  them. A thread opened by a request rather than a pointer (a new comment,
+  an open thread the renderer drew no highlight for gives its block one small
+  glyph marker, labelled with the number of such threads, that opens the first
+  of them. That covers a quote that changed, matches more than once or covers
+  the whole block, and also one that resolves but cannot be marked (inside
+  inline code, across bold or other markup). Marker eligibility reads the
+  coverage the inline renderer reports (`QuoteCoverage`), never a second
+  derivation from the source, so every open thread keeps an entry point. A
+  thread sharing another's passage shares its mark. While the block is being
+  edited nothing is rendered and the marker keeps its last answer. A thread opened by a request rather than a pointer (a new comment,
   Comment on existing, or an edit of one of its messages started elsewhere)
   anchors below the commented block's text, never over it. Cards, replies and
   document mutations are the same components and door
@@ -87,7 +92,15 @@ findings 1 and 2.
 - A collapsed body block shows an outlined “N below” chip for open thread roots
   on descendant body blocks. Own threads and all replies are excluded; a root
   with `tine.resolved:: true` is excluded from this count. The chip expands the
-  existing surface fold.
+  existing surface fold. The count is maintained from structure and comment
+  membership (`createFoldedThreadCount`), not text: a structural change walks
+  the hidden subtree once with untracked reads; a raw edit of a walked block
+  re-derives only that block (one key screen, plus one facet lookup if it may
+  quote), walks again only if its comment membership changed, and adjusts the
+  count if a counted root was resolved or reopened. Typing in the folded block
+  reads none of its hidden descendants (0 foreign raw reads at 4, 16 and 64
+  hidden children in the counter test); the native typing p95 budget above 64
+  hidden children is 16 ms.
 - Threads resolving to the same source range (or the whole block) share a card
   and passage header in the margin, popover and sheet. File order
   breaks ties. Stale and ambiguous selectors remain separate cards. Each root

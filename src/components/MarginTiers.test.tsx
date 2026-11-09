@@ -408,6 +408,39 @@ it.each([
   expect(pane.querySelector(".margin-marker,.comment-quote-anchor")).toBeNull(); expect(popup()).toBeNull();
 });
 
+// Review round 2 (AR-1, UI-4): a quote that resolves in the source can still
+// have no highlight, because the renderer marks only passages inside one plain
+// text run. Marker eligibility reads what the renderer drew, so such a thread
+// keeps an entry point, also while its block is being edited.
+it.each([
+  { why: "inside inline code", parent: "Some `codeword` text and an ordinary passage", quote: "codeword", width: 800, display: "margin" },
+  { why: "across bold markup", parent: "Plain then **bold** words and an ordinary passage", quote: "then **bold**", width: 800, display: "margin" },
+  { why: "inside inline code", parent: "Some `codeword` text and an ordinary passage", quote: "codeword", width: 1400, display: "popup" },
+  { why: "across bold markup", parent: "Plain then **bold** words and an ordinary passage", quote: "then **bold**", width: 1400, display: "popup" },
+] as const)("a quote that resolves $why but cannot be highlighted keeps the marker (width $width, $display)", async ({ parent, quote, width, display }) => {
+  const pane = mount(width, "main", [b("p", parent, [b("code", `Code thread\ntine.quote:: ${quote}`), b("plain", "Plain thread\ntine.quote:: ordinary passage")])]);
+  if (display === "popup") chooseComments("popup");
+  expect(pane.querySelector('.comment-quote-anchor[data-comment-id="code"]'), "the renderer draws no highlight here").toBeNull();
+  expect(pane.querySelector('.comment-quote-anchor[data-comment-id="plain"]'), "control: an ordinary passage is highlighted").not.toBeNull();
+  const marker = () => pane.querySelector<HTMLButtonElement>(".comment-unanchored-marker");
+  expect(marker(), "the unhighlighted thread keeps an entry point").not.toBeNull();
+  expect(pane.querySelectorAll(".margin-marker")).toHaveLength(1);
+  marker()!.click();
+  expect(popup().querySelector('[data-comment-group="code"]')!.closest("[hidden]")).toBeNull();
+  popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+  // Editing the block replaces its rendering; the marker keeps the last answer.
+  startEditing("p", 0); await Promise.resolve();
+  expect(editorIn(pane, "p")).toBeTruthy();
+  expect(marker()).not.toBeNull();
+  endEdit("blur"); await Promise.resolve();
+  expect(marker()).not.toBeNull();
+  // Once the passage becomes highlightable the marker goes.
+  setRaw("p", "Some codeword text and an ordinary passage then bold words", { timetracking: false });
+  setRaw("code", "Code thread\ntine.quote:: codeword", { timetracking: false });
+  expect(pane.querySelector('.comment-quote-anchor[data-comment-id="code"]')).not.toBeNull();
+  expect(marker()).toBeNull();
+});
+
 it("the phone chip is a tap target without a count and opens the bottom sheet", () => {
   const pane = mount(390);
   expect(chip(pane).textContent).toBe(""); expect(chip(pane).querySelector("svg")).not.toBeNull();
