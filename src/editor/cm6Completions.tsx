@@ -69,7 +69,13 @@ export function cm6Completions(props: {
     quickSwitch: cap ? (query, limit) => cap.quickSwitch(query, limit) : undefined,
   });
   const { ac, acItems, acBlockState, acIndex, setAcIndex, acVisible, closeAc,
-    selectAc, updateAutocomplete, refresh, selectionChanged } = completion;
+    selectAc, updateAutocomplete, selectionChanged } = completion;
+  let refreshedInput: Pick<EditorState, "doc" | "selection"> | undefined;
+  const refresh = () => {
+    const { doc, selection } = view().state;
+    refreshedInput = { doc, selection };
+    completion.refresh();
+  };
   const openPlanning = (kind: "scheduled" | "deadline") => {
     const rect = view().contentDOM.getBoundingClientRect();
     openDatePicker(props.id, kind, rect.left, rect.bottom + 4, inResults(props.id) ? liveWriteTarget(props.id) : undefined);
@@ -96,9 +102,20 @@ export function cm6Completions(props: {
   };
   const input = (event: InputEvent) => {
     if (!current() || event.isComposing || view().compositionStarted || applying) return;
-    // A platform input may describe an unchanged state (fixture/IME notification).
-    // Actual native edits are reconciled by CM and handled by changed().
-    refresh();
+    // CM's transaction listener owns native edits. The platform notification
+    // may arrive before or after its DOM reconciliation; wait for that flush
+    // and only handle a state that the transaction path has not refreshed.
+    // A notification without a preceding transaction can open an initial trigger.
+    queueMicrotask(() => {
+      if (!current() || view().compositionStarted || applying) return;
+      const state = view().state;
+      const refreshed = refreshedInput;
+      refreshedInput = undefined;
+      if (refreshed?.doc === state.doc && refreshed.selection.eq(state.selection)) return;
+      // Consume only the transaction's companion notification. A later standalone
+      // input can refresh changed graph data even when the buffer is unchanged.
+      completion.refresh();
+    });
   };
   // The property-name workflow authors name|::, starting with an empty ::.
   // Adjust the input transaction itself so observers never see a stale caret.
@@ -181,5 +198,5 @@ export function cm6Completions(props: {
     blockState={acBlockState()} retry={() => void updateAutocomplete()} /></Show>;
   const scaffold = () => completion.openLanguagePicker("", 3, false);
   return { mount, inputSelection, changed, input, keydown, commands, selectionChanged, close: closeAc, scaffold,
-    pause: completion.pause, refresh, Popup };
+    pause: () => { refreshedInput = undefined; completion.pause(); }, refresh, Popup };
 }

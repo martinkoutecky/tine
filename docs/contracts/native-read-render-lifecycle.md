@@ -14,6 +14,16 @@ the warm-cache probe) or page-inventory reads there. Page/tag completion uses
 the dedicated bounded capture query. `capture.graphReaders.test.tsx` exercises
 the capture entry point with native-equivalent refusals for general reads.
 
+CM6 input transactions own completion refresh. The matching platform input
+notification does not start another read or invalidate the first reply; a
+notification before DOM reconciliation waits for that reconciliation. Standalone
+notifications still refresh changed graph data when the buffer is unchanged. Composition
+pauses completion until the final flush, and caret movement keeps the existing
+selection-only policy. Slash commands filter locally after loading templates;
+property keys and values retain their shared per-session reads rather than
+reading on every character. `Block.completionInput.test.tsx` exercises the shared
+editor driver, and `e2e-completion-perf.mjs` counts native reads per physical key.
+
 Page/tag completion retains every match of its previous query, including
 matches outside the displayed limit. Extending both the search-folded query
 and any Mandarin expansion query re-ranks that set with the existing page

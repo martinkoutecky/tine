@@ -22,6 +22,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
+- Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).
+- CodeMirror page and tag completion uses one search per typed query, showing choices on the first reply without a duplicate read or empty intermediate list (GH #767; internal: UI-CM6-COMPLETION-SINGLE-INPUT).
 - Context-menu rows use a consistent font size and family, including the page menu's **Copy as** submenu (GH #916).
 - Extending page or hashtag suggestions re-ranks the previous matches, preserving their exact order while avoiding a fresh scan of rejected names in both editors (internal: UI-PERF-COMPLETION-INCREMENTAL; D-20261102-PERF).
 - Advanced query lists honor `:breadcrumb-show? false`, hiding ancestor trails while retaining grouped page headings, including in the sidebar and embeds (GH #881).
