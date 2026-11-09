@@ -2,7 +2,7 @@ import { createMemo, getOwner, mapArray, runWithOwner, type Accessor } from "sol
 import { changedAny, pageChangeKey } from "../changeKeys";
 import { formatForBlock, type Node as StoreNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
-import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
+import { evaluate, parseFormula, type Ast, type FormulaClock, type FormulaValue, type ParseResult } from "./formula";
 import {
   errorValue,
   nullValue,
@@ -15,7 +15,7 @@ import { isPlainDecimalNumber, isoDatePrefix } from "./typed";
 import { fieldValueFromFacets, readField, type FieldId, type FieldValue } from "./fields";
 import type { BlockDto, PageKind } from "../types";
 
-import { appNow } from "../journal";
+import { appNow, currentDayKey } from "../journal";
 import { resolveResultRow } from "../components/queryResultIdentity";
 export interface FormulaEvalRow {
   id: string;
@@ -42,6 +42,7 @@ export function liveFormulaRowNode(row: FormulaEvalRow, mode: "action" | "mount"
 interface FormulaResultsOptions {
   rows: Accessor<readonly FormulaEvalRow[]>;
   formulas: Accessor<ReadonlyMap<string, string>>;
+  /** Replaces the app clock (tests); omitted, the sheet follows `liveFormulaClock`. */
   now?: Accessor<Date>;
   ownerId?: string;
   warnThreshold?: number;
@@ -136,7 +137,7 @@ function evaluateAstForRow(
   row: FormulaEvalRow,
   ast: Ast,
   formulas: ReadonlyMap<string, string>,
-  now: Date
+  now: FormulaClock
 ): FormulaValue {
   const astFor = formulaAstResolver(formulas);
   return evaluate(ast, {
@@ -150,7 +151,7 @@ export function evaluateFormulaForRow(
   row: FormulaEvalRow,
   formulaName: string,
   formulas: ReadonlyMap<string, string>,
-  now: Date
+  now: FormulaClock
 ): FormulaValue {
   const astFor = formulaAstResolver(formulas);
   let ast: Ast | null;
@@ -177,7 +178,7 @@ function observeFormulaRow(row: FormulaEvalRow): void {
 export function computeFormulaResults(
   rows: readonly FormulaEvalRow[],
   formulas: ReadonlyMap<string, string>,
-  now: Date,
+  now: FormulaClock,
   onEvaluate?: () => void
 ): { results: Map<string, FormulaValue>; evaluations: number } {
   const names = [...formulas.keys()];
@@ -195,12 +196,24 @@ export function computeFormulaResults(
   return { results, evaluations };
 }
 
+/** The clock a live sheet's formulas read (card CBEnA): the app clock, asked
+ *  only when a formula reads the date (`today()`, `now()`, `.relative()`), and
+ *  that read subscribes the running computation to `currentDayKey()`, the
+ *  app's one date-change signal. A row whose evaluation never reads the date
+ *  is not tracked, so a window left open past midnight recomputes exactly the
+ *  cells that read it, O(those cells), with no graph walk. `now()` moves with
+ *  the day, not by the minute. An injected clock (tests) owns its own signal. */
+export function liveFormulaClock(override?: Accessor<Date>): () => Date {
+  return override ?? (() => { currentDayKey(); return appNow(); });
+}
+
 export type FormulaResultsMemo = Accessor<ReadonlyMap<string, FormulaValue>> & {
   get: (key: string) => FormulaValue | undefined;
 };
 
 export function createFormulaResultsMemo(opts: FormulaResultsOptions): FormulaResultsMemo {
   let warned = false;
+  const clock = liveFormulaClock(opts.now);
   const owner = getOwner();
   // mapArray owns one computation per current row and disposes removed rows.
   // The evaluator can read only this row, formula definitions and time (including
@@ -210,7 +223,7 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): FormulaRe
     row,
     value: createMemo(() => {
       changedAny([`block:${row.id}`, pageChangeKey(row.page)]);
-      return computeFormulaResults([row], opts.formulas(), opts.now?.() ?? appNow(), opts.onEvaluate);
+      return computeFormulaResults([row], opts.formulas(), clock, opts.onEvaluate);
     }),
   })));
   // Membership/definition changes rebuild this directory; a row edit does not.
@@ -250,7 +263,7 @@ export function filterFormulaRows<T extends FormulaEvalRow>(
   rows: readonly T[],
   expr: string | null,
   formulas: ReadonlyMap<string, string>,
-  now: Date,
+  now: FormulaClock,
   ownerId?: string
 ): FormulaFilterState<T> {
   const source = expr?.trim() ?? "";
@@ -285,17 +298,18 @@ export function filterFormulaRows<T extends FormulaEvalRow>(
 export function createFormulaFilterMemo<T extends FormulaEvalRow>(
   opts: FormulaFilterOptions<T>
 ): Accessor<FormulaFilterState<T>> {
+  const clock = liveFormulaClock(opts.now);
   const source = createMemo(() => opts.filter()?.trim() ?? "");
   const filtered = mapArray(() => source() ? opts.rows() : [], row => createMemo(() => {
     changedAny([`block:${row.id}`, pageChangeKey(row.page)]);
-    return filterFormulaRows([row], source(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
+    return filterFormulaRows([row], source(), opts.formulas(), clock, opts.ownerId);
   }));
   return createMemo(() => {
     const rows = opts.rows();
     if (!source()) { filtered(); return { rows, error: null }; }
     const current = filtered();
     // Parse errors must still be reported when there are no rows.
-    const empty = filterFormulaRows([], source(), opts.formulas(), opts.now?.() ?? appNow(), opts.ownerId);
+    const empty = filterFormulaRows([], source(), opts.formulas(), clock, opts.ownerId);
     if (empty.error) return { rows, error: empty.error };
     const kept: T[] = [];
     for (const result of current) {

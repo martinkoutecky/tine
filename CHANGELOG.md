@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
 - Scrolling the Journals feed loads each next set of days from a bounded slice of the day index instead of re-sorting every journal day, with the same days, referenced-only days and order (REG-JOURNAL-STEP-WINDOW).
 - Printed and published pages list a `{{namespace X}}` macro's pages by page identity, as the live macro and Logseq do, so `project/y` appears under `{{namespace Project}}`; printing such a page no longer copies or sorts the whole graph (REG-PRINT-NAMESPACE-COST).
@@ -20,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- An IME composition cancelled by losing focus (the window switched away, a picker took focus) no longer leaves the editor, or Quick Capture's File capture, ignoring what you type next (internal: UI-OG-L9-18-IME-BLUR-ABANDONED; OG audit L9-18).
+- Copying a large image or text through a Linux clipboard tool no longer pauses 5 ms each time the pipe fills, so a big copy to a tool that reads promptly finishes in a fraction of the time; a tool that stops reading is still given up on after the same stall (internal: REG-OG-RF1-CLIPBOARD-POLL; OG audit R-F1).
 - On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (REG-AUDIT1109-FLIGHT-LOCK-ANDROID).
 - If the page host fails with an internal error while publishing a save, the graph's other writes continue, its open pages go back to file watching, and closing the graph no longer crashes Tine (REG-AUDIT1109-DRIVER-PANIC-WRITER).
 - After such a page host failure, closing its window now finishes closing the graph: Tine can quit, the command line can use the graph again, and reopening it starts a working page host that recovers any crash-recovery copies (REG-AUDIT1109-RETIRE-ENDED-HOST).
@@ -110,6 +113,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - After merging a page through an alias (renaming ML notes to ML, where Machine Learning has `alias:: ML`), a query that named the old page, such as `{{query (page "ML notes")}}`, now names Machine Learning, the page that remains. Before, it named `ML`. Links keep the name you typed (REG-CM-R11-ALIAS-MERGE-QUERY-SURVIVOR).
 - Renaming a page onto a used name inside its own namespace, such as `Foo` to `Foo/bar` when `Foo/bar` is a page or an alias, is refused with the reason and changes nothing. Before, Tine merged `Foo` into `Foo/bar`, a page that moves with `Foo` (REG-CM-R12-OWN-CHILD-REFUSED, UI-CM-OWN-CHILD-REFUSAL-REASON).
 - A rename that only changes capitalization onto a file another page already uses now says which page holds that file. Before, it failed with "page changed repeatedly during rename", as if trying again could help; nothing was written then or now (REG-CM-R14-CASE-ONLY-FILE-TAKEN).
+- A table, board or filter whose formulas use `today()` or `now()` now shows the new day's values when the date changes in a window left open overnight, instead of keeping yesterday's until a row is edited. Sheets whose formulas never read the date are not recalculated, and `now()` moves with the day, not by the minute (internal: UI-CBENA-SHEET-FORMULAS-FOLLOW-THE-DATE).
 
 ### Changed
 

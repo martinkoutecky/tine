@@ -107,7 +107,7 @@ fn b_query_org_template_metadata_is_removed_by_the_copy_door() {
 #[test]
 #[ignore = "manual before/after 10k search benchmark"]
 fn b_query_search_10k_bench() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     for i in 0..10_000 {

@@ -1026,9 +1026,11 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   let compositionEndValue: string | null = null;
   // The composing text is not in the store yet, so a page reload from disk must
   // wait for it: hold the page for the composition (a deferred reload replays
-  // when the hold is released).
+  // when the hold is released). Ending the hold also ends the transaction: a
+  // blur or teardown with no compositionend must not leave input swallowed.
   let releaseCompositionHold: (() => void) | null = null;
   const endCompositionHold = () => {
+    compositionActive = false;
     releaseCompositionHold?.();
     releaseCompositionHold = null;
   };
@@ -1039,7 +1041,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     completion.pause();
     releaseCompositionHold ??= pinPageWhileDrafting(() => docNode(props.id)?.page ?? null);
   };
-  const onCompositionStart = () => beginComposition();
   const onInput = (e: InputEvent) => {
     // Some supported IMEs omit compositionstart but mark their composing input
     // (master f1c7de6e2). Enter the same transaction so the not-yet-committed
@@ -1052,11 +1053,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // Chromium-family engines can emit one ordinary input after compositionend.
     // Its DOM value has already committed above; suppress only that duplicate,
     // never a subsequent real edit with different text.
-    if (compositionEndValue === ref.value) {
-      compositionEndValue = null;
-      return;
-    }
+    const duplicate = compositionEndValue === ref.value;
     compositionEndValue = null;
+    if (duplicate) return;
     // Editor keystroke post-processing on a single inserted char (not paste/IME/
     // delete). All branches edit ref.value BEFORE commit so the store sees it.
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
@@ -1936,6 +1935,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
 
   const onBlur = (e: FocusEvent) => {
     plainPaste.dispose();
+    queueMicrotask(endCompositionHold); // an IME cancelled by blur may send no compositionend (L9-18); after the commits below
     // The palette must retain the source occurrence until its contextual
     // Select embedding block action runs. Blur still commits the draft.
     if (embedNavExit && (e.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) {
@@ -2221,7 +2221,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         value={textareaValue()}
         placeholder={cap?.bulletHint?.() || PRIMARY_SELECTION_GUARD_PLACEHOLDER}
         onInput={onInput}
-        onCompositionStart={onCompositionStart}
+        onCompositionStart={beginComposition}
         onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
         onKeyUp={(e) => {

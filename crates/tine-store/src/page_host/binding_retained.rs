@@ -17,8 +17,22 @@ pub(in crate::page_host) enum FlushRefusal {
 type HostShared = Shared<ProductionIo, SystemClock>;
 pub(super) type HostState = State<ProductionIo, SystemClock>;
 
-/// The longest a host operation's caller waits for admission, then for its
-/// answer and every page's publication (Finding B, R1).
+/// The stall bound of a host operation's caller (Finding B, R1, L2-06), not
+/// the longest it waits. From the caller's start it limits how long a page
+/// busy in another operation delays admission (`Busy`); a save-first flush
+/// past it refuses `Busy` only for a rename still finishing, and otherwise
+/// keeps waiting (`bounded`), after which admission gets a new budget. Once
+/// admitted, `settle` moves its deadline to this long after the answer and
+/// after each page's newly counted publication, so an operation that keeps
+/// progressing is waited for beyond it. A wait the driver is mid-ask on at
+/// its deadline gets `ASK_GRACE` more. `Deadline::Never` reads (naming a
+/// page, `register_all`) are in no bound.
+///
+/// Enforced by: `an_operation_over_a_running_order_is_busy_until_the_order_ends`
+/// (admission `Busy`), `a_flush_handed_to_a_rename_is_told_busy_after_the_bound`
+/// (the flush refusal), `a_moving_deadline_keeps_the_caller_waiting_only_while_the_step_moves_it`
+/// (a moved deadline outlives the first bound) and
+/// `an_answer_given_across_the_deadline_reaches_the_caller` (`ASK_GRACE`).
 pub const OPERATION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What a caller's admitted operation came to, by precedence: Superseded,

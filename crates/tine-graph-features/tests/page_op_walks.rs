@@ -84,7 +84,7 @@ fn one_text_walk(what: &str, graph: &Graph, counts: Counts) {
 
 #[test]
 fn a_page_operation_walks_the_graph_text_once_and_no_asset() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let graph = graph(Default::default());
     let renamed = measured(&graph, || {
         pages::rename_or_merge_page(

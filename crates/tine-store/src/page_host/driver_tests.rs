@@ -342,6 +342,51 @@ fn an_answer_given_across_the_deadline_reaches_the_caller() {
     assert_eq!(ask_across_the_deadline(|| Wait::Ready(7)), Ok(7));
 }
 
+/// L2-06: a `Moving` deadline bounds a stall, not the whole wait. A step that
+/// moves the instant later on each ask keeps its caller waiting past the
+/// instant the wait began with, and the wait ends only when the step stops
+/// moving it (the claim `OPERATION_WAIT` makes for `settle`). The control is
+/// the same step under a fixed `At` deadline, which gives up at that instant.
+#[test]
+fn a_moving_deadline_keeps_the_caller_waiting_only_while_the_step_moves_it() {
+    let bound = Duration::from_millis(1_000);
+    let ask_every = Duration::from_millis(200);
+    // Moves the instant for its first six asks (about 1 s of progress), then
+    // answers on the eighth, well inside the last instant it set.
+    let progressing = |deadline: Deadline, moving: Option<Arc<Mutex<Instant>>>| {
+        let (mut d, ..) = spawn(host());
+        let mut asks = 0u32;
+        let answer = d.shared.locked_wait(deadline, move |_| {
+            asks += 1;
+            if let Some(moving) = &moving {
+                if asks <= 6 {
+                    *moving.lock().unwrap() = Instant::now() + bound;
+                }
+            }
+            if asks >= 8 {
+                return Wait::Ready(asks);
+            }
+            Wait::Until(Some(Instant::now() + ask_every))
+        });
+        d.join();
+        answer
+    };
+    let started = Instant::now();
+    let moving = Arc::new(Mutex::new(started + bound));
+    let moved = progressing(Deadline::Moving(moving.clone()), Some(moving));
+    assert_eq!(moved, Ok(8), "a moving deadline outlives its first instant");
+    assert!(
+        started.elapsed() > bound,
+        "the answer came after the first bound"
+    );
+    let fixed = progressing(Deadline::At(Instant::now() + bound), None);
+    assert_eq!(
+        fixed,
+        Err(super::driver::Unanswered::Withdrawn),
+        "the same step under a fixed deadline gives up at it"
+    );
+}
+
 #[test]
 fn a_lock_retry_that_passes_while_the_driver_plans_its_sleep_still_wakes_it() {
     let mut h = host();

@@ -176,7 +176,7 @@ fn run(pages: usize) -> Vec<(&'static str, u64)> {
 
 #[test]
 fn an_alias_edit_costs_the_edit_not_the_graph() {
-    let _integration_guard = crate::test_transactions::integration_lock();
+    let _integration_guard = crate::test_transactions::exclusive_integration_lock();
     if crate::test_transactions::isolated_cost_case(
         "test_transactions::alias_edit_cost::an_alias_edit_costs_the_edit_not_the_graph",
     ) {

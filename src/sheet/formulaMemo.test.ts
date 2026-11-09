@@ -7,7 +7,8 @@ import { applyChangeSummary } from "../changeSummary";
 import { resetStore } from "../document";
 import { setDoc, type FeedPage, type Node } from "../document/model";
 import { initParser } from "../render/parse";
-import { computeFormulaResults, createFormulaResultsMemo, createFormulaFilterMemo, filterFormulaRows } from "./formulaEval";
+import { computeFormulaResults, createFormulaResultsMemo, createFormulaFilterMemo, filterFormulaRows, formulaResultKey } from "./formulaEval";
+import { localDayKey, resyncCurrentDayForTest, setCurrentDayKeyForTest } from "../journal";
 
 beforeAll(initParser);
 afterEach(resetStore);
@@ -68,6 +69,36 @@ it("one live row edit evaluates F cells, not N × F", () => {
     expect(dataRev()).toBe(revision);
     dispose();
   });
+});
+
+// Card CBEnA: past midnight only the cells whose evaluation read the date are
+// computed again (a row whose `if` never reached today() is not), with no
+// injected clock, as in the app.
+it("a day change recomputes exactly the rows whose formulas read the date", () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2030, 6, 15, 23, 0));
+  setCurrentDayKeyForTest(localDayKey());
+  try {
+    const nodes = ["r0", "r1"].map((id, i) => ({ id, raw: `Row\nscore:: ${i ? 9 : 1}`, page: "Sheet", parent: null, children: [], collapsed: false }));
+    const page: FeedPage = { name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["r0", "r1"], format: "md", readOnly: false, guide: false };
+    setDoc({ byId: Object.fromEntries(nodes.map(n => [n.id, n])), pages: [page], feed: [page.name], loaded: true });
+    const rows = nodes.map(n => ({ id: n.id, page: n.page }));
+    createRoot(dispose => {
+      const evaluated: string[] = [];
+      const formulas = new Map([["when", 'if(score > 5, today().format("YYYY-MM-DD"), "later")']]);
+      const results = createFormulaResultsMemo({ rows: () => rows, formulas: () => formulas, onEvaluate: () => evaluated.push("cell") });
+      const text = (id: string) => { const v = results.get(formulaResultKey(id, "when")); return v?.kind === "text" ? v.value : undefined; };
+      try {
+        results();
+        expect([text("r0"), text("r1")]).toEqual(["later", new Date(2030, 6, 15, 23, 0).toISOString().slice(0, 10)]);
+        evaluated.length = 0;
+        vi.setSystemTime(new Date(2030, 6, 16, 23, 30)); // 24.5 hours on: another local and UTC day
+        resyncCurrentDayForTest();
+        expect([text("r0"), text("r1")]).toEqual(["later", new Date(2030, 6, 16, 23, 30).toISOString().slice(0, 10)]);
+        expect(evaluated).toHaveLength(1);
+      } finally { dispose(); }
+    });
+  } finally { vi.useRealTimers(); setCurrentDayKeyForTest(localDayKey()); }
 });
 
 it.skipIf(!process.env.L10_BENCH)("measures the audit matrix", () => {

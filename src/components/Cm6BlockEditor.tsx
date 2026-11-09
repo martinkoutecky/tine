@@ -301,6 +301,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
           focus: () => { noteSurfaceFocused(props.surface); registerCommandBridge(); return false; },
           blur: (event, v) => {
             clipboard.dispose();
+            const abandoned = typing.active() && !typing.settling(); // preedit still open at blur (L9-18)
             const intentIsCurrent = captureEditIntent();
             // Reorders can blur a retained editor; the structural gesture owns
             // its focus restoration. Palette actions still need embed context.
@@ -324,6 +325,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
             // A blur during preedit still commits the live buffer before exit.
             if (typing.settling()) queueMicrotask(leave);
             else leave();
+            // An IME cancelled by blur may send no compositionend, and CM never clears its own composing flag
+            // without one. End the preedit as the IME would, but only after leave() has committed the live buffer
+            // (ending it first defers leave() and loses the draft), so the next ordinary edit is not swallowed.
+            if (abandoned) v.contentDOM.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
             return false;
           },
           beforeinput: event => { if ((event as InputEvent).isComposing) typing.begin(); return !current(); },
