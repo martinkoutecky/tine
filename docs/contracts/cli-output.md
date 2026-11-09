@@ -256,7 +256,10 @@ checks they read back as the intended outline, and writes. Commands writing one 
 turns, so they never race each other: parallel writes that name no revision land, in some order, while `--rev`
 and a handle are checked against the page as it stands at that command's turn. Turns follow the order commands
 reach the line; a `--run` write reaches it only after the graph's run lock, whose waiters have no order, and
-`page rename` and `page delete` take the whole graph's turn and resolve their name in it. If something outside
+`page rename`, `page delete` and a command that creates its page by name (`add --page`, `page create`, when
+nothing claims the name yet) take the whole graph's turn and resolve their name in it, so two spellings of one
+new page (`Foo`, `foo`) are one page and the later command writes to the first's file, still in the graph's
+turn it holds. A write to a page that exists when the command names it takes only that page's turn. If something outside
 the owner's commands changed the page in between (someone typed, an editor, Syncthing), the write re-reads and
 re-resolves once; a second change is `stale`. A write still in line after 45 seconds is `refused`, reason
 `page-busy`, nothing written (other writers behind a wedged or very slow one). The 45 seconds cover the line
@@ -279,7 +282,12 @@ or is killed while its write stands in line does not cancel it: the write can la
   write only if the page is still at that rev; else `stale` with the
   current `detail.rev`.
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
-  (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
+  (today) / `--journal=DATE` (created when absent); content `-` reads stdin. A `PAGE` that is a date in the
+  graph's journal format (`2026_11_02`, `2026-11-02`, `Nov 2nd, 2026`) and that no ordinary page, journal or
+  alias claims is that day's journal, created under `journals/` as `[[PAGE]]` is in the app
+  (`JournalFormat::absent_link_is_journal`, the rule `WholeGraph::link_target` uses), never a second file under
+  `pages/`; an ordinary page file with exactly that name keeps its own file (D-20261107-KD, where OG would
+  count that file as the same page as the journal: `convert-page-if-journal-impl`). Content is a page fragment in the
   page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
@@ -471,7 +479,9 @@ searched.
 
 `tine page create NAME` creates an empty page through the owner's guarded save,
 with EditKind `create-page`. It creates no blocks, so there is no `tine.author::` to
-add. An existing page, alias or file refuses as `refused:page-exists`. Its payload
+add. An existing page, alias or file refuses as `refused:page-exists`; two spellings of a new page named at once
+(`Foo`, `foo`) create one page and refuse the other this way. A name that is a date no page claims creates that
+day's journal file, as for `add --page`. Its payload
 and text are the `block.edit` / `written` fields above (`blocks: []`, `more: 0`).
 An absent page cannot match `--rev` (`stale`). `--run` uses the existing commits.
 

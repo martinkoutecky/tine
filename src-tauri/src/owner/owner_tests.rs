@@ -44,6 +44,12 @@ mod cm_favorites;
 #[path = "owner_tests/parallel_write_tests.rs"]
 mod parallel_writes;
 
+#[path = "owner_tests/spelling_tests.rs"]
+mod spelling;
+
+#[path = "owner_tests/write_cost_tests.rs"]
+mod write_cost;
+
 #[cfg(desktop)]
 #[path = "owner_tests/git_run_tests.rs"]
 mod git_run;
@@ -719,6 +725,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("lock", include_str!("lock.rs")),
         ("mod", include_str!("mod.rs")),
         ("namespace", include_str!("namespace.rs")),
+        ("op_counts", include_str!("op_counts.rs")),
         ("pages", include_str!("pages.rs")),
         ("properties", include_str!("properties.rs")),
         ("seen", include_str!("seen.rs")),
@@ -746,7 +753,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 34, "scan every owner/*.rs file");
+    assert_eq!(files, 35, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
