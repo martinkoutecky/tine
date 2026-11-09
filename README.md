@@ -76,8 +76,8 @@ warn the first time — here's how to get past it:
 - **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic
   updates, or take the signed **`Tine_*_android-arm64.apk`** from Releases.
 - **iPhone and iPad** — install Tine from the **[App Store](https://apps.apple.com/us/app/tineoutline/id6804403687)** (it appears as
-  *TineOutline*). Betas come through TestFlight as a separate app, *Tine Beta*; its public link
-  will be here once its first Beta is out.
+  *TineOutline*). Betas come through TestFlight as a separate app, *Tine Beta*:
+  install Apple's TestFlight app, then open **[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)**.
   Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
 
 **Updates.** On desktop, Tine tells you when a new version is out and installs it in place when

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
+
 ## [0.8.4] - 2026-10-31
 
 Fixes for Tine 0.8.3: the Microsoft Store package, scrolling past a block embed, and sync apps missing edits on Android shared storage.
