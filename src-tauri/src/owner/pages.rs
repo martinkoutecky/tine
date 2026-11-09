@@ -263,13 +263,16 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
     // This inventory check proves an occupied destination refusal before
     // entering the shared operation. Errors from that operation alone do not
     // establish whether it already published files.
+    // The holder is the rename planner's own answer, so a journal holds
+    // every spelling of its day here as in the app's dialog (M-Q7).
     let graph = whole_graph(slot)?;
-    let occupied = match graph.resolve(new, false) {
-        Resolved::Existing { id, others } => page.as_ref() != Some(&id) || !others.is_empty(),
-        Resolved::Alias { owners } => owners.iter().any(|id| page.as_ref() != Some(id)),
-        Resolved::Absent { .. } => false,
-    };
-    if occupied {
+    let holders = tine_graph_features::pages::rename_destination_holders(
+        &slot.store,
+        &graph,
+        new,
+        page.as_ref(),
+    );
+    if !holders.is_empty() {
         return Err(refused(
             "page-exists",
             page.as_ref(),
