@@ -1,66 +1,66 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 it("the Guide teaches advanced query breadcrumb options (GH #881)", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   for (const outcome of [":breadcrumb-show? false", "keep their source page headings", ":group-by-page? false", "right sidebar and embeds", ":table-view? false"]) expect(guide).toContain(outcome);
 });
 it("the Guide explains compact embed icons and visible touch labels (GH #847)", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["chain icon for **Edit link**", "box-with-arrow icon for **Open source**", "**Remove** keeps its text beside a trash icon", "touch screen, all three keep their text labels"]) expect(guide).toContain(outcome);
 });
 it("the onboarding Guide explains the shared journal-section View and its editing home (GH #914)", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["table or board, columns, sort and aggregates", "Change the View on the sections page", "result blocks can be edited directly in the journal"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches calendar sidebar gestures and retained tagged-page folds", () => {
-  const journals = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
-  const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  const journals = readFileSync("crates/tine-guide/src/templates/journals-tasks-scheduling.md", "utf8");
+  const references = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   expect(journals).toContain("Shift-clicking the calendar button itself opens today's journal there");
   expect(references).toContain("remembers your fold choice for each page when you switch tabs");
 });
 it("the Guide explains query pauses and stale collapsed reference counts", () => {
-  const queries = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
-  const references = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  const queries = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
+  const references = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["pause typing for 1.5 seconds", "latest saved publication", "last answer visible"]) expect(queries).toContain(outcome);
   for (const outcome of ["keep their last count", "Count may be out of date", "opening the section reloads"]) expect(references).toContain(outcome);
 });
 it("the Guide explains preview placement and reachable source actions (GH #750, GH #752)", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["space above or below the link", "stays in place as its content changes", "title and **Open source** stay visible while you scroll"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches time tracking for selected task cycling", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["**Time tracking** on", "DOING / NOW records a clock-in", "into DONE records a clock-out", "Ctrl/Cmd+Enter cycles several selected blocks, in one Undo step"]) expect(guide).toContain(outcome);
   for (const outcome of ["logbook stays out of the text editor", "**Enter** at the end of its text leaves the history on that task", "keeps only the surviving block's clock history", "heading and flashcard state, are dropped", "the merge leaves both blocks in place", "Undo restores a merge", "editor stays open with your typed text", "use **Copy** on that message"]) expect(guide).toContain(outcome);
   for (const outcome of ["type by hand stays visible until you leave the editor", "Copying or cutting whole blocks carries their clock history", "between Markdown and Org pages"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches result-scoped columns and retained saved choices", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   for (const outcome of ["only columns found in the current results", "saved column choice stays intact", "checkbox returns when the column appears again"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches leaving selection mode and restoring an empty query", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   for (const outcome of ["Removing the last condition returns to that same empty state", "Selection actions stay above the result rows", "keep their page or block labels", "Press **Select results** again or **Done** to leave selection mode"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches query answer continuity and Save then Escape", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   for (const outcome of ["Renaming keeps the current results visible", "unsaved text draft leaves the results unchanged", "Saving keeps focus in the editor", "returns focus to the query's **⋯** menu"]) expect(guide).toContain(outcome);
 });
 it("the Guide teaches inline checklist clicks, nesting, Org and own-content collapse", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["**Shift+Enter**", "`+ [ ] item` in Org", "tick just that item without opening the editor", "same indent step as child blocks", "its own inline checklist stays visible"]) expect(guide).toContain(outcome);
 });
 it("the canonical Guide teaches linked property keys, shaded embeds and the tagged-page section", () => {
-  const guide = readFileSync(new URL("../crates/tine-core/src/templates/pages-links-references-search.md", import.meta.url), "utf8");
+  const guide = readFileSync(new URL("../crates/tine-guide/src/templates/pages-links-references-search.md", import.meta.url), "utf8");
   for (const outcome of ["Click a property key to open its page", "Shift-click opens it in the right sidebar", "before and after editing", ":property-pages/enabled? false", "it does not remove key links", "Later groups remain in the file", "shaded background in both light and dark", '**Pages tagged with "X"**', "before Linked References", "Inline block tags still belong to Linked References"]) expect(guide).toContain(outcome);
 });
 
 it("the Guide explains journal feed references and their lazy/collapse behavior", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["beneath each day in the Journals feed", "References load as you scroll", "Empty sections stay hidden", "collapse threshold"]) expect(guide).toContain(outcome);
 });
 
 it("the Guide explains canonical alias chips, unique block counts and compatible filter persistence", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["page and its aliases share one chip", "block using two aliases counts once", "Include or exclude applies to every alias", "Logseq-compatible `filters::` property", "older filter naming an alias", "Unlinked References shares the alias chips"]) expect(guide).toContain(outcome);
 });

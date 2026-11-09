@@ -16,7 +16,6 @@ pub mod export_definition;
 pub use tine_outline::editor_text;
 pub use tine_outline::outline as outline_kernel;
 pub mod graph_paths;
-pub mod guide;
 pub mod html_sanitize;
 pub mod latency;
 pub use tine_outline::logbook;

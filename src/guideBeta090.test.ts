@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
+const guide = (page: string) => readFileSync(`crates/tine-guide/src/templates/${page}.md`, "utf8");
 
 it("the 0.9 Beta Guide explains creating ordinary comment blocks from the CLI", () => {
   const cli = guide("command-line");

@@ -205,6 +205,11 @@ pub const DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD: u32 = 100;
 /// integer (`state/get-ref-open-blocks-level`); shared like the one above.
 pub const DEFAULT_REF_OPEN_BLOCKS_LEVEL: i32 = 2;
 
+/// `logseq/config.edn` for a new graph (triple-lowbar namespace filenames, the
+/// welcome page pinned as a favorite). The store writes it when a new graph's
+/// seed supplies none; the onboarding graph seeds it explicitly.
+pub const NEW_GRAPH_CONFIG_EDN: &str = include_str!("new-graph-config.edn");
+
 /// Preferred task marker cycle.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -63,7 +63,7 @@ it("GH453: bindable palette command preserves each reading viewport in both dire
 });
 
 it("GH453: Guide explains the command and shortcut assignment", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
   expect(guide).toContain("Toggle code block wrap");
   expect(guide).toContain("keeps your reading position");
   expect(guide).toContain("Code cards above the visible reading row can grow or shrink without moving that row");

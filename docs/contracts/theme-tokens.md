@@ -4,7 +4,7 @@ What a user's `logseq/custom.css` may rely on across Tine updates, and how Tine
 treats that file (GH #610). Kept true by same-commit updates and by the tests
 listed at the end. The guard `src/themeTokens.guard.test.ts` reads THIS file:
 the token tables below are the single source of truth for the shipped CSS and
-for the Guide page "Customize Tine's look" (`crates/tine-core/src/templates/customize-look.md`).
+for the Guide page "Customize Tine's look" (`crates/tine-guide/src/templates/customize-look.md`).
 
 ## 1. Two public layers
 
@@ -226,6 +226,6 @@ writer.
 - crates/tine-store/src/watch/custom_css.rs (the lane's own tests, including the metadata shortcut that skips hashing an unchanged file)
 - crates/tine-graph-features/tests/custom_css_edit.rs (create-if-missing, oversized file, directory)
 - src-tauri/src/watcher.rs::an_external_custom_css_edit_is_announced_and_an_own_write_is_not
-- crates/tine-core/src/guide.rs::the_customize_page_is_reachable_and_teaches_the_whole_loop
+- crates/tine-guide/src/lib.rs::the_customize_page_is_reachable_and_teaches_the_whole_loop
 - scripts/shot-theme-tokens.mjs (browser: defaults byte-identical, tokens reach the rendering, html-level overrides win)
 - scripts/e2e-custom-css.mjs (native: edit the file on disk, the style is applied without a reopen)

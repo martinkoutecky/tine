@@ -135,6 +135,6 @@ describe("GH #705 + D-20261018-W1: modified-click and chord paths open a backgro
 });
 
 it("the Guide says a narrow window lists the new tab under Open tabs in the left sidebar", () => {
-  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  const guide = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   expect(guide).toContain("it is listed under **Open tabs** in the left sidebar");
 });

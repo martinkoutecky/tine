@@ -1,0 +1,20 @@
+[package]
+autotests = false
+name = "tine-guide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The bundled Guide pages and assets, kept out of tine-core so a Guide-only
+# edit recompiles this crate and its consumers instead of the whole workspace.
+[dependencies]
+tine-core = { path = "../tine-core" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

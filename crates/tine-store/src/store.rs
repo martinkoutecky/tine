@@ -1012,7 +1012,7 @@ impl Store {
             .find(|(area, rel, _)| *area == Area::Meta && rel == "config.edn");
         let config_bytes = supplied_config
             .map(|(_, _, bytes)| bytes.as_slice())
-            .unwrap_or(tine_core::guide::CONFIG_EDN.as_bytes());
+            .unwrap_or(tine_core::config::NEW_GRAPH_CONFIG_EDN.as_bytes());
         crate::model::checked_write_target(&root, &config, "new graph root", None)
             .map_err(|error| failed(&config, error))?;
         crate::model::atomic_write_new(&config, config_bytes)

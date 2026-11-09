@@ -180,7 +180,7 @@ fn source_scan_guard_clients_touch_no_path() {
 /// bundled templates. The Guide's text lives in exactly one place (the
 /// templates); no test restates it.
 fn guide_pages() -> impl Iterator<Item = (&'static str, &'static str)> {
-    tine_core::guide::GUIDE_TEMPLATES
+    tine_guide::GUIDE_TEMPLATES
         .iter()
         .map(|template| (template.title, template.markdown))
 }
@@ -206,11 +206,11 @@ fn expected_demo_tree() -> std::collections::BTreeMap<String, Vec<u8>> {
     let mut tree = std::collections::BTreeMap::new();
     tree.insert(
         "logseq/config.edn".to_string(),
-        tine_core::guide::CONFIG_EDN.as_bytes().to_vec(),
+        tine_core::config::NEW_GRAPH_CONFIG_EDN.as_bytes().to_vec(),
     );
     tree.insert(
         "assets/quick-capture.png".to_string(),
-        tine_core::guide::QUICK_CAPTURE_PNG.to_vec(),
+        tine_guide::QUICK_CAPTURE_PNG.to_vec(),
     );
     for (title, markdown) in guide_pages() {
         tree.insert(
@@ -370,10 +370,10 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
         let mut expected = copies.clone();
         expected.insert(
             "assets/quick-capture.png".to_string(),
-            tine_core::guide::QUICK_CAPTURE_PNG.to_vec(),
+            tine_guide::QUICK_CAPTURE_PNG.to_vec(),
         );
         if case == "page" {
-            let name = tine_core::guide::guide_copy_page_name("Features/Sheets");
+            let name = tine_guide::guide_copy_page_name("Features/Sheets");
             let file = format!(
                 "{}.md",
                 tine_core::model::encode_page_name(
@@ -400,7 +400,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
         if case == "page" {
             assert!(actual
                 .skipped_pages
-                .contains(&tine_core::guide::guide_copy_page_name("Features/Sheets")));
+                .contains(&tine_guide::guide_copy_page_name("Features/Sheets")));
         }
         if case == "asset" || case == "asset_dir" {
             assert!(!actual

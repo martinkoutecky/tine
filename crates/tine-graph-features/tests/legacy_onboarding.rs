@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::config::{Config, FileNameFormat};
-use tine_core::guide::{
+use tine_graph_features::guide;
+use tine_guide::{
     bundled_guide_pages, guide_copy_page_name, rewrite_bundled_guide_links, GUIDE_TEMPLATES,
 };
-use tine_graph_features::guide;
 use tine_store::{PageId, Resolved, Store};
 
 const TARGET_ID: &str = "7a1c0f5e-0000-4000-8000-000000000001";

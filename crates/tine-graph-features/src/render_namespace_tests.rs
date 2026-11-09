@@ -2,7 +2,7 @@ use super::super::*;
 
 #[test]
 fn guide_explains_export_namespace_membership() {
-    let guide = include_str!("../../tine-core/src/templates/files-external-edits-backups.md");
+    let guide = include_str!("../../tine-guide/src/templates/files-external-edits-backups.md");
     assert!(guide.contains(
         "`{{namespace Project}}` lists descendants such as `project/y` using page identity"
     ));

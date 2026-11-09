@@ -5116,6 +5116,7 @@ dependencies = [
  "tempfile",
  "tine-core",
  "tine-graph-features",
+ "tine-guide",
  "tine-ios-folder-picker-native",
  "tine-ios-native-integrations",
  "tine-store",
@@ -5166,7 +5167,17 @@ dependencies = [
  "time",
  "tine-core",
  "tine-graph-features",
+ "tine-guide",
  "tine-store",
+]
+
+[[package]]
+name = "tine-guide"
+version = "0.10.0-beta.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tine-core",
 ]
 
 [[package]]

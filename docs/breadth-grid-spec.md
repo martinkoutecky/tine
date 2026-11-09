@@ -577,7 +577,7 @@ Grounded facts (code study, Jul 3 2026):
   the showcase, needs zero properties;
 - **discoverability**: `/table` · `/grid` · `/board` slash commands; a grid+kanban
   demo page in the onboarding welcome-graph templates
-  (`crates/tine-core/src/templates/`);
+  (`crates/tine-guide/src/templates/`);
 - the edge/selection interaction model + the **full §4.3 spreadsheet keyboard**
   (navigation, 2-D range-select, content-move, fill, TSV/indented-text clipboard);
 - automatic resize-to-content;

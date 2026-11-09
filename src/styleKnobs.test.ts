@@ -193,8 +193,8 @@ describe("guards", () => {
   });
 
   it("the Guide page names the Fine-tuning section and the device preference key (K5)", () => {
-    const guide = readFileSync("crates/tine-core/src/templates/customize-look.md", "utf8");
-    expect(existsSync("crates/tine-core/src/templates/customize-look.md")).toBe(true);
+    const guide = readFileSync("crates/tine-guide/src/templates/customize-look.md", "utf8");
+    expect(existsSync("crates/tine-guide/src/templates/customize-look.md")).toBe(true);
     expect(guide).toContain("**Fine-tuning**");
     expect(guide).toContain("style.knobs.v1");
     for (const k of KNOBS.filter((entry) => entry.type !== "heading")) {

@@ -56,7 +56,7 @@ fn emitted_fixture_corpus_is_accepted_by_lsdoc() {
     }
     // The Guide seed writes the bundled template bytes unchanged (pinned by
     // client.rs), so the templates themselves are the emitted artifact.
-    let welcome = tine_core::guide::GUIDE_TEMPLATES
+    let welcome = tine_guide::GUIDE_TEMPLATES
         .iter()
         .find(|template| template.title == "Welcome to Tine")
         .expect("the Welcome page is bundled");

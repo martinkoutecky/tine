@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
+const guide = (page: string) => readFileSync(`crates/tine-guide/src/templates/${page}.md`, "utf8");
 
 it("the Guide explains usable journals during graph loading and the later referenced-day merge", () => {
   const journals = guide("journals-tasks-scheduling");

@@ -243,7 +243,7 @@ describe("disabled situations", () => {
 });
 
 it("the mobile Guide explains the revealed cue and wider outdent band", () => {
-  const guide = readFileSync(new URL("../crates/tine-core/src/templates/platforms-and-mobile.md", import.meta.url), "utf8");
+  const guide = readFileSync(new URL("../crates/tine-guide/src/templates/platforms-and-mobile.md", import.meta.url), "utf8");
   expect(guide).toContain("A revealed arrow shows indent or outdent before you let go");
   expect(guide).toContain("circled **more** icon");
   expect(guide).toContain("40–139 px; actions start at 140 px");

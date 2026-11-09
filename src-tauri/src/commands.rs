@@ -434,8 +434,8 @@ mod wire_family_tests {
 }
 
 #[tauri::command]
-pub(crate) fn guide_pages() -> Vec<tine_core::guide::GuidePage> {
-    tine_core::guide::bundled_guide_pages()
+pub(crate) fn guide_pages() -> Vec<tine_guide::GuidePage> {
+    tine_guide::bundled_guide_pages()
 }
 
 #[tauri::command]

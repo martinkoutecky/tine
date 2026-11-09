@@ -6,9 +6,10 @@
 
 use std::io;
 
-use tine_core::guide::{
-    guide_copy_page_name, guide_link_renames, rewrite_bundled_guide_links, CONFIG_EDN,
-    GUIDE_ASSETS, GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
+use tine_core::config::NEW_GRAPH_CONFIG_EDN as CONFIG_EDN;
+use tine_guide::{
+    guide_copy_page_name, guide_link_renames, rewrite_bundled_guide_links, GUIDE_ASSETS,
+    GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
 };
 use tine_store::{Area, Content, Input, OpenError, PageHost, Resolved, Store, TxOutcome, Why};
 

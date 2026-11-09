@@ -100,7 +100,7 @@ describe("error and danger colors (UI-DANGER-THEME-CONTRAST)", () => {
     expect(readFileSync("src/components/PluginsTab.tsx", "utf8")).toContain("var(--tine-danger-color,");
   });
   it("the Guide explains the public danger override and its theme default", () => {
-    const guide = readFileSync("crates/tine-core/src/templates/customize-look.md", "utf8");
+    const guide = readFileSync("crates/tine-guide/src/templates/customize-look.md", "utf8");
     expect(guide).toContain("`--tine-danger-color`");
     expect(guide).toContain("Error and destructive-action text and error borders");
   });
