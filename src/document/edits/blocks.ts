@@ -61,8 +61,9 @@ export function prepareReferenceChangeNotice(roots: readonly string[], subtree: 
 // ---------------------------------------------------------------------------
 
 
-/** Supply graph identity context; insertion and duplicate handling live in Rust. */
-function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: OutlinePlace, reuse?: string) {
+/** Supply graph identity context; insertion and duplicate handling live in Rust. `edited` names a block
+ *  whose text a same-gesture edit is about to write (see `PendingEdit`): the kernel reads that text. */
+function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: OutlinePlace, reuse?: string, edited?: { id: string; raw: string }) {
   const liveIds: string[] = [];
   const format = formatForBlock(anchor);
   const visit = (node: OutlineNode) => {
@@ -71,7 +72,7 @@ function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: Outl
     node.children.forEach(visit);
   };
   nodes.forEach(visit);
-  return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page]);
+  return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page], edited);
 }
 
 type SetRawOptions = { timetracking?: boolean; markerBaseline?: string };
@@ -94,9 +95,10 @@ export function rawToWrite(id: string, raw: string, opts?: SetRawOptions): strin
 
 /** An edit to a block's text that the editor has decided on but not written:
  *  `raw` is the block's raw once `write` has run. A structural gesture that
- *  edits the text it acts on (Enter over a selection) computes the kernel's
- *  answer from `raw` and calls `write` only when the kernel answers, so a
- *  refused gesture leaves the editor and the document as they were. */
+ *  edits the text it acts on (Enter over a selection, the multiline exit's
+ *  trim of a trailing blank line) computes the kernel's answer from `raw` and
+ *  calls `write` only when the kernel answers, so a refused gesture leaves the
+ *  editor and the document as they were. */
 export interface PendingEdit { raw: string; write(): void }
 
 export function setRaw(id: string, raw: string, opts?: SetRawOptions) {
@@ -390,6 +392,30 @@ export function insertOutlineBefore(beforeId: string, nodes: OutlineNode[]): str
   return insertOutlineBeside(beforeId, nodes, "before", "insert-block");
 }
 
+/** The kernel's answer to an insert beside `anchorId`, or null when nothing may change: an empty outline,
+ *  a read-only anchor, an outline past the depth cap, a refusal, or a parser failure (the kernel has
+ *  already told the user the last two). Pure: nothing is written, pushed to undo or marked dirty, so a
+ *  caller that has staged an edit (`pending`, read by the kernel as the anchor's text) writes it only
+ *  when this returns a change. */
+function planInsertBeside(
+  anchorId: string,
+  nodes: OutlineNode[],
+  side: "before" | "after",
+  pending?: PendingEdit,
+): OutlineChange | null {
+  if (!nodes.length) return null;
+  // Read-only gate at the choke point — file drops (and any future caller)
+  // must not mutate a page the round-trip self-check marked read-only
+  // (Phase-6 review finding, validated).
+  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
+  const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId }, undefined, pending && { id: anchorId, raw: pending.raw });
+  if ("refused" in change) {
+    noteOutlineRefusal(change.refused);
+    return null;
+  }
+  return change;
+}
+
 /** Shared body of insertOutlineAfter/Before. Focus answer: the inserted block
  *  the reading order ends on beside the anchor — last after it, first before. */
 function insertOutlineBeside(
@@ -398,20 +424,33 @@ function insertOutlineBeside(
   side: "before" | "after",
   undoLabel: string,
 ): string | null {
-  if (!nodes.length) return null;
-  // Read-only gate at the choke point — file drops (and any future caller)
-  // must not mutate a page the round-trip self-check marked read-only
-  // (Phase-6 review finding, validated).
-  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
-  const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId });
-  if ("refused" in change) {
-    noteOutlineRefusal(change.refused);
-    return null;
-  }
+  const change = planInsertBeside(anchorId, nodes, side);
+  if (!change) return null;
   pushUndo(undoLabel, [doc.byId[anchorId].page]);
   applyOutlineChange(change);
   markOutlineDirty(change);
   return change.focus?.key ?? null;
+}
+
+/** The multiline exit: double Enter on the blank last line of a code, calc, fence, display-math or
+ *  page-properties block. The gesture is one change: `trim` (the block's text without that line) is
+ *  written and an empty sibling follows the block, as one undo unit, so one Undo restores the line and
+ *  removes the sibling. The kernel is asked about the insert over the trimmed text before anything is
+ *  written, so a refusal or a parser failure leaves the block, its editor, undo and the dirty bit
+ *  exactly as they were. Returns the new block, or null when nothing changed (the unit is entered only
+ *  once the kernel has answered, so a refusal never has to roll one back: a rollback replaces the
+ *  block's node, and the mounted editor then no longer owns it). Cost: one kernel ask, O(the page's
+ *  blocks) for the undo snapshot. */
+export function exitMultilineBlock(id: string, trim: PendingEdit): string | null {
+  const change = planInsertBeside(id, [{ raw: "", children: [] }], "after", trim);
+  if (!change) return null;
+  const sibling = withUndoUnit(`multiline-exit:${id}`, [doc.byId[id].page], () => {
+    trim.write();
+    applyOutlineChange(change);
+    markOutlineDirty(change);
+    return change.focus?.key ?? null;
+  });
+  return sibling ?? null;
 }
 
 /** Replace one empty leaf with a parsed outline in one transaction and undo

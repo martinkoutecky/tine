@@ -176,7 +176,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   };
   const embedExit = useContext(EmbedNavExitContext);
   const scope = cell && editsLikeOutline(cell) ? gridOutlineScope(cell) : props.scope;
-  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, deleteSelection, embedExit, code: () => code() !== null, calc: isCalc,
+  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, stage, deleteSelection, embedExit, code: () => code() !== null, calc: isCalc,
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
     ...marginNavigation(props.id, scope, props.surface, () => format),

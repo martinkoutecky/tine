@@ -1,10 +1,10 @@
 import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
-  beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
+  beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, exitMultilineBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
   mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
-  selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, withUndoUnit, type OutlineScope,
+  selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
   bodyNeighbor, threadRootOf, type PendingEdit,
@@ -41,6 +41,8 @@ interface StructureContext {
   format: "md" | "org";
   current(): boolean;
   commit(text: string): void;
+  /** The write `commit(text)` would make, decided but not made. */
+  stage(text: string): PendingEdit;
   /** Taking `from..to` out of the editor and the block, decided but not made. */
   deleteSelection(v: EditorView, from: number, to: number): PendingEdit;
   code(): boolean;
@@ -187,11 +189,9 @@ export function cm6Structure(ctx: StructureContext) {
     if (kind && s.empty) {
       const trimmed = kind === "code" ? codeBodyExitTrim(raw, s.from) : multilineExitTrim(raw, s.from, kind, ctx.format);
       if (trimmed !== null) {
-        let id: string | null = null;
-        withUndoUnit(`multiline-exit:${ctx.id}`, [n.page], () => {
-          ctx.commit(trimmed);
-          id = insertOutlineAfter(ctx.id, [{ raw: "", children: [] }]);
-        });
+        // One gesture: the kernel is asked about the sibling over the trimmed text, which is written
+        // only once it has answered, so a refused or failed insert leaves the blank line in place.
+        const id = exitMultilineBlock(ctx.id, ctx.stage(trimmed));
         if (id) startEditing(id, 0, null, editSurface());
         return true;
       }
