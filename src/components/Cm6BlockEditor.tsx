@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, For, Show, getOwner, onCleanup,
 import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
-import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, setRaw, type OutlineScope } from "../document";
+import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, rawToWrite, setRaw, type OutlineScope, type PendingEdit } from "../document";
 import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { cm6CaretReveal } from "../editor/cm6CaretReveal";
@@ -105,24 +105,42 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     () => view?.state.doc.toString() ?? "");
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
   let anchorFrame: number | undefined;
-  const commit = (text: string) => {
-    if (!current()) return;
-    if (text === shown()) { commitRecovery.applied(); return; }
+  /** The write `commit(text)` would make, decided but not made: `raw` is the block's text once written
+   *  (the clock transition settled, so it runs once), `write` writes it. A refused join throws here,
+   *  as in `commit`. A structural gesture that replaces the selection stages the replacement, asks
+   *  the kernel about the text it leaves and writes only on an answer. */
+  const stage = (text: string): PendingEdit => {
+    const unchanged = (): PendingEdit => ({ raw: node(props.id)?.raw ?? shownNode.raw, write() {} });
+    if (!current()) return unchanged();
+    if (text === shown()) { commitRecovery.applied(); return unchanged(); }
     const raw = node(props.id).raw;
     rawBeforeCommit = raw;
     const next = commitRecovery.join(() => (isCalc() ? null : codeView.join(text))
       ?? propertySession.join(isCalc() ? serializeCalcExitCommit(text, visible()) : text, parts().hidden, raw, hiddenProperties, format), text);
-    if (next === raw) return;
-    // Capture before live mirrors react; one restoration per frame, with the
-    // same focus/scroll/gesture ownership as the textarea autosize path.
-    if (view && pendingScrollAnchor === undefined) {
-      pendingScrollAnchor = captureEditorScrollAnchor(view.contentDOM, nearestScrollableY(view.contentDOM));
-      anchorFrame = host.ownerDocument.defaultView!.requestAnimationFrame(() => {
-        pendingScrollAnchor?.restore(view?.contentDOM ?? null);
-        pendingScrollAnchor = undefined; anchorFrame = undefined;
-      });
-    }
-    setRaw(props.id, next, { markerBaseline: markerBaseline(raw) });
+    if (next === raw) return unchanged();
+    const settled = rawToWrite(props.id, next, { markerBaseline: markerBaseline(raw) });
+    return {
+      raw: settled,
+      write() {
+        // Capture before live mirrors react; one restoration per frame, with the
+        // same focus/scroll/gesture ownership as the textarea autosize path.
+        if (view && pendingScrollAnchor === undefined) {
+          pendingScrollAnchor = captureEditorScrollAnchor(view.contentDOM, nearestScrollableY(view.contentDOM));
+          anchorFrame = host.ownerDocument.defaultView!.requestAnimationFrame(() => {
+            pendingScrollAnchor?.restore(view?.contentDOM ?? null);
+            pendingScrollAnchor = undefined; anchorFrame = undefined;
+          });
+        }
+        setRaw(props.id, settled, { timetracking: false });
+      },
+    };
+  };
+  const commit = (text: string) => stage(text).write();
+  /** Deleting `from..to` as a staged edit. Its write takes the text out of the view as a projection, so
+   *  the typing listener does not commit it a second time; `stage` publishes it once. */
+  const deleteSelection = (v: EditorView, from: number, to: number): PendingEdit => {
+    const staged = stage(v.state.doc.sliceString(0, from) + v.state.doc.sliceString(to));
+    return { raw: staged.raw, write() { v.dispatch({ changes: { from, to }, annotations: projection.of(true) }); staged.write(); } };
   };
   // Projection transactions change the local coordinate space only. Never
   // publish those replacements as edits or run completion/typing transforms.
@@ -158,7 +176,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   };
   const embedExit = useContext(EmbedNavExitContext);
   const scope = cell && editsLikeOutline(cell) ? gridOutlineScope(cell) : props.scope;
-  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, embedExit, code: () => code() !== null, calc: isCalc,
+  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, stage, deleteSelection, embedExit, code: () => code() !== null, calc: isCalc,
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
     ...marginNavigation(props.id, scope, props.surface, () => format),
@@ -405,7 +423,18 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       const s = view.state.selection.main;
       const leave = codeView.leaveRange(event, view.state.doc.toString(), s.from, s.to);
       if (leave) showText(view, visible(), leave.anchor, leave.head);
-      if (runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(event, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view!))) {
+      let handled: boolean;
+      try {
+        handled = !!runGridOutline(cell, () => leave || clipboard.keydown(event, view!) || sheet?.keydown(event, view!) || id && command(id) || formatting.keydown(event) || structure.keydown(event, view!));
+      } catch (error) {
+        // A command that threw (a refused commit, a parser trap before the kernel answered) still
+        // owns its key: CodeMirror's own binding would put the Enter or Tab into the text, and the
+        // next keystroke would act on that instead (og-wasm-enter-trap). The error stays uncaught.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        throw error;
+      }
+      if (handled) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
