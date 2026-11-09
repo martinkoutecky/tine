@@ -682,6 +682,7 @@ describe("cross-day move (journal feed as one list)", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
     loadFeed([today, older]); // today on top, older below
+    await bindTestHost();
     const o1 = older.blocks[0].id;
     const res = await moveBlockFeed(o1, -1); // up → end of the day above
     expect(res).toBe("crossed");
@@ -694,6 +695,7 @@ describe("cross-day move (journal feed as one list)", () => {
     const today = journal("Today", [blk("t1"), blk("t2")]);
     const older = journal("Older", [blk("o1")]);
     loadFeed([today, older]);
+    await bindTestHost();
     const t2 = today.blocks[1].id;
     const res = await moveBlockFeed(t2, 1); // down → start of the day below
     expect(res).toBe("crossed");
@@ -705,6 +707,7 @@ describe("cross-day move (journal feed as one list)", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1", [blk("o1a")])]);
     loadFeed([today, older]);
+    await bindTestHost();
     const o1 = older.blocks[0].id;
     const o1a = older.blocks[0].children[0].id;
     await moveBlockFeed(o1, -1);
@@ -1149,10 +1152,12 @@ describe("page-scoped structural undo", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
     loadFeed([today, older]);
+    await bindMemoryDisk(); // a bound host that answers the transfer
     const o1 = older.blocks[0].id;
     await moveBlockFeed(o1, -1); // o1 crosses up into Today
     expect(raws("Today")).toEqual(["t1", "o1"]);
     expect(raws("Older")).toEqual(["o2"]);
+    await flushAll(); // the host's transfer ends before undo may run
 
     undo();
     expect(raws("Today")).toEqual(["t1"]);
@@ -1251,7 +1256,7 @@ describe("carry unfinished tasks → today", () => {
   });
   const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
 
-  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", () => {
+  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", async () => {
     const today = journal(TODAY, [blk("")]); // synthetic empty today
     const older = journal("Older", [
       blk("TODO A", [blk("DONE A1")]), // open task with done child → moves whole
@@ -1260,6 +1265,7 @@ describe("carry unfinished tasks → today", () => {
       blk("note D", [blk("TODO D1")]), // note containing an open task → moves whole (context)
     ]);
     loadFeed([today, older]);
+    await bindTestHost();
     const moved = carryUnfinished(["Older"], true, null).moved;
     expect(moved).toBe(2);
     expect(raws(TODAY)).toEqual(["TODO A", "note D"]); // empty placeholder dropped
@@ -1269,10 +1275,11 @@ describe("carry unfinished tasks → today", () => {
     expect(doc.byId[a].children.map((id) => doc.byId[id].raw)).toEqual(["DONE A1"]);
   });
 
-  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", () => {
+  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", async () => {
     const today = journal(TODAY, [blk("existing")]);
     const older = journal("Older", [blk("note D", [blk("TODO D1", [blk("DONE D1a")])])]);
     loadFeed([today, older]);
+    await bindTestHost();
     const moved = carryUnfinished(["Older"], false, null).moved;
     expect(moved).toBe(1);
     expect(raws(TODAY)).toEqual(["existing", "TODO D1"]); // pulled out; note D stays
@@ -1281,11 +1288,12 @@ describe("carry unfinished tasks → today", () => {
     expect(doc.byId[t].children.map((id) => doc.byId[id].raw)).toEqual(["DONE D1a"]);
   });
 
-  it("processes days in order (newest first ends up on top) and can add a header", () => {
+  it("processes days in order (newest first ends up on top) and can add a header", async () => {
     const today = journal(TODAY, [blk("")]);
     const d1 = journal("D1", [blk("TODO from-d1")]);
     const d2 = journal("D2", [blk("TODO from-d2")]);
     loadFeed([today, d1, d2]);
+    await bindTestHost();
     carryUnfinished(["D1", "D2"], true, "Carried over");
     expect(raws(TODAY)).toEqual(["Carried over", "TODO from-d1", "TODO from-d2"]);
   });
@@ -1298,7 +1306,7 @@ describe("carry unfinished tasks → today", () => {
     expect(raws("Older")).toEqual(["DONE x", "just a note"]);
   });
 
-  it("removes the carried tasks and leaves finished tasks AND blank spacer bullets untouched", () => {
+  it("removes the carried tasks and leaves finished tasks AND blank spacer bullets untouched", async () => {
     const today = journal(TODAY, [blk("")]);
     // The reported case: open tasks interleaved with a finished task and a blank
     // spacer bullet. Carrying must remove ONLY the open tasks; the spacer stays.
@@ -1311,14 +1319,16 @@ describe("carry unfinished tasks → today", () => {
       blk("DONE another thing"),
     ]);
     loadFeed([today, older]);
+    await bindTestHost();
     expect(carryUnfinished(["Older"], false, null).moved).toBe(3);
     expect(raws("Older")).toEqual(["DONE something else", "", "DONE another thing"]);
   });
 
-  it("leaves a blank parent that only held a carried task (no-task blocks are never touched)", () => {
+  it("leaves a blank parent that only held a carried task (no-task blocks are never touched)", async () => {
     const today = journal(TODAY, [blk("")]);
     const older = journal("Older", [blk("", [blk("TODO a")])]);
     loadFeed([today, older]);
+    await bindTestHost();
     carryUnfinished(["Older"], false, null);
     expect(raws("Older")).toEqual([""]); // the empty parent stays — it had no task marker
   });
@@ -1793,6 +1803,7 @@ describe("root-to-root drop across pages targets the drop page (#38)", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1")]);
     loadFeed([today, older]);
+    await bindTestHost();
     const t1 = today.blocks[0].id;
     // Drop t1 (a root) after o1 (a root on Older): newParent=null, targetPage=Older.
     await moveBlock(t1, null, 1, "Older");
