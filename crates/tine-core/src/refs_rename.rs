@@ -34,7 +34,8 @@
 //!
 //! Cost: one lsdoc parse per block (the projection the store builds anyway),
 //! a second one for a block holding `{{` or an Org `[[file:`, plus one query
-//! parse per query macro; O(page bytes). Pure.
+//! parse per query macro and one read of each property value that holds one
+//! (`PropertyValueCode`); O(page bytes). Pure.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -436,27 +437,64 @@ fn link_edits(
     }
 }
 
-/// Whether `at` is inside code (a backtick span, an Org `=…=` or `~…~` span)
-/// written in a property's value. The outline parser reads a property line as
-/// one `Properties` node and keeps each value as text, which is why its
-/// literal regions end at the node; the app shows the value as inline text
-/// (`PagePropertyValue`), so the same value parsed on its own, as the parser
-/// would read it as text, says what is code there. One small parse, only for a
-/// macro that sits inside a property value.
-fn in_property_value_code(
-    raw: &str,
-    regions: &crate::block_regions::BlockRegions,
-    at: usize,
+/// Where the code is in the property values of one block, each value read once.
+///
+/// The outline parser reads a property line as one `Properties` node and keeps
+/// each value as text, which is why the block's literal regions end at the
+/// node; the app shows the value as inline text (`PagePropertyValue`), so the
+/// value parsed on its own, as the parser would read it as text, says what is
+/// code there (a backtick span, an Org `=…=` or `~…~` span).
+///
+/// Lower bound: a value holding a query macro is read once, however many
+/// macros it holds (O(its bytes)), and a value without one is not read; each
+/// macro is then a binary search of that read's code ranges. `properties` are
+/// in source order and disjoint (`block_regions`' visitors append in source
+/// order), and so are a parse's `literals` (sorted and merged).
+struct PropertyValueCode<'a> {
+    raw: &'a str,
+    regions: &'a crate::block_regions::BlockRegions,
     is_org: bool,
-) -> bool {
-    regions
-        .properties
-        .iter()
-        .find(|property| property.value_range.contains(at))
-        .is_some_and(|property| {
-            crate::block_regions::parse(property.value_range.slice(raw), is_org)
-                .literal_at(at - property.value_range.0)
-        })
+    /// The code ranges of each value already read, in the value's own offsets,
+    /// by its index in `regions.properties`.
+    read: HashMap<usize, Vec<crate::block_regions::Range>>,
+}
+
+impl<'a> PropertyValueCode<'a> {
+    fn new(raw: &'a str, regions: &'a crate::block_regions::BlockRegions, is_org: bool) -> Self {
+        Self {
+            raw,
+            regions,
+            is_org,
+            read: HashMap::new(),
+        }
+    }
+
+    /// Whether `at` (an offset in `raw`) is inside code written in a property's
+    /// value.
+    fn contains(&mut self, at: usize) -> bool {
+        let (raw, is_org, properties) = (self.raw, self.is_org, &self.regions.properties);
+        let index = properties.partition_point(|property| property.value_range.1 <= at);
+        let Some(property) = properties
+            .get(index)
+            .filter(|property| property.value_range.contains(at))
+        else {
+            return false;
+        };
+        let code = self.read.entry(index).or_insert_with(|| {
+            #[cfg(test)]
+            VALUE_PARSES.with(|reads| reads.set(reads.get() + 1));
+            crate::block_regions::parse(property.value_range.slice(raw), is_org).literals
+        });
+        let at = at - property.value_range.0;
+        let next = code.partition_point(|range| range.1 <= at);
+        code.get(next).is_some_and(|range| range.0 <= at)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Property values read for code on this thread (tests reset it first).
+    static VALUE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The page-name arguments of each query macro in `raw` (D-20261031-CMQ):
@@ -474,10 +512,9 @@ fn query_edits(
     if !raw.contains("{{") {
         return edits;
     }
+    let mut value_code = PropertyValueCode::new(raw, regions, is_org);
     for extent in query_macro_extents(raw) {
-        if regions.literal_at(extent.start)
-            || in_property_value_code(raw, regions, extent.start, is_org)
-        {
+        if regions.literal_at(extent.start) || value_code.contains(extent.start) {
             continue;
         }
         let family = FormFamily::for_macro_name(&extent.name);
@@ -601,4 +638,120 @@ fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
         start..start + stem_len,
         crate::model::encode_page_name(&to, renames.file_name_format),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Rename reads a property value for code once, however many query macros
+    //! it holds (qs-leftovers-1109 round 2; PC-1, PC-3, PC-5).
+    use super::VALUE_PARSES;
+    use crate::config::FileNameFormat;
+    use std::time::{Duration, Instant};
+
+    const OLD: &str = "{{tine-query @page and name = 'Old'}}";
+    const NEW: &str = "{{tine-query @page and name = 'New'}}";
+
+    fn rename(text: &str, is_org: bool) -> String {
+        crate::refs::rename_rewrite(
+            text,
+            is_org,
+            &[("Old".to_owned(), "New".to_owned())],
+            FileNameFormat::TripleLowbar,
+        )
+    }
+
+    /// Property values read for code since the last call, on this thread. The
+    /// counter is thread-local, so tests running in parallel never share it.
+    fn value_reads() -> usize {
+        VALUE_PARSES.with(|reads| reads.replace(0))
+    }
+
+    /// `n` macros side by side in one value, every second one inside a code
+    /// span written with `mark`: the value before and after the rename.
+    fn value_of(n: usize, mark: &str) -> (String, String) {
+        let spelled = |renamed: bool| {
+            (0..n)
+                .map(|i| match (i % 2, renamed) {
+                    (1, _) => format!("{mark}{OLD}{mark}"),
+                    (_, true) => NEW.to_owned(),
+                    _ => OLD.to_owned(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        (spelled(false), spelled(true))
+    }
+
+    /// A value is read once, whether it holds one macro or four hundred, in a
+    /// Markdown property and in an Org drawer; the answer is the same as one
+    /// read per macro gave: the macros outside code follow, those in code stay.
+    #[test]
+    fn a_value_with_many_macros_is_read_once() {
+        for n in [1, 2, 10, 400] {
+            let (md, md_to) = value_of(n, "`");
+            let (org, org_to) = value_of(n, "~");
+            for (text, want, is_org) in [
+                (
+                    format!("- x\n  q:: {md}\n"),
+                    format!("- x\n  q:: {md_to}\n"),
+                    false,
+                ),
+                (
+                    format!("* x\n:PROPERTIES:\n:Q: {org}\n:END:\n"),
+                    format!("* x\n:PROPERTIES:\n:Q: {org_to}\n:END:\n"),
+                    true,
+                ),
+            ] {
+                value_reads();
+                assert_eq!(rename(&text, is_org), want, "n = {n}, org = {is_org}");
+                assert_eq!(value_reads(), 1, "n = {n}, org = {is_org}");
+            }
+        }
+    }
+
+    /// A value without a query macro is not read, and neither is a macro in the
+    /// block's text.
+    #[test]
+    fn values_without_a_macro_are_not_read() {
+        let text = format!("- {OLD}\n  a:: plain\n  b:: `code`\n  c:: {{{{embed [[Keep]]}}}}\n");
+        value_reads();
+        assert_eq!(rename(&text, false), text.replace(OLD, NEW));
+        assert_eq!(value_reads(), 0);
+    }
+
+    /// Exactly one read per value that holds a macro, in a page property and in
+    /// block properties, and none for the values and text beside them.
+    #[test]
+    fn each_value_holding_a_macro_is_read_once() {
+        let text = format!(
+            "type:: {OLD} {OLD}\n\n- x {OLD}\n  a:: {OLD} `{OLD}` {OLD}\n  b:: plain `code`\n  c:: `{OLD}`\n- y\n  d:: {OLD}\n"
+        );
+        let want = format!(
+            "type:: {NEW} {NEW}\n\n- x {NEW}\n  a:: {NEW} `{OLD}` {NEW}\n  b:: plain `code`\n  c:: `{OLD}`\n- y\n  d:: {NEW}\n"
+        );
+        value_reads();
+        assert_eq!(rename(&text, false), want);
+        // type, a, c, d.
+        assert_eq!(value_reads(), 4);
+    }
+
+    /// PC-1/PC-3 timing budget, in the form of sync_diff_tests.rs's
+    /// `similarity_pairing_is_bounded_on_giant_single_line_blocks` (an
+    /// `Instant`, a bound, a message naming the rule): a 76 kB value of 2000
+    /// macros renames in time linear in its length, about 0.06 s unoptimized
+    /// (the bound leaves 16x for a busy host). Reading it once per macro
+    /// (round 1) took 11.6 s here.
+    #[test]
+    fn a_value_with_many_macros_renames_within_the_budget() {
+        let (before, after) = value_of(2000, "`");
+        let text = format!("- x\n  q:: {before}\n");
+        let start = Instant::now();
+        let got = rename(&text, false);
+        let took = start.elapsed();
+        assert_eq!(got, format!("- x\n  q:: {after}\n"));
+        assert!(
+            took < Duration::from_secs(1),
+            "PC-3: a property value is read once for all its macros, not once per macro ({took:?})"
+        );
+    }
 }
