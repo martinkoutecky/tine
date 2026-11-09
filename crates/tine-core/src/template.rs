@@ -17,17 +17,22 @@ use crate::model::BlockDto;
 /// `template-including-parent:: false`; inserted copies drop `id::` and, at an
 /// included root, the `template*` properties. O(copied subtree).
 pub fn template_of(b: &DocBlock) -> Option<(String, Vec<BlockDto>)> {
-    let name = b.property("template")?;
-    if name.is_empty() {
-        return None;
-    }
+    let name = template_name(b)?;
+    Some((name, template_blocks(b)))
+}
+
+fn template_name(b: &DocBlock) -> Option<String> {
+    b.property("template").filter(|name| !name.is_empty())
+}
+
+fn template_blocks(b: &DocBlock) -> Vec<BlockDto> {
     let include_parent = b.property("template-including-parent").as_deref() != Some("false");
     let blocks = if include_parent {
         vec![template_copy(b, true)]
     } else {
         b.children.iter().map(|c| template_copy(c, false)).collect()
     };
-    Some((name, blocks))
+    blocks
 }
 
 /// Every template of one page: its property header first (see the module
@@ -38,17 +43,22 @@ pub fn template_of(b: &DocBlock) -> Option<(String, Vec<BlockDto>)> {
 /// as in OG (`(drop 1 sorted-blocks)` of a one-block tree). The header is
 /// parsed only when its text can hold the key at all. O(page).
 pub fn templates_in_document(doc: &Document, each: &mut impl FnMut(String, Vec<BlockDto>)) {
+    template_definitions_in_document(doc, &mut |name, block| each(name, template_blocks(block)));
+}
+
+/// Visit template definitions without copying their insertion trees. Same
+/// order and membership as [`templates_in_document`]. O(page blocks + header).
+pub fn template_definitions_in_document(doc: &Document, each: &mut impl FnMut(String, &DocBlock)) {
+    #[cfg(feature = "test-counters")]
+    template_work::document();
     if let Some(pre) = doc.pre_block.as_deref() {
         if may_define_template(pre.as_bytes()) {
-            if let Some((name, blocks)) = crate::page_properties::document_page_property_block(doc)
-                .as_ref()
-                .and_then(template_of)
-            {
-                each(name, blocks);
+            if let Some(block) = crate::page_properties::document_page_property_block(doc) {
+                template_definition(&block, each);
             }
         }
     }
-    templates_in(&doc.roots, each);
+    template_definitions(&doc.roots, each);
 }
 
 /// Whether these bytes can hold a block that defines a template: a property
@@ -68,17 +78,29 @@ pub fn may_define_template(bytes: &[u8]) -> bool {
 /// Every template under `roots`, in depth-first preorder (a template's own
 /// subtree is still visited). O(blocks plus copied subtrees).
 pub fn templates_in(roots: &[DocBlock], each: &mut impl FnMut(String, Vec<BlockDto>)) {
+    template_definitions(roots, &mut |name, block| each(name, template_blocks(block)));
+}
+
+fn template_definition(b: &DocBlock, each: &mut impl FnMut(String, &DocBlock)) {
+    #[cfg(feature = "test-counters")]
+    template_work::block();
+    if let Some(name) = template_name(b) {
+        each(name, b);
+    }
+}
+
+fn template_definitions(roots: &[DocBlock], each: &mut impl FnMut(String, &DocBlock)) {
     for b in roots {
-        if let Some((name, blocks)) = template_of(b) {
-            each(name, blocks);
-        }
-        templates_in(&b.children, each);
+        template_definition(b, each);
+        template_definitions(&b.children, each);
     }
 }
 
 /// Convert a template block subtree to a DTO, dropping `id::` (so inserted
 /// copies get fresh ids) and, at the root, the `template*` properties.
 pub fn template_copy(b: &DocBlock, strip_template: bool) -> BlockDto {
+    #[cfg(feature = "test-counters")]
+    template_work::copied();
     let raw = b
         .projection()
         .regions
@@ -97,6 +119,35 @@ pub fn template_copy(b: &DocBlock, strip_template: bool) -> BlockDto {
         children: b.children.iter().map(|c| template_copy(c, false)).collect(),
         breadcrumb: Vec::new(),
         ..Default::default()
+    }
+}
+
+/// Per-thread work at discovery/copy primitives, for downstream cost tests.
+#[cfg(feature = "test-counters")]
+pub mod template_work {
+    use std::cell::Cell;
+    thread_local! { static WORK: Cell<(usize, usize, usize)> = const { Cell::new((0, 0, 0)) }; }
+    pub(super) fn document() {
+        WORK.with(|w| {
+            let (d, b, c) = w.get();
+            w.set((d + 1, b, c));
+        });
+    }
+    pub(super) fn block() {
+        WORK.with(|w| {
+            let (d, b, c) = w.get();
+            w.set((d, b + 1, c));
+        });
+    }
+    pub(super) fn copied() {
+        WORK.with(|w| {
+            let (d, b, c) = w.get();
+            w.set((d, b, c + 1));
+        });
+    }
+    /// Take and reset (documents visited, blocks visited, blocks copied).
+    pub fn take() -> (usize, usize, usize) {
+        WORK.with(|w| w.replace((0, 0, 0)))
     }
 }
 

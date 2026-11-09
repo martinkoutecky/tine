@@ -8,6 +8,7 @@ static PREAMBLE_READS: AtomicU64 = AtomicU64::new(0);
 static OLD_SOURCE_PARSES: AtomicU64 = AtomicU64::new(0);
 static PARSES: AtomicU64 = AtomicU64::new(0);
 static CORPUS: AtomicU64 = AtomicU64::new(0);
+static NAMESPACE_NAME_VISITS: AtomicU64 = AtomicU64::new(0);
 static FSYNCS: AtomicU64 = AtomicU64::new(0);
 static BYTES_WRITTEN: AtomicU64 = AtomicU64::new(0);
 static FILES_WRITTEN: AtomicU64 = AtomicU64::new(0);
@@ -45,11 +46,35 @@ pub(crate) static HOST_WORKER_KEY_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
+    static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set while the page host processes a watcher-forwarded observation.
     static OBSERVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Calling thread's journal day visits, inventory sorts, and reference-name visits.
+pub fn journal_work() -> (usize, usize, usize) {
+    JOURNAL_WORK.with(std::cell::Cell::get)
+}
+pub(crate) fn journal_day_visit() {
+    JOURNAL_WORK.with(|work| {
+        let (days, sorts, refs) = work.get();
+        work.set((days + 1, sorts, refs));
+    });
+}
+pub(crate) fn inventory_sort() {
+    JOURNAL_WORK.with(|work| {
+        let (days, sorts, refs) = work.get();
+        work.set((days, sorts + 1, refs));
+    });
+}
+pub(crate) fn journal_reference_visit() {
+    JOURNAL_WORK.with(|work| {
+        let (days, sorts, refs) = work.get();
+        work.set((days, sorts, refs + 1));
+    });
 }
 
 /// Run `observe`, the page host's processing of an observation the watcher
@@ -110,6 +135,8 @@ pub struct Counts {
     pub old_source_parses: u64,
     /// Owned corpus constructions.
     pub corpus: u64,
+    /// Stored name claimants visited by namespace prefix lookups.
+    pub namespace_name_visits: u64,
     /// File and parent directory sync calls.
     pub fsyncs: u64,
     /// Payload bytes written to temporary files.
@@ -224,6 +251,7 @@ pub fn reset() {
         &PARSES,
         &OLD_SOURCE_PARSES,
         &CORPUS,
+        &NAMESPACE_NAME_VISITS,
         &FSYNCS,
         &BYTES_WRITTEN,
         &FILES_WRITTEN,
@@ -275,6 +303,7 @@ pub fn snapshot() -> Counts {
         parses: PARSES.load(Ordering::Relaxed),
         old_source_parses: OLD_SOURCE_PARSES.load(Ordering::Relaxed),
         corpus: CORPUS.load(Ordering::Relaxed),
+        namespace_name_visits: NAMESPACE_NAME_VISITS.load(Ordering::Relaxed),
         fsyncs: FSYNCS.load(Ordering::Relaxed),
         bytes_written: BYTES_WRITTEN.load(Ordering::Relaxed),
         files_written: FILES_WRITTEN.load(Ordering::Relaxed),
@@ -402,6 +431,9 @@ pub(crate) fn old_source_parse() {
 }
 pub(crate) fn corpus() {
     CORPUS.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn namespace_name_visit() {
+    NAMESPACE_NAME_VISITS.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn fsync() {
     FSYNCS.fetch_add(1, Ordering::Relaxed);

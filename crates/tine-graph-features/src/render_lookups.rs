@@ -1,14 +1,16 @@
-//! Corpus lookups for export macros, each built once per `RenderGraph` on first
-//! use (I-15): a `{{embed}}`, `{{query}}` or `{{namespace}}` then costs a hash or
-//! range probe, not a corpus scan. Each index costs O(pages) or O(blocks) once.
+//! Corpus indexes for export embeds and queries, built once per `RenderGraph`
+//! on first use (I-15), then answered by hash probes instead of corpus scans.
+//! Each corpus index costs O(pages) or O(blocks) once; namespace names use the
+//! store's existing identity tree directly.
 //! Entries are page indexes and child paths into the one corpus the graph holds.
 //!
 //! A single-page print holds no whole-graph corpus: its lookups are `keyed`
 //! and ask the view's name table (`WholeGraph::corpus(Some(name))`) and exact
 //! block index (`WholeGraph::blocks`, which names the page a corpus scan finds
 //! first) instead, so a printed embed or query costs its target, not the graph
-//! (cost-model audit 2026-11-02, row 5). Only `{{namespace}}`, and a block
-//! whose subtree exceeds `blocks`' result budget, still copy the corpus once.
+//! (cost-model audit 2026-11-02, row 5). Namespace names range the store's
+//! identity tree in either mode. A block whose subtree exceeds `blocks`'
+//! result budget still copies the corpus once.
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -17,6 +19,10 @@ use tine_core::doc::{DocBlock, Document};
 use tine_core::model::PageKind;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::WholeGraph;
+
+#[cfg(test)]
+#[path = "render_namespace_tests.rs"]
+mod namespace_tests;
 
 #[cfg(test)]
 thread_local!(pub(super) static PAGE_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) });
@@ -91,14 +97,12 @@ fn keyed_block(whole: &WholeGraph, uuid: &str) -> Result<Option<BlockHit>, ()> {
 pub(super) struct Lookups {
     /// Answer from the view's keyed indexes, not the corpus (single-page print).
     pub keyed: bool,
-    /// Keyed mode's page list for `{{namespace}}`, copied on first use.
+    /// Keyed mode's fallback for blocks over the exact lookup result budget.
     all_pages: OnceCell<Corpus>,
     /// Block uuid or `id::` → page index and child-index path from its roots.
     blocks: OnceCell<HashMap<String, BlockAt>>,
     docs: OnceCell<HashMap<(String, PageKind), usize>>,
     by_name: OnceCell<HashMap<String, usize>>,
-    /// Page indexes sorted by name, one per distinct name.
-    names: OnceCell<Vec<usize>>,
 }
 
 impl Lookups {
@@ -202,32 +206,11 @@ impl Lookups {
         Some(Arc::clone(&corpus.pages[*page].document))
     }
 
-    /// Distinct page names starting with `prefix`, sorted: a range of one sorted list.
-    pub(super) fn names_under(
-        &self,
-        corpus: &Corpus,
-        whole: &WholeGraph,
-        prefix: &str,
-    ) -> Vec<String> {
-        // Keyed mode has no corpus to range over: a namespace listing copies
-        // the view's page list once (the one graph-sized walk print keeps).
-        let corpus = if self.keyed {
-            self.all_pages.get_or_init(|| whole.corpus(None, true))
-        } else {
-            corpus
-        };
-        let name = |i: &usize| corpus.pages[*i].name.as_str();
-        let names = self.names.get_or_init(|| {
-            count_page_probes(corpus.pages.len());
-            let mut names: Vec<usize> = (0..corpus.pages.len()).collect();
-            names.sort_unstable_by(|a, b| name(a).cmp(name(b)));
-            names.dedup_by(|a, b| name(a) == name(b));
-            names
-        });
-        let start = names.partition_point(|i| name(i) < prefix);
-        (names[start..].iter().map(name))
-            .take_while(|n| n.starts_with(prefix))
-            .map(str::to_owned)
-            .collect()
+    /// Active stored names under an identity prefix, in displayed-name byte order.
+    pub(super) fn names_under(&self, whole: &WholeGraph, prefix: &str) -> Vec<String> {
+        let entries = whole.inventory(tine_store::InventoryScope::ActiveFilesUnder(prefix));
+        let mut names: Vec<_> = entries.0.iter().map(|entry| entry.name.clone()).collect();
+        names.sort_unstable();
+        names
     }
 }

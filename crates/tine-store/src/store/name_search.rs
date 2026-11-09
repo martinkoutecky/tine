@@ -11,6 +11,10 @@ impl WholeGraph {
         let journal_prefix = format!("{}/", self.config.config.journals_dir);
         self.graph
             .explicit_reference_names()
+            .inspect(|_| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::journal_reference_visit();
+            })
             .filter_map(|name| {
                 let date = self.journal_format.parse(name)?;
                 let title = self.journal_format.title(date);

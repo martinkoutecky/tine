@@ -163,7 +163,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath",
   "syncConflictDiff", "duplicateJournalDiff", "conflictInventory", "vcsMarkerConflictDiff", "liveConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
-  "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "pdfAssetSource", "readExternalPdf", "streamAsset",
+  "listTemplates", "listTemplateNames", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "pdfAssetSource", "readExternalPdf", "streamAsset",
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder", "readCssFile", "saveCssFile", "revealExport",
   // prepareGraphFolder: iOS container check + iCloud download before a graph
   // bind; it writes no graph data (master 027b5ae15).
