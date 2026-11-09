@@ -1378,7 +1378,7 @@ mod rename_guide_tests {
             "a remembered graph reopens after an app update",
             "**Plugins do not run on iOS yet.**",
             // D-20261107-ASL: Betas come through the separate Tine Beta app's public link (GH #890).
-            "[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)",
+            "](https://testflight.apple.com/join/f2HQgJGn)",
         ] {
             assert!(
                 mobile.contains(outcome),
