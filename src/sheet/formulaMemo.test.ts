@@ -90,11 +90,11 @@ it("a day change recomputes exactly the rows whose formulas read the date", () =
       const text = (id: string) => { const v = results.get(formulaResultKey(id, "when")); return v?.kind === "text" ? v.value : undefined; };
       try {
         results();
-        expect([text("r0"), text("r1")]).toEqual(["later", new Date(2030, 6, 15, 23, 0).toISOString().slice(0, 10)]);
+        expect([text("r0"), text("r1")]).toEqual(["later", "2030-07-15"]); // the local day (REG-FORMULA-LOCAL-DATE)
         evaluated.length = 0;
         vi.setSystemTime(new Date(2030, 6, 16, 23, 30)); // 24.5 hours on: another local and UTC day
         resyncCurrentDayForTest();
-        expect([text("r0"), text("r1")]).toEqual(["later", new Date(2030, 6, 16, 23, 30).toISOString().slice(0, 10)]);
+        expect([text("r0"), text("r1")]).toEqual(["later", "2030-07-16"]);
         expect(evaluated).toHaveLength(1);
       } finally { dispose(); }
     });
