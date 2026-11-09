@@ -924,11 +924,13 @@ export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: Edi
   const c = host();
   // No page host (startup before the bind finishes, or a failed bind): a block
   // moving between pages needs the host's planned sequence, so the move is
-  // refused and restored like an endpoint the host cannot take (L2-14). Edits
-  // with no block moving between pages stay ordinary dirty pages, noted and
-  // saved at bind like any edit made before it.
+  // refused and restored like an endpoint the host cannot take (L2-14). The
+  // check reads the edges as given: filtering drops an endpoint that could not
+  // be captured (an unfinished page header), and that move must refuse too.
+  // Edits with no block moving between pages stay ordinary dirty pages, noted
+  // and saved at bind like any edit made before it.
   const cannotRun = c ? edges.some(([a, b]) => !before.has(a) || !before.has(b)) || [...after.values()].some(dto => !dto)
-    : endpoints.length > 0;
+    : edges.some(([a, b]) => a !== b);
   if (cannotRun) {
     const rollback = transferRollbacks.get(before);
     if (rollback) rollback();

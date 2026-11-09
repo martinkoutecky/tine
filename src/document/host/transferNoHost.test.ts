@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { initParser } from "../../render/parse";
-import { carryUnfinished, isDirty, loadFeed, moveBlockFeed, pageByName, resetStore } from "..";
+import { beginPageHeaderEdit, carryUnfinished, isDirty, loadFeed, moveBlockFeed, pageByName, resetStore, setRaw } from "..";
+import { backend } from "../../backend";
 import { doc, setDoc } from "../model";
 import { loadSingle } from "../workingSet";
 import { moveBlock } from "../edits/moves";
@@ -78,6 +79,40 @@ it("L2-14: persistTransfer with no page host refuses a transfer instead of repor
   expect(doc.byId.Src.page).toBe("Src");
   expect(pageByName("Dst")!.roots).toEqual(["Dst"]);
 });
+
+// Review of 2249d292b (Codex, required neighbour): an endpoint whose page header
+// is an unfinished draft cannot be captured, so its edge used to be filtered
+// out before the no-host check, the move ran as an ordinary edit, and the source
+// would save without the block while the destination could not save at all.
+for (const unfinished of ["Dst", "Src"]) {
+  it(`L2-14: with no page host, a move whose ${unfinished === "Dst" ? "destination" : "source"} has an unfinished page header is refused, touching no storage`, async () => {
+    resetStore();
+    setToasts([]);
+    for (const name of ["Src", "Dst"]) loadSingle({ name, kind: "page", title: name,
+      id: `pages/${name}.md`, rev: name, pre_block: "tags:: x", format: "md",
+      blocks: [{ id: name, raw: name === "Src" ? "the moved block" : "destination", collapsed: false, children: [] }] });
+    const header = beginPageHeaderEdit(unfinished)!;
+    setRaw(header, "tags:: x\nunfinished", { timetracking: false });
+    const before = capturePages(["Src", "Dst"]);
+    expect(before.has(unfinished)).toBe(false);
+    const other = unfinished === "Dst" ? "Src" : "Dst";
+    const draftDirty = isDirty(unfinished);
+    const api = backend() as unknown as Record<string, unknown>;
+    const calls = Object.keys(api).filter(k => typeof api[k] === "function").map(k => vi.spyOn(api as never, k as never));
+    setDoc("pages", p => p.name === "Src", "roots", roots => roots.filter(id => id !== "Src"));
+    setDoc("pages", p => p.name === "Dst", "roots", roots => [...roots, "Src"]);
+    setDoc("byId", "Src", "page", "Dst");
+    expect(await persistTransfer(before, "move-blocks", [["Src", "Dst"]])).toBe(false);
+    expect(doc.byId.Src.page).toBe("Src");
+    expect(pageByName("Src")!.roots).toContain("Src");
+    expect(pageByName("Dst")!.roots).not.toContain("Src");
+    expect(isDirty(other)).toBe(false);
+    expect(isDirty(unfinished)).toBe(draftDirty);
+    expect(refused()).toBe(true);
+    expect(doc.byId[header].raw).toBe("tags:: x\nunfinished");
+    for (const call of calls) expect(call).not.toHaveBeenCalled();
+  });
+}
 
 it("L2-14: undo of a cross-page move with no page host is refused and restored", () => {
   loadPair();
