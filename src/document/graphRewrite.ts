@@ -12,12 +12,14 @@ import { toLoadablePage } from "./convert";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 import { pushToast } from "../toasts";
 import { pageIdentityKey } from "../ui";
-import type { RenameDone, RenameProbeText, RenameTouchedPage } from "../types";
+import type { RenameDone, RenamedPage, RenameProbeText, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { adoptRenamedFavorites } from "../favorites";
 import { activeElement, isHTMLElementNode } from "../windowRealm";
 
-type RenameRefresh = (from: string, to: string, target?: PageTarget, preserveRoutes?: boolean, follow?: PageFollower) => void;
+/** `follow`: the rename's one map (`followRename`). `reopened`: the page the
+ *  initiating dialog reopens under its new name itself. */
+type RenameRefresh = (follow: PageFollower, reopened?: PageTarget) => void;
 let refreshRenamedNavigation: RenameRefresh | null = null;
 
 /** The app supplies route/index effects; the document intent owns the flush,
@@ -83,7 +85,7 @@ export async function renamePageOnDisk(
       throw error;
     }
     if (result.kind === "stale") return "uncertain";
-    await refreshAfterRename(from, to, target, result.value, onRefreshed);
+    await refreshAfterRename(from, target, result.value, onRefreshed);
     return result.value.outcome;
   } finally {
     release();
@@ -93,7 +95,7 @@ export async function renamePageOnDisk(
 /** A CLI rename is already published by this window's page host. Reuse the
  * same working-set and navigation refresh as a rename initiated here. */
 export async function applyOwnerPageRename(rename: import("../types").OwnerPageRename): Promise<void> {
-  await refreshAfterRename(rename.old, rename.name, { name: rename.old, path: rename.path ?? undefined, pageKind: rename.kind }, rename.report, undefined, true);
+  await refreshAfterRename(rename.old, undefined, rename.report);
 }
 
 /** Take in the rename's config step (one answerer, `pages::commit_config`):
@@ -122,41 +124,38 @@ export async function followPageIdentity(path: string, old: string): Promise<voi
   }
 }
 
-async function refreshAfterRename(from: string, to: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void, preserveRoutes = false): Promise<void> {
+/** `target`: the page the initiating dialog reopens under its new name (a CLI
+ *  rename has no such control: every view of it follows instead). */
+async function refreshAfterRename(from: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void): Promise<void> {
     if (report.outcome === "unchanged") return;
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = report.skipped_conflicted_referrers ?? [];
     if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
     adoptConfigStep(from, report);
-    const follow = movedDescendants(from, to, report.touched);
+    const follow = followRename(report.renamed);
     const reloads = batch(() => {
       const pages = forgetMovedPages(report.touched);
-      refreshRenamedNavigation?.(from, to, target, preserveRoutes, follow);
+      refreshRenamedNavigation?.(follow, target);
       onRefreshed?.(graphOwner());
       return pages;
     });
     await reloadRewrittenPages(reloads);
 }
 
-/** Where the rename moved the namespace descendants of `from` (the renamed page
- * itself is the caller's exact target): a page under `from/` whose file
- * `touched` lists as moved now lives under `to`, with the tail the backend gave
- * it. A view pinned to a file that did not move, and a loaded descendant that
- * has no file of its own (reference-only: the rename leaves it and its
- * references alone), stay. The backend reports paths, not names, so the new name
- * is `to` plus the descendant's tail (`namespace_suffix`, pages.rs). O(loaded pages). */
-function movedDescendants(from: string, to: string, touched: readonly RenameTouchedPage[]): PageFollower {
-  const fromKey = pageIdentityKey(from);
-  const moved = new Set(touched.filter((page) => page.moved).map((page) => page.path));
-  const under = (name: string) => pageIdentityKey(name).startsWith(`${fromKey}/`);
-  const staying = new Set(doc.pages
-    .filter((page) => page.kind === "page" && under(page.name) && !moved.has(page.id ?? ""))
-    .map((page) => pageIdentityKey(page.name)));
-  return (page) => {
-    if (page.pageKind !== "page" || !under(page.name) || staying.has(pageIdentityKey(page.name))) return null;
-    if (page.path !== undefined && !moved.has(page.path)) return null;
-    const tail = page.name.trim().replace(/^\//, "").split("/").slice(fromKey.split("/").length);
-    return { name: [to, ...tail].join("/"), pageKind: "page" };
+/** The rename's one answer for every view of a page (each pane's history,
+ * closed tabs included, Recent, the sidebar): the backend's `renamed` map, old
+ * name → the name it wrote, looked up by page identity and applied once. It
+ * names reference-only namespace members too: the backend rewrote their
+ * references. A page the map does not name stays, and so does a view pinned
+ * to a file other than the one that moved; nothing is inferred from loaded
+ * pages or name prefixes.
+ * O(map) to build, O(1) per view. */
+export function followRename(renamed: readonly RenamedPage[]): PageFollower {
+  const byKey = new Map(renamed.map((page) => [pageIdentityKey(page.from), page]));
+  return (view) => {
+    const page = byKey.get(pageIdentityKey(view.name));
+    if (!page || (view.path !== undefined && view.path !== page.path)) return null;
+    return { name: page.to, pageKind: view.pageKind };
   };
 }
 

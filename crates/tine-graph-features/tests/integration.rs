@@ -86,6 +86,8 @@ mod c3w_keep_both_ids;
 mod c3w_rename_refs;
 #[path = "cm_rename_bytes.rs"]
 mod cm_rename_bytes;
+#[path = "rename_report_identities.rs"]
+mod rename_report_identities;
 #[path = "rename_would_change.rs"]
 mod rename_would_change;
 

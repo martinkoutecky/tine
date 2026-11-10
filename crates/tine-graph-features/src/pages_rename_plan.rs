@@ -54,6 +54,11 @@ pub(super) struct RenamePlan {
     /// `map.1` keyed so: query arguments naming a merged page (ruling (a)).
     pub(super) query_lookup: HashMap<String, String>,
     pub(super) moves: HashMap<PageId, FileId>,
+    /// Every page identity the rename moves: first the map's pairs, in
+    /// `map.0`'s order (it is built from them), then the reference-only
+    /// namespace members its rewrite renames. The report's one old → new
+    /// answer (`RenameReport::renamed`).
+    pub(super) renamed: Vec<RenamedPage>,
     pub(super) moved_titles_to_rebind: HashSet<PageId>,
     pub(super) merge: Option<(PageId, PageId)>,
     pub(super) ref_merge: bool,
@@ -411,6 +416,19 @@ pub enum RenameChoice<'a> {
     OwnPage,
 }
 
+/// One page identity a rename or merge moved ([`RenameReport::renamed`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RenamedPage {
+    /// The page's name before the rename, in its own spelling.
+    pub from: String,
+    /// The name the rename gave it (written to its file name or title, and to
+    /// the references that followed it).
+    pub to: String,
+    /// Graph-relative path of the page's file before the rename; `None` for a
+    /// renamed page with no file and for a reference-only namespace member.
+    pub path: Option<String>,
+}
+
 pub(super) fn plan_rename(
     store: &Store,
     old: &str,
@@ -461,7 +479,15 @@ pub(super) fn plan_rename(
         .filter(|entry| !entry.is_journal)
         .flat_map(|entry| physical(&entry.target))
         .collect();
-    let mut pairs = Vec::new();
+    // Every identity the rename moves, with the file it moves from: the
+    // rename map's pairs and the report's answer are this one list.
+    let mut renamed = Vec::new();
+    let renames =
+        |entry: &tine_store::InventoryEntry, to: &str, from: Option<&PageId>| RenamedPage {
+            from: entry.name.clone(),
+            to: to.to_owned(),
+            path: from.map(|id| id.as_str().to_owned()),
+        };
     let mut moves = HashMap::<PageId, FileId>::new();
     let mut moved_titles_to_rebind = HashSet::<PageId>::new();
     let mut destinations = HashSet::new();
@@ -525,9 +551,9 @@ pub(super) fn plan_rename(
                             .error());
                         }
                         identities.insert(refs::normalize(&new_name));
+                        renamed.push(renames(entry, &new_name, Some(&id)));
                         merge = Some((id, survivor.clone()));
                         primary_is_file = true;
-                        pairs.push((entry.name.clone(), new_name));
                         continue;
                     }
                     RenameChoice::Rename => {
@@ -584,8 +610,8 @@ pub(super) fn plan_rename(
         if to == id.file() {
             // A crash after the physical rename can leave Old's explicit
             // title in New's file. Finish that rewrite in place on retry.
-            moved_titles_to_rebind.insert(id.clone());
-            pairs.push((entry.name.clone(), new_name));
+            renamed.push(renames(entry, &new_name, Some(&id)));
+            moved_titles_to_rebind.insert(id);
             primary_is_file |= primary;
             continue;
         }
@@ -609,7 +635,7 @@ pub(super) fn plan_rename(
         if primary {
             primary_is_file = true;
         }
-        pairs.push((entry.name.clone(), new_name));
+        renamed.push(renames(entry, &new_name, Some(&id)));
         moves.insert(id, to);
     }
     if let Some(held) = held {
@@ -673,7 +699,11 @@ pub(super) fn plan_rename(
                 ))
             }
         }
-        pairs.push((old.to_owned(), new.to_owned()));
+        renamed.push(RenamedPage {
+            from: old.to_owned(),
+            to: new.to_owned(),
+            path: None,
+        });
     }
     if merge_into.is_some() && merge.is_none() && !ref_merge {
         return Err(error(
@@ -691,6 +721,10 @@ pub(super) fn plan_rename(
         .and_then(|survivor| name_of(&graph, survivor))
         .map(|name| vec![(old.to_owned(), name)])
         .unwrap_or_default();
+    let pairs = renamed
+        .iter()
+        .map(|page| (page.from.clone(), page.to.clone()))
+        .collect();
     let map = RenameMap(pairs, queries);
     let keyed = |pairs: &[(String, String)]| -> HashMap<String, String> {
         pairs
@@ -699,6 +733,24 @@ pub(super) fn plan_rename(
             .collect()
     };
     let lookup = keyed(&map.0);
+    // A reference-only namespace member has no file to move, but the rewrite
+    // renames every reference to it by the prefix rule, so its identity moves
+    // too. Reported only: the map above already writes it.
+    let listed: HashSet<String> = renamed
+        .iter()
+        .map(|page| refs::normalize(&page.from))
+        .collect();
+    renamed.extend(
+        graph
+            .renamed_reference_names(old, &lookup)
+            .into_iter()
+            .filter(|(from, _)| !listed.contains(&refs::normalize(from)))
+            .map(|(from, to)| RenamedPage {
+                from,
+                to,
+                path: None,
+            }),
+    );
     let query_lookup = keyed(&map.1);
     // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: the
     // pages that explicitly reference a renamed name, plus every moved page.
@@ -744,6 +796,7 @@ pub(super) fn plan_rename(
         lookup,
         query_lookup,
         moves,
+        renamed,
         moved_titles_to_rebind,
         merge,
         ref_merge,

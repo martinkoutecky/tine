@@ -11,7 +11,7 @@ use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
 #[path = "pages_rename_plan.rs"]
 mod rename_plan;
-pub use rename_plan::{RenameBlocked, RenameChoice};
+pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
@@ -792,6 +792,7 @@ fn rename_transaction<'s>(
         lookup,
         query_lookup,
         moves,
+        renamed,
         moved_titles_to_rebind,
         merge,
         ref_merge,
@@ -987,6 +988,7 @@ fn rename_transaction<'s>(
         report: RenameReport {
             outcome,
             touched,
+            renamed,
             skipped_conflicted_referrers: skipped,
             home_page: None,
             favorites: None,
@@ -1123,6 +1125,13 @@ pub struct RenameReport {
     pub outcome: RenameOutcome,
     /// Every page file moved, trashed or rewritten; empty when `Unchanged`.
     pub touched: Vec<TouchedPage>,
+    /// Every page identity the rename moved, from its old name to the name it
+    /// wrote: the renamed page (a reference-only one too), each file-backed
+    /// namespace descendant, and each reference-only namespace member whose
+    /// references it renamed (`path: None`). Empty when `Unchanged`. The
+    /// window's navigation follows exactly this map; it never re-derives a
+    /// moved name.
+    pub renamed: Vec<RenamedPage>,
     /// Paths of referrers carrying VCS conflict markers whose references the
     /// rename left untouched (R-VCS-MARKERS); the UI says so. Reported once
     /// per file.
@@ -1170,6 +1179,7 @@ impl RenameReport {
         Self {
             outcome: RenameOutcome::Unchanged,
             touched: Vec::new(),
+            renamed: Vec::new(),
             skipped_conflicted_referrers: Vec::new(),
             home_page: None,
             favorites: None,

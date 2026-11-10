@@ -29,7 +29,7 @@ it("refuses typing, paste, and move while rename IPC is in flight", async () => 
   activatePageInstance("A");
   let finish!: () => void;
   // The renamed page moved, so it leaves the working set under its old name.
-  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ outcome: "renamed", touched: [{ path: "pages/A.md", moved: true }] }); }));
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ outcome: "renamed", renamed: [{ from: "A", to: "B", path: "pages/A.md" }], touched: [{ path: "pages/A.md", moved: true }] }); }));
   installRenameRefreshHandler(() => expect(doc.pages).toHaveLength(0));
   const pending = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
@@ -85,7 +85,7 @@ it("refuses a page creation that started before the rename freeze", async () => 
   const creating = createPage("New", { name: "New", kind: "page", title: "New", pre_block: null, blocks: [] });
   await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
   let finishRename!: () => void;
-  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finishRename = () => done({ outcome: "renamed", touched: [] }); }));
+  const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finishRename = () => done({ outcome: "renamed", renamed: [{ from: "A", to: "B", path: null }], touched: [] }); }));
   installRenameRefreshHandler(() => {});
   const renaming = renamePageOnDisk("A", "B");
   // The freeze is taken before the rename's first await (its drain).
@@ -104,7 +104,7 @@ it("refuses a page creation that started before the rename freeze", async () => 
 
 it("names the referrers a rename left untouched because they are mid-merge (og 21a, master a8fd4230d)", async () => {
   setToasts([]);
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [],
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "A", to: "B", path: null }], touched: [],
     skipped_conflicted_referrers: ["pages/Conflicted.md"] });
   installRenameRefreshHandler(() => {});
   expect(await renamePageOnDisk("A", "B")).toBe("renamed");
@@ -118,7 +118,7 @@ it("says the rename happened when only the config.edn step failed after the page
   // The app's rename command answers this case with the applied report and the
   // cause in `config_skipped` (`RenameReport::with_config_failure`), not with an error.
   setToasts([]);
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [{ path: "pages/A.md", moved: true }],
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "A", to: "B", path: "pages/A.md" }], touched: [{ path: "pages/A.md", moved: true }],
     config_skipped: "Permission denied (os error 13)" });
   const refreshed = vi.fn();
   installRenameRefreshHandler(refreshed);
@@ -135,11 +135,11 @@ it("says the rename happened when only the config.edn step failed after the page
 
 it("takes in the home page a rename moved with it (og 22b, OG rename-page-aux)", async () => {
   setGraphMeta({ root: "/g", default_home: "Start" } as GraphMeta);
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [], home_page: "Begin" });
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Start", to: "Begin", path: null }], touched: [], home_page: "Begin" });
   installRenameRefreshHandler(() => {});
   expect(await renamePageOnDisk("Start", "Begin")).toBe("renamed");
   expect(graphMeta()?.default_home).toBe("Begin");
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [], home_page: null });
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Other", to: "Kit", path: null }], touched: [], home_page: null });
   expect(await renamePageOnDisk("Other", "Kit")).toBe("renamed");
   expect(graphMeta()?.default_home).toBe("Begin");
   setGraphMeta(null);
@@ -149,7 +149,7 @@ it("keeps rewritten referrers frozen until their disk reload lands (OG-P10C)", a
   setDoc({ byId: { ref: { id: "ref", raw: "[[Old]]", collapsed: false, parent: null, page: "Ref", children: [] } },
     pages: [{ name: "Ref", id: "pages/Ref.md", kind: "page", title: "Ref", preBlock: null, roots: ["ref"], format: "md", readOnly: false, guide: false }], feed: [], loaded: true });
   activatePageInstance("Ref");
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [{ path: "pages/Ref.md", moved: false }] });
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: null }], touched: [{ path: "pages/Ref.md", moved: false }] });
   let finish!: (value: null) => void;
   const reload = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise((done) => { finish = done; }));
   installRenameRefreshHandler(() => bumpGraphEpoch());
@@ -170,7 +170,7 @@ it("GH #623 refresh matches each loaded page once across a large touched set", a
   const loadedCount = loaded.length;
   setDoc({ byId: {}, pages: loaded, feed: [], loaded: true });
   const touched = Array.from({ length: 200 }, (_, i) => ({ path: `pages/Ref${i}.md`, moved: false }));
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched });
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: null }], touched });
   const reload = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
   installRenameRefreshHandler(() => {});
   // Count visits at the literal intent, before unreadable reloads drop pages.
@@ -188,7 +188,7 @@ it("GH #623 refresh matches each loaded page once across a large touched set", a
 it("does not reload a moved page reported again in the touched set", async () => {
   setDoc({ byId: {}, pages: [{ name: "Old", id: "pages/Old.md", kind: "page", title: "Old",
     preBlock: null, roots: [], format: "md", readOnly: false, guide: false }], feed: [], loaded: true });
-  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed",
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }],
     touched: [{ path: "pages/Old.md", moved: true }, { path: "pages/Old.md", moved: false }] });
   const reload = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
   installRenameRefreshHandler(() => {});

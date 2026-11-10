@@ -7,7 +7,7 @@ import { backend, type CustomCssChange, type GraphConfigChange } from "./backend
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
-import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
+import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
@@ -15,7 +15,7 @@ import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJo
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
-import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes, rewritePagesAcrossPanes } from "./panes";
+import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePagesAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal";
 import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
@@ -452,28 +452,18 @@ async function reportLegacyDrafts(): Promise<void> {
 /** Refresh frontend state after a successful page rename. The backend rename
  *  rewrites `[[refs]]` across many files through the self-write guard. The
  *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
- *  app's navigation and graph-derived views, then navigate to the new name.
- *  `follow` answers for the namespace descendants the rename moved: every pane
- *  (main, split, sidebar), tab history and Recent entry showing one follows it,
- *  whoever started the rename (OG `rename-page-aux` re-keys Recent for each
- *  moved child; its sidebar holds the page entity, which survives the move). */
-export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget, preserveRoutes = false, follow?: PageFollower): void {
-  if (exactTarget) {
-    if (preserveRoutes) {
-      // A CLI rename has no initiating control to reopen the destination.
-      // Keep every pane on the renamed page, including name-only routes.
-      const destination = { name: to, pageKind: exactTarget.pageKind };
-      rewritePageTargetAcrossPanes(exactTarget, destination);
-      rewritePageTargetAcrossPanes({ name: from, pageKind: exactTarget.pageKind }, destination);
-    } else removePageTargetAcrossPanes(exactTarget);
-    renamePageInNavigation(exactTarget, { name: to, pageKind: exactTarget.pageKind });
-  } else {
-    renamePageInNavigation(from, to);
-  }
-  if (follow) {
-    rewritePagesAcrossPanes(follow);
-    followPagesInNavigation(follow);
-  }
+ *  app's navigation and graph-derived views. `follow` is the rename's one map
+ *  (`followRename`, the backend's report of every page it moved, the renamed
+ *  page and its file-backed namespace descendants): every pane (main, split,
+ *  sidebar) history, closed tabs included, Recent and sidebar entry showing a
+ *  moved page follows it, once, whoever started the rename (OG
+ *  `rename-page-aux` re-keys Recent for each moved child; its sidebar holds the
+ *  page entity, which survives the move). `reopened`: the page the initiating
+ *  dialog reopens under its new name itself, so its routes leave the panes. */
+export function refreshAfterRename(follow: PageFollower, reopened?: PageTarget): void {
+  if (reopened) removePageTargetAcrossPanes(reopened);
+  rewritePagesAcrossPanes(follow);
+  followPagesInNavigation(follow);
   // The epoch bump refreshes the page index (`pageIndex.ts`).
   resetPageIndex();
   bumpGraphEpoch();

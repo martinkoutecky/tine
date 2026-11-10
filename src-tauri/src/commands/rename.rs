@@ -62,7 +62,7 @@ pub(crate) async fn rename_page(
                     (_, Some(into)) => RenameChoice::MergeInto(into),
                     (_, None) => RenameChoice::Rename,
                 };
-                tine_graph_features::pages::rename_page_as(
+                window_answer(tine_graph_features::pages::rename_page_as(
                     &slot.store,
                     slot.host_slot()?.running()?,
                     &old,
@@ -70,15 +70,7 @@ pub(crate) async fn rename_page(
                     expected_path.as_deref(),
                     choice,
                     unsaved_paths.as_deref().unwrap_or_default(),
-                )
-                // Page files moved and the config.edn write then failed: the
-                // rename happened, so the window refreshes and says that home
-                // and favorites did not follow (`config_skipped`), never
-                // "Rename failed".
-                .or_else(|e| {
-                    tine_graph_features::pages::RenameReport::with_config_failure(&e).ok_or(e)
-                })
-                .map_err(|e| e.to_string())
+                ))
             },
         )
         .inspect(|report| crate::seen::page_renamed(&app, &slot, &old, report))
@@ -86,3 +78,20 @@ pub(crate) async fn rename_page(
     .await
     .map_err(|error| error.to_string())?
 }
+
+/// What the window is told about the rename `rename_page` ran. Page files
+/// moved and the config.edn write then failed: the rename happened, so the
+/// window gets the applied report with the cause in `config_skipped`, refreshes
+/// and says that home and favorites did not follow, never "Rename failed"
+/// (`RenameReport::with_config_failure`). Any other failure is its message.
+fn window_answer(
+    answer: std::io::Result<tine_graph_features::pages::RenameReport>,
+) -> Result<tine_graph_features::pages::RenameReport, String> {
+    answer
+        .or_else(|e| tine_graph_features::pages::RenameReport::with_config_failure(&e).ok_or(e))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+#[path = "rename_tests.rs"]
+mod tests;

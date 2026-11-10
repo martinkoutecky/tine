@@ -701,18 +701,14 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
 export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
 export function renamePageInNavigation(from: string, to: string): void;
 export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
-  const from: PageTarget = typeof fromOrName === "string"
-    ? { name: fromOrName, pageKind: "page" }
-    : fromOrName;
-  const to: PageTarget = typeof toOrName === "string"
-    ? { name: toOrName, pageKind: from.pageKind }
-    : toOrName;
+  const from: PageTarget = typeof fromOrName === "string" ? { name: fromOrName, pageKind: "page" } : fromOrName;
+  const to: PageTarget = typeof toOrName === "string" ? { name: toOrName, pageKind: from.pageKind } : toOrName;
   followPagesInNavigation((page) => page.pageKind === from.pageKind && page.name === from.name
     && (from.path === undefined || page.path === from.path) ? to : null);
 }
 
 /** Re-key the recent and sidebar entries of every page `follow` moved (a
- * rename's page and the namespace descendants it moved). O(recents² + sidebar items). */
+ * rename's `followRename` map). O(recents² + sidebar items). */
 export function followPagesInNavigation(follow: PageFollower): void {
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const to = follow({ name: item.name, pageKind: item.kind, path: item.path });

@@ -494,7 +494,7 @@ references and physical descendants move without creating a placeholder page.
 A destination owned by a file or alias refuses as `refused:page-exists`; merging
 requires confirmation in the app. Duplicate source claimants return `ambiguous`.
 The window saves typed text first and receives the app's rename report to refresh
-navigation and rewritten pages. A graph-wide rename cannot use the existing
+navigation (by `report.renamed`) and rewritten pages. A graph-wide rename cannot use the existing
 single-file revision guard or run commits: `--rev` or `--run` (including `TINE_RUN`)
 refuses as `refused:rename-options` before any change. An error from the app's I/O
 adapter whose admission cannot be proved returns `uncertain` with
@@ -517,6 +517,10 @@ unchanged without failing the rename: `report.config_skipped` says why.
 | `report` | `tine_graph_features::pages::RenameReport` | always | no | app operation report |
 | `report.outcome` | string | always | no | `renamed` or `unchanged` |
 | `report.touched` | array | always | no | old paths and whether they moved |
+| `report.renamed` | array | always | no | every page identity the rename moved: the renamed page (one with no file too), each file-backed namespace descendant, and each namespace member that exists only through references (its references were renamed with the page; `path` is `null`), once per page, in no promised order. The app's window moves its tabs (closed ones too), Recent and sidebar by exactly this list. Empty for `unchanged` |
+| `report.renamed[].from` | string | always | no | the page's name before the rename |
+| `report.renamed[].to` | string | always | no | the name the rename gave it (its file name or title, and the references that followed) |
+| `report.renamed[].path` | string | nullable | no | graph-relative path of its file before the rename; `null` for a renamed page with no file and for a reference-only member |
 | `report.skipped_conflicted_referrers` | array of string | always | yes | referrers carrying VCS markers left unchanged; text prints each path |
 | `report.home_page` | string | nullable | no | new home-page title when changed |
 | `report.favorites` | object | optional | no | config.edn's favorites after the rename, present only when they changed: `names` (`:favorites`, in order) and `page` (`:tine/favorites-page`, nullable). A merged-away page's favorite moves to the survivor (deduplicated); an alias spelling stays |
