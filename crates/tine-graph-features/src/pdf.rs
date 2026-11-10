@@ -272,7 +272,7 @@ pub fn write_pdf_area_image(
     crate::retry_on_conflict("PDF area image changed repeatedly during save", || {
         let baseline = match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((_, rev)) => Some(rev),
-            Err(StoreError::NotFound) => None,
+            Err(StoreError::NotFound(_)) => None,
             Err(error) => return Err(store_error(error)),
         };
         let mut tx = store.transaction(None);
