@@ -249,7 +249,7 @@ fn case_rename_crash_worker() {
 
 /// Kill the case rename's worker at `point`, with its app data in `app_data`.
 fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &str) {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .args(["--exact", "og_gh609_case_rename::case_rename_crash_worker"])
         .env("TINE_QD1_CRASH_ROOT", dir)
         .env("TINE_QD1_CRASH_POINT", point)

@@ -164,6 +164,11 @@ fn a_private_case_twin_of_a_public_page_is_never_published() {
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/Twin.md"), "public:: true\n- visible\n").unwrap();
     fs::write(root.join("pages/twin.md"), "- private twin token\n").unwrap();
+    if fs::read_dir(root.join("pages")).unwrap().count() < 2 {
+        // A case-insensitive filesystem (Windows, default macOS) folds the two
+        // names into one file: no case twin can exist there.
+        return;
+    }
     let store = Store::open(&root, Default::default()).unwrap().0;
     let (site, count) = crate::published_site(&store).unwrap();
     assert_eq!(count, 1);
