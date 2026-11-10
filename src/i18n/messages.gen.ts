@@ -197,6 +197,7 @@ export interface MessageArgs {
   "command-editor-paste-as-link": {};
   "command-editor-quick-capture-file": {};
   "command-editor-redo": {};
+  "command-editor-remove-author": {};
   "command-editor-select-all": {};
   "command-editor-select-block-down": {};
   "command-editor-select-block-up": {};

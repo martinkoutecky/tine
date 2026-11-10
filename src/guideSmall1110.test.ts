@@ -1,0 +1,18 @@
+import { readFileSync } from "node:fs";
+import { expect, it } from "vitest";
+
+const template = (name: string) => readFileSync(`crates/tine-guide/src/templates/${name}.md`, "utf8");
+
+it("the Guide explains link completion inside a complete link (GH #888)", () => {
+  expect(template("pages-links-references-search")).toContain("the list searches the whole link text, not only the part before the caret, so the linked page comes first");
+});
+
+it("the Guide says no completion menu opens inside a fenced code block (CM6-D9)", () => {
+  expect(template("tips")).toContain("Inside a fenced code block no menu opens");
+});
+
+it("the Guide names the Remove author command and how to run it (GH #918)", () => {
+  const tips = template("tips");
+  expect(tips).toContain("**Remove author** is also a command");
+  expect(tips).toContain("with the block selected, or assign it a key under **Settings → Shortcuts**");
+});
