@@ -224,7 +224,7 @@ fn may_hold_reference(
 ) -> bool {
     let bytes = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
         Ok((bytes, _)) => bytes,
-        Err(StoreError::NotFound) => return false,
+        Err(StoreError::NotFound(_)) => return false,
         Err(StoreError::TooLarge { .. }) => {
             return store
                 .path_for_os_handoff(file, false)
