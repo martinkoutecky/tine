@@ -119,7 +119,7 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
-import { bindRowHost, type RowHost } from "./block/embedRowHost";
+import { bindRowHost, bindRowPosition, type RowHost } from "./block/embedRowHost";
 import { beginEditGesture, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { bodyNeighbor, rawToWrite, threadRootOf, type PendingEdit } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
@@ -304,7 +304,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id}
-      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); }}
+      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope }); }}
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
@@ -368,7 +368,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             // Mousedown anywhere in the row (not on a link/chip) arms the same
             // click-or-drag gesture as block content, with an end-of-block caret
             // (the row padding has no text to map). Read-only org pages don't edit.
-            if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
             if (!editing() && !readOnly() && !forbidsEditEntry(e))
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
@@ -666,8 +666,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     id: props.id, format: pageFmt,
     current: () => editorMounted && !!liveNode() && !!ref?.isConnected,
     composing: () => compositionActive,
-    // Census D9: retain the shipped textarea's code-body completion policy.
-    suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell,
+    // CM6-D9: a projected code body is code, as in CM6 (detectTrigger owns the raw-fence rule).
+    suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell || codeShown() !== null,
     text: () => ref.value, caret: () => ref.selectionStart,
     selection: () => [ref.selectionStart, ref.selectionEnd],
     rawBeforeCommit: () => rawBeforeLastCommit, visible: editorValue,

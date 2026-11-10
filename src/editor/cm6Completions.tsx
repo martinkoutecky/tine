@@ -56,7 +56,7 @@ export function cm6Completions(props: {
   const completion = editorCompletions({
     id: props.id, format: () => props.format, current, text, caret,
     composing: () => view().compositionStarted,
-    // Census D9: projected code bodies retain the existing CM6 literal policy.
+    // CM6-D9: a projected code body is code (detectTrigger owns the raw-fence rule).
     suppressTriggers: () => props.literal() || props.sheet || props.annotation() || calcSource(text()) !== null,
     keepEmptyLanguagePicker: true,
     selection: () => { const s = view().state.selection.main; return [s.anchor, s.head]; },

@@ -1,6 +1,9 @@
+import { t } from "./i18n";
+
 export type ErrorFamily =
   | "conflict" | "deleted" | "twin" | "repeated" | "read-only" | "invalid-target"
   | "closed" | "not-found" | "asset-too-large" | "result-too-large" | "stale-graph-binding" | "io" | "rollback-incomplete" | "publication-incomplete"
+  | "config-unreadable"
   | "unreadable-owner" | "graph-app-owner" | "conflict-copy-gone" | "unknown";
 
 /** Classify exact Tauri wire tokens for control flow. Cost O(message length);
@@ -8,8 +11,9 @@ export type ErrorFamily =
 export function errorFamily(error: unknown): ErrorFamily {
   const message = error instanceof Error ? error.message : String(error);
   if (/^io:[A-Za-z]+$/.test(message)) return "io";
-  const incomplete = /^(rollback-incomplete|publication-incomplete):[\s\S]*$/.exec(message);
-  if (incomplete) return incomplete[1] as "rollback-incomplete" | "publication-incomplete";
+  if (/^config-unreadable-after: [^\n]*\n/.test(message)) return "config-unreadable";
+  const withDetail = /^(rollback-incomplete|publication-incomplete|config-unreadable):[\s\S]*$/.exec(message);
+  if (withDetail) return withDetail[1] as "rollback-incomplete" | "publication-incomplete" | "config-unreadable";
   switch (message) {
     case "conflict":
     case "deleted":
@@ -29,4 +33,13 @@ export function errorFamily(error: unknown): ErrorFamily {
     default:
       return "unknown";
   }
+}
+
+/** The window's words for a `config-unreadable` refusal: the catalog sentence
+ *  (never the read error), after what a partial operation already saved when
+ *  the refusal came after part of it (Rust `after_partial`). O(message length). */
+export function configUnreadableText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const after = /^config-unreadable-after: ([^\n]*)\n/.exec(message);
+  return after ? t("ui-failure-config-read-after", { done: after[1] }) : t("ui-failure-config-read");
 }
