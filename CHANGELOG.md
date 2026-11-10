@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.10] - 2026-11-10
+
 ### Changed
 
 - Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
