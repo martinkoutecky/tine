@@ -410,6 +410,10 @@ pub(super) struct Delivery {
     /// Keys the host evicted with no publication left: their index returns
     /// to the watcher (§5, Q6). (key, spelling).
     pub evicted: Vec<(PageKey, String)>,
+    /// Reads that found the bytes their page already holds (A-H1): each
+    /// read's pre-read stamp, which becomes the watcher's observation of
+    /// the file once the publications above are indexed. (spelling, stamp).
+    pub confirmed: Vec<(String, crate::watch::Stamp)>,
     pub mail: Vec<(PageKey, Mail, MailFacts)>,
 }
 
@@ -417,6 +421,7 @@ impl Delivery {
     pub fn is_empty(&self) -> bool {
         self.mail.is_empty()
             && self.publications.is_empty()
+            && self.confirmed.is_empty()
             && self.claimed.is_empty()
             && self.evicted.is_empty()
     }
@@ -586,6 +591,12 @@ impl Book {
                         own: None,
                         stamp: progress.host.fs.take_stamp(page),
                     });
+                }
+                Event::Confirmed(page) => {
+                    if let Some(stamp) = progress.host.fs.take_stamp(page) {
+                        let spelling = progress.host.fs.spelling(page);
+                        delivery.confirmed.push((spelling, stamp));
+                    }
                 }
                 Event::Refused { page, id, reason } => {
                     refused.insert((page.clone(), *id), *reason);

@@ -172,44 +172,54 @@ impl Store {
 
     /// A journal day `name` the index resolves absent may have arrived
     /// unobserved under another accepted file name (GH #863, D3): stat each,
-    /// the day's spellings (`JournalFormat::spellings`) times the graph-text
-    /// extensions, and hand those whose stamp the watcher has not observed
-    /// to its exact-path reconcile, which reads and publishes them (a held
-    /// one through its owner). True when one was handed over. A constant
-    /// number of stats under the writer; nothing is read unless found.
-    pub(super) fn reconcile_unindexed_day(&self, name: &str) -> bool {
+    /// the day's accepted stems (`JournalFormat::accepted_stems`) times the
+    /// graph-text extensions. A hit the watcher has not observed is read and
+    /// published before this returns: an unheld one by the watcher's
+    /// exact-path reconcile under the writer, a held one through its owner
+    /// as a held page's read is (`Store::page`, writer released), whose read
+    /// error this returns. True when one was found. A bounded number of
+    /// stats under the writer; nothing is read unless found.
+    pub(super) fn reconcile_unindexed_day(&self, name: &str) -> Result<bool, StoreError> {
         let format = self.graph.current_journal_format();
         let Some(day) = format.parse(name) else {
-            return false;
+            return Ok(false);
         };
         // From Ready only: a served launch checkpoint's diff holds the writer
         // and reconciles every file itself, and a read never waits for it.
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
-            return false;
+            return Ok(false);
         }
-        let directory = (self.graph.root).join(&self.graph.current_config().journals_dir);
-        let _writer = self.writer.lock().unwrap();
+        let directory = self.graph.current_config().journals_dir.clone();
+        let writer = self.writer.lock().unwrap();
         if self.is_closed() {
-            return false;
+            return Ok(false);
         }
-        let unobserved: HashSet<PathBuf> = (format.spellings(day).into_iter())
+        let (held, unheld): (Vec<_>, Vec<_>) = (format.accepted_stems(day).into_iter())
             .filter(|stem| !stem.contains(['/', '\\']))
             .flat_map(|stem| {
-                crate::file_kind::GRAPH_TEXT_EXTENSIONS
-                    .map(|extension| directory.join(format!("{stem}.{extension}")))
+                crate::file_kind::GRAPH_TEXT_EXTENSIONS.map(|extension| {
+                    let id = PageId::from(format!("{directory}/{stem}.{extension}").as_str());
+                    (self.graph.root.join(id.as_str()), id)
+                })
             })
-            .filter(|path| {
+            .filter(|(path, _)| {
                 let now = fs::symlink_metadata(path)
                     .ok()
                     .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata));
                 now.is_some() && !self.watch.unchanged_since_observed(path, now.as_ref())
             })
-            .collect();
-        if unobserved.is_empty() {
-            return false;
+            .partition(|(path, _)| !matches!(self.graph.source(path), crate::model::Source::Disk));
+        let found = !held.is_empty() || !unheld.is_empty();
+        let unheld = unheld.into_iter().map(|(path, _)| path).collect();
+        self.watch.reconcile_raced(&unheld);
+        drop(writer);
+        for (_, id) in held {
+            match self.page(&id) {
+                Ok(_) | Err(StoreError::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
         }
-        self.watch.reconcile_raced(&unobserved);
-        true
+        Ok(found)
     }
 
     /// The listing entry of the page file at `path` (its preamble names it).

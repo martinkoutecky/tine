@@ -811,17 +811,24 @@ Stamps-depth rule (time, size, identity, change time; a racy, missing or
 retry stamp never matches; `watch::reconcile::unchanged`). On a match it
 answers the bytes the owner last published; no file on both sides answers
 `NotFound`, which is then a fresh absence. On a mismatch it hands the key to
-the owner as a watcher notification does, releases the writer, and waits at
-most `OPERATION_WAIT` for that observation to be indexed, found unchanged, or
-fail. It then answers the owner's published bytes. A failed observation
+the owner as a watcher notification does, due now even past a failed
+observation's backoff, releases the writer, and waits at most `OPERATION_WAIT`
+for that observation to be indexed, found unchanged, or fail. It then answers
+the owner's published bytes. An observation that finds the bytes the owner
+holds makes its read's stamp the owner's observation (`Event::Confirmed`,
+`watch::note_confirmed`), so after an own save or a same-bytes replacement one
+owner read settles the stamp and later reads ask no one. A failed observation
 answers its read error, never `NotFound`. At the bound, or once the host has
 ended, it reads again without asking. Before the owner's first publication it
 parses the file without publishing it. `page()` is never called on the host
 driver's thread (a debug assertion). A journal day the index has no file for
-first stats the day's other accepted file names (its spellings times the
-graph-text extensions) and hands a file the watcher has not observed to its
-exact-path reconcile (GH #863), so a creating save finds a day delivered
-unobserved instead of making a duplicate. A write computed
+first stats the day's other accepted file names (its spellings at every
+numeric width the parser reads, `JournalFormat::accepted_stems`, times the
+graph-text extensions) and reads a file the watcher has not observed before
+resolving the name again: an unheld one through the watcher's exact-path
+reconcile, a held one through its owner as `page()` reads it, whose read error
+is the answer (GH #863). So a creating save finds a day delivered unobserved
+instead of making a duplicate. A write computed
 from a page parses the bytes whose revision guards it (`Store::read` then
 `Store::page_of`; A-V4b), never `page()`. With no host running nothing is
 held and every path reads the file. Proof:
@@ -832,7 +839,8 @@ held and every path reads the file. Proof:
 delivery, removal, unsaved input, two surfaces, own saves, twins, a failed
 observation, racy stamps, the bound, the driver thread, an unindexed day),
 `crates/tine-store/tests/held_open_cost.rs` (I-25: an unchanged held open reads
-no file and asks no owner),
+no file and asks no owner, also after one owner read confirmed an own save or a
+same-bytes replacement),
 `crates/tine-store/src/model/derived_tests.rs`,
 `crates/tine-store/src/model/entry_identity_tests.rs`,
 `crates/tine-store/src/model/held_index.rs` (the `review2_*` tests and the

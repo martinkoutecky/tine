@@ -342,6 +342,10 @@ enum Event {
         page: PageKey,
         bytes: Text,
     },
+    /// A disk read found the bytes the page already holds: nothing to
+    /// index, but that read is the owner's latest observation, so the
+    /// publication consumer aligns the watcher's stamp with it (A-H1).
+    Confirmed(PageKey),
     /// An operation whose caller stopped waiting (Uncertain) ended with its
     /// draft durably absent: it did not happen (PLAN-P2b-AB v2 Q2).
     OperationDropped(BTreeSet<PageKey>),
@@ -1155,13 +1159,15 @@ impl<F: HostIo> Host<F> {
     }
 
     /// Apply a disk read of `key` to its page (SPEC read table); false when
-    /// the page is unchanged. A read that changes the page publishes its
+    /// the page is unchanged, which is a confirmation of its last
+    /// observation (`Event::Confirmed`). A read that changes the page publishes its
     /// bytes even when they equal the last observation: an own save may
     /// have moved the index past them since (V3, REVIEW-3a).
     fn adopt_read(&mut self, key: &str, bytes: Text) -> bool {
         let mut page = self.pages[key].clone();
         page.observe(bytes.clone(), self.next_version());
         if page == self.pages[key] {
+            self.events.push(Event::Confirmed(key.into()));
             return false;
         }
         if page.version == self.next_version() {

@@ -2007,8 +2007,9 @@ impl Store {
     /// or once the host has ended, it reads again without asking. Before the
     /// owner's first publication it parses the file without publishing it.
     /// An unchanged held page costs one map lookup over today's read; a
-    /// changed one the owner's one read and publication. Never called on the
-    /// page host driver's thread, which that observation needs. A write
+    /// changed one, or one whose stamp no owner read confirmed since an own
+    /// save or a same-bytes replacement, the owner's one read, after which
+    /// it is unchanged. Never on the page host driver's thread. A write
     /// parses the bytes its revision guards with [`Store::page_of`] instead.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
@@ -2056,9 +2057,9 @@ impl Store {
     /// answers. A closed store returns `StoreError::Closed`. A resolved file
     /// that has disappeared reads as `None`. It writes no page bytes. A
     /// journal day the index has no file for first looks for one delivered
-    /// unobserved under another accepted name (GH #863): a constant number of
-    /// stats, the day's spellings times the graph-text extensions, and a hit
-    /// the watcher has not observed goes through its exact-path reconcile.
+    /// unobserved under another accepted name (GH #863): a bounded number of
+    /// stats, and a hit is read and published (a held one through its owner,
+    /// as `page` reads it) before the name resolves again; its read error.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
@@ -2081,7 +2082,7 @@ impl Store {
             // resolves it.
             if journal && !looked && matches!(resolved, Resolved::Absent { .. }) {
                 looked = true;
-                if self.reconcile_unindexed_day(name) {
+                if self.reconcile_unindexed_day(name)? {
                     continue;
                 }
             }

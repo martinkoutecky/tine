@@ -139,8 +139,8 @@ pub(crate) fn observation_failed(
     )
 }
 
-/// How long a held page's read waits for its forwarded observation (A-H1):
-/// the page host's `OPERATION_WAIT` (pinned equal in its tests).
+/// How long a held page's read waits for its forwarded observation (A-H1),
+/// and the page host's `OPERATION_WAIT`, which is defined as this.
 pub(crate) const OBSERVED_WAIT: Duration = Duration::from_secs(10);
 
 thread_local! {
@@ -1088,6 +1088,24 @@ impl WatchHandle {
         let raced = self.core.note_own(files, observed_before);
         let _ = self.wake.send(());
         raced
+    }
+
+    /// A held page's owner read `id` and found the bytes it already holds
+    /// (A-H1): that read's pre-read `stamp` becomes the file's observation,
+    /// as an unchanged publication's does, so a later read trusts it (and
+    /// an own save's racy stamp settles once read outside the window).
+    /// Only when the watcher's entry already carries the revision of those
+    /// bytes: otherwise the entry stays and the next read asks again.
+    /// Returns the paths that raced. The caller holds the writer.
+    pub(crate) fn note_confirmed(&self, id: FileId, stamp: Stamp) -> HashSet<PathBuf> {
+        let path = self.core.path_for_id(&id);
+        let snapshot = self.core.snapshot.lock().unwrap();
+        let indexed = snapshot.get(&path).and_then(|old| old.rev.clone());
+        drop(snapshot);
+        if indexed.is_none() || indexed != stamp.rev {
+            return HashSet::new();
+        }
+        self.note_own_observed(&[(id.clone(), indexed)], &HashMap::from([(id, stamp)]))
     }
 
     /// The transaction's final bytes for this path are now the asset baseline,

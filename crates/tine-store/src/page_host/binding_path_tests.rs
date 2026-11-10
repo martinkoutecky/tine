@@ -364,13 +364,6 @@ fn a_held_read_answers_the_indexed_page_when_its_owner_is_busy_past_the_bound() 
     assert_eq!(first(live.store.page(&id)), "two");
 }
 
-/// A held page's read waits for its owner as long as another host operation
-/// does (A-H1: at most `OPERATION_WAIT`).
-#[test]
-fn a_held_reads_bound_is_the_host_operation_wait() {
-    assert_eq!(crate::watch::OBSERVED_WAIT, OPERATION_WAIT);
-}
-
 /// A held page's read may wait for the page host driver, so it never runs
 /// on that driver's thread (A-H1; a debug assertion pins it).
 #[cfg(debug_assertions)]
@@ -415,6 +408,103 @@ fn an_absent_day_opens_a_file_delivered_unobserved_under_another_accepted_name()
             .journal_id(crate::Day(day.ordinal_key()), false)
             .as_str(),
         "journals/2026-11-10.md",
+        "a creating save targets the delivered file"
+    );
+}
+
+/// The failed observations the driver has counted for `key`.
+fn observe_failures(live: &Live, key: &str) -> u32 {
+    (live.host.driver.shared)
+        .with_state_for_tests(|state| state.observe.get(key).map_or(0, |o| o.failures))
+}
+
+/// GH #863 (A-H1): a held read whose owner's reads keep failing, so the
+/// driver's own retries have backed off, has its observation made now: it
+/// answers that read error within its wait, never an absence.
+#[test]
+fn a_held_read_after_repeated_owner_read_failures_answers_the_error_within_its_wait() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    deaf(&live);
+    let (key, _) = live.open("journals/2026_11_10.md");
+    let id = PageId::from(key.as_str());
+    live.faults(Phase::Read, 10);
+    deliver(&live, &key, b"- Journal delivered by sync\n");
+    assert!(matches!(
+        live.store.page(&id),
+        Err(crate::StoreError::Io(_))
+    ));
+    // The driver retries on its own after 100 ms and 300 ms; its third
+    // failure puts the next retry 1 s away (`progress::backoff`).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while observe_failures(&live, &key) < 3 {
+        assert!(Instant::now() < deadline, "the owner never retried");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    *live.store.held_read_wait.lock().unwrap() = Some(Duration::from_millis(300));
+    match live.store.page(&id) {
+        Err(crate::StoreError::Io(_)) => {}
+        Ok(read) => panic!("read {:?} over failed reads", read.doc.blocks[0].raw),
+        Err(error) => panic!("not the read error within the wait: {error:?}"),
+    }
+    assert!(
+        observe_failures(&live, &key) >= 4,
+        "the read's own observation failed"
+    );
+}
+
+/// GH #863 (D3, A-H1): a held day whose owner last published its absence
+/// opens by name the file a sync client delivered unobserved, also while
+/// its owner is busy: the lookup waits for the observation it asked for.
+#[test]
+fn a_held_absent_day_opens_by_name_a_missed_delivery_its_busy_owner_observes() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    deaf(&live);
+    let (key, _) = live.open("journals/2026_11_10.md");
+    let id = PageId::from(key.as_str());
+    let busy = live.host.pause_for_tests(std::slice::from_ref(&id));
+    deliver(&live, &key, b"- Journal delivered by sync\n");
+    let store = Arc::clone(&live.store);
+    let named = std::thread::spawn(move || {
+        store.page_named("Nov 10th, 2026", tine_core::model::PageKind::Journal)
+    });
+    // The owner stays busy until the lookup waits for it (or answered).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let waiting = |live: &Live| {
+        (live.host.driver.shared).with_state_for_tests(|state| state.observed.contains_key(&key))
+    };
+    while !named.is_finished() && !waiting(&live) {
+        assert!(
+            Instant::now() < deadline,
+            "the lookup never asked the owner"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(busy);
+    let read = (named.join().unwrap().unwrap()).expect("the delivered day opens by name");
+    assert_eq!(read.id.as_str(), key);
+    assert_eq!(read.doc.blocks[0].raw, "Journal delivered by sync");
+}
+
+/// GH #863 (D3): a day delivered unobserved under an unpadded name the
+/// parser accepts (by default `2026-11-1` is November 1) opens by name, and
+/// a creating save targets it rather than a duplicate day.
+#[test]
+fn an_absent_day_opens_an_unpadded_delivery_and_proposes_no_duplicate() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    deaf(&live);
+    deliver(&live, "journals/2026-11-1.md", b"- delivered unpadded\n");
+    let read = (live.store)
+        .page_named("Nov 1st, 2026", tine_core::model::PageKind::Journal)
+        .unwrap()
+        .expect("the delivered day opens");
+    assert_eq!(read.id.as_str(), "journals/2026-11-1.md");
+    assert_eq!(read.doc.blocks[0].raw, "delivered unpadded");
+    let day = tine_core::date::JournalDate::from_file_stem("2026_11_01").unwrap();
+    assert_eq!(
+        live.store
+            .journal_id(crate::Day(day.ordinal_key()), false)
+            .as_str(),
+        "journals/2026-11-1.md",
         "a creating save targets the delivered file"
     );
 }

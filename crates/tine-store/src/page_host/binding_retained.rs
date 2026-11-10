@@ -33,7 +33,8 @@ pub(super) type HostState = State<ProductionIo, SystemClock>;
 /// (the flush refusal), `a_moving_deadline_keeps_the_caller_waiting_only_while_the_step_moves_it`
 /// (a moved deadline outlives the first bound) and
 /// `an_answer_given_across_the_deadline_reaches_the_caller` (`ASK_GRACE`).
-pub const OPERATION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// A held page's read waits as long for its owner (`watch::OBSERVED_WAIT`).
+pub const OPERATION_WAIT: std::time::Duration = crate::watch::OBSERVED_WAIT;
 
 /// What a caller's admitted operation came to, by precedence: Superseded,
 /// Applied, Unwritten, Uncertain (STEP3-DESIGN option 2; plan v3 N6).
