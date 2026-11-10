@@ -8,7 +8,8 @@ mod test_host_writer;
 // thread, file-descriptor and allocation totals. A case that reads them takes
 // `exclusive_integration_lock`, so no other case's graph activity runs beside
 // its measurement. Every other case takes the shared `integration_lock` and
-// runs in parallel with the rest. Fault plants are per thread
+// runs in parallel with the rest (scripts/test-rust-integration-layout.mjs
+// checks that every case takes one). Fault plants are per thread
 // (`host_faults`), so they need no lock.
 // Child workers start a fresh executable and therefore have their own lock.
 static INTEGRATION_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
@@ -23,6 +24,26 @@ fn exclusive_integration_lock() -> std::sync::RwLockWriteGuard<'static, ()> {
     INTEGRATION_LOCK
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// `store`'s static site as `tine publish` writes it (`publish_static`, rendered
+/// from the private build graph): the folder it landed in and its page count.
+/// Each call writes a fresh folder outside the graph.
+fn published_site(store: &tine_store::Store) -> std::io::Result<(String, usize)> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let parent = std::env::temp_dir().join(format!(
+        "tine-published-site-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&parent)?;
+    let receipt = tine_graph_features::publish_query::publish_static(
+        store,
+        &parent,
+        "site",
+        store.config().all_pages_public,
+    )?;
+    Ok((receipt.path, receipt.pages))
 }
 
 /// A running page host for `store`, the only writer of page files
@@ -66,6 +87,8 @@ mod c3w_keep_both_ids;
 mod c3w_rename_refs;
 #[path = "cm_rename_bytes.rs"]
 mod cm_rename_bytes;
+#[path = "rename_report_identities.rs"]
+mod rename_report_identities;
 #[path = "rename_would_change.rs"]
 mod rename_would_change;
 
@@ -172,6 +195,8 @@ mod identity_switch_guide;
 
 #[path = "journal_migrations.rs"]
 mod journal_migrations;
+#[path = "journal_step_cost.rs"]
+mod journal_step_cost;
 
 #[path = "l8_03_duplicate_day_asset.rs"]
 mod l8_03_duplicate_day_asset;

@@ -4,7 +4,9 @@
 // (`tests/fixtures/published-answers/legacy-golden.json`) was written by the
 // viewer before this change (develop d86067791) over the frozen generation-1
 // fixtures and the answer fixtures with `answers` removed or of an unknown
-// `v`; this viewer must give every answer in it unchanged.
+// `v`; this viewer must give every answer in it unchanged, except that the
+// `inventory` also lists the snapshot's alias pairs as alias rows (HFh-eo,
+// regenerated; the diff is those four alias rows, no `names` answer moved).
 // `TINE_PUBLISHED_LEGACY_GOLDEN=write` rewrites it (only ever from that old
 // viewer: the golden is the old behaviour, not this code's).
 import { readFileSync, writeFileSync } from "node:fs";

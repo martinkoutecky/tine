@@ -517,7 +517,7 @@ fn a_commit_or_push_the_os_ends_leaves_the_repository_whole() {
     let delays = [0u64, 2, 5, 9, 14, 20, 30, 45, 70, 110, 170, 260, 400];
     for delay in delays {
         let _ = fs::remove_file(phone.root.join("ready"));
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(tine_store::test_binary::own_test_binary())
             .args(["--exact", &name, "--nocapture", "--test-threads=1"])
             .env("TINE_GIT_KILL_CHILD", &phone.root)
             .stdout(std::process::Stdio::null())
@@ -1338,7 +1338,7 @@ fn a_pull_the_os_ends_resumes_to_the_fetched_tip() {
         for mark in ["ready", "done", "path"] {
             let _ = fs::remove_file(marks.join(mark));
         }
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(tine_store::test_binary::own_test_binary())
             .args(["--exact", &name, "--nocapture", "--test-threads=1"])
             .env("TINE_GIT_PULL_KILL_CHILD", &phone.root)
             .env("TINE_GIT_PULL_KILL_APP", &phone.app_data)

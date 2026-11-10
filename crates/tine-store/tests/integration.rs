@@ -7,7 +7,8 @@ mod search_properties;
 // thread, file-descriptor and allocation totals. A case that reads them takes
 // `exclusive_integration_lock`, so no other case's graph activity runs beside
 // its measurement. Every other case takes the shared `integration_lock` and
-// runs in parallel with the rest. Fault plants are per thread
+// runs in parallel with the rest (scripts/test-rust-integration-layout.mjs
+// checks that every case takes one). Fault plants are per thread
 // (`host_faults`), so they need no lock.
 // Child workers start a fresh executable and therefore have their own lock.
 static INTEGRATION_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
@@ -38,7 +39,7 @@ fn isolated_case(name: &str) -> bool {
     if std::env::var(CHILD).as_deref() == Ok(name) {
         return false;
     }
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .args(["--exact", name, "--nocapture"])
         .env(CHILD, name)
         .output()
@@ -312,3 +313,6 @@ mod page_set_changes;
 
 #[path = "og_b_store_move.rs"]
 mod og_b_store_move;
+
+#[path = "own_test_binary.rs"]
+mod own_test_binary;

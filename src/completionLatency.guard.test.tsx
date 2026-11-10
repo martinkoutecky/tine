@@ -38,7 +38,7 @@ function editor(capture = false) {
     id: "source", format: () => "md", current: () => current, composing: () => false,
     suppressTriggers: () => false, text: () => raw, selection: () => [raw.length, raw.length],
     caret: () => raw.length, rawBeforeCommit: () => "baseline [[Keep]]", visible: () => raw,
-    apply: vi.fn(), replace: vi.fn(), afterEdit: callback => callback(), languagePicker: vi.fn(),
+    stageDelete: () => ({ raw, write: vi.fn() }), apply: vi.fn(), replace: vi.fn(), afterEdit: callback => callback(), languagePicker: vi.fn(),
     closed: vi.fn(), element: () => document.createElement("textarea"), resultTarget: () => undefined,
     openJournal: vi.fn(), assets: { uploadAsset: vi.fn(), desktopVoiceMemoToggle: vi.fn(), createDrawioDiagram: vi.fn() },
     ...(capture ? { quickSwitch: (q: string, limit: number) => backend().captureQuickSwitch(q, limit) } : {}),

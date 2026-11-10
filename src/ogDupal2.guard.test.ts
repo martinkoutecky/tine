@@ -16,7 +16,8 @@ it("I-12: imported outline construction and deletion use the outline kernel; pag
   const blocks = read("src/document/edits/blocks.ts");
   expect(blocks).toContain('verb: "insert_outline"');
   expect(blocks).not.toMatch(/function createOutline|function outlineRaw|const create =/);
-  expect(blocks.match(/importedOutlineChange\((?:parentId|anchorId|id), nodes/g)).toHaveLength(3);
+  // One owner asks the kernel for every imported outline: insertOutlineWithEdit (og-enter-family-1109).
+  expect(blocks.match(/importedOutlineChange\(\w+, nodes/g)).toHaveLength(1);
   // Block and selection deletion are the kernel's verb (outline-kernel M1).
   expect(blocks).toContain('outlineChange({ verb: "delete", keys: [id] }');
   expect(blocks).not.toMatch(/removeSubtree|delete s\.byId/);

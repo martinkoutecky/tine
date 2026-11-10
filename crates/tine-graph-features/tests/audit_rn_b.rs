@@ -6,7 +6,7 @@ use std::fs;
 use tine_core::query::ir::{ExecutionContext, QueryResult, QueryRows};
 use tine_core::query::registry::Registry;
 use tine_core::query::{parse_query_input, QueryInput};
-use tine_graph_features::{config, print, publish};
+use tine_graph_features::{config, print};
 use tine_store::{IrAnswer, IrRequest, Store};
 
 fn graph(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
@@ -195,7 +195,7 @@ fn audit_l7s2_03_print_and_publication_keep_refusal_text_in_sheet_fallbacks() {
             .map(|(p, t)| (p.as_str(), t.as_str()))
             .collect();
         let (_dir, store) = graph(&borrowed);
-        let (site, _) = publish::publish_html(&store).unwrap();
+        let (site, _) = crate::published_site(&store).unwrap();
         for name in ["Window", "Unknown", "InvalidTql", "Binding", "Empty"] {
             let printed = print::page_print_html(&store, name, Default::default())
                 .unwrap()

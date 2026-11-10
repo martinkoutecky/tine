@@ -174,8 +174,13 @@ build graph (closure, below). The same field is written by the static export
 - **Legacy.** A document without a recognized `answers` is answered by
   `upgradeLegacySnapshot` (`publishedLegacy.ts`, the declared I-12 exception:
   generation-1 snapshots written before `answers` carry no Rust answer; retire
-  with `/s/1/`). It reproduces the reader before `answers` exactly, pinned by
-  the frozen fixtures written before it (`pages`, `one-page`).
+  with `/s/1/`). It reproduces the reader before `answers`, pinned by the
+  frozen fixtures written before it (`pages`, `one-page`), with one addition:
+  the inventory also lists each of the snapshot's `aliases` pairs whose name no
+  exported page spells as the alias row Rust writes (target `alias` with the
+  owner's path, `link` the owner's name and kind), so a link to an alias opens
+  its owner by the same reader (`linkTargetIn`), a journal's alias included.
+  Nothing else in the old reading changes, and the writer is untouched.
 
 The frozen documents in the fixtures are the normative examples. The writer
 golden (`writer.json`, the document with runtime ids renumbered) must match a

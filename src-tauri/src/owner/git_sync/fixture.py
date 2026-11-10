@@ -84,17 +84,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.answer(307, [("Location", self.path)])
         if mode == "post-redirect" and self.command == "POST":
             return self.answer(307, [("Location", destination + self.path)])
-        if mode in ("stall-fetch", "stall-push") and path.endswith(
-                "git-upload-pack" if mode == "stall-fetch" else "git-receive-pack"):
-            self.record(102)  # test synchronizes cancellation with a live request
-            time.sleep(10)
-        if (mode == "hold-fetch" and path.endswith("git-upload-pack") or
+        # A held request: the test synchronizes on the 102 mark, then acts
+        # while the request is open. A hold ends when the test writes
+        # release-request; a stall never does, so only the client's cancel or
+        # its own timeout ends it. No wall-clock deadline here: a loaded host
+        # must not end a hold before the test acted (flakes-1110).
+        if (mode in ("stall-fetch", "stall-push") and path.endswith(
+                "git-upload-pack" if mode == "stall-fetch" else "git-receive-pack") or
+                mode == "hold-fetch" and path.endswith("git-upload-pack") or
                 mode == "hold-ls" and self.command == "GET"):
             self.record(102)
-            deadline = time.monotonic() + 5
             while not (Path(root) / "release-request").exists():
-                if time.monotonic() >= deadline:
-                    return self.answer(504)
                 time.sleep(0.01)
         if mode == "bad-type":
             return self.answer(200, [("Content-Type", "text/html")], b"not git")

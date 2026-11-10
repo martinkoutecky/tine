@@ -13,6 +13,7 @@ import {
   type PaneSnapshot,
   type PaneRouter,
   type Route,
+  type PageFollower,
   type PageTarget,
   type PdfRoute,
 } from "./router";
@@ -217,6 +218,10 @@ export function activePaneRoutes(): Route[] {
 
 export function rewritePageTargetAcrossPanes(from: PageTarget, to: PageTarget) {
   for (const router of routers.values()) router.rewritePageTarget(from, to);
+}
+
+export function rewritePagesAcrossPanes(follow: PageFollower) {
+  for (const router of routers.values()) router.rewritePages(follow);
 }
 
 export function removePageTargetAcrossPanes(target: PageTarget) {

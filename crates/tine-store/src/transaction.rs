@@ -804,6 +804,7 @@ impl<'a> PagePlan<'a> {
                     &renames.0,
                     &renames.1,
                     name_format,
+                    None,
                 );
                 if new == text {
                     RewriteEffect::Unchanged

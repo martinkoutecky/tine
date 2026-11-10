@@ -68,8 +68,11 @@ it.each(["other block", "same block in sidebar", "return to original", "same edi
     let expectedBlock = "c";
     let retained = old;
     if (newer === "same editor request") {
-      // Retain the same mounted editor and identity tuple, but publish a newer intent.
+      // Retain the same mounted editor and identity tuple, but publish a newer intent. The mounted editor
+      // takes the newer request's caret, as a fresh mount would (og-enter-family-1109 round 2).
       startEditing("a", 2, editingOwner(), editingSurface());
+      await flush();
+      expect(retained.selection()).toEqual([2, 2]);
       expectedBlock = "a";
     } else if (newer !== "no newer click") {
       const side = host.querySelector('[data-surface="sidebar"] [data-block-id]')!;

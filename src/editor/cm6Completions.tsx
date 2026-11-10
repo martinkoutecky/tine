@@ -18,6 +18,7 @@ import { isPermittedTabGesture } from "../keybindings";
 import { guardedCommands } from "./cm6Commands";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
+import type { PendingEdit } from "../document";
 
 /** CM transactions own the buffer and selection; completion never writes files.
  * Reads retain the same ranking, baseline leases and durable ref publication as
@@ -29,6 +30,8 @@ export function cm6Completions(props: {
   visible: () => string; rawBeforeCommit: () => string;
   literal(): boolean; annotation(): boolean; languagePicker(active: boolean): void;
   completeRegion(text: string, caret: number): void;
+  /** Taking `from..to` out of the editor and the block, decided but not made (the editor's `deleteSelection`). */
+  stageDelete(from: number, to: number): PendingEdit;
   assets: ReturnType<typeof editorAssets>;
 }) {
   const cap = useContext(CaptureCtx);
@@ -58,6 +61,7 @@ export function cm6Completions(props: {
     keepEmptyLanguagePicker: true,
     selection: () => { const s = view().state.selection.main; return [s.anchor, s.head]; },
     rawBeforeCommit: props.rawBeforeCommit, visible: props.visible,
+    stageDelete: props.stageDelete,
     apply, afterEdit: callback => { callback(); reanchor(); },
     replace: (raw, position, close) => {
       apply(raw, position); close(); props.completeRegion(raw, position);

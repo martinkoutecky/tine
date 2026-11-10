@@ -592,6 +592,17 @@ fn fixture_specs() -> Vec<GraphSpec> {
 /// frontend's real decisions without the bridge. Stale or missing cases
 /// fail here; `CM_REFRESH=1` rewrites them.
 fn check_frontend_cases(subdir: &str, cases: BTreeMap<String, Value>, hint: &str) {
+    check_frontend_cases_skipping(subdir, cases, &BTreeSet::new(), hint);
+}
+
+/// As [`check_frontend_cases`], leaving the committed cases of `skipped`
+/// fixtures alone: this volume cannot write them ([`shared::listed_apart`]).
+fn check_frontend_cases_skipping(
+    subdir: &str,
+    cases: BTreeMap<String, Value>,
+    skipped: &BTreeSet<String>,
+    hint: &str,
+) {
     let dir = shared::fixture_dir(env!("CARGO_MANIFEST_DIR")).join(subdir);
     let refresh = std::env::var_os("CM_REFRESH").is_some();
     if refresh {
@@ -599,7 +610,10 @@ fn check_frontend_cases(subdir: &str, cases: BTreeMap<String, Value>, hint: &str
         for e in fs::read_dir(&dir).unwrap() {
             let p = e.unwrap().path();
             let stem = p.file_stem().unwrap().to_string_lossy().into_owned();
-            if p.extension().is_some_and(|x| x == "json") && !cases.contains_key(&stem) {
+            if p.extension().is_some_and(|x| x == "json")
+                && !cases.contains_key(&stem)
+                && !skipped.contains(&stem)
+            {
                 fs::remove_file(&p).unwrap();
             }
         }
@@ -621,7 +635,7 @@ fn check_frontend_cases(subdir: &str, cases: BTreeMap<String, Value>, hint: &str
                     let p = e.ok()?.path();
                     Some(p.file_stem()?.to_string_lossy().into_owned())
                 })
-                .filter(|n| !cases.contains_key(n))
+                .filter(|n| !cases.contains_key(n) && !skipped.contains(n))
                 .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -787,9 +801,15 @@ fn file_name_answerers() {
     let mut section = Section::default();
     let mut cases = BTreeMap::new();
     let mut keep = Vec::new();
+    let mut skipped = BTreeSet::new();
     for spec in fixture_specs() {
         let dir = tempfile::tempdir().unwrap();
         spec.write(dir.path());
+        if !spec.listed_apart(dir.path()) {
+            section.skip_on_volume(&spec.name, "");
+            skipped.insert(spec.name.clone());
+            continue;
+        }
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let view = store.whole_graph().expect("graph loads");
         let mut diffs = shared::compare_file_names(&view, &spec);
@@ -836,9 +856,10 @@ fn file_name_answerers() {
     for h in keep {
         h.join().unwrap();
     }
-    check_frontend_cases(
+    check_frontend_cases_skipping(
         "frontend-names",
         cases,
+        &skipped,
         "CM_REFRESH=1 cargo test -p tine-store --lib cm_conformance_tests::file_name_answerers, \
          then CM_REFRESH=1 npx vitest run src/cmConformanceFileNames.test.ts",
     );

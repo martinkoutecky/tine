@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
-use tine_graph_features::{print, publish};
+use tine_graph_features::print;
 use tine_store::Store;
 
 fn atomic_fixture_write(path: &Path, bytes: impl AsRef<[u8]>) {
@@ -70,7 +70,7 @@ fn site_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
 
 fn dump(root: &Path) -> BTreeMap<String, Vec<u8>> {
     let (store, _, _) = Store::open(root, Default::default()).unwrap();
-    let (site, _) = publish::publish_html(&store).unwrap();
+    let (site, _) = crate::published_site(&store).unwrap();
     let mut out = site_files(Path::new(&site))
         .into_iter()
         .map(|(path, bytes)| (format!("site/{path}"), bytes))
@@ -144,7 +144,7 @@ fn external_visibility_edit_is_seen_after_corpus_warmup() {
         &root.join("pages/Alpha.md"),
         "public:: false\n- after edit\n",
     );
-    let (site, count) = publish::publish_html(&store).unwrap();
+    let (site, count) = crate::published_site(&store).unwrap();
     assert_eq!(count, 0);
     assert!(!Path::new(&site).join("alpha.html").exists());
     let html = print::page_print_html(&store, "Alpha", print::PrintOpts::default())
@@ -153,18 +153,22 @@ fn external_visibility_edit_is_seen_after_corpus_warmup() {
     assert!(html.contains("after edit"));
 }
 
+/// Two files claim one name (a case twin). The live site publishes the file
+/// that owns the name and nothing of the other: it renders from the private
+/// build graph, which holds only the exported documents (see
+/// `legacy_publish::publish_carries_nothing_of_a_private_file_that_shares_a_public_pages_name`).
 #[test]
-fn colliding_public_identity_does_not_publish_private_twin() {
+fn a_private_case_twin_of_a_public_page_is_never_published() {
     let _integration_guard = crate::integration_lock();
     let (_dir, root) = scratch("public-twin");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/Twin.md"), "public:: true\n- visible\n").unwrap();
     fs::write(root.join("pages/twin.md"), "- private twin token\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let (site, count) = publish::publish_html(&store).unwrap();
-    assert_eq!(count, 0);
+    let (site, count) = crate::published_site(&store).unwrap();
+    assert_eq!(count, 1);
     let files = site_files(Path::new(&site));
-    assert!(!files.keys().any(|name| name == "twin.html"));
+    assert!(String::from_utf8_lossy(&files["twin.html"]).contains("visible"));
     assert!(!files.values().any(|bytes| bytes
         .windows(b"private twin token".len())
         .any(|window| window == b"private twin token")));
