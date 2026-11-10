@@ -298,7 +298,7 @@ fn generated_restore_copy_errors_conserve_payloads_at_each_input() {
                 .extend(std::iter::repeat_n(b' ', 8192));
             case.backup(&backup);
             graph.store.close();
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
+            let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
                 .args([
                     "--exact",
                     "restore::generated_restore_copy_error_worker",

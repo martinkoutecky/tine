@@ -749,9 +749,16 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             }
             work(Work::Candidates, 1);
             let t = &self.times[&key];
-            let due = self.save_first(&key, &self.host.pages[&key])
-                || t.deadline().is_some_and(|deadline| now >= deadline);
+            let stopping = self.save_first(&key, &self.host.pages[&key]);
+            let due = stopping || t.deadline().is_some_and(|deadline| now >= deadline);
+            #[cfg(feature = "test-faults")]
+            let debounced = !stopping && !t.urgent && t.retry.is_none();
             if due && self.host.start_save(&key) == Disposition::Pending {
+                #[cfg(feature = "test-faults")]
+                if debounced {
+                    crate::cost_counters::HOST_DEBOUNCED_SAVES
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.save_cursor = Some(key);
                 return Disposition::Pending;
             }

@@ -27,7 +27,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { refreshAfterRename } from "./graph";
-import { applyOwnerPageRename, followPageIdentity } from "./document/graphRewrite";
+import { applyOwnerPageRename, followPageIdentity, followRename } from "./document/graphRewrite";
 import { seedFavorites, favorites } from "./favorites";
 import { allPages, installPageIndex, refreshPageIndex, resetPageIndex } from "./pageIndex";
 import type { PageInventoryEntry } from "./types";
@@ -95,7 +95,7 @@ async function runScenario(s: Scenario): Promise<string[]> {
     }
   } else {
     // Navigation alone must not touch favorites.
-    refreshAfterRename(s.op.old, s.op.new);
+    refreshAfterRename(followRename([{ from: s.op.old, to: s.op.new, path: null }]));
     await settle();
     const shownAfterNavigation = favorites().map((f) => f.name);
     if (JSON.stringify(shownAfterNavigation) !== JSON.stringify(config.names)) {
@@ -103,7 +103,7 @@ async function runScenario(s: Scenario): Promise<string[]> {
     }
     await applyOwnerPageRename({
       old: s.op.old, name: s.op.new, kind: "page", path: null,
-      report: { outcome: s.op.kind === "merge" ? "merged" : "renamed", touched: [], ...(moved ? { favorites: answer } : {}) },
+      report: { outcome: s.op.kind === "merge" ? "merged" : "renamed", touched: [], renamed: [{ from: s.op.old, to: s.op.new, path: null }], ...(moved ? { favorites: answer } : {}) },
     } as never);
   }
   await settle();

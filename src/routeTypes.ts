@@ -8,6 +8,10 @@ export interface PageTarget {
   path?: string;
 }
 
+/** Where a page now lives, for a view that showed `page`; null when it is not
+ *  the page that moved. A rename's one answer for views of a moved page. */
+export type PageFollower = (page: PageTarget) => PageTarget | null;
+
 export type QueryPresentation = ViewKind;
 
 export interface QueryRoute {
