@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- The PDF reader uses pdf.js 5.7.284, with its image decoders and fonts bundled for offline reading (internal D-20261028-PDF9 item 7). Building Tine now requires Node.js 22.13 or newer.
+
 ### Added
 
 - Git sync offers **Turn off line-ending conversion for this repository** when tracked bytes already match their index blobs. It changes only local `core.autocrlf`, leaves graph files untouched, and otherwise links to safe commit-and-checkout steps in the Guide.

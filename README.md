@@ -222,6 +222,8 @@ samples/             Demo graph used by tests/screenshots
 
 ## Build & run
 
+Use Node.js 22.13 or newer (pdf.js 5 requires Node 22).
+
 ```bash
 source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
 npm install                  # first time

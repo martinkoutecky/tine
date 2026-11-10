@@ -6,6 +6,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { pdfjsAssets } from "./scripts/vite-pdfjs-assets";
 
 // Build timestamp, shown in Settings so it's easy to confirm the running binary is
 // the latest (vs. a stale Syncthing copy). Wall-clock by default, so "Built" tracks
@@ -82,7 +83,10 @@ return {
   base: "./",
   // Published readers use native emoji (editableEmoji.ts); the viewer needs
   // neither the desktop SVG bundle nor its root-relative development server.
-  plugins: [solid(), ...(!viewer ? [twemojiAssets()] : [])],
+  plugins: [solid(), ...(!viewer ? [twemojiAssets(), pdfjsAssets()] : [])],
+  // Upstream's legacy build supplies recent JS API polyfills to existing
+  // WebKitGTK/Android WebViews. Main and worker use the same shared policy.
+  resolve: { alias: [{ find: /^pdfjs-dist$/, replacement: fileURLToPath(new URL("./node_modules/pdfjs-dist/legacy/build/pdf.mjs", import.meta.url)) }] },
   define: {
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
     __GIT_COMMIT__: JSON.stringify(GIT_COMMIT),

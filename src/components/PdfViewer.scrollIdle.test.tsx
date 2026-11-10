@@ -10,7 +10,7 @@ const { getDocument } = vi.hoisted(() => ({ getDocument: vi.fn() }));
 vi.mock("pdfjs-dist", () => ({ GlobalWorkerOptions: {}, getDocument, TextLayer: class {
   render() { return Promise.resolve(); } update() { return Promise.resolve(); } cancel() {}
 } }));
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
 afterEach(() => { vi.useRealTimers(); resetPdfOwnershipForTest(); vi.restoreAllMocks(); document.body.replaceChildren(); });
 it("keeps the page indicator live but publishes only on idle, and flushes the final position on close", async () => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);

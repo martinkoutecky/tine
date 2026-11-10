@@ -12,7 +12,7 @@ vi.mock("pdfjs-dist", () => ({
     onDataRange = vi.fn();
   },
 }));
-vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "worker.js" }));
 
 afterEach(() => {
   delete (backend() as { pdfAssetSource?: unknown }).pdfAssetSource;
@@ -40,6 +40,14 @@ it("starts pdf.js from a range source without a whole-file read or annotation wr
     const options = getDocument.mock.calls.at(-1)![0];
     expect(options.range.length).toBe(source.length);
     expect(options.data).toBeUndefined();
+    // pdf.js 5 decodes JPX/JBIG2/CMYK with external files. The application
+    // supplies bundled directories even when the PDF itself uses asset IPC.
+    for (const [key, directory] of [["wasmUrl", "wasm"], ["cMapUrl", "cmaps"],
+      ["standardFontDataUrl", "standard_fonts"], ["iccUrl", "iccs"]]) {
+      const url = new URL(options[key]);
+      expect(url.origin).toBe(window.location.origin);
+      expect(url.pathname).toMatch(new RegExp(`/pdfjs/${directory}/$`));
+    }
     options.range.requestDataRange(0, 65536);
     for (let n = 0; n < 20; n++) await Promise.resolve();
     expect(source.read).toHaveBeenCalledWith(0, 65536);

@@ -5,6 +5,7 @@ import { bindingOwner, readOwned, type WriteOwner } from "../owned";
 import { errorMessage, MAX_PDF_BYTES } from "./pdfViewerPrimitives";
 import { createPdfRangeTransport, PDF_RANGE_CHUNK_SIZE } from "./pdfRangeTransport";
 import type { OpenPdfDocument } from "./pdfDocumentShare";
+import { pdfjsAssetOptions } from "./pdfjsAssets";
 
 const TOO_LARGE = "This PDF is larger than 256 MiB and can't be opened safely.";
 
@@ -36,7 +37,7 @@ export function openPdfDocument(api: Backend, filename: string, generation: numb
     } catch (error) {
       return { kind: "error", message: errorFamily(error) === "asset-too-large" ? TOO_LARGE : errorMessage("Couldn't read this PDF asset", error) };
     }
-    const task = pdfjs.getDocument(input);
+    const task = pdfjs.getDocument({ ...input, ...pdfjsAssetOptions() });
     adopt.task({ destroy: () => { transport?.range.abort(); return task.destroy(); } });
     // Destruction alone need not reject a loading task. Race the explicit read
     // failure too, and let every retaining view observe later range failures.

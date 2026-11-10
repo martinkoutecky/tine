@@ -4,6 +4,7 @@ import { latestOwner, type Owner } from "../owned";
 import { isMobilePlatform } from "../nativeChrome";
 import { reportUiFailure } from "../uiFailure";
 import { createRangeIn, selectionOf } from "../windowRealm";
+import { pdfTextContent } from "./pdfTextContent";
 
 export const PDF_FIND_TEXT_CACHE_BYTES = isMobilePlatform ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
 export const PDF_FIND_PAGE_TEXT_BYTES = 1024 * 1024;
@@ -60,7 +61,7 @@ export function createPdfFind(ctx: {
     if (!doc) return "";
     const page = await doc.getPage(n);
     if (!current()) return null;
-    const content = await page.getTextContent();
+    const content = await pdfTextContent(page);
     if (!current()) return null;
     let value = "";
     for (const item of content.items) {

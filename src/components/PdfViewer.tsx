@@ -4,7 +4,7 @@ import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, 
 import * as pdfjs from "pdfjs-dist";
 import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import { PdfViewerView } from "./pdfViewerView";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
@@ -29,6 +29,8 @@ import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
 import { createPdfViewState } from "./pdfViewState";
+import { pinPdfTextScale } from "./pdfTextScale";
+import { pdfTextContent } from "./pdfTextContent";
 import { pdfProbe } from "./pdfProbe";
 import { createPdfPinch } from "./pdfPinch";
 import { createWheelZoomAccumulator, highestPriorityPage, PDF_PREFETCH_PAGES, PDF_ZOOM_SETTLE_MS } from "./pdfRenderQueue";
@@ -633,7 +635,7 @@ export function PdfViewer(props: {
     canvas.style.height = "100%";
 
     const task = page.render({
-      canvasContext: canvas.getContext("2d")!,
+      canvas,
       viewport,
       transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
     });
@@ -901,12 +903,10 @@ export function PdfViewer(props: {
   // A text layer's spans size themselves from --scale-factor. Each layer pins
   // the scale it was laid out at, and a zoom only stretches it with a
   // transform, so a zoom step costs no text relayout (pdf.js cssTransform).
-  function pinTextScale(n: number, atScale: number) {
+  function pinTextScale(n: number, atScale: number, userUnit = 1) {
     const layer = textLayers[n];
     if (!layer) return;
-    layer.style.setProperty("--scale-factor", String(atScale));
-    layer.dataset.scale = String(atScale);
-    layer.style.transform = "";
+    pinPdfTextScale(layer, atScale, userUnit);
   }
   function fitTextLayer(n: number) {
     const layer = textLayers[n];
@@ -942,7 +942,7 @@ export function PdfViewer(props: {
     const existing = textLayerObjs[n];
     if (existing) {
       try {
-        pinTextScale(n, atScale);
+        pinTextScale(n, atScale, viewport.userUnit);
         await existing.update({ viewport });
         if (!buildCurrent()) return;
         textScale[n] = atScale;
@@ -956,7 +956,7 @@ export function PdfViewer(props: {
 
     let textContent: Awaited<ReturnType<pdfjs.PDFPageProxy["getTextContent"]>>;
     try {
-      textContent = await page.getTextContent();
+      textContent = await pdfTextContent(page);
     } catch (err) {
       if (buildCurrent()) failPdf(errorMessage("Couldn't read this PDF text", err));
       return;
@@ -964,7 +964,7 @@ export function PdfViewer(props: {
     if (!buildCurrent()) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
-    pinTextScale(n, atScale);
+    pinTextScale(n, atScale, viewport.userUnit);
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
     textInflight[n] = layer;
     try {

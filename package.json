@@ -4,6 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
+  "engines": { "node": ">=22.13.0" },
   "scripts": {
     "dev": "vite",
     "build": "node scripts/check-wasm-pin.mjs && npm run check:lsdoc-oracle && vite build",
@@ -85,7 +86,7 @@
     "inter-ui": "4.1.1",
     "katex": "^0.16.47",
     "lenis": "^1.3.25",
-    "pdfjs-dist": "^4.10.38",
+    "pdfjs-dist": "5.7.284",
     "solid-js": "^1.9.17",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"
