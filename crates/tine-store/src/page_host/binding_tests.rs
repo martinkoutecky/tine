@@ -2535,6 +2535,126 @@ fn the_kinds_sink_runs_outside_the_store_writer() {
     live.host.stop();
 }
 
+/// s3b O6: a host bug that panics the driver mid-delivery, under the store
+/// writer, ends the host but not the Store. The kinds sink poisons the host
+/// state, so the delivery's owner lookup panics with the writer held.
+/// Afterwards an external edit still reaches the index, the dead host's page
+/// returns to the watcher when the host is dropped, and the Store closes
+/// without a panic (before: a poisoned writer made the watcher and
+/// `Store::close` panic, a crash on close).
+#[test]
+fn a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = dir.path().join("graph");
+    fs::create_dir_all(graph.join("pages")).unwrap();
+    fs::write(graph.join("pages/a.md"), "- one\n").unwrap();
+    fs::write(graph.join("pages/b.md"), "- bee\n").unwrap();
+    let app = dir.path().join("app");
+    fs::create_dir_all(&app).unwrap();
+    let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+    store.whole_graph_reconciled().unwrap();
+    type Poison = Arc<std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>>;
+    let poison: Poison = Default::default();
+    let sink_poison = poison.clone();
+    let kinds = move |_: &str, _: &[EditKind]| {
+        if let Some(poison) = sink_poison.get() {
+            poison();
+        }
+    };
+    let (sender, mail) = mpsc::channel();
+    let host = PageHost::start(&store, &app, "test-graph", kinds, move |mail| {
+        let _ = sender.send(mail);
+    })
+    .unwrap();
+    let shared = Arc::clone(&host.driver.shared);
+    let poisoner = Arc::clone(&shared);
+    assert!(poison
+        .set(Box::new(move || {
+            let shared = Arc::clone(&poisoner);
+            let thread = std::thread::spawn(move || {
+                let _state = shared.state_for_tests();
+                panic!("O6 test: a host bug poisons the host state");
+            });
+            assert!(thread.join().is_err());
+        }))
+        .is_ok());
+    let live = Live {
+        root: store.graph.root.clone(),
+        _dir: dir,
+        store,
+        host,
+        mail,
+        kinds: Kinds::default(),
+        id: std::cell::Cell::new(0),
+    };
+    let (key, page) = live.open("pages/a.md");
+    live.submit(&key, "- two\n", page.version, None).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !shared.ended() {
+        assert!(Instant::now() < deadline, "the delivery never panicked");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let Live {
+        root, store, host, ..
+    } = live;
+    let indexed = |key: &str, body: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while store.graph.cached_rev(&root.join(key)) != Some(content_rev(body)) {
+            assert!(Instant::now() < deadline, "{key} never indexed {body:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    fs::write(root.join("pages/b.md"), "- bee two\n").unwrap();
+    indexed("pages/b.md", "- bee two\n");
+    // The host's drop reports the driver's panic, as before.
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(host)));
+    assert!(
+        dropped.is_err(),
+        "the host's drop reports its driver's panic"
+    );
+    fs::write(root.join("pages/a.md"), "- three\n").unwrap();
+    indexed("pages/a.md", "- three\n");
+    let closed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.close()));
+    assert!(closed.is_ok(), "the Store closes after a host bug");
+}
+
+/// R1 (the s3b O6 neighbour): every stop of a host whose driver ended says
+/// so instead of panicking (`orphan_stop`, `stop_state`), a restore's stop
+/// never closes over it, and `stop_finish` ends it for good without
+/// rethrowing the driver's panic. The page it held goes back to the
+/// watcher, which indexes an external edit from disk, and the Store closes.
+#[test]
+fn an_ended_host_retires_for_good_and_hands_its_pages_back() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let _ = live.open("pages/a.md");
+    let Live {
+        root, store, host, ..
+    } = live;
+    assert!(!host.ended());
+    host.crash_driver_for_tests();
+    assert!(host.ended());
+    assert_eq!(host.orphan_stop(), StopState::Ended);
+    assert_eq!(host.stop_state(), StopState::Ended);
+    let Err((host, pages)) = host.stop_saved(0, StopMode::Restore) else {
+        panic!("a restore closed over a dead host");
+    };
+    assert!(pages.is_empty());
+    let Ok(_stopped) = host.stop_finish() else {
+        panic!("a dead host's stop never ends");
+    };
+    fs::write(root.join("pages/a.md"), "- three\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while store.graph.cached_rev(&root.join("pages/a.md")) != Some(content_rev("- three\n")) {
+        assert!(
+            Instant::now() < deadline,
+            "the dead host's page never indexed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let closed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.close()));
+    assert!(closed.is_ok(), "the Store closes after the host bug");
+}
+
 /// CLI PROTOCOL §5: the host read returns a held page's buffer, unsaved
 /// input included, while its file still has the old bytes; a page the host
 /// does not hold reads from its file with no revision; no file reads absent.

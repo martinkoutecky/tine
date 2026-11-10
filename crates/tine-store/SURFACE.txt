@@ -423,7 +423,14 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 52)
+## Page host (ceiling: 53)
+# audit-storage-1109 R1 (52 -> 53, Beta port of develop 73e1c818a): `ended`, whether
+# a host's driver ended (a host bug). src-tauri's retirement must not adopt such a
+# host on reopen (host_retirement.rs adopt, state.rs PageHostSlot::ended). No
+# existing item answers it without effect: orphan_stop ends the window's session
+# first, window_reloaded/draft_status ask the dead driver, and stop_finish consumes
+# the host. A parameter on those cannot ask without acting. The terminal stop
+# itself is stop_finish's existing verb (no new item).
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -454,6 +461,7 @@ fn page_host::PageHost::orphan_stop
 fn page_host::PageHost::retarget
 fn page_host::PageHost::stop_abort
 fn page_host::PageHost::stop_finish
+fn page_host::PageHost::ended
 struct page_host::Reloaded
 struct page_host::Opened
 struct page_host::PageMail

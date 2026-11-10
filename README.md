@@ -75,8 +75,9 @@ warn the first time — here's how to get past it:
   same folder.
 - **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic
   updates, or take the signed **`Tine_*_android-arm64.apk`** from Releases.
-- **iPhone and iPad** — Tine is in public beta on **[TestFlight](https://testflight.apple.com/join/rpGGpTVW)**:
-  install Apple's TestFlight app, open the link, and install Tine (it appears as *TineOutline*).
+- **iPhone and iPad** — install Tine from the **[App Store](https://apps.apple.com/us/app/tineoutline/id6804403687)** (it appears as
+  *TineOutline*). Betas come through TestFlight as a separate app, *Tine Beta*:
+  install Apple's TestFlight app, then open **[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)**.
   Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
 
 **Updates.** On desktop, Tine tells you when a new version is out and installs it in place when
@@ -365,7 +366,7 @@ compatibility; see [the user overview](https://tine.page/plugins.html) and
 
 **Mobile:** Tine has a **native Android build** (Tauri v2) as of 0.4.0 — it opens and edits your real
 Logseq graph on the phone over your own sync, alongside the Logseq mobile app. **iOS** (iPhone and
-iPad) is in public beta on [TestFlight](https://testflight.apple.com/join/rpGGpTVW).
+iPad) is on the [App Store](https://apps.apple.com/us/app/tineoutline/id6804403687).
 
 **Under discussion, not promised:** built-in git integration.
 

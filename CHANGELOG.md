@@ -8,9 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- iOS: Tine is on the App Store, and Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
+
 ### Fixed
 
 - On a touch screen, holding a sidebar **Favorites** row still opens its menu again, the same one a right-click opens (so **Open in new tab** is back within reach); holding a nested **Open tabs** row opens its **Move out of group** menu. Holding and then dragging still picks the row up to reorder it (the menu closes as you drag), a finger that moves first still scrolls, and a tap still opens it (GH #921).
+- On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (internal: REG-AUDIT1109-FLIGHT-LOCK-ANDROID).
+- If the page host fails with an internal error while publishing a save, the graph's other writes continue, its open pages go back to file watching, and closing the graph no longer crashes Tine (internal: REG-AUDIT1109-DRIVER-PANIC-WRITER).
+- After such a page host failure, closing its window now finishes closing the graph: Tine can quit, the command line can use the graph again, and reopening it starts a working page host that recovers any crash-recovery copies (REG-AUDIT1109-RETIRE-ENDED-HOST).
 - Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).
 - Context-menu rows use a consistent font size and family, including the page menu's **Copy as** submenu (GH #916).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).

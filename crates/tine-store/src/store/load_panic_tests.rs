@@ -468,3 +468,23 @@ fn a_rescan_whose_index_build_panics_fails_the_graph_and_keeps_the_writer() {
     drop(store);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// A writer that panicked poisons the writer lock. `close` still completes
+/// (the store reads as closed and refuses I/O), and `Drop`, which closes
+/// again, neither panics nor aborts (review R1 of audit-storage-1109). The
+/// watcher is stopped first: it would itself stop on the poisoned lock.
+#[test]
+fn close_after_a_writer_panicked_completes_and_drops() {
+    let root = graph_with_bad_page("close-poisoned-writer", "- fine for now\n", 0);
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(matches!(settled(&store), Ok(true)));
+    store.watch.stop_background_for_test();
+    store.poison_writer_for_tests();
+    assert!(store.writer.is_poisoned());
+    store.close();
+    assert!(store.is_closed());
+    assert!(matches!(store.is_graph_ready(), Err(LoadError::Closed)));
+    store.close();
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
+}
