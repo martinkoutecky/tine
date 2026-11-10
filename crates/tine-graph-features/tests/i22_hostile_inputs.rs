@@ -137,7 +137,7 @@ fn hostile_inputs_survive_all_entry_points() {
             .prefix(&format!("i22-hostile-{case}-"))
             .tempdir()
             .unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "i22_hostile_inputs::hostile_child",
