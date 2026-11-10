@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tine_core::doc::DocBlock;
 use tine_core::editor_text::{set_text_with_policy, split, HidePolicy};
 use tine_core::model::{BlockDto, Format, PageDto};
 use tine_store::{
@@ -57,11 +58,12 @@ pub(crate) fn position(path: &[usize]) -> String {
 /// `pos~fp` for the block at `path`.
 pub(crate) fn handle_of(doc: &PageDto, path: &[usize]) -> Option<String> {
     let block = block_at(&doc.blocks, path)?;
-    Some(format!(
-        "{}~{}",
-        position(path),
-        fingerprint(&block.raw, is_org(doc))
-    ))
+    Some(handle(path, &block.raw, is_org(doc)))
+}
+
+/// `pos~fp` for a block at `path` whose raw text is `raw`.
+fn handle(path: &[usize], raw: &str, org: bool) -> String {
+    format!("{}~{}", position(path), fingerprint(raw, org))
 }
 
 /// Put `handle` on every block of a page payload's `blocks` (the JSON form
@@ -409,10 +411,10 @@ pub(super) fn host_failed(message: String) -> ErrorBody {
 
 /// Compare the tree the command meant with the tree its bytes parse to:
 /// shape, and each block's raw up to trailing whitespace (design §1 4b).
-fn same_tree(meant: &[BlockDto], parsed: &[BlockDto]) -> bool {
+fn same_tree(meant: &[BlockDto], parsed: &[DocBlock]) -> bool {
     meant.len() == parsed.len()
         && meant.iter().zip(parsed).all(|(a, b)| {
-            a.raw.trim_end() == b.raw.trim_end() && same_tree(&a.children, &b.children)
+            a.raw.trim_end() == b.raw().trim_end() && same_tree(&a.children, &b.children)
         })
 }
 
@@ -837,13 +839,15 @@ pub(super) fn write_page_in_turn(
         }) else {
             return Err(internal(Diag::WriteFailed, "a page write planned no bytes"));
         };
-        let reparsed = slot
-            .store
-            .page_of(&read.page, &new_bytes)
-            .map_err(|error| store_refused(error, page))?;
-        if !same_tree(&planned.doc.blocks, &reparsed.doc.blocks)
+        // What the bytes mean, from the serializer's own parse of them and
+        // named as a read of them would be: not parsed a second time.
+        let Some((_, saved)) = std::mem::take(&mut op.saved).into_iter().next() else {
+            return Err(internal(Diag::WriteFailed, "a page write planned no parse"));
+        };
+        let reparsed = &saved.document;
+        if !same_tree(&planned.doc.blocks, &reparsed.roots)
             || planned.doc.pre_block.as_deref().map(str::trim_end)
-                != reparsed.doc.pre_block.as_deref().map(str::trim_end)
+                != reparsed.pre_block.as_deref().map(str::trim_end)
         {
             if !is_org(&planned.doc)
                 && planned.doc.pre_block.as_deref().unwrap_or("").is_empty()
@@ -853,7 +857,7 @@ pub(super) fn write_page_in_turn(
                             b.raw.trim_end_matches(['\n', '\r']),
                         )
                 })
-                && reparsed.doc.pre_block.is_some()
+                && reparsed.pre_block.is_some()
             {
                 return Err(refused(
                     "page-properties",
@@ -874,22 +878,25 @@ pub(super) fn write_page_in_turn(
                 // A window that displays the page without holding it gets no
                 // page mail: tell it as of an outside edit (owner::window).
                 if let Some(link) = slot.window.get() {
-                    link.changed(
-                        read.page.as_str(),
-                        &reparsed.doc.name,
-                        reparsed.doc.kind,
-                        absent,
-                    );
+                    link.changed(read.page.as_str(), &saved.name, saved.kind, absent);
                 }
-                let mut reply = written(&read.page, &reparsed.doc, &reparsed.rev, &planned.changed);
+                let rev = tine_store::FileRev::from_bytes(&new_bytes);
+                let mut reply = written(
+                    &read.page,
+                    &saved.name,
+                    &reparsed.roots,
+                    is_org(&planned.doc),
+                    &rev,
+                    &planned.changed,
+                );
                 // A write that changed the page's name (its `title::`) moves
                 // home and favorites through the rename's config step and
                 // answerer (CM step 2, FAV-RETITLE), after the page landed:
                 // the page write stands whatever the config step does.
                 if !absent
                     && current.doc.kind == tine_core::model::PageKind::Page
-                    && reparsed.doc.kind == tine_core::model::PageKind::Page
-                    && !tine_core::refs::same_page(&current.doc.name, &reparsed.doc.name)
+                    && saved.kind == tine_core::model::PageKind::Page
+                    && !tine_core::refs::same_page(&current.doc.name, &saved.name)
                 {
                     let follow = tine_graph_features::pages::follow_page_identity(
                         &slot.store,
@@ -923,7 +930,9 @@ pub(super) fn write_page_in_turn(
 
 fn written(
     page: &PageId,
-    doc: &PageDto,
+    name: &str,
+    roots: &[DocBlock],
+    org: bool,
     rev: &tine_store::FileRev,
     changed: &[Vec<usize>],
 ) -> Value {
@@ -931,14 +940,23 @@ fn written(
     let handles: Vec<String> = changed
         .iter()
         .take(REPLY_HANDLES)
-        .filter_map(|path| handle_of(doc, path))
-        .map(|handle| format!("{}/{handle}", doc.name))
+        .filter_map(|path| {
+            let raw = path
+                .split_first()
+                .and_then(|(first, rest)| {
+                    rest.iter()
+                        .try_fold(roots.get(*first)?, |block, i| block.children.get(*i))
+                })?
+                .raw();
+            Some(handle(path, raw, org))
+        })
+        .map(|handle| format!("{name}/{handle}"))
         .collect();
     ok(
         "written",
         json!({
             "page": page.as_str(),
-            "name": doc.name,
+            "name": name,
             "rev": String::from(rev.clone()),
             "blocks": handles,
             "more": changed.len().saturating_sub(REPLY_HANDLES),
@@ -953,7 +971,7 @@ pub(super) fn store_refused(error: StoreError, page: &PageId) -> ErrorBody {
             format!("the page is {len} bytes, over the {limit}-byte parse limit"),
             false,
         ),
-        StoreError::NotFound => ErrorBody::new(
+        StoreError::NotFound(_) => ErrorBody::new(
             "not-found",
             format!("{} does not exist", page.as_str()),
             false,
