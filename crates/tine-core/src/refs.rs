@@ -183,7 +183,7 @@ pub fn rename_rewrite(
     renames: &[(String, String)],
     file_name_format: FileNameFormat,
 ) -> String {
-    rename_rewrite_with_queries(text, is_org, renames, &[], file_name_format)
+    rename_rewrite_with_queries(text, is_org, renames, &[], file_name_format, None)
 }
 
 /// [`rename_rewrite`] where a query's page-name arguments naming a key of
@@ -191,12 +191,18 @@ pub fn rename_rewrite(
 /// survivor's own name there, ruling (a) of D-20261103-CMA; links and
 /// namespace children keep `renames`' typed name). Empty `queries` is
 /// [`rename_rewrite`].
+/// If supplied, `rewritten` receives distinct old/new logical-name pairs of edits
+/// actually spliced into the text (including macro/query/file-link targets).
+/// Rejected, overlapping and byte-identical edits contribute nothing. Recording
+/// costs O(name bytes) per proposed edit and retains unique pairs, with no
+/// additional parse or I/O.
 pub fn rename_rewrite_with_queries(
     text: &str,
     is_org: bool,
     renames: &[(String, String)],
     queries: &[(String, String)],
     file_name_format: FileNameFormat,
+    rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     let keyed = |pairs: &[(String, String)]| -> std::collections::HashMap<String, String> {
         pairs
@@ -209,7 +215,13 @@ pub fn rename_rewrite_with_queries(
     rename::rewrite_page(
         text,
         is_org,
-        &rename::Renames::new(&renames, Some(&queries), file_name_format),
+        &rename::Renames::new(
+            &renames,
+            Some(&queries),
+            file_name_format,
+            rewritten.is_some(),
+        ),
+        rewritten,
     )
 }
 
@@ -223,40 +235,47 @@ pub fn rename_rewrite_keyed(
     rename::rewrite_page(
         text,
         is_org,
-        &rename::Renames::new(renames, None, file_name_format),
+        &rename::Renames::new(renames, None, file_name_format, false),
+        None,
     )
 }
 
 /// [`rename_rewrite_keyed`] for one block's raw body (a page DTO's block, as
 /// the merge rewrites it); `queries` as [`rename_rewrite_with_queries`].
+/// `rewritten` records applied edits as in that function.
 pub fn rename_block_raw(
     raw: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
     queries: Option<&std::collections::HashMap<String, String>>,
     file_name_format: FileNameFormat,
+    rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     rename::rewrite_block(
         raw,
         is_org,
-        &rename::Renames::new(renames, queries, file_name_format),
+        &rename::Renames::new(renames, queries, file_name_format, rewritten.is_some()),
+        rewritten,
     )
 }
 
 /// [`rename_rewrite_keyed`] for a page's pre-block text (a page DTO's
 /// `pre_block`, as the merge rewrites it): its page properties; `queries` as
 /// [`rename_rewrite_with_queries`].
+/// `rewritten` records applied edits as in that function.
 pub fn rename_pre_block(
     pre: &str,
     is_org: bool,
     renames: &std::collections::HashMap<String, String>,
     queries: Option<&std::collections::HashMap<String, String>>,
     file_name_format: FileNameFormat,
+    rewritten: Option<&mut std::collections::HashSet<(String, String)>>,
 ) -> String {
     rename::rewrite_pre_block(
         pre,
         is_org,
-        &rename::Renames::new(renames, queries, file_name_format),
+        &rename::Renames::new(renames, queries, file_name_format, rewritten.is_some()),
+        rewritten,
     )
 }
 
@@ -327,7 +346,7 @@ mod tests {
     fn rename_in_block(raw: &str, from: &str, to: &str, is_org: bool) -> String {
         let mut map = std::collections::HashMap::with_capacity(1);
         map.insert(normalize(from), to.to_string());
-        rename_block_raw(raw, is_org, &map, None, FileNameFormat::TripleLowbar)
+        rename_block_raw(raw, is_org, &map, None, FileNameFormat::TripleLowbar, None)
     }
 
     /// The rewrite of a page whose text starts with page properties.
@@ -591,7 +610,7 @@ mod tests {
                 crate::model::encode_page_name(new_title, format)
             );
             assert_eq!(
-                rename_block_raw(&raw, true, &renames, None, format),
+                rename_block_raw(&raw, true, &renames, None, format, None),
                 expected
             );
         }

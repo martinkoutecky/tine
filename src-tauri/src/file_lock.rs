@@ -303,7 +303,7 @@ mod tests {
 
     impl Holder {
         fn spawn(path: &Path) -> Self {
-            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            let mut child = std::process::Command::new(tine_store::test_binary::own_test_binary())
                 .args([
                     "file_lock::tests::lock_holder_child",
                     "--exact",

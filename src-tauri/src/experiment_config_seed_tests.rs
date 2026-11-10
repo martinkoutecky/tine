@@ -337,7 +337,7 @@ fn killed_webview_seed_retries_after_config_has_already_published() {
     let release_store = root.join("release-store");
     write(&release_store.join("preferences"), b"master browser state");
     let before = tree(&release_store);
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .args([
             "--exact",
             "experiment_config_seed::tests::crash_child_after_webview_stage",

@@ -145,7 +145,7 @@ fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
             )
             .unwrap();
         }
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .arg("--exact")
             .arg("i02_crash_gaps::crash_restore_worker")
             .arg("--nocapture")
@@ -207,7 +207,7 @@ fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() 
             case.backup(&backup);
             graph.store.close();
             let at = format!("restore abort seed {seed} cut {boundary}");
-            let output = Command::new(std::env::current_exe().unwrap())
+            let output = Command::new(tine_store::test_binary::own_test_binary())
                 .args([
                     "--exact",
                     "i02_crash_gaps::generated_restore_crash_worker",
@@ -341,7 +341,7 @@ fn graph_restore_kill_reopen_keeps_live_or_recovery_bytes() {
             fs::write(root.join("snapshot").join(rel), format!("new {rel}")).unwrap();
         }
         fs::write(root.join("archive/Stale.md"), "stale").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .arg("--exact")
             .arg("i02_crash_gaps::crash_graph_restore_worker")
             .arg("--nocapture")
@@ -558,7 +558,7 @@ fn feature_journeys_kill_reopen_keep_content() {
                 }
                 _ => unreachable!(),
             }
-            let output = Command::new(std::env::current_exe().unwrap())
+            let output = Command::new(tine_store::test_binary::own_test_binary())
                 .arg("--exact")
                 .arg("i02_crash_gaps::crash_feature_worker")
                 .arg("--nocapture")

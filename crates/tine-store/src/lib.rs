@@ -128,6 +128,8 @@ pub mod restore;
 #[cfg(test)]
 mod search_edit_tests;
 pub mod store;
+#[cfg(any(test, feature = "test-faults"))]
+pub mod test_binary;
 #[cfg(test)]
 mod test_cfg;
 #[cfg(test)]

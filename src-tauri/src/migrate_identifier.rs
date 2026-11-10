@@ -320,7 +320,7 @@ mod tests {
             "master-only",
             "current bytes",
         );
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(tine_store::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "migrate_identifier::tests::crash_child_after_parking",

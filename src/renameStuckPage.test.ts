@@ -77,6 +77,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({
     outcome: "renamed",
     touched: [{ path: "pages/Old.md", moved: true }, { path: "pages/Referrer.md", moved: false }],
+    renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }],
   });
   const rewritten: PageRead = {
     id: "pages/Referrer.md", name: "Referrer", kind: "page", title: "Referrer", pre_block: null, rev: "r2",
@@ -118,7 +119,7 @@ it.each(cases)("a stuck page blocks a rename only when the rename would touch it
 it("a rename with every page saved sends no unsaved paths and keeps untouched pages", async () => {
   graph("Other");
   vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/Old.md", moved: true }] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }], touched: [{ path: "pages/Old.md", moved: true }] });
   const other = doc.byId.other;
   expect(await renameOrMergePage("Old", "New")).toBe("renamed");
   expect(rename).toHaveBeenCalledWith("Old", "New", "rename-page", undefined, undefined, []);
@@ -130,7 +131,7 @@ it("a rename with every page saved sends no unsaved paths and keeps untouched pa
 it("a rewritten page that cannot be re-read leaves the working set instead of staying stale", async () => {
   graph("Other");
   vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
-  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/Referrer.md", moved: false }] });
+  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: null }], touched: [{ path: "pages/Referrer.md", moved: false }] });
   vi.spyOn(backend(), "getPageByPath").mockRejectedValue(new Error("io:NotFound"));
   expect(await renameOrMergePage("Old", "New")).toBe("renamed");
   expect(doc.pages.some((loaded) => loaded.name === "Referrer")).toBe(false);
@@ -149,7 +150,7 @@ it.each([true, false])("a stuck page blocks a rename exactly when the rename wou
   graph("Other");
   await stuckDisk("Other", "io:PermissionDenied");
   vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: null }], touched: [] });
   const asked = vi.spyOn(backend(), "renameWouldChange").mockResolvedValue([false, changes]);
   setDoc("pages", doc.pages.findIndex((loaded) => loaded.name === "Other"), "preBlock", "title:: Other");
   setRaw("other", "draft about [[old]]", { timetracking: false });

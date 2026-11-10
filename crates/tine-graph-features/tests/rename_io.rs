@@ -70,7 +70,7 @@ fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts
     for index in 0..referrers {
         files.push((
             format!("pages/Ref{index:05}.md"),
-            format!("- links [[Target]] {index}\n"),
+            format!("- links [[Target]] [[Target/ghost]] {index}\n"),
         ));
     }
     files.push(("pages/Target.md".into(), "- the target\n".into()));
@@ -91,10 +91,13 @@ fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts
         store.stop_watcher_for_tests();
     }
     cost_counters::reset();
-    hosted(&store, watcher, |host| {
-        pages::rename_page_expected(&store, host, "Target", "Renamed", None)
+    let report = hosted(&store, watcher, |host| {
+        pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
     })
     .unwrap();
+    assert!(report.renamed.iter().any(|page| page.from == "Target/ghost"
+        && page.to == "Renamed/ghost"
+        && page.path.is_none()));
     if watcher == Watcher::Drained {
         // After the host stopped: the watcher's re-reads of what the rename
         // wrote (contract §5.4, REVIEW-3b-P2b-2 N3).
@@ -107,7 +110,7 @@ fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(
         fs::read_to_string(root.join("pages/Ref00001.md")).unwrap(),
-        "- links [[Renamed]] 1\n"
+        "- links [[Renamed]] [[Renamed/ghost]] 1\n"
     );
     store.close();
     counts

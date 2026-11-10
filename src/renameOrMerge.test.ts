@@ -23,7 +23,7 @@ afterEach(() => {
 it("asks before merging onto an existing page and names the confirmed survivor", async () => {
   const asked = offer({ kind: "merge", into: "pages/New.md", name: "New", journal: false });
   const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }], touched: [] });
   expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("merged");
   expect(confirm).toHaveBeenCalledWith("Page “New” already exists. Merge “Old” into it?", { okLabel: "Merge pages", cancelLabel: "Cancel" });
   expect(rename).toHaveBeenCalledWith("Old", "New", "rename-page", "pages/Old.md", "pages/New.md", []);
@@ -34,7 +34,7 @@ it("asks before merging onto an existing page and names the confirmed survivor",
 it("declining the merge writes nothing", async () => {
   offer({ kind: "merge", into: "pages/New.md", name: "New", journal: false });
   vi.spyOn(backend(), "confirm").mockResolvedValue(false);
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }], touched: [] });
   expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("cancelled");
   expect(rename).not.toHaveBeenCalled();
 });
@@ -42,7 +42,7 @@ it("declining the merge writes nothing", async () => {
 it("renames without asking when the backend's plan is a plain rename", async () => {
   offer({ kind: "rename" });
   const confirm = vi.spyOn(backend(), "confirm");
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [] }).mockResolvedValueOnce({ outcome: "renamed", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: "pages/Old.md" }], touched: [] }).mockResolvedValueOnce({ outcome: "renamed", renamed: [{ from: "Old", to: "old", path: null }], touched: [] });
   expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("renamed");
   // GH #609: the same identity changes spelling without a merge prompt.
   expect(await renameOrMergePage("Old", "old")).toBe("renamed");
@@ -57,7 +57,7 @@ it("renames without asking when the backend's plan is a plain rename", async () 
 it("retries an entry-first interrupted rename from its still-old displayed title", async () => {
   offer({ kind: "rename" });
   const confirm = vi.spyOn(backend(), "confirm");
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/Old.md", moved: false }] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "old", to: "Old", path: "pages/Old.md" }], touched: [{ path: "pages/Old.md", moved: false }] });
   expect(await renameOrMergePage("old", "Old", { name: "old", pageKind: "page", path: "pages/Old.md" })).toBe("renamed");
   expect(rename).toHaveBeenCalledWith("old", "Old", "rename-page", "pages/Old.md", undefined, []);
   expect(confirm).not.toHaveBeenCalled();
@@ -66,7 +66,7 @@ it("retries an entry-first interrupted rename from its still-old displayed title
 it("asks before merging from a file-less name into the page the backend names", async () => {
   offer({ kind: "merge", into: "pages/New.md", name: "New", journal: false });
   const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "Ghost", to: "New", path: null }], touched: [] });
   expect(await renameOrMergePage("Ghost", "New")).toBe("merged");
   expect(rename).toHaveBeenLastCalledWith("Ghost", "New", "rename-page", undefined, "pages/New.md", []);
   expect(confirm).toHaveBeenCalledTimes(1);
@@ -77,7 +77,7 @@ it("asks before merging from a file-less name into the page the backend names", 
 it("offers a merge into a journal day reached by another date spelling", async () => {
   offer({ kind: "merge", into: "journals/2026_10_26.md", name: "Oct 26th, 2026", journal: true });
   const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "meeting", to: "2026-10-26", path: null }], touched: [] });
   expect(await renameOrMergePage("meeting", "2026-10-26")).toBe("merged");
   expect(confirm.mock.calls[0][0]).toContain("“Oct 26th, 2026”");
   expect(rename).toHaveBeenLastCalledWith("meeting", "2026-10-26", "rename-page", undefined, "journals/2026_10_26.md", []);
@@ -88,7 +88,7 @@ it("offers a merge into a journal day reached by another date spelling", async (
 it("an alias-only name asks merge / own page / cancel and sends the answer", async () => {
   offer({ kind: "aliasOf", owner: "pages/Machine Learning.md", name: "Machine Learning", merge: true, ownPage: true });
   const confirm = vi.spyOn(backend(), "confirm");
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "ML notes", to: "ML", path: "pages/ML notes.md" }], touched: [] });
   const answer = async (choice: "merge" | "own-page" | null) => {
     const pending = renameOrMergePage("ML notes", "ML", { name: "ML notes", pageKind: "page", path: "pages/ML notes.md" });
     await vi.waitFor(() => expect(aliasRenameRequest()).not.toBeNull());
@@ -108,7 +108,7 @@ it("an alias-only name asks merge / own page / cancel and sends the answer", asy
 
 it("an alias-only source uses Rust's merge-only offer and submits no source file", async () => {
   const asked = offer({ kind: "aliasOf", owner: "pages/Artificial Intelligence.md", name: "Artificial Intelligence", merge: true, ownPage: false });
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", renamed: [{ from: "ML", to: "AI", path: null }], touched: [] });
   const pending = renameOrMergePage("ML", "AI", { name: "ML", pageKind: "page" });
   await vi.waitFor(() => expect(aliasRenameRequest()).not.toBeNull());
   const request = aliasRenameRequest()!;
@@ -153,7 +153,7 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
   expect(await renameOrMergePage("Old", "New")).toBe("busy");
   release();
   let finish!: () => void;
-  vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finish = () => done({ outcome: "renamed", touched: [] }); }));
+  vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finish = () => done({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: null }], touched: [] }); }));
   const pending = renameOrMergePage("Old", "New");
   await vi.waitFor(() => expect(backend().renamePage).toHaveBeenCalledOnce());
   // The graph owner is the binding (R4): a graph switch/restore retires it.
@@ -169,7 +169,7 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
 it("a rename that lands after a display repaint reports what it did", async () => {
   offer({ kind: "rename" });
   let finish!: () => void;
-  vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finish = () => done({ outcome: "renamed", touched: [] }); }));
+  vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finish = () => done({ outcome: "renamed", renamed: [{ from: "Old", to: "New", path: null }], touched: [] }); }));
   const pending = renameOrMergePage("Old", "New");
   await vi.waitFor(() => expect(backend().renamePage).toHaveBeenCalledOnce());
   bumpGraphEpoch();
@@ -182,7 +182,7 @@ it("a rename that lands after a display repaint reports what it did", async () =
 // claim a case-only rename there.
 it("words unchanged spelling and absent source truthfully", async () => {
   offer({ kind: "rename" });
-  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", touched: [] });
+  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", renamed: [], touched: [] });
   const outcome = await renameOrMergePage("Draft", "Other");
   expect(outcome).toBe("unchanged");
   const message = renameOutcomeMessage(outcome, "Draft", "Other")!;
@@ -196,7 +196,7 @@ it("a case-only rename refreshes recent and right-sidebar names through the ordi
   setRecentPages([{ name: "my note", kind: "page", path: "pages/my note.md" }]);
   setRightSidebar([{ kind: "page", name: "my note", pageKind: "page", path: "pages/my note.md" }]);
   offer({ kind: "rename" });
-  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/my note.md", moved: true }] });
+  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "my note", to: "My Note", path: "pages/my note.md" }], touched: [{ path: "pages/my note.md", moved: true }] });
   const confirmed = vi.spyOn(backend(), "confirm");
   expect(await renameOrMergePage("my note", "My Note", { name: "my note", pageKind: "page", path: "pages/my note.md" })).toBe("renamed");
   expect(recentPages()).toEqual([{ name: "My Note", kind: "page" }]);

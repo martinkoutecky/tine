@@ -173,9 +173,10 @@ fn single_rename_refuses_unwritable_and_unsaved_referrers_untouched() {
             error.to_string(),
             format!(
                 "cannot rename: {} is a read-only .org file (does not round-trip)",
-                root.join("pages/o.org").display()
+                shown_path(&root.join("pages/o.org"))
             )
         );
+        assert!(!error.to_string().contains(r"\\?\"), "{error}");
         assert_eq!(text_at(&root, "pages/o.org"), org);
         assert_eq!(text_at(&root, "pages/old.md"), "- old\n");
         assert_eq!(text_at(&root, "pages/r.md"), "- see [[old]]\n");
@@ -294,9 +295,10 @@ fn a_single_org_title_rebind_keeps_its_unwritable_refusal() {
         error.to_string(),
         format!(
             "cannot rename: {} is a read-only .org file (does not round-trip)",
-            root.join("pages/Old.org").display()
+            shown_path(&root.join("pages/Old.org"))
         )
     );
+    assert!(!error.to_string().contains(r"\\?\"), "{error}");
     assert_eq!(text_at(&root, "pages/Old.org"), content);
     assert!(!root.join("pages/New.org").exists());
 }
@@ -883,6 +885,40 @@ fn a_hosted_rename_routes_by_the_plan_shape() {
 }
 
 /// A graph under a temp dir: `files` relative to the graph root.
+/// A file as a refusal names it: where it really is (the temp dir may be an
+/// 8.3 or symlinked spelling), without Windows' verbatim `\\?\` prefix.
+fn shown_path(path: &std::path::Path) -> String {
+    let real = disk::canonicalize(path).unwrap();
+    tine_core::graph_paths::normalize_graph_path(&real.display().to_string())
+}
+
+/// A Windows user reads the refusal: the verbatim prefix of a canonical path
+/// never reaches the message, on any platform the path string arrives from.
+#[test]
+fn a_read_only_org_refusal_names_the_file_without_the_verbatim_prefix() {
+    for (path, shown) in [
+        (
+            r"\\?\C:\Users\me\graph\pages\Old.org",
+            r"C:\Users\me\graph\pages\Old.org",
+        ),
+        (
+            r"\\?\UNC\server\share\graph\pages\Old.org",
+            r"\\server\share\graph\pages\Old.org",
+        ),
+        (
+            "/home/me/graph/pages/Old.org",
+            "/home/me/graph/pages/Old.org",
+        ),
+    ] {
+        let error = read_only_org(std::path::Path::new(path));
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            error.to_string(),
+            format!("cannot rename: {shown} is a read-only .org file (does not round-trip)")
+        );
+    }
+}
+
 fn b2_graph(files: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf, Arc<Store>) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("graph");

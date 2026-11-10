@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -1044,15 +1045,18 @@ fn fetch_ref_cas_preserves_a_concurrent_external_fetch() {
     let log = server.log.clone();
     let root = f.root.clone();
     let release = f._dir.path().join("release-request");
+    let (returned, ended) = mpsc::channel::<()>();
     let external = std::thread::spawn(move || {
-        wait_for_stall(&log);
-        let repo = Repository::open(&root).unwrap();
-        repo.reference("refs/remotes/origin/main", local, true, "external fetch")
-            .unwrap();
-        fs::write(release, "release").unwrap();
+        if wait_for_stall(&log, &ended) {
+            let repo = Repository::open(&root).unwrap();
+            repo.reference("refs/remotes/origin/main", local, true, "external fetch")
+                .unwrap();
+            fs::write(release, "release").unwrap();
+        }
     });
     let before = f.snapshot();
     let outcome = server.operation(None).0.fetch(&f.root);
+    drop(returned);
     external.join().unwrap();
     assert_eq!(outcome, Outcome::Busy);
     assert_eq!(
@@ -1077,15 +1081,18 @@ fn push_refuses_a_checkout_change_during_advertisement() {
     let log = server.log.clone();
     let root = f.root.clone();
     let release = f._dir.path().join("release-request");
+    let (returned, ended) = mpsc::channel::<()>();
     let external = std::thread::spawn(move || {
-        wait_for_stall(&log);
-        Repository::open(root)
-            .unwrap()
-            .set_head("refs/heads/other")
-            .unwrap();
-        fs::write(release, "release").unwrap();
+        if wait_for_stall(&log, &ended) {
+            Repository::open(root)
+                .unwrap()
+                .set_head("refs/heads/other")
+                .unwrap();
+            fs::write(release, "release").unwrap();
+        }
     });
     let outcome = server.operation(None).0.push_upstream(&f.root);
+    drop(returned);
     external.join().unwrap();
     assert!(matches!(outcome, Outcome::Refused(reason) if reason.contains("branch changed")));
     assert_eq!(
@@ -1130,11 +1137,20 @@ fn sync_refuses_symbolic_tracking_refs_and_missing_or_conflicted_indexes() {
     ));
 }
 
-fn wait_for_stall(log: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !fs::read_to_string(log).unwrap_or_default().contains("102") {
-        assert!(Instant::now() < deadline, "fixture never received git POST");
-        std::thread::sleep(Duration::from_millis(10));
+/// Wait until the fixture holds a request (its 102 mark): true. False once
+/// the operation returned (`ended` disconnects) without reaching it; the
+/// test's own assertions then say how it ended. No wall-clock deadline: the
+/// fixture holds until the test acts, and the client's own timeouts bound
+/// the operation (flakes-1110: a 5 s deadline here failed on a loaded host).
+fn wait_for_stall(log: &Path, ended: &mpsc::Receiver<()>) -> bool {
+    loop {
+        if fs::read_to_string(log).unwrap_or_default().contains("102") {
+            return true;
+        }
+        match ended.recv_timeout(Duration::from_millis(10)) {
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            _ => return false,
+        }
     }
 }
 
@@ -1145,23 +1161,33 @@ fn https_clone_cancellation_and_mid_fetch_failure_remove_the_new_folder() {
         let server = Server::start(&f, "stall-fetch", "");
         let root = f._dir.path().join("cloned");
         let cancel = Arc::new(AtomicBool::new(false));
-        let options = TransportOptions {
-            read_timeout: Duration::from_millis(300),
-            ..TransportOptions::default()
+        // The stall never ends: a cancel ends the cancelled clone, a short
+        // read timeout the other. The cancelled one keeps the default
+        // timeout, so its cancel never races the timeout on a loaded host.
+        let options = if cancelled {
+            TransportOptions::default()
+        } else {
+            TransportOptions {
+                read_timeout: Duration::from_millis(300),
+                ..TransportOptions::default()
+            }
         };
         let op = server
             .operation_at(None, server.remote(), &options, cancel.clone())
             .0;
+        let (returned, ended) = mpsc::channel::<()>();
         let canceller = if cancelled {
             let log = server.log.clone();
             Some(std::thread::spawn(move || {
-                wait_for_stall(&log);
-                cancel.store(true, Ordering::Release);
+                if wait_for_stall(&log, &ended) {
+                    cancel.store(true, Ordering::Release);
+                }
             }))
         } else {
             None
         };
         let result = op.clone_graph(&server.remote(), &root);
+        drop(returned);
         if let Some(canceller) = canceller {
             canceller.join().unwrap();
             assert_eq!(result, Outcome::Cancelled);
@@ -1197,20 +1223,31 @@ fn https_cancel_aborts_stalled_fetch_and_push_and_releases_locks() {
             )
             .0;
         let log = server.log.clone();
+        let (returned, ended) = mpsc::channel::<()>();
         let canceller = std::thread::spawn(move || {
-            wait_for_stall(&log);
-            cancel.store(true, Ordering::Release);
+            let stalled = wait_for_stall(&log, &ended);
+            if stalled {
+                cancel.store(true, Ordering::Release);
+            }
+            stalled.then(Instant::now)
         });
-        let started = Instant::now();
         let before = f.snapshot();
         let result = if mode == "stall-fetch" {
             op.fetch(&f.root)
         } else {
             op.push_upstream(&f.root)
         };
-        canceller.join().unwrap();
+        let finished = Instant::now();
+        drop(returned);
+        let cancelled_at = canceller.join().unwrap();
+        // The stall never ends and the read timeout would answer Network:
+        // Cancelled means the cancel aborted the open request.
         assert_eq!(result, Outcome::Cancelled, "{mode}");
-        assert!(started.elapsed() < Duration::from_secs(5));
+        // What the user waits for after pressing cancel (the transport
+        // polls the flag every 50 ms), not the TLS and advertisement work
+        // before the stall, which a loaded host stretches.
+        let latency = finished.saturating_duration_since(cancelled_at.unwrap());
+        assert!(latency < Duration::from_secs(5), "{mode}: {latency:?}");
         assert_eq!(f.snapshot(), before);
         assert!(!f.repo.path().join("index.lock").exists());
     }
