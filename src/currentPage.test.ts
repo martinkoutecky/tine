@@ -53,9 +53,9 @@ describe("current page snapshot", () => {
     state.element = null;
     expect(currentPage()).toMatchObject({ block_url: null });
   });
-  it("does not report an old window's page when another app has focus", () => {
+  it("answers the last-focused window's page while another app (the asking terminal) has focus", () => {
     state.focused = false;
-    expect(currentPage()).toEqual({ kind: "no-current-page", reason: "no-focused-window" });
+    expect(currentPage()).toMatchObject({ kind: "current-page", name: state.page });
   });
   it("still answers the page for a new block with only a transient key", () => {
     focusEditor("focused-pane", "b-new-block");

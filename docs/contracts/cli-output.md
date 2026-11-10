@@ -82,8 +82,9 @@ Kind `status`.
 
 ### `page.current`
 
-`tine page current` asks the selected graph's running owner for the focused
-window's active pane. Graph selection follows `page show` (`--graph`, `TINE_GRAPH`,
+`tine page current` asks the selected graph's running owner for the active pane
+of its most recently focused window, whether or not Tine has OS focus (the
+asking script's app usually does). Graph selection follows `page show` (`--graph`, `TINE_GRAPH`,
 or the working directory). It never starts `serve`. Like `page show`, it uses
 the endpoint's ordinary admission gate and can return `busy` during handover.
 
@@ -97,7 +98,7 @@ All Pages, search, PDF and other non-page panes have no current page.
 
 Kind `no-current-page` is an ordinary answer on stdout, exiting 3. Text includes
 its reason: `no-owner-endpoint` (no endpoint for the selected graph),
-`no-focused-window` (also a headless owner), `not-page`, or `journals`.
+`no-focused-window` (a headless owner: no graph window), `not-page`, or `journals`.
 A frontend that fails to answer within 5 seconds
 returns `busy` on stderr; it is not reported as an absent page.
 

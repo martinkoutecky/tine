@@ -5,13 +5,13 @@ import { editingId } from "./editorController";
 import type { CurrentPage } from "./nativeTineLinks";
 import { ownedWhen, readOwned, readOwnedResource } from "./owned";
 import { focusedRouterOf } from "./panes";
-import { activeElement, activeWindow, activeWindowId } from "./windowRealm";
+import { activeElement, activeWindowId } from "./windowRealm";
 
-/** Snapshot the focused window's active pane. O(route/URL bytes + DOM depth),
+/** Snapshot the most recently focused graph window's active pane, whether or not
+ * Tine has OS focus now (the asking script's app usually has it). O(route/URL bytes + DOM depth),
  * no graph I/O, mutation or rendering. The rendered editor supplies the existing
  * external block identity; another pane's retained edit is not focus. */
 export function currentPage(): CurrentPage {
-  if (!activeWindow().document.hasFocus()) return { kind: "no-current-page", reason: "no-focused-window" };
   const router = focusedRouterOf(activeWindowId());
   const route = router.route();
   if (route.kind !== "page" && route.kind !== "journals") return { kind: "no-current-page", reason: "not-page" };
