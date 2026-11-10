@@ -12,6 +12,7 @@ import { bindTestHost } from "../document/host/wiring.test.support";
 import { contextMenu, favorites, seedFavorites, setContextMenu, setRecentPages } from "../ui";
 import { openJournals, route } from "../router";
 import { Sidebar } from "./Sidebar";
+import { ContextMenu } from "./ContextMenu";
 
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
 function setRect(el: Element, top: number) {
@@ -308,23 +309,98 @@ describe("favorites arrangement in the sidebar", () => {
       dispose();
     });
 
-    it("the hold opens neither the platform's nor the row's menu; a mouse right-click still opens it", async () => {
+    // GH #921: a still hold opens the row's own menu (as a right-click does);
+    // the platform's menu never opens; moving the held finger drags instead.
+    it("GH #921: a still hold opens the row's menu, not the platform's; the release keeps it open", async () => {
       vi.useFakeTimers();
       const { dispose, rows, layoutRows } = mount();
+      const menuRoot = document.body.appendChild(document.createElement("div"));
+      const disposeMenu = render(() => <ContextMenu />, menuRoot);
       layoutRows();
       const beta = rows()[1];
       beta.dispatchEvent(touch("pointerdown", 10, 40));
       vi.advanceTimersByTime(600);
-      const hold = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 40 });
-      beta.dispatchEvent(hold);
-      expect(hold.defaultPrevented).toBe(true);
-      expect(contextMenu()).toBeFalsy();
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta", x: 10, y: 40 });
+      const opened = contextMenu();
+      // Android's own hold menu, arriving over the open menu, neither opens nor closes anything.
+      const platform = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 40 });
+      menuRoot.querySelector(".ctx-overlay")!.dispatchEvent(platform);
+      expect(platform.defaultPrevented).toBe(true);
+      expect(contextMenu()).toBe(opened);
       document.dispatchEvent(touch("pointerup", 10, 40));
+      // The release's compatibility click lands on the menu that opened under the finger.
+      menuRoot.querySelector(".ctx-overlay")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      vi.advanceTimersByTime(10);
+      expect(contextMenu()).toBe(opened);
+      expect(route().kind).toBe("journals");
+      expect(favorites().map((f) => f.name)).toEqual(["Alpha", "Beta", "Gamma"]);
+      // The next tap is the user's: it closes the menu as ever.
+      menuRoot.querySelector(".ctx-overlay")!.dispatchEvent(touch("pointerdown", 150, 150));
+      menuRoot.querySelector<HTMLElement>(".ctx-overlay")!.click();
+      expect(contextMenu()).toBeFalsy();
+      vi.useRealTimers();
+      // A mouse right-click still opens it.
+      beta.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 40 }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta" });
+      disposeMenu();
+      dispose();
+    });
+
+    it.each(["touch", "pen"])("GH #921: Escape after a released %s hold lets another row open its keyboard context menu", (pointerType) => {
+      vi.useFakeTimers();
+      const { dispose, rows } = mount();
+      const menuRoot = document.body.appendChild(document.createElement("div"));
+      const disposeMenu = render(() => <ContextMenu />, menuRoot);
+      const heldPointer = (type: string) => {
+        const event = pointer(type, 10, 40);
+        Object.defineProperty(event, "pointerType", { value: pointerType });
+        return event;
+      };
+      try {
+        rows()[1].dispatchEvent(heldPointer("pointerdown"));
+        vi.advanceTimersByTime(600);
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta" });
+        document.dispatchEvent(heldPointer("pointerup")); // no compatibility click
+        menuRoot.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        expect(contextMenu()).toBeFalsy();
+        rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, detail: 0 }));
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+      } finally {
+        document.dispatchEvent(heldPointer("pointerdown")); // retire ownership even on failure
+        vi.advanceTimersByTime(10);
+        disposeMenu();
+        dispose();
+      }
+    });
+
+    it("GH #921: moving the held finger closes the hold's menu and drags; a move before the hold opens none", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      const [alpha, , gamma] = rows();
+      alpha.dispatchEvent(touch("pointerdown", 10, 10));
+      document.dispatchEvent(touch("pointermove", 10, 40)); // before the hold: a scroll
+      vi.advanceTimersByTime(1000);
+      document.dispatchEvent(touch("pointerup", 10, 40));
+      expect(contextMenu()).toBeFalsy();
+      alpha.dispatchEvent(touch("pointerdown", 10, 10));
+      vi.advanceTimersByTime(600);
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+      const prev = document.elementFromPoint;
+      document.elementFromPoint = () => gamma;
+      try {
+        document.dispatchEvent(touch("pointermove", 13, 14)); // a still finger's jitter keeps the menu
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+        document.dispatchEvent(touch("pointermove", 10, 85));
+        expect(contextMenu()).toBeFalsy();
+        document.dispatchEvent(touch("pointerup", 10, 85));
+      } finally { document.elementFromPoint = prev; }
       vi.advanceTimersByTime(10);
       vi.useRealTimers();
-      expect(favorites().map((f) => f.name)).toEqual(["Alpha", "Beta", "Gamma"]);
-      beta.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 40 }));
-      expect(contextMenu()).toBeTruthy();
+      await settle();
+      expect(contextMenu()).toBeFalsy();
+      expect(favorites().map((f) => f.name)).toEqual(["Beta", "Gamma", "Alpha"]);
+      expect(configWrites).toEqual([[["Beta", "Gamma", "Alpha"], null]]);
       dispose();
     });
 

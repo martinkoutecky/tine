@@ -64,12 +64,12 @@ it("the Guide explains compatible plugin updates and the complete Chinese interf
 
 it("the Guide teaches the sidebar tab tree (GH #704)", () => {
   const tabs = guide("keep-context-visible");
-  for (const detail of ["drag it right, under another tab, to nest it there", "hold a row still for a moment, then drag", "collapses them in the sidebar list only", "**Move out of group**", "Closing a tab never closes the tabs nested under it", "Pinned tabs stay at the top and never nest", "pins and groups included"]) expect(tabs).toContain(detail);
+  for (const detail of ["drag it right, under another tab, to nest it there", "hold a row still for a moment, then drag", "collapses them in the sidebar list only", "**Move out of group**", "on a touch screen, hold it still;", "Closing a tab never closes the tabs nested under it", "Pinned tabs stay at the top and never nest", "pins and groups included"]) expect(tabs).toContain(detail);
   expect(guide("where-things-are")).toContain("nest one tab under another");
 });
 
-it("the Guide teaches the Favorites touch hold (D-20261019-FT1)", () => {
-  expect(guide("where-things-are")).toContain("hold a favorite still for a moment to pick it up, then drag; a finger that moves first scrolls the list");
+it("the Guide teaches the Favorites touch hold (D-20261019-FT1) and its menu (GH #921)", () => {
+  expect(guide("where-things-are")).toContain("hold a favorite still for a moment to open its menu (the one a right-click opens), or hold it and then drag to pick it up and move it; a finger that moves first scrolls the list");
 });
 
 it("the Guide says Quick Capture takes pasted images as graph assets (GH #835)", () => {
