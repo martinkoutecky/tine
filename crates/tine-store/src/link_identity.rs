@@ -213,7 +213,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(temp.path().join("pages")).unwrap();
         std::fs::write(temp.path().join("pages/A.md"), b"- no block id yet\n").unwrap();
-        let result = std::process::Command::new(std::env::current_exe().unwrap())
+        let result = std::process::Command::new(crate::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "link_identity::tests::link_identity_crash_worker",

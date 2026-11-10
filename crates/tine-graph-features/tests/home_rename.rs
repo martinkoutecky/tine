@@ -270,7 +270,7 @@ fn a_home_rename_killed_at_each_step_reopens_whole() {
         let app_data = tempfile::tempdir().unwrap();
         fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
         fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "home_rename::crash_home_rename_worker",

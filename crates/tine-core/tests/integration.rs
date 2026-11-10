@@ -21,6 +21,12 @@ mod linkable_page_property_refs;
 #[path = "logseq_pdf_edn.rs"]
 mod logseq_pdf_edn;
 
+// tine-store owns how a test starts its own binary again; tine-core has no
+// dependency on it, so its one such test compiles the same source.
+#[cfg(unix)]
+#[path = "../../tine-store/src/test_binary.rs"]
+mod test_binary;
+
 #[path = "lsdoc_parse_boundary.rs"]
 mod lsdoc_parse_boundary;
 
