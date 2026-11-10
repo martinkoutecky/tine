@@ -24,11 +24,18 @@
 //! order they visit the seeds in.
 //!
 //! `fileless_names::DaySupport` maintains these seeds transiently for full
-//! inventory and typed day deltas. This module also folds supplied inputs for
-//! baseline-aware completion and fresh test oracles. The ordinary one-key answer reads only the
-//! names whose key starts with that key (a parent's key is always a prefix of
-//! its child's key: the fold trims, lowercases per character and strips a
-//! boundary slash, none of which crosses the `/` a prefix ends at).
+//! inventory and typed day deltas: one bucket per parent key holding every
+//! seed `(spelling, source)`, carried per changed page. The publication's
+//! one-key answer reads that bucket's least spelling
+//! (`ReadSnapshot::resident_namespace_seed`, O(log P)). This module also folds
+//! supplied inputs for baseline-aware completion and fresh test oracles.
+//! Before the support is resident (only `[[` completion has read: it builds
+//! the name table, not the support) the one-key answer
+//! ([`ReadSnapshot::namespace_seed`], also the resident read's test oracle)
+//! reads only the names whose key starts with that key (a parent's key
+//! is always a prefix of its child's key: the fold trims, lowercases per
+//! character and strips a boundary slash, none of which crosses the `/` a
+//! prefix ends at).
 use super::referenced_names::ReferencedNameTable;
 use super::ReadSnapshot;
 use std::collections::BTreeMap;
@@ -51,6 +58,28 @@ pub(crate) fn document_supplies_parents(doc: &tine_core::doc::Document) -> bool 
             .pre_block
             .as_deref()
             .is_some_and(|p| !p.trim().is_empty())
+}
+
+/// Names the one-key namespace-parent answer read, per asked key (the
+/// publication's inventory delta asks once per compared key and side, on the
+/// store's worker thread; a key keeps parallel tests apart).
+#[cfg(test)]
+static SEED_VISITS: std::sync::Mutex<BTreeMap<String, usize>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+#[cfg(test)]
+pub(super) fn seed_visit(key: &str) {
+    *SEED_VISITS
+        .lock()
+        .unwrap()
+        .entry(key.to_owned())
+        .or_default() += 1;
+}
+
+/// Read and reset the names visited for `key` since the last call.
+#[cfg(test)]
+pub(crate) fn take_seed_visits(key: &str) -> usize {
+    SEED_VISITS.lock().unwrap().remove(key).unwrap_or(0)
 }
 
 fn keep_least<'a>(slot: &mut Option<&'a str>, spelling: &'a str) {
@@ -158,7 +187,9 @@ impl ReadSnapshot {
 
     /// The least seed spelling for one key, or `None` when it is
     /// no seed: reads only the claims and referenced names whose key starts
-    /// with `key`. O(log V + those names).
+    /// with `key`. O(log V + those names). The publication reads
+    /// [`Self::resident_namespace_seed`] instead whenever the support is
+    /// resident; this walk answers only before it is, and is its test oracle.
     pub(crate) fn namespace_seed<'a>(
         &'a self,
         table: &'a ReferencedNameTable,
@@ -172,6 +203,8 @@ impl ReadSnapshot {
             if !child.starts_with(key) {
                 break;
             }
+            #[cfg(test)]
+            seed_visit(key);
             if name.contains('/') && self.file_supplies_parents(path) {
                 for (prefix, prefix_key) in parent_prefixes(name) {
                     if prefix_key == key {
@@ -184,6 +217,8 @@ impl ReadSnapshot {
             if !child.starts_with(key) {
                 break;
             }
+            #[cfg(test)]
+            seed_visit(key);
             if referrers.spelling.contains('/') {
                 for (prefix, prefix_key) in parent_prefixes(&referrers.spelling) {
                     if prefix_key == key {

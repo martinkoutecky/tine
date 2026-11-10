@@ -301,6 +301,24 @@ impl ReadSnapshot {
         self.day_support.get().is_some()
     }
 
+    /// The least namespace seed spelling of page key `key` (the answer
+    /// [`Self::namespace_seed`] walks for), read from the resident parents
+    /// support: its bucket orders every seed by spelling first, so its first
+    /// entry is the least. `None` when the support is not resident (nothing is
+    /// built here); `Some(None)` when `key` is no seed. O(log P) for P parent keys.
+    pub(crate) fn resident_namespace_seed(&self, key: &str) -> Option<Option<&str>> {
+        let support = self.day_support.get()?;
+        #[cfg(test)]
+        super::namespace_parents::seed_visit(key);
+        Some(
+            support
+                .parents
+                .get(key)
+                .and_then(|bucket| bucket.first())
+                .map(|((spelling, _), _)| spelling.as_str()),
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn assert_day_support_fresh(&self) {
         let rows = |support: &DaySupport| {

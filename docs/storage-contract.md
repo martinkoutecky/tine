@@ -1848,11 +1848,19 @@ prefix spelling of its seeds so the whole answer and an `inventoryDelta`'s
 one-key answer agree. The delta carries a parent's key whenever a changed
 reference name lies under it, or a page file under it gains its first content
 or loses its last, so a live edit that adds or removes its last child updates
-it. A parent opens itself (`Absent`, no `link`), is listed in All
+it. That one-key answer reads the least spelling from the in-memory parents
+support (`fileless_names::DaySupport`: per parent key, every seed ordered by
+spelling, carried per changed page), O(log P) for P parent keys whatever the
+namespace's size; it walks the names under the parent only in a session
+whose only reads so far are `[[` completion, which builds the name table but
+not that support (card hehIo;
+tests `a_namespaced_edit_reads_the_parent_entry_without_walking_its_children`,
+`the_resident_parent_answer_equals_the_walk_over_random_graphs`). A parent opens itself (`Absent`, no `link`), is listed in All
 pages and in page queries' page sets (`reference_only_page_names`), and its
 Linked References are the blocks under it by the namespace closure of
 references (Q6, `namespace_refs`), unchanged. Nothing is persisted: it is
-derived per read from the claims and the in-memory referenced-name table.
+derived per read from the claims, the in-memory referenced-name table and
+the in-memory parents support.
 Proof: `crates/tine-store/tests/inventory_delta.rs`, the conformance harness
 (`cm_conformance_tests.rs`, `src/cmConformanceNamespaces.test.ts`). The
 frontend's namespace views (sidebar tree, Namespaces, `{{namespace}}`,
