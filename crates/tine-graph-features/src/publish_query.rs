@@ -850,7 +850,7 @@ fn publication_assets(
             Err(tine_store::StoreError::InvalidTarget(_)) => {
                 warnings.push(format!("Asset {name} was omitted: not a regular file."));
             }
-            Err(tine_store::StoreError::NotFound) => {
+            Err(tine_store::StoreError::NotFound(_)) => {
                 warnings.push(format!("Asset {name} was omitted: file not found."));
             }
             Err(tine_store::StoreError::Io(error))

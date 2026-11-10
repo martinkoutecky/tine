@@ -194,10 +194,10 @@ pub fn feed_page_through(
     let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
         Ok(match store.page(id) {
             Ok(read) => Loaded::Page(feed_read(read)),
-            Err(StoreError::NotFound) if referenced.contains(&by_id[id]) => {
+            Err(StoreError::NotFound(_)) if referenced.contains(&by_id[id]) => {
                 Loaded::Page(virtual_day(store, by_id[id]))
             }
-            Err(StoreError::NotFound) => Loaded::Gone,
+            Err(StoreError::NotFound(_)) => Loaded::Gone,
             Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
             Err(error) => Loaded::Unreadable(store_error(error).to_string()),
         })
@@ -813,7 +813,7 @@ pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Res
     let plan = || {
         let rev = match store.read(&id, max) {
             Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
+            Err(StoreError::NotFound(_)) => {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     "no such journal file",

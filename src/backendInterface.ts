@@ -381,8 +381,11 @@ export interface Backend {
    *  duplicate day's files before reconciling. */
   readJournalFile(name: string): Promise<string>;
   /** Load a page from a SPECIFIC file by its graph-root-relative path — reaches a
-   *  duplicate-day stray that shares a (kind,name) with the canonical file (#21). */
-  getPageByPath(path: string): Promise<import("./types").PageRead | null>;
+   *  duplicate-day stray that shares a (kind,name) with the canonical file (#21).
+   *  The optional receiver gets the original read's provenance even for absence;
+   *  null means target validation rejected the path before selecting a source.
+   *  Uses the same single page-read IPC. */
+  getPageByPath(path: string, source?: (value: import("./types").PageReadSource | null) => void): Promise<import("./types").PageRead | null>;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
   mergePages(src: string, dst: string, kinds: EditKinds): Promise<void>;

@@ -2,6 +2,41 @@
 use super::*;
 
 #[test]
+fn missed_journal_delivery_keeps_held_absence_provenance_on_repeated_reads() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    live.store
+        .watch
+        .core_for_load()
+        .deaf
+        .store(true, std::sync::atomic::Ordering::Release);
+    let (key, _) = live.open("journals/2026_11_10.md");
+    let temp = live.root.join("journals/.syncthing.2026_11_10.md.tmp");
+    let bytes = b"- Synthetic sync delivery\n";
+    fs::write(&temp, bytes).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(&temp).unwrap();
+    file.set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .unwrap();
+    drop(file);
+    fs::rename(&temp, live.root.join(&key)).unwrap();
+    assert_eq!(
+        live.store
+            .read(&crate::FileId::from(key.clone()), None)
+            .unwrap()
+            .0,
+        bytes
+    );
+    for _ in 0..2 {
+        assert!(matches!(
+            live.store.page(&PageId::from(key.clone())),
+            Err(crate::StoreError::NotFound(
+                crate::PageReadSource::HeldAbsent
+            ))
+        ));
+    }
+    assert_eq!(fs::read(live.root.join(key)).unwrap(), bytes);
+}
+
+#[test]
 fn a_live_subfolder_move_of_a_clean_held_page_retires_its_old_claimant() {
     for watch in [crate::WatchMode::Notify, crate::WatchMode::Poll] {
         let live = Live::build(

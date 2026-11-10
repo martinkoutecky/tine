@@ -3,6 +3,37 @@
 //! read observed (GH #623 BR3 split these out of `Store::page`).
 use super::*;
 
+/// Provenance of a page answer, carried from the content-selection seam.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PageReadSource {
+    /// An unheld file read.
+    Disk,
+    /// The held owner's indexed bytes.
+    HeldBytes,
+    /// The held owner's indexed absence, without reading disk.
+    HeldAbsent,
+    /// An unindexed or uncertain held identity, read from disk unpublished.
+    HeldUnindexed,
+}
+
+/// Parsed page and the raw-byte revision used for a guarded save.
+pub struct PageRead {
+    /// Exact disk path identity. A case-alias request on a case-insensitive
+    /// volume returns the file's disk spelling.
+    pub id: PageId,
+    /// Parsed document.
+    pub doc: PageDto,
+    /// Revision of the bytes that produced `doc`.
+    pub rev: FileRev,
+    /// Reason a file cannot round-trip safely, if any. Reflects the parsed
+    /// `doc.read_only` flag; a twin claim alone does not set it. Save checks
+    /// disk safety again rather than trusting either caller-supplied flag.
+    pub read_only: Option<String>,
+    /// Where this answer obtained its bytes.
+    pub source: PageReadSource,
+}
+
 impl Store {
     /// The validated page file `id` names: its disk spelling, path and
     /// listing entry. Refuses a symlinked page or one outside the areas.
@@ -45,23 +76,39 @@ impl Store {
     /// bytes, named and parsed from them, with no read of the file; one
     /// its owner has not indexed yet is parsed from the file, unpublished.
     /// None for a page no host holds.
-    pub(super) fn held_page(&self, path: &Path) -> Result<Option<PageDto>, StoreError> {
-        let read = match self.graph.source(path) {
+    pub(super) fn held_page(
+        &self,
+        path: &Path,
+    ) -> Result<Option<(PageDto, PageReadSource)>, StoreError> {
+        let (read, source) = match self.graph.source(path) {
             crate::model::Source::Disk => return Ok(None),
-            crate::model::Source::Held(bytes) => {
-                page_dto(|| self.graph.page_dto_for_bytes(path, &bytes))
+            crate::model::Source::Held(bytes) => (
+                page_dto(|| self.graph.page_dto_for_bytes(path, &bytes)),
+                PageReadSource::HeldBytes,
+            ),
+            crate::model::Source::HeldAbsent => {
+                return Err(StoreError::NotFound(PageReadSource::HeldAbsent))
             }
-            crate::model::Source::HeldAbsent => Err(StoreError::NotFound),
-            crate::model::Source::HeldUnindexed => {
-                page_dto(|| self.graph.load_by_validated_path(path))
-            }
+            crate::model::Source::HeldUnindexed => (
+                page_dto(|| self.graph.load_by_validated_path(path)),
+                PageReadSource::HeldUnindexed,
+            ),
         };
-        read.map(Some)
+        read.map(|doc| Some((doc, source)))
+            .map_err(|error| match error {
+                StoreError::NotFound(_) => StoreError::NotFound(source),
+                other => other,
+            })
     }
 
     /// A parsed page as a read: its revision and read-only state.
-    pub(super) fn page_read(&self, id: PageId, mut doc: PageDto) -> Result<PageRead, StoreError> {
-        let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound)?);
+    pub(super) fn page_read(
+        &self,
+        id: PageId,
+        mut doc: PageDto,
+        source: PageReadSource,
+    ) -> Result<PageRead, StoreError> {
+        let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound(source))?);
         let read_only = if self.config().problem.is_some() {
             doc.read_only = true;
             Some("config.edn could not be read; graph is read-only".to_owned())
@@ -74,6 +121,7 @@ impl Store {
             doc,
             rev,
             read_only,
+            source,
         })
     }
 
@@ -109,7 +157,7 @@ impl Store {
     pub fn page_of(&self, id: &PageId, bytes: &[u8]) -> Result<PageRead, StoreError> {
         let (id, path, _) = self.page_target(id)?;
         let doc = page_dto(|| self.graph.page_dto_for_bytes(&path, bytes))?;
-        self.page_read(id, doc)
+        self.page_read(id, doc, PageReadSource::Disk)
     }
 
     /// Stage a byte-exact copy of `old`, the bytes of a conflicted page file
@@ -207,5 +255,49 @@ fn page_dto(
                 StoreError::from_io(error)
             }
         })?
-        .ok_or(StoreError::NotFound)
+        .ok_or(StoreError::NotFound(PageReadSource::Disk))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_read_carries_the_selected_source_including_absence() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("pages")).unwrap();
+        fs::write(temp.path().join("pages/a.md"), "- disk\n").unwrap();
+        let (store, _) = Store::open(temp.path(), Default::default()).unwrap();
+        store.whole_graph().unwrap();
+        store
+            .watch
+            .core_for_load()
+            .deaf
+            .store(true, Ordering::Release);
+        let id = PageId::from("pages/a.md");
+        assert_eq!(store.page(&id).unwrap().source, PageReadSource::Disk);
+        store.graph.hold_unhosted(id.as_str());
+        assert_eq!(
+            store.page(&id).unwrap().source,
+            PageReadSource::HeldUnindexed
+        );
+        fs::remove_file(temp.path().join("pages/a.md")).unwrap();
+        assert!(matches!(
+            store.page(&id),
+            Err(StoreError::NotFound(PageReadSource::HeldUnindexed))
+        ));
+        store
+            .graph
+            .publish_owned(id.as_str(), Some(Arc::from(&b"- owner\n"[..])), None)
+            .unwrap();
+        let read = store.page(&id).unwrap();
+        assert_eq!(read.source, PageReadSource::HeldBytes);
+        assert_eq!(read.doc.blocks[0].raw, "owner");
+        store.graph.publish_owned(id.as_str(), None, None).unwrap();
+        assert!(matches!(
+            store.page(&id),
+            Err(StoreError::NotFound(PageReadSource::HeldAbsent))
+        ));
+        store.close();
+    }
 }
