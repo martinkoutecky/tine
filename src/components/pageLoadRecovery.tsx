@@ -72,6 +72,9 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
       const owner = graphOwner(live);
       const path = r.path;
       let delay = 3000;
+      // A probe records a flight event only when its facts change: the probe
+      // repeats for as long as the route stays refused.
+      let recorded = "";
       let cancel = () => {};
       const arm = () => {
         const timer = setTimeout(() => { void probe(); }, delay);
@@ -89,10 +92,14 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
             retry();
             return;
           }
-          recordPageOpenRefusal("probe", mismatch, source);
+          const facts = JSON.stringify([source, mismatch.pathMismatch, mismatch.nameMismatch, mismatch.kindMismatch]);
+          if (facts !== recorded) {
+            recorded = facts;
+            recordPageOpenRefusal("probe", mismatch, source);
+          }
         } catch {
-          // Keep the original refusal on a probe failure, with no repeated
-          // toast or flight event; a publication can still recover the route.
+          // Keep the original refusal on a probe failure, with no toast or
+          // flight event; a publication can still recover the route.
         }
         if (!owner()) return;
         delay = Math.min(delay * 2, 60_000);
