@@ -343,7 +343,7 @@ fn a_config_write_killed_after_its_step_reopens_whole() {
     let _integration_guard = crate::integration_lock();
     let before = ";; keep\n{:favorites [\"Before\"]\n :unknown {:a [1 2]}}\n";
     let dir = scratch("crash", Some(before));
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(tine_store::test_binary::own_test_binary())
         .args([
             "--exact",
             "config_writes::crash_config_write_worker",
