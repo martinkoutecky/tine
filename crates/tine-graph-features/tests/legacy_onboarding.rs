@@ -226,7 +226,7 @@ fn guide_explains_margin_comments() {
         "Comment and reply editors hide every `tine.*` property",
         "speech bubble at the right edge",
         "click its **Reply…** box at the bottom",
-        "**Shift+Enter** adds a line",
+        "**Enter** and **Shift+Enter** insert a line break",
         "**Escape** or **Cancel** discards the draft",
         "empty reply creates no block and does not save the page",
         "short quote inside that same thread",
@@ -271,16 +271,34 @@ fn guide_explains_margin_comments() {
     assert!(tips
         .markdown
         .contains("Right-click the name chip (long-press on a phone) for the block menu"));
-    // Slice 2: the margin column on wide windows, and where it does not apply.
+    // D-20261107-MC3 §§5–7: width tiers and live annotation entry points.
     assert!(tips
         .markdown
         .contains("shows threads in a column on the right"));
     assert!(tips
         .markdown
-        .contains("**Enter** in a comment's text adds a reply under the thread root"));
+        .contains("**Enter** and **Shift+Enter** insert a line break"));
+    // D-20261108-MC7/MC8: hover opens the popover; no rail and no counts; only
+    // an unhighlightable thread keeps a marker; the In a popup display choice.
+    assert!(!tips.markdown.contains("slim passage rail"));
     assert!(tips
         .markdown
-        .contains("in the sidebar or in an embed, comments stay in the outline"));
+        .contains("hover the highlighted words to open their thread in a live popover"));
+    assert!(tips
+        .markdown
+        .contains("a click on the words still places the caret"));
+    assert!(tips
+        .markdown
+        .contains("its block shows a small comment marker that opens it"));
+    assert!(tips
+        .markdown
+        .contains("A block shows no count of its own comments."));
+    assert!(tips
+        .markdown
+        .contains("**In a popup** works the same at every width, including Wide mode"));
+    assert!(tips.markdown.contains("live popover"));
+    assert!(tips.markdown.contains("bottom sheet"));
+    assert!(tips.markdown.contains("swipe between passages"));
 }
 
 #[test]

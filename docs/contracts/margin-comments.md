@@ -1,0 +1,167 @@
+# Margin comment interaction
+
+Authority: D-20261107-MC3, design §§4–7 and 9; D-20261108-MC4, MC7, MC8; internal IDs
+UI-MC010-KEYBOARD, UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE,
+UI-MC010-DATES, UI-MC010-MEDIUM, UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY; GH #891 review
+findings 1 and 2.
+
+- Settings > Appearance > Comments offers **In the margin** (default) and
+  **In a popup** (D-20261108-MC7). This viewer preference uses the same
+  device-local display preference storage as Wide mode, under the key
+  `logseq-claude.comments-in-popup`; the earlier On click value is not migrated
+  (a viewer who chose it sees the default once). In a popup substitutes the
+  medium tier for the wide tier, including in Wide mode; phone widths still use
+  the bottom sheet. It applies live on every comment surface without changing
+  the graph. Switching preserves unsent reply drafts by thread and surface, just
+  as crossing tier widths does. Show/Hide comments takes precedence over either
+  display choice. Changing the preference costs one local preference write
+  and an O(1) tier comparison per mounted surface, with no graph I/O or IPC;
+  rendering the newly visible threads costs O(visible threads).
+
+- With In the margin, layout uses the containing pane's CSS width, including interface zoom. At
+  960 px the existing margin fits; below that threads never fall back to inline
+  cards. In a popup and the medium tier draw nothing beside the text: no
+  per-thread rail markers and no count on any chip (D-20261108-MC8).
+  Hovering a highlight with a mouse opens its thread through the hover
+  preview's own trigger, delay (Settings hover-preview delay, default 1 s),
+  100 ms close grace and popup-enter rules (`createPeekBridge`, shared with
+  page-link and block-reference previews). A mouse click on a highlight places
+  the caret and opens nothing; a press during the dwell cancels it. Touch and
+  pen taps open the thread; Enter or Space on a focused highlight opens it.
+  The thread opens in `PeekPopup`, sharing preview placement and outside-press,
+  Escape, scroll and resize dismissal; it stays live and editable, and a
+  focused comment editor or reply draft holds it open past pointer exit.
+  Hovering another passage preserves the current popup while it contains focus
+  or a non-empty reply draft. Only
+  an open thread the renderer drew no highlight for gives its block one small
+  glyph marker, labelled with the number of such threads, that opens the first
+  of them. That covers a quote that changed, matches more than once or covers
+  the whole block, and also one that resolves but cannot be marked (inside
+  inline code, across bold or other markup). Marker eligibility reads the
+  coverage the inline renderer reports (`QuoteCoverage`), never a second
+  derivation from the source, so every open thread keeps an entry point. A
+  thread sharing another's passage shares its mark. While the block is being
+  edited nothing is rendered and the marker keeps its last answer. A thread opened by a request rather than a pointer (a new comment,
+  Comment on existing, or an edit of one of its messages started elsewhere)
+  anchors below the commented block's text, never over it. Cards, replies and
+  document mutations are the same components and door
+  as in the wide margin. Expanded wide blocks have no count badge.
+- At 480 px or less, highlight or chip tap opens a bottom sheet capped at 55% of
+  the viewport height, leaving source text above; hover does not open at this
+  tier. Swipe horizontally or use the
+  previous/next controls to move between passages; same-passage threads stay
+  grouped. Only the shown passage's threads are mounted; the block's composers
+  retain drafts across navigation through the entry's draft leases. The chip
+  shows a comment glyph without a count (its accessible name still states the
+  number of own open roots) and remains reachable when the
+  block is folded. Show/Hide comments removes these entry points and surfaces.
+  Page routes, journal days, zoomed blocks, splits, sidebar blocks, references
+  and embeds follow the same width rule. Crossing the medium/phone boundary
+  while editing changes placement without replacing the editor. A held sheet
+  fits the visual viewport when a soft keyboard shrinks it; opening above an
+  existing keyboard reveals the source in the visible text strip. Removing its source
+  closes the compact surface; deleting its selected thread leaves any remaining
+  thread visible and replyable.
+
+- Surface order (GH #891 finding 2). One producer orders a block's thread roots:
+  `groupCommentEntries` sorts by resolved anchor start (file order breaks ties,
+  unresolved last) and groups by passage; `threadOrder` flattens the groups.
+  The margin cards and the popover's grouped cards render that order, and the
+  arrow keys in a thread consume the same list: past a thread's last message
+  the caret moves to the next root in the order, above a root to the previous
+  root's last message, and past either end to the commented block or the body
+  block after it. The margin walks every group of the block; the popover and
+  sheet walk only the group they show. Interleaved A (alpha), B (beta),
+  C (alpha) present and navigate as A, C, B.
+- Comment membership has one owner (GH #891 review round 3): the comment index
+  of each resolution scope (page, journal day, sidebar item, reference group,
+  zoomed block; `commentIndex.ts`). It answers which blocks are comments (with
+  their selectors and resolution), which comments are thread roots rather than
+  replies, and which roots lie under a subtree. The "N resolved" control, the
+  folded "N below" count, and every block's comment children (outline filter,
+  highlights, compact entry and popup, margin column) and margin eligibility
+  read it. A structural change rescans the scope's trees once with untracked
+  reads. Each mounted block's child-list memo then compares its own list; an
+  unchanged list retains its value and does not rerun downstream comment views.
+  Covering-index selection follows the block's ancestry rather than a global
+  structural revision. A raw edit of any
+  block on those pages runs one key screen (plus one facet lookup if it may
+  quote): a comment whose selector or resolution changed is updated in place
+  and notifies only its parent's readers and, for a root, the root readers; a
+  change of membership (an ordinary block gains a quote, a comment loses it, so
+  roots may become replies or back) rescans. Blocks outside every scope's trees
+  (quick capture) share one index per top-level tree.
+- Cost (GH #891 finding 1). Typing in an
+  ordinary sibling therefore costs a constant number of store reads and at most
+  one facet lookup, whatever the number of siblings (14 foreign raw reads and 1
+  facet lookup at 4, 16 and 64 siblings in the counter test); the native typing
+  p95 budget beside 64 siblings is 16 ms.
+
+- In either block editor, Enter and Shift+Enter insert a line break in a comment
+  or any reply. Ctrl/Cmd+Enter and Escape finish editing. These keys never split
+  the message, create a reply, or run the task command. IME composition and an
+  open completion popup retain their existing priority. Body Enter is unchanged.
+- Reply drafts keep Enter as a newline; Ctrl/Cmd+Enter or the visible Send button
+  posts the draft as a direct child of its thread root through the document door.
+  An empty draft never writes. Escape/Cancel discards the draft.
+- A collapsed body block shows an outlined “N below” chip for open thread roots
+  on descendant body blocks. Own threads and all replies are excluded; a root
+  with `tine.resolved:: true` is excluded from this count. The chip expands the
+  existing surface fold. The count reads the comment index's roots
+  (`createFoldedThreadCount`): O(roots × depth) when a root or the structure
+  changes, nothing on a comment-free page. Typing in the folded block
+  reads none of its hidden descendants (0 foreign raw reads at 4, 16 and 64
+  hidden children in the counter test); the native typing p95 budget above 64
+  hidden children is 16 ms.
+- Threads resolving to the same source range (or the whole block) share a card
+  and passage header in the margin, popover and sheet. File order
+  breaks ties. Stale and ambiguous selectors remain separate cards. Each root
+  retains its messages, actions and reply composer; disk structure is unchanged.
+  A composer remounted during regrouping or width changes retains its unsent
+  draft for that thread and surface. Compact entry keeps drafts while its source
+  row remains mounted, including closing and reopening the thread view; leaving
+  the surface releases the state, and graph switches clear it. Opening one
+  passage mounts that passage's cards only (1 group and 1 card at 4, 16 and 64
+  single-thread passages in the counter test, was 4/16/64); moving to another
+  passage mounts it then.
+- Commenting again on the same anchored passage focuses its last thread's reply box.
+  It does not write. The group's explicit New thread action appends a distinct
+  root on the same resolved passage, through the existing guarded save path.
+  New roots use the existing context-to-uniqueness writer, including when an old
+  root omitted context properties; that old root is never rewritten. Unresolved
+  cards retain editing/replies and offer no New thread action without a passage.
+  Read-only sources offer neither a composer nor New thread.
+- The visible page actions menu offers Show comments or Hide comments on touch
+  and desktop, using the same device preference as Settings and the command.
+  Hiding removes cards, highlights, chips and markers. Pending drafts retain the
+  existing refusal and remain available to send or discard.
+
+## Resolved threads and creation dates (D-20261107-MC3 §§4,9)
+
+Resolve writes `tine.resolved:: true` on the root only; Reopen removes it.
+Both use the existing guarded document save and undo. A resolved thread loses
+its cards, highlights and open counts, including the collapsed subtree count.
+The page's **N resolved** control reveals greyed cards in their passage groups
+with Reopen. Revealing never restores highlights or open counts. Replying to a
+resolved thread removes its resolution in the reply's single undo unit.
+At compact widths, revealing adds a muted **N resolved** entry beside each
+source block with closed threads. It opens those same greyed live cards in the
+popover or phone sheet, with Reopen and dates. This entry is separate from the
+open-thread chip; closed roots never contribute markers or highlights. Secondary outlines and zoomed blocks own the same reveal scope.
+Show/Hide comments also removes the resolved entry and any open compact view.
+
+New comments and replies carry `tine.date:: 2026-11-07T13:37Z`: UTC, minute
+precision, written once at creation from `appNow("instant")` (without the local
+calendar's zone-skew correction). Edits retain it byte for byte. A quiet
+localized date appears in each message header; missing or invalid dates show
+nothing. Dates never change file order or passage grouping. Ordinary blocks
+receive no date. All `tine.*` rows stay hidden in comment and reply editors.
+
+These properties use the ordinary Markdown property / Org drawer writer and
+the existing whole-file guarded save, with no new file or transport. With LF
+endings, Resolve adds 21 bytes plus Markdown indentation on the root; a date
+adds 30 bytes plus Markdown indentation per message. An unnamed Org reply
+also needs its first property drawer (19 bytes), for 49 bytes total; a root or
+signed reply already has a drawer. These byte deltas are independent of page
+size; the existing save still rewrites the whole affected file. Displaying or
+revealing dates/closed cards writes nothing. Editing adds no timestamp bytes.

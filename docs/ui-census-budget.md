@@ -47,6 +47,15 @@ The alternatives to growing a surface are palette-only, config-only or cut.
 Run `UI_CENSUS_PRINT=1 npx vitest run --config vitest.render.config.ts src/uiCensus.budget.test.tsx`
 to print every count with the labels of the controls counted.
 
+- 2026-11-08, D-20261107-MC3 §7 (UI-MC010-VISIBILITY, GH #891): ordinary page
+  and journal header menus gain one Show comments/Hide comments row: desktop
+  16→17, mobile 15→16. The approved design requires a visible mobile control
+  and delegates page menu versus keyboard toolbar placement to this lane.
+  The page header menu keeps this reading action available without occupying
+  the editing toolbar; the same action is available on desktop. Link/sidebar
+  context menus gain no row. Review rationale is also in the lane receipt;
+  this implementation lane is explicitly instructed not to commit.
+
 ## Known gap
 
 jsdom has no layout. Controls that CSS hides at rest (hover reveal, container-query
@@ -57,6 +66,18 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
+  `settings.appearance.open` 30→31 for the explicitly requested **Comments**
+  display selector, **In the margin** / **On click**, beside the other display
+  preferences. It reuses the annotation settings group and adds no command,
+  menu or topbar control. Palette-only or graph configuration would not provide
+  the approved device-local Settings choice. Integration commit rationale is
+  recorded in the lane receipt; this implementation lane does not commit.
+- 2026-11-08, GH #896 (D-20261107-MC3 §10 and the 0.10 author-marks lane brief):
+  `commands.registry` 149→150, `commands.palette` 90→91 and
+  `settings.appearance.open` 29→30 for the explicitly requested independent
+  **Show/Hide author marks** command and switch beside **Show/Hide comments**.
+  The command has no default key; there is no additional topbar or menu control.
 - 2026-11-07, GH #805 (0.10 lane brief, Martin's 10/30 AA and TRIAGE-1031 placement):
   `commands.registry` 148→149 for the explicitly requested remappable **Quit Tine**
   command (`app/quit`, Ctrl+Q on Linux/Windows). It reaches the existing safe Quit

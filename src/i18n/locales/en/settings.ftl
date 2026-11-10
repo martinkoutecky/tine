@@ -285,10 +285,17 @@ settings-ui-zoom-the-whole-interface-ctrl-ctrl-ctrl-0-or = Zoom the whole interf
 settings-ui-smaller-ctrl = Smaller (Ctrl −)
 settings-ui-larger-ctrl = Larger (Ctrl +)
 settings-ui-wide-mode = Wide mode
+settings-comments-display = Comments
+settings-comments-display-hint = In the margin follows pane width. In a popup keeps comments out of the way: hover highlighted words to open their thread, even in Wide mode; phones use a bottom sheet. Saved on this device.
+settings-comments-in-margin = In the margin
+settings-comments-in-popup = In a popup
 settings-ui-drops-the-reading-width-cap = Drops the reading-width cap.
 settings-ui-document-mode = Document mode
 settings-ui-hides-bullets-and-indent-guides-for-a-cleaner-prose = Hides bullets and indent guides for a cleaner prose view.
 settings-ui-comment-margin = Show/Hide comments
+settings-annotation-visibility = Comments and authorship
+settings-author-marks = Show/Hide author marks
+settings-author-marks-hint = Show author lines in the bullet gap. Names stay available when lines are hidden. Separate from comment visibility; shown by default.
 settings-ui-shows-the-comment-threads-beside-the-page-off-hides = Shows the comment threads beside the page. Off hides every thread, in every pane; the comments stay in your files. Saved on this device.
 settings-ui-document-mode-enter-creates-a-new-block = Document-mode Enter creates a new block
 settings-ui-keep-the-normal-enter-new-block-and-shift-enter = Keep the normal Enter = new block and Shift + Enter = line break mapping while Document mode is on. Off (the default) swaps them, like Logseq. Saved to <code>:shortcut/doc-mode-enter-for-new-block?</code> in <code>config.edn</code>.

@@ -1,6 +1,7 @@
 // GH #845: the comment margin's visibility is a device preference that survives
 // a restart, hides only the view (never the graph), and comes back whenever a
 // comment is written or a link leads to one.
+import { openCommentThread } from "./tests/commentEntry";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { blockRegions, initParser } from "./render/parse";
@@ -142,14 +143,15 @@ describe("hiding waits for work in the thread", () => {
     const dispose = render(() => <PageView />, root);
     try {
       const area = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLTextAreaElement>('[data-block-id="c"] .comment-composer textarea');
+        if (!document.querySelector(".comment-thread-popup")) openCommentThread(root);
+        const el = document.querySelector<HTMLTextAreaElement>('[data-block-id="c"] .comment-composer textarea');
         expect(el).not.toBeNull();
         return el!;
       });
       area.value = "unsent";
       area.dispatchEvent(new InputEvent("input", { bubbles: true }));
       expect(setCommentMarginVisible(false)).toBe(false);
-      expect(root.querySelector('[data-block-id="c"]')).not.toBeNull();
+      expect(document.querySelector('[data-block-id="c"]')).not.toBeNull();
       area.value = "";
       area.dispatchEvent(new InputEvent("input", { bubbles: true }));
       expect(setCommentMarginVisible(false)).toBe(true);

@@ -1,4 +1,6 @@
 import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
+import { openCommentThread } from "../tests/commentEntry";
+import { resetNearObserverForTests } from "../lazyObserve";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -44,6 +46,8 @@ afterEach(() => {
   vi.useRealTimers();
   resyncCurrentDayForTest();
   vi.restoreAllMocks();
+  // A stubbed IntersectionObserver left by one test kept later bodies deferred.
+  vi.unstubAllGlobals();
   endEdit("blur");
   closeContextMenu();
   resetStore();
@@ -1126,7 +1130,7 @@ describe("zoomed block view", () => {
     }
   });
 
-  it("zooming into a commented block keeps its thread and replies inline", async () => {
+  it("zooming into a commented block keeps its thread and replies reachable through its chip", async () => {
     const dto = {
       name: "Comment zoom", kind: "page" as const, title: "Comment zoom", pre_block: null,
       blocks: [{
@@ -1141,13 +1145,23 @@ describe("zoomed block view", () => {
     loadSingle(dto);
     vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     focusBlock("passage");
+    // Highlights render with the block body; an earlier test's near-viewport
+    // observer must not leave this body deferred.
+    resetNearObserverForTests();
     const { root, dispose } = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(root.querySelector(".zoomed-page")).not.toBeNull());
       const zoom = root.querySelector(".zoomed-block")!;
-      expect(zoom.querySelector('[data-block-id="comment"].comment-card')).not.toBeNull();
-      expect(zoom.querySelector('[data-block-id="reply"]')?.textContent).toContain("A reply.");
+      expect(zoom.querySelector('[data-block-id="comment"].comment-card')).toBeNull();
+      // The zoom re-renders once its page load answers: tap the live highlight.
+      await vi.waitFor(() => {
+        openCommentThread(root.querySelector(".zoomed-block")!);
+        expect(document.querySelector(".comment-thread-popup")).not.toBeNull();
+      });
+      expect(document.querySelector('.comment-thread-popup [data-block-id="comment"].comment-card')).not.toBeNull();
+      expect(document.querySelector('.comment-thread-popup [data-block-id="reply"]')?.textContent).toContain("A reply.");
       expect(root.querySelector(".margin-column")).toBeNull();
+      // D-20261108-MC8: the highlight is the entry point; no count on the block.
       expect(root.querySelector(".margin-marker")).toBeNull();
     } finally {
       dispose();

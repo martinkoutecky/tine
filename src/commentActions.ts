@@ -5,24 +5,36 @@
 // undo step: no new write path.
 
 import { batch } from "solid-js";
-import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, withUndoUnit } from "./document";
+import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, setBlockProperty, withUndoUnit } from "./document";
 import { editingId, endEdit, startEditing } from "./editorController";
 import { focusedEditorCommandBridge } from "./editorCommandBridge";
 import { graphScopedSignal, refuseStaleWrite } from "./binding";
-import { commentRaw, replyRaw, normalizeQuoteText, normalizeWithMap, occurrences, quoteSelectorFor, quoteSelectorOf } from "./comments";
-import { blockRegions } from "./render/parse";
+import { anchorQuote, commentRaw, replyRaw, normalizeQuoteText, normalizeWithMap, occurrences, quoteSelectorFor, quoteSelectorOf, stampCommentDate, COMMENT_RESOLVED_KEY } from "./comments";
 import { facetsOf } from "./render/facets";
-import { utf8ByteLength } from "./render/spans";
 import { splitProps, BUILTIN_HIDE } from "./editor/properties";
 import { pushToast } from "./toasts";
 import { msg, t } from "./i18n";
-import { commentsWritten } from "./margin";
-import { revealCommentMargin } from "./commentMargin";
+import { revealCommentMargin, hasPendingReplyDraft } from "./commentMargin";
 import { commentAuthorName } from "./commentIdentity";
 import { runWithCommentName } from "./commentNamePrompt";
 import { selectionOf } from "./windowRealm";
 import { threadRootOf } from "./margin";
 import { deleteBlock } from "./document";
+import { commentGroups, passageKey } from "./commentGroups";
+import { focusCommentReply } from "./commentReplyFocus";
+import { threadResolved } from "./commentResolution";
+
+/** Resolution belongs to the outermost root and the ordinary property door. */
+export function setThreadResolved(commentId: string, resolved: boolean): void {
+  const root = threadRootOf(commentId);
+  if (!root || !blockWritable(root) || threadResolved(root) === resolved) return;
+  if (resolved && hasPendingReplyDraft([root])) { pushToast(msg("comment-margin-draft-pending"), "warn"); return; }
+  endEdit("page-navigation");
+  if (editingId() !== null) return;
+  batch(() => withUndoUnit("comment:resolve", [docNode(root)!.page], () => {
+    setBlockProperty(root, COMMENT_RESOLVED_KEY, resolved ? "true" : null);
+  }));
+}
 
 /** Append a comment on [start, end) of `editorText` (the parent editor's
  * text) under `parentId` and return its id, or null when the parent cannot be
@@ -32,7 +44,8 @@ export function createComment(parentId: string, editorText: string, start: numbe
   const parent = docNode(parentId);
   if (!parent || !blockWritable(parentId)) return null;
   const raw = commentRaw(quoteSelectorFor(editorText, start, end, parent.raw, formatForBlock(parentId)), formatForBlock(parentId), commentAuthorName());
-  const destination = docNode(threadRootOf(parentId, formatForBlock(parentId)) ?? parentId)!;
+  const root = threadRootOf(parentId, formatForBlock(parentId));
+  const destination = docNode(root ?? parentId)!;
   let id: string | null = null;
   // Publish structure and quote metadata together. Inline ordering deliberately
   // reads text untracked on structural changes; exposing the empty child first
@@ -40,12 +53,14 @@ export function createComment(parentId: string, editorText: string, start: numbe
   batch(() => {
     withUndoUnit("comment:create", [parent.page], () => {
       id = insertEmptyChildBlock(destination.id, destination.children.length);
-      if (id) setRaw(id, raw, { timetracking: false });
+      if (id) {
+        setRaw(id, stampCommentDate(raw, formatForBlock(parentId)), { timetracking: false });
+        if (root && threadResolved(root)) setBlockProperty(root, COMMENT_RESOLVED_KEY, null);
+      }
     });
     if (id) {
       // GH #845: a comment is never written into a hidden margin.
       revealCommentMargin();
-      commentsWritten();
     }
   });
   return id;
@@ -54,6 +69,21 @@ export function createComment(parentId: string, editorText: string, start: numbe
 /** Create the comment and put the caret on its empty body line. */
 export function commentAndEdit(parentId: string, editorText: string, start: number, end: number, surface: string | null = null, owner: string | null = null): string | null {
   return batch(() => {
+    const parent = docNode(parentId);
+    if (parent && blockWritable(parentId) && threadRootOf(parentId) === null) {
+      const format = formatForBlock(parentId);
+      const key = passageKey(parent.raw, quoteSelectorFor(editorText, start, end, parent.raw, format), format);
+      const group = key === null ? undefined : commentGroups(parentId, format, true).find(ids => {
+        const selector = quoteSelectorOf(facetsOf(docNode(ids[0])!.raw, format).properties)!;
+        return passageKey(parent.raw, selector, format) === key;
+      });
+      if (group) {
+        endEdit("page-navigation");
+        revealCommentMargin();
+        focusCommentReply(group.at(-1)!, surface);
+        return group.at(-1)!;
+      }
+    }
     const id = createComment(parentId, editorText, start, end);
     if (id) startEditing(id, 0, owner, surface);
     return id;
@@ -74,23 +104,30 @@ export function commentFromEditor(id: string, ref: Pick<HTMLTextAreaElement, "va
   });
 }
 
-function canReplyTo(commentId: string): boolean {
-  return blockWritable(commentId) && threadRootOf(commentId, formatForBlock(commentId)) !== null;
-}
-
-/** Enter in a comment opens an ordinary last child in its thread. The composer
- * uses submitReply instead, so it need not persist an empty child first. */
-export function replyAndEdit(commentId: string, surface: string | null = null): string | null {
-  const comment = docNode(commentId);
-  if (!comment || !canReplyTo(commentId)) return null;
-  const root = docNode(threadRootOf(commentId, formatForBlock(commentId))!)!;
+/** Explicit New thread preserves the group's passage and appends a separate
+ * root through the same document door as every comment creation. */
+export function appendThreadForPassage(commentId: string, surface: string | null = null): string | null {
+  const comment = docNode(commentId), format = formatForBlock(commentId);
+  const selector = comment && quoteSelectorOf(facetsOf(comment.raw, format).properties);
+  const parent = comment?.parent ? docNode(comment.parent) : null;
+  if (!parent || !selector || !blockWritable(parent.id)) return null;
+  const anchor = anchorQuote(parent.raw, selector, format);
+  if (anchor.kind !== "range" && anchor.kind !== "whole") return null;
+  // New roots obey the same context-to-uniqueness writer as editor selections,
+  // including when the source thread is legacy text without context properties.
+  const freshSelector = anchor.kind === "range"
+    ? quoteSelectorFor(parent.raw, anchor.start, anchor.end, parent.raw, format) : selector;
+  const parentRaw = parent.raw;
+  const sourceRaw = comment.raw;
   let id: string | null = null;
-  withUndoUnit("comment:reply", [comment.page], () => {
-    id = insertEmptyChildBlock(root.id, root.children.length);
-    const author = commentAuthorName();
-    if (id && author) setRaw(id, replyRaw(formatForBlock(commentId), author), { timetracking: false });
-  });
-  if (id) startEditing(id, 0, null, surface);
+  runWithCommentName(() => batch(() => {
+    if (docNode(parent.id) !== parent || parent.raw !== parentRaw || docNode(commentId) !== comment || comment.raw !== sourceRaw) return pushToast(msg("comment-block-changed"), "warn");
+    withUndoUnit("comment:create", [parent.page], () => {
+      id = insertEmptyChildBlock(parent.id, parent.children.length);
+      if (id) setRaw(id, stampCommentDate(commentRaw(freshSelector, format, commentAuthorName()), format), { timetracking: false });
+    });
+    if (id) { revealCommentMargin(); startEditing(id, 0, null, surface); }
+  }));
   return id;
 }
 
@@ -102,14 +139,15 @@ export function submitReply(commentId: string, text: string): string | null {
     || threadRootOf(commentId, formatForBlock(commentId)) === null) return null;
   const root = docNode(threadRootOf(commentId, formatForBlock(commentId))!)!;
   let id: string | null = null;
-  withUndoUnit("comment:reply", [comment.page], () => {
+  batch(() => withUndoUnit("comment:reply", [comment.page], () => {
     id = insertEmptyChildBlock(root.id, root.children.length);
     if (id) {
       const author = commentAuthorName();
       const metadata = author ? replyRaw(formatForBlock(commentId), author) : "";
-      setRaw(id, text + metadata, { timetracking: false });
+      setRaw(id, text + stampCommentDate(metadata || "\n", formatForBlock(commentId)), { timetracking: false });
+      if (threadResolved(root.id)) setBlockProperty(root.id, COMMENT_RESOLVED_KEY, null);
     }
-  });
+  }));
   return id;
 }
 
@@ -135,25 +173,6 @@ export function deleteComment(commentId: string): void {
     if (id === commentId) { endEdit("delete-block"); break; }
   }
   deleteBlock(commentId);
-}
-
-/** Enter in a comment's text, before its property lines, starts a reply: a new
- * last child (thread order = document order), and the caret moves there. A split
- * would carry the `tine.quote::` lines into the new block and turn the comment into
- * an ordinary block. Returns false when Enter should behave as everywhere else
- * (an ordinary block, or the caret among the property lines). The caller has
- * committed `editorText`. One parse of the editor text, only on Enter in a
- * comment (the comment test itself is a cached facet lookup). */
-export function replyOnEnter(commentId: string, editorText: string, caret: number, surface: string | null = null): boolean {
-  const comment = docNode(commentId);
-  if (!comment || comment.parent === null) return false;
-  const format = formatForBlock(commentId);
-  if (quoteSelectorOf(facetsOf(comment.raw, format).properties) === null) return false;
-  const lines = blockRegions(editorText, format).properties.map((p) => p.line[0]);
-  if (lines.length > 0 && utf8ByteLength(editorText.slice(0, caret)) > Math.min(...lines)) return false;
-  if (!canReplyTo(commentId)) return false;
-  runWithCommentName(() => { replyAndEdit(commentId, surface); });
-  return true;
 }
 
 // The palette closes the editor before its command runs (opening it blurs the

@@ -152,6 +152,8 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/render/seededFacets.ts#seeded": "one reference-counted entry per loaded-node raw; resetStore releases owners and clears",
   "src/render/seededFacets.ts#owners": "one observer per loaded node; releases on raw change, replacement, deletion and resetStore",
   "src/document/model.ts#rawListeners": "one raw-change listener per mounted outline window geometry (BIGLOAD-090b); its Solid owner's cleanup removes it on rebuild or unmount; holds no graph payload",
+  "src/document/model.ts#pageRawListeners": "one raw-change listener per page per live comment index (GH #891 review round 3); the index's Solid owner's cleanup removes it on rescan or unmount; holds no graph payload",
+  "src/commentIndex.ts#shared": "one comment index per top-level tree read by a mounted block outside every resolution scope (quick capture); leased by those readers, disposed and deleted with the last lease, so a graph switch empties it with its surfaces",
   "src/seen/displayed.ts#displayed": "one entry per routed page showing seen marks (keyed by page identity; dropped on leave, rename, merge and delete); a leaf module so backend.ts can drop entries without an import cycle, so the binding clear lives in src/seen/seenState.ts (clearOnBindingInvalidated -> clearDisplayed) and each entry holds only the binding owner",
   "src/changeKeys.ts#invalidators": "one permanent callback per importing cache module, no graph payload",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
@@ -295,10 +297,13 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // Readers of a graph-scoped target that do not prove a binding check, and why
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
+  "src/components/CommentEntry.tsx#replyFocusRequest": "reveals the mounted block's thread only; no graph write or delayed action. The entry unmounts with its source block and graphScopedSignal clears the request on binding invalidation",
   "src/changeSummary.ts#latest": "read-only publication evidence; graphScopedSignal clears it at binding invalidation, the accessor checks graphEpoch, and it never writes graph content",
   "src/queryResultDrafts.ts#drafts": "read-only result retention leases, not a popup writer; graphScopedSignal clears them at binding invalidation, release checks its captured binding, and captureResultDraft guards the actual cell write",
   "src/components/Page.tsx#upcomingFeed": "reads graph-bound feed metadata for rendering only; the owned feed restart publishes it after its graph/surface admission checks",
   "src/components/RightSidebar.tsx#rightSidebarFocusRequest": "scrolls and focuses the mounted card only; no graph write. The queued callback rechecks request identity, and graphScopedSignal clears the request on a graph switch",
+  "src/components/CommentParts.tsx#replyFocusRequest": "focuses the mounted reply draft after editor teardown and consumes the request; no graph write. The graphScopedSignal reads null after binding invalidation, and the composer checks its own thread id, surface, request identity and connected input before focusing",
+  "src/components/CommentResolutionScope.tsx#replyFocusRequest": "reveals resolved cards only in the mounted page that owns the requested root; no graph write. The graphScopedSignal reads null on binding invalidation, and this component's state dies with its page",
   "src/components/ContextMenu.tsx#contextMenu": "menu actions run synchronously on a click while the menu is mounted, and it is mounted only "
     + "while its target is bound (reads null after a switch). Every action that awaits before writing captures bindingOwner() first "
     + "and applies nothing when stale (make template, rename, delete, open file, copy as Markdown)",

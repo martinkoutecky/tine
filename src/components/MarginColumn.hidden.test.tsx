@@ -4,6 +4,7 @@ import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 // not the highlight of the commented words or the count on the commented block;
 // the arrow keys never stop on one; nothing is written to the graph.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { openCommentThread, showThread } from "../tests/commentEntry";
 import { type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -17,6 +18,7 @@ import { BlockList } from "./BlockList";
 import { Block, SurfaceContext } from "./Block";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { CommentResolutionScope } from "./CommentResolutionScope";
 import { forceCommentMarginShown } from "../commentMarginPref";
 import { revealCommentMargin, setCommentMarginVisible } from "../commentMargin";
 
@@ -42,14 +44,14 @@ function Host(): JSX.Element {
   let outline: HTMLDivElement | undefined;
   const margin = createMarginSurface({ page: () => pageByName(PAGE), eligible: () => true, outline: () => outline });
   return (
-    <div class="page-section">
+    <CommentResolutionScope roots={pageByName(PAGE)?.roots ?? []}><div class="page-section">
       <MarginContext.Provider value={margin.placement}>
         <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
           <BlockList ids={pageByName(PAGE)?.roots ?? []} />
         </div>
       </MarginContext.Provider>
       <margin.Column />
-    </div>
+    </div></CommentResolutionScope>
   );
 }
 
@@ -130,22 +132,30 @@ describe("a hidden comment margin", () => {
       flushFrames();
       expect(pane.querySelector(".margin-column")).not.toBeNull();
       expect(blockEl(pane.querySelector(".margin-column")!, "c1")).not.toBeNull();
-      expect(pane.querySelector(".page-blocks .margin-marker")!.textContent).toBe("2");
+      expect(pane.querySelector(".page-blocks button.margin-marker")).toBeNull();
       expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
     } finally {
       dispose();
     }
   });
 
-  it("does not fall back to the narrow-pane inline layout, and brings it back when shown", () => {
+  it("hides and restores narrow-pane entry points without any inline fallback", () => {
     const { pane, dispose } = mount(commented(), 800);
     try {
-      expect(anywhere(pane)).toEqual(COMMENTS.slice(0, 3));
+      expect(anywhere(pane)).toEqual([]);
+      // D-20261108-MC8: the highlights are the entry points; no counted marker.
+      expect(pane.querySelector(".margin-marker")).toBeNull();
+      expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
       setCommentMarginVisible(false);
       expect(anywhere(pane)).toEqual([]);
       expect(pane.querySelector(".comment-quote-anchor")).toBeNull();
       setCommentMarginVisible(true);
-      expect(anywhere(pane)).toEqual(COMMENTS);
+      expect(anywhere(pane)).toEqual([]);
+      openCommentThread(pane, "c1");
+      // Separate passages: the shown one is mounted, the other when reached (review round 3).
+      expect(anywhere(document.body)).toEqual(["c1", "r1"]);
+      expect(showThread("c2")).not.toBeNull();
+      expect(anywhere(document.body)).toEqual(["c2"]);
       expect(pane.querySelectorAll(".comment-quote-anchor")).toHaveLength(2);
     } finally {
       dispose();
@@ -160,8 +170,8 @@ describe("a hidden comment margin", () => {
       </div>
     ));
     try {
-      expect(blockEl(pane.querySelector(".plain")!, "c1")).not.toBeNull();
-      expect(blockEl(pane.querySelector(".embed")!, "c1")).not.toBeNull();
+      expect(pane.querySelectorAll(".plain .comment-quote-anchor")).toHaveLength(2);
+      expect(pane.querySelectorAll(".embed .comment-quote-anchor")).toHaveLength(2);
       setCommentMarginVisible(false);
       for (const part of ["plain", "embed"]) {
         const surface = pane.querySelector(`.${part}`)!;

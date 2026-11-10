@@ -403,6 +403,10 @@ settings-ui-smaller-ctrl = 缩小（Ctrl −）
 settings-ui-larger-ctrl = 放大（Ctrl +）
 
 settings-ui-wide-mode = 宽屏模式
+settings-comments-display = 评论
+settings-comments-display-hint = “在页边显示”根据窗格宽度调整。“在弹窗中显示”让评论不占用版面：将指针悬停在高亮文字上即可打开讨论，宽屏模式下也一样；手机使用底部面板。保存在本设备上。
+settings-comments-in-margin = 在页边显示
+settings-comments-in-popup = 在弹窗中显示
 
 settings-ui-drops-the-reading-width-cap = 取消阅读宽度上限。
 
@@ -411,6 +415,9 @@ settings-ui-document-mode = 文档模式
 settings-ui-hides-bullets-and-indent-guides-for-a-cleaner-prose = 隐藏项目符号和缩进辅助线，使正文更简洁。
 
 settings-ui-comment-margin = 显示/隐藏评论
+settings-annotation-visibility = 评论与作者
+settings-author-marks = 显示/隐藏作者标记
+settings-author-marks-hint = 在项目符号与正文的间隙中显示作者线条。隐藏线条后仍可查看作者名字。与评论显示独立，默认显示。
 
 settings-ui-shows-the-comment-threads-beside-the-page-off-hides = 在页面旁显示评论串。关闭后，所有窗格中的评论串都会隐藏；评论仍保留在你的文件中。保存在此设备上。
 

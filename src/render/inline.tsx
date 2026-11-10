@@ -1,6 +1,6 @@
 import { msg, t } from "../i18n";
 import { isRtlContext } from "./textDirection";
-import { hoverPreviewDelayMs } from "../hoverPreviewSettings";
+import { createPeekBridge } from "./peekBridge";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
@@ -170,7 +170,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       // Reactive only under a parent that may hold comments: a comment added,
       // edited or removed re-marks this run without re-rendering the block.
       if (quoted && quoted.blockId === blockId) {
-        return <>{renderQuotedPlain(s, quoted.ranges()) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
+        return <>{renderQuotedPlain(s, quoted.ranges(), quoted.drew) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
       }
       return renderPlain(s.text, s.span, s.span_map, spanMode);
     }
@@ -279,78 +279,7 @@ function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefine
   return extent ?? undefined;
 }
 
-// OG 0.10.9 page-preview-trigger / block-ref tippy: `:delay [1000, 100]` (ms open, close).
-// GH #735: a quicker open puts the popup over the reference you meant to click.
-const PEEK_CLOSE_MS = 100;
 const PEEK_BLOCK_CAP = 50;
-
-function createPeekBridge(disabled: () => boolean) {
-  const [open, setOpen] = createSignal(false);
-  let touchOpen = false;
-  let openT: ReturnType<typeof setTimeout> | undefined;
-  let closeT: ReturnType<typeof setTimeout> | undefined;
-  // The popup's editor holds the caret (D-20261023-VQ): no hover timer closes it.
-  let held = false;
-  const setHeld = (value: boolean) => { held = value; };
-  const closeLater = () => { closeT = setTimeout(() => { if (!held) setOpen(false); }, PEEK_CLOSE_MS); };
-  const clearOpen = () => {
-    if (openT) {
-      clearTimeout(openT);
-      openT = undefined;
-    }
-  };
-  const clearClose = () => {
-    if (closeT) {
-      clearTimeout(closeT);
-      closeT = undefined;
-    }
-  };
-  const anchorEnter = (event: PointerEvent) => {
-    // Touch WebViews synthesize mouse hover around a hold. Only a real mouse
-    // may arm a hover preview; hybrid devices keep their mouse behavior.
-    if (event.pointerType !== "mouse") { dismiss(); return; }
-    if (disabled()) return;
-    clearClose();
-    clearOpen();
-    const delay = hoverPreviewDelayMs();
-    if (delay !== null) openT = setTimeout(() => setOpen(true), delay);
-  };
-  const anchorLeave = () => {
-    if (touchOpen) return;
-    clearOpen();
-    if (disabled()) return;
-    clearClose();
-    closeLater();
-  };
-  const popupEnter = () => {
-    if (disabled()) return;
-    clearClose();
-  };
-  const popupLeave = () => {
-    if (touchOpen) return;
-    if (disabled()) return;
-    clearClose();
-    closeLater();
-  };
-  const dismiss = () => {
-    touchOpen = false;
-    clearOpen();
-    clearClose();
-    setOpen(false);
-  };
-  onCleanup(() => {
-    clearOpen();
-    clearClose();
-  });
-  const hold = () => {
-    if (disabled()) return;
-    clearOpen();
-    clearClose();
-    touchOpen = true;
-    setOpen(true);
-  };
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold, setHeld };
-}
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 // `file`: carry the physical claimant path for the alias group's Related pages row (R13-C4).

@@ -26,6 +26,8 @@ describe("appNow follows the backend clock (GH #607)", () => {
     setBackendClock({ offset_minutes: browserOffset - 60, unix_ms: now });
     expect(localDayKey()).toBe(20260927);
     expect(appNow().getHours()).toBe(23);
+    // Comment creation stores a UTC instant, never a shifted calendar reading.
+    expect(appNow("instant").getTime()).toBe(now);
   });
 
   it("keeps the WebView clock when the backend disagrees by more than stale rules can", () => {

@@ -15,6 +15,15 @@ comment-margin-label = Comments
 comment-toolbar = Comment
 comment-toolbar-shortcut = Comment (Ctrl/Cmd+R)
 comment-reply = Reply
+comment-send = Send
+comment-new-thread = New thread
+comment-resolve = Resolve
+comment-reopen = Reopen
+comment-resolved-count = { NUMBER($count, useGrouping: 0) } resolved
+comment-below = { NUMBER($count, useGrouping: 0) } below
+comment-below-expand = Expand to show { NUMBER($count, useGrouping: 0) } comment threads below
+comment-show = Show comments
+comment-hide = Hide comments
 comment-reply-placeholder = Reply…
 comment-delete = Delete comment and replies
 comment-select-first = Select text in a block first, then choose Comment on selection (or press Ctrl+R while editing)
@@ -36,3 +45,13 @@ comment-name-prompt-save = Use this name
 comment-name-prompt-graph-changed = The graph changed while Tine asked for your name, so the comment was not written.
 comment-remove-author = Remove author
 comment-margin-draft-pending = Send or discard the unsent reply before hiding the comments
+comment-open-thread = Open comment thread
+# $count (number): open threads on this block whose quoted text cannot be highlighted (changed or ambiguous).
+comment-unanchored-marker = { $count ->
+        [one] Open the comment whose quoted text has no highlight
+       *[other] Open { NUMBER($count, useGrouping: 0) } comments whose quoted text has no highlight
+    }
+comment-thread-position = Passage { $current } of { $count }
+comment-prev-thread = Previous passage
+comment-next-thread = Next passage
+comment-close-threads = Close comments

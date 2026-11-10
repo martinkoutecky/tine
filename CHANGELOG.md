@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Settings → Appearance → Comments offers **In a popup**: hovering highlighted words opens their live, editable thread with the same delay and close rules as a page link's hover preview, at every width including Wide mode. A click on the words places the caret, touch tablets tap, a reply draft keeps the popover open, and phones keep the bottom sheet. **In the margin** stays the default; the choice uses a new device key, so an earlier On click choice returns to the default once (GH #891; UI-MC010-CLICK-DISPLAY).
+- Resolved comments remain reachable with Reopen and dates in narrow popovers and phone sheets, while staying out of markers and highlights (UI-MC010-COMPACT-RESOLVE; GH #891, #831).
+- Resolve closes a whole comment thread; the page's resolved count reveals it with Reopen, and replying reopens it. Closed threads leave highlights and open counts (UI-MC010-RESOLVE; GH #891).
+- New comments and replies show a localized creation date, stored once as a UTC minute; edits keep it and messages retain file order (UI-MC010-DATES; GH #831).
+- Narrow panes open live comment threads by hovering highlighted words (tap on touch screens), with no passage rail and no comment counts; only a thread whose quoted words have no highlight (they changed, match more than once, or sit inside inline code or across bold text) gets a small marker that opens it, so every open thread stays reachable. Phones tap a highlight or a count-free comment chip to open a bottom sheet with swipe navigation. The tiers follow pane width on pages, journals, splits, sidebars and embeds, and visible wide-margin threads no longer duplicate a count badge (GH #891; UI-MC010-MEDIUM; UI-MC010-PHONE).
+- Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
+- Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
+- The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).
+- Author marks are centred in the bullet gap; same-author sibling runs share a continuous line and one leading chip, with each block's author available on hover or focus (GH #892, GH #893).
+- Show/Hide author marks has its own Settings switch beside Show/Hide comments and a rebindable command with no default shortcut (GH #896).
 - Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
 - `tine edit` saves a large page faster: it no longer parses the bytes it has just written a second time or reads their page name again, so each edit does one parse and one name read fewer (a 2 MiB page saves about 15 % faster). The written bytes, files, syncs and reply are unchanged (internal: REG-COST-BLOCK-EDIT-REPARSE; card DuDHQ).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
@@ -28,6 +38,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Typing in a block that shares its parent with comment threads, or in a folded block that shows an "N below" count, no longer slows down as the outline grows: comment membership, highlights, grouping, the margin and the below count follow each edit instead of rescanning every sibling or hidden child (GH #891; UI-MC010-MEDIUM; UI-MC010-BELOW).
+- The arrow keys in the comment margin and popover move through threads in the order the cards are shown, so a second thread on the same passage is no longer skipped (GH #891; UI-MC010-KEYBOARD).
 - A query or table no longer stays empty or stale until reload when a page it lists starts or stops existing without a file of its own: linking a new `[[Page]]`, giving a blank `Brand/Child` file its first text (which makes `Brand` a page), or removing a page's last reference now refreshes the queries that can list that page, and only those (internal: hHbdR0, REG-QUERY-FILELESS-PAGE-STALE).
 - Merging or deleting a block no longer replaces a long page with an error and loses the editor after earlier structural edits (GH #745).
 - Page and block properties now have a tinted, rounded panel, following the active theme and Logseq's `--ls-block-properties-background-color` custom CSS variable (#920).

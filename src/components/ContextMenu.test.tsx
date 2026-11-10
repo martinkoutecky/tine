@@ -20,6 +20,7 @@ import { bindTestHost } from "../document/host/wiring.test.support";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { reloadPage } from "../document/workingSet";
 import { noteSeenAnswer, resetSeenForTests } from "../seen/seenState";
+import { commentMarginHidden, persistCommentMarginHidden } from "../commentMarginPref";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -69,6 +70,22 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     });
   }
   const menuLabels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
+
+  it("the page actions menu offers the current Show/Hide comments action without a keyboard", () => {
+    load(); persistCommentMarginHidden(false);
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      const action = () => document.querySelector<HTMLButtonElement>('[data-page-action-id="comment-visibility"]')!;
+      expect(action()?.textContent).toBe("Hide comments");
+      action().click(); expect(commentMarginHidden()).toBe(true);
+      openPageContextMenu(10, 10, "P", "page", true);
+      expect(action()?.textContent).toBe("Show comments");
+      action().click(); expect(commentMarginHidden()).toBe(false);
+      openPageContextMenu(10, 10, "P", "page", false);
+      expect(action()).toBeNull();
+    } finally { dispose(); persistCommentMarginHidden(false); }
+  });
 
   it("offers a durable new-tab destination for writable and read-only blocks", () => {
     for (const readOnly of [false, true]) {
@@ -525,6 +542,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
+      "comment-visibility",
       "copy-as", "copy-page-ref", "copy-page-embed", "copy-link",
       "copy-export",
       "share",
@@ -692,7 +710,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
-      "open", "open-sidebar", "open-new-tab", "favorite-toggle",
+      "open", "open-sidebar", "open-new-tab", "favorite-toggle", "comment-visibility",
       "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
@@ -704,7 +722,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     setDoc("pages", 0, "kind", "journal");
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
-      "open", "open-sidebar", "open-new-tab", "favorite-toggle",
+      "open", "open-sidebar", "open-new-tab", "favorite-toggle", "comment-visibility",
       "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "set-page-icon",

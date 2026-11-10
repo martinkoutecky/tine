@@ -10,12 +10,15 @@ import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { endEdit } from "../editorController";
 import { PaneContext, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
 import type { PageRead } from "../types";
+import { changeCommentsInPopup } from "../commentMarginPref";
+import { openCommentThread } from "../tests/commentEntry";
 
 let dispose: (() => void) | undefined;
 beforeAll(initParser);
 beforeEach(async () => { await bindTestHost(); });
 afterEach(() => {
   endEdit("page-navigation"); dispose?.(); resetStore(); resetTabsToJournals(); resetPaneLayoutToSingle();
+  changeCommentsInPopup(false);
   document.body.replaceChildren(); vi.restoreAllMocks();
 });
 function page(date: Date, id: string): PageRead {
@@ -26,12 +29,12 @@ function page(date: Date, id: string): PageRead {
     ] }] };
 }
 
-it.each(["journals", "page", "split-main", "split-secondary"] as const)("the %s surface gives each journal day its own margin at wide widths and inline threads at narrow widths", async kind => {
+it.each(["journals", "page", "zoom", "split-main", "split-secondary"] as const)("the %s surface uses the same margin, popover and sheet tiers", async kind => {
   const today = new Date(); const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
   const pages = [page(today, "today"), page(yesterday, "yesterday")];
   vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages, done: true, next_before_day: null, as_of_day: localDayKey(today) });
   vi.spyOn(backend(), "getPage").mockResolvedValue(pages[0]);
-  const route = { kind: "page", name: pages[0].name, pageKind: "journal" } as const;
+  const route = { kind: "page", name: pages[0].name, pageKind: "journal", ...(kind === "zoom" ? { block: "today" } : {}) } as const;
   if (kind !== "journals") mainPaneRouter.replaceActiveRoute(route);
   const paneId = kind === "split-secondary" ? "pane-2" : "main";
   if (kind.startsWith("split")) restorePaneLayout(
@@ -55,9 +58,31 @@ it.each(["journals", "page", "split-main", "split-secondary"] as const)("the %s 
       expect(section.querySelectorAll(".margin-column .comment-card")).toHaveLength(1);
       expect(section.querySelector(".page-blocks .comment-card")).toBeNull();
     }
+    changeCommentsInPopup(true);
+    expect(pane.querySelector(".margin-column")).toBeNull();
+    // D-20261108-MC8: in a popup the highlights are the entry points, without counts.
+    expect(pane.querySelectorAll(".page-blocks .margin-marker")).toHaveLength(0);
+    expect(pane.querySelectorAll(".page-blocks .comment-quote-anchor")).toHaveLength(count);
+    openCommentThread(pane);
+    expect(document.querySelector(".comment-thread-popup .comment-card")).not.toBeNull();
+    document.querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+    changeCommentsInPopup(false);
+    expect(pane.querySelectorAll(".margin-column")).toHaveLength(count);
     width = 800;
     for (const cb of [...resize]) cb([], {} as ResizeObserver);
     await vi.waitFor(() => expect(pane.querySelector(".margin-column")).toBeNull());
-    expect(pane.querySelectorAll(".page-blocks .comment-card")).toHaveLength(count);
+    expect(pane.querySelectorAll(".page-blocks .comment-card")).toHaveLength(0);
+    expect(pane.querySelectorAll(".page-blocks .margin-marker")).toHaveLength(0);
+    expect(pane.querySelectorAll(".page-blocks .comment-quote-anchor")).toHaveLength(count);
+    openCommentThread(pane);
+    expect(document.querySelector(".comment-thread-popup .comment-card")).not.toBeNull();
+    document.querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
+    width = 390;
+    for (const cb of [...resize]) cb([], {} as ResizeObserver);
+    // Phones keep a glyph chip as a tap target, without a count.
+    await vi.waitFor(() => expect(pane.querySelectorAll(".page-blocks .margin-marker")).toHaveLength(count));
+    expect(pane.querySelector(".page-blocks .margin-marker")!.textContent).toBe("");
+    pane.querySelector<HTMLButtonElement>(".margin-marker")!.click();
+    expect(document.querySelector(".comment-bottom-sheet .comment-card")).not.toBeNull();
   } finally { vi.unstubAllGlobals(); }
 });

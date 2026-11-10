@@ -3,6 +3,7 @@
 // name (all graphs); skipping is remembered (all graphs); the comment is
 // written either way; nothing is asked without git, with a name, after a
 // decline, or before the facts are known.
+import { openCommentThread } from "./tests/commentEntry";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -10,8 +11,7 @@ import { Block } from "./components/Block";
 import { CommentNamePrompt } from "./components/CommentNamePrompt";
 import { CommentComposer } from "./components/CommentParts";
 import { backend } from "./backend";
-import { commentOnRenderedSelection, replyOnEnter } from "./commentActions";
-import { createComment } from "./commentActions";
+import { commentOnRenderedSelection } from "./commentActions";
 import { commentAuthorName, resetCommentAuthorNameForTests } from "./commentIdentity";
 import { probeGraphGit, resetCommentNamePromptForTests, shouldAskCommentName, initCommentNamePrompt } from "./commentNamePrompt";
 import { blockRegions, initParser } from "./render/parse";
@@ -37,7 +37,7 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
-function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
+function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
   loadSingle({ name: PAGE, kind: "page", title: PAGE, format: "md", pre_block: null, blocks });
   setGraphMeta({ root: "/fixture" } as any);
   const root = document.createElement("div");
@@ -49,7 +49,8 @@ function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLDivElement {
       {extra?.()}
     </>
   ), root);
-  return root;
+  openCommentThread(root);
+  return document.body;
 }
 
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"].comment-name-prompt');
@@ -123,7 +124,7 @@ describe("the first comment in a git graph, no name", () => {
     expect(children()).toHaveLength(1);
     expect(doc.byId[children()[0]].raw).not.toContain("tine.author::");
     await vi.waitFor(() => expect(setApp).toHaveBeenCalledWith("comment_name_prompt_declined", "1"));
-    commentOnRenderedSelection(HELD);
+    commentOnRenderedSelection({ ...HELD, start: 0, end: 2 });
     expect(dialog()).toBeNull();
     expect(children()).toHaveLength(2);
   });
@@ -156,7 +157,7 @@ describe("the first comment in a git graph, no name", () => {
     commentOnRenderedSelection(HELD);
     type("Ada");
     submit();
-    commentOnRenderedSelection(HELD);
+    commentOnRenderedSelection({ ...HELD, start: 0, end: 2 });
     expect(dialog()).toBeNull();
     expect(children()).toHaveLength(2);
     expect(doc.byId[children()[1]].raw).toContain("tine.author:: Ada");
@@ -226,7 +227,7 @@ describe("no prompt", () => {
     expect(dialog()).toBeNull();
     resetCommentAuthorNameForTests("", false);
     resetCommentNamePromptForTests({ repository: true });
-    commentOnRenderedSelection(HELD);
+    commentOnRenderedSelection({ ...HELD, start: 0, end: 2 });
     expect(dialog()).toBeNull();
     expect(children()).toHaveLength(2);
   });
@@ -267,23 +268,6 @@ describe("the device preference, across graphs", () => {
 });
 
 describe("replies", () => {
-  const withComment = () => {
-    mount([block("p", TEXT)]);
-    resetCommentNamePromptForTests();
-    return createComment("p", TEXT, 15, 39)!;
-  };
-
-  it("Enter in a comment asks before the reply is created, and the reply is created when dismissed", () => {
-    const comment = withComment();
-    gitGraph();
-    expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
-    expect(dialog()).not.toBeNull();
-    expect(doc.byId[comment].children).toHaveLength(0);
-    type("Ada");
-    submit();
-    expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("\ntine.author:: Ada");
-  });
-
   it("the composer keeps its draft while asking, then posts the reply with the name", () => {
     const root = mount([block("p", TEXT, [block("c", "\ntine.quote:: a phrase worth disputing")])], () => <CommentComposer id="c" surface="test" />);
     gitGraph();
@@ -311,5 +295,5 @@ describe("replies", () => {
 
 function draftSubmitEmpty(root: HTMLElement) {
   const draft = root.querySelector<HTMLTextAreaElement>("textarea.comment-reply-draft")!;
-  draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
 }
