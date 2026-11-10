@@ -792,6 +792,20 @@ fn case_only_rename_onto_another_pages_file_refuses_with_the_reason() {
             ("pages/p.md", "- see [[N/y]] and [[B]]\n"),
         ],
     );
+    let listed: Vec<_> = fs::read_dir(root.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    if !["N%2Fy.md", "n%2Fy.md"]
+        .iter()
+        .all(|name| listed.iter().any(|listed| listed == name))
+    {
+        // A case-insensitive volume (NTFS, APFS) holds one file for both
+        // names, so no other page can own the case-only destination there.
+        eprintln!("SKIP: pages/ folds case on this volume");
+        store.close();
+        return;
+    }
     let before = snapshot(&root);
     let offer = rename_offer(&store, "N/y", "n/y", None).unwrap();
     assert_eq!(

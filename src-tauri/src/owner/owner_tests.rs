@@ -1870,16 +1870,18 @@ fn add_resolves_author_environment_and_explicit_override() {
     // A child process owns its environment, so parallel owner tests never see
     // a process-global env mutation.
     if std::env::var_os("TINE_ADD_AUTHOR_TEST_CHILD").is_none() {
-        assert!(std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "owner::owner_tests::add_resolves_author_environment_and_explicit_override"
-            ])
-            .env("TINE_ADD_AUTHOR_TEST_CHILD", "1")
-            .env("TINE_AUTHOR", "Environment Author")
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            std::process::Command::new(tine_store::test_binary::own_test_binary())
+                .args([
+                    "--exact",
+                    "owner::owner_tests::add_resolves_author_environment_and_explicit_override"
+                ])
+                .env("TINE_ADD_AUTHOR_TEST_CHILD", "1")
+                .env("TINE_AUTHOR", "Environment Author")
+                .status()
+                .unwrap()
+                .success()
+        );
         return;
     }
     let graph = Graph::new();

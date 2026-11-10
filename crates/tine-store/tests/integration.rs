@@ -39,7 +39,7 @@ fn isolated_case(name: &str) -> bool {
     if std::env::var(CHILD).as_deref() == Ok(name) {
         return false;
     }
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .args(["--exact", name, "--nocapture"])
         .env(CHILD, name)
         .output()
@@ -313,3 +313,6 @@ mod page_set_changes;
 
 #[path = "og_b_store_move.rs"]
 mod og_b_store_move;
+
+#[path = "own_test_binary.rs"]
+mod own_test_binary;

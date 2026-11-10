@@ -75,7 +75,7 @@ fn run_race(kill: Option<usize>) {
     let barrier = root.join("barrier");
     let stdout = root.join("worker.stdout");
     let stderr = root.join("worker.stderr");
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(tine_store::test_binary::own_test_binary());
     command
         .args([
             "--exact",

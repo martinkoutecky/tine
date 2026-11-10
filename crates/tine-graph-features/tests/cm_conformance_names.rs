@@ -58,6 +58,10 @@ fn conflict_and_merge_names() {
     for spec in fixture_specs() {
         let dir = tempfile::tempdir().unwrap();
         spec.write(dir.path());
+        if !spec.listed_apart(dir.path()) {
+            section.skip_on_volume(&spec.name, "");
+            continue;
+        }
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let view = store.whole_graph().expect("graph loads");
         let mut diffs = Vec::new();

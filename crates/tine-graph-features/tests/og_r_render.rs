@@ -1,12 +1,12 @@
 //! Checkpoint-5 packet R: the static render/export answers agree with the app
 //! and with the parser (I-12), print stays single-page work (I-13) and an Org
 //! page is rendered as Org. Each test drives the real entry point
-//! (`publish::publish_html`, `print::page_print_html`).
+//! (`publish_query::publish_static`, `print::page_print_html`).
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tine_graph_features::{print, publish};
+use tine_graph_features::print;
 use tine_store::Store;
 
 fn graph(label: &str, config: &str, pages: &[(&str, &str)]) -> PathBuf {
@@ -48,7 +48,7 @@ fn published(
 ) -> (BTreeMap<String, String>, usize) {
     let dir = graph(label, config, pages);
     let store = Store::open(&dir, Default::default()).unwrap().0;
-    let (out, count) = publish::publish_html(&store).unwrap();
+    let (out, count) = crate::published_site(&store).unwrap();
     let files = site(Path::new(&out));
     store.close();
     let _ = fs::remove_dir_all(&dir);
