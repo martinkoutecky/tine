@@ -277,7 +277,7 @@ export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string):
   return renderEnglish(message);
 }
 
-/** Load a page into the working set if it isn't already there (used by
+/** Load a page into the working set, or replace a clean loaded copy whose revision changed (used by
  *  satellite surfaces — sidebar / query results / embeds — so they render the
  *  same live, editable nodes as the main view). Idempotent: never clobbers an
  *  already-loaded page's in-progress edits. Returns null when the slot now holds
