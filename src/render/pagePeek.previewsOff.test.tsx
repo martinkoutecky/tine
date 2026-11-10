@@ -161,4 +161,21 @@ describe("GH #824: touch hold on a page link or tag", () => {
       } finally { dispose(); closeContextMenu(); }
     }
   });
+
+  it("switching previews off and on again does not reopen a held preview without a new hold", async () => {
+    touch.primary = true;
+    meta(true);
+    const { root, dispose } = mount("[[Tine]]");
+    try {
+      pointer(root.querySelector("a")!, "pointerdown");
+      await advance(LONG_PRESS_DELAY + 100);
+      expect(popup()).not.toBeNull();
+      meta(false);
+      await advance(0);
+      expect(popup()).toBeNull();
+      meta(true);
+      await advance(PEEK_OPEN_MS * 2);
+      expect(popup()).toBeNull();
+    } finally { dispose(); }
+  });
 });

@@ -343,6 +343,8 @@ function createPeekBridge(blocked: () => boolean) {
     clearClose();
     setOpen(false);
   };
+  // Disabling retires the preview, its hold and its timers, so enabling again opens nothing by itself.
+  createEffect(() => { if (disabled()) dismiss(); });
   onCleanup(() => {
     clearOpen();
     clearClose();
