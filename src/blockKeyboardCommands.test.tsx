@@ -13,7 +13,7 @@ import { clearClipboardPayload } from "./clipboard";
 import { BUILTIN_KEYS, commandDefaults, installKeybindings, paletteCommands } from "./keybindings";
 import { closeSwitcher, switcherOpen, switcherPrefill } from "./ui";
 import { editingId, endEdit, startEditing } from "./editorController";
-import { pasteAsLinkEdit } from "./blockRefActions";
+import { pasteAsLinkEdit, removeAuthorTarget } from "./blockRefActions";
 import { setGraphMeta } from "./graphSession";
 import { openPage, resetTabsToJournals } from "./router";
 import { setToasts, toasts } from "./toasts";
@@ -520,6 +520,25 @@ describe("Remove author (GH #918)", () => {
       { ...block(B, `Mine\nid:: ${B}`), properties: [["id", B]] }],
   });
   const offered = () => paletteCommands().some((c) => c.id === "editor/remove-author");
+
+  it("checks availability without revisiting an unchanged 1,000-block outline", () => {
+    const blocks = Array.from({ length: 1000 }, (_, i) => ({
+      ...block(`cost-${i}`, `Words ${i}\ntine.author:: Ada Test`),
+      properties: [["tine.author", "Ada Test"]] as [string, string][],
+    }));
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null, blocks });
+    let visits = 0;
+    selectBlock("cost-0", { roots: blocks.map(b => b.id), collapsed: (_id, stored) => { visits++; return stored; } });
+    expect(removeAuthorTarget()).toBe("cost-0"); // warm the selection memo
+    visits = 0;
+    expect(removeAuthorTarget()).toBe("cost-0");
+    expect(removeAuthorTarget()).toBe("cost-0");
+    expect(visits).toBe(0);
+    extendSelectionTo("cost-1");
+    expect(removeAuthorTarget()).toBeNull();
+    selectBlock("cost-1");
+    expect(removeAuthorTarget()).toBe("cost-1");
+  });
 
   it("ships without a key, like the other block commands", () => {
     expect(commandDefaults().find((c) => c.id === "editor/remove-author")).toMatchObject({ binding: "", label: "Remove author" });

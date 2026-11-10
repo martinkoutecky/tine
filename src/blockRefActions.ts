@@ -21,6 +21,7 @@ import {
   pageByName,
   pasteClipboardPayload,
   selectedIds,
+  singleSelectedId,
   setCollapsed,
   storedFold,
   withUndoUnit,
@@ -111,9 +112,11 @@ export function copyTargetBlockRefs(): boolean {
 /** "Remove author" (GH #918): the block it acts on, or null where it is not
  *  offered. The block context menu offers it on one writable block carrying
  *  `tine.author::`; the command takes the same block from the selection or the
- *  editor (`commandTargetIds`), so a selection of several offers nothing. O(1). */
-export function removeAuthorTarget(ids: readonly string[] = commandTargetIds()): string | null {
-  const id = ids.length === 1 ? ids[0] : null;
+ *  editor, so a selection of several offers nothing. Target lookup reuses the
+ *  memoized selection; property checks read only the target block. */
+export function removeAuthorTarget(ids?: readonly string[]): string | null {
+  const id = ids ? (ids.length === 1 ? ids[0] : null)
+    : hasSelection() ? singleSelectedId() : editingId();
   return id !== null && blockWritable(id) && blockProperty(id, "tine.author") !== null ? id : null;
 }
 
