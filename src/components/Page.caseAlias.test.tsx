@@ -32,6 +32,7 @@ function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => 
  * the file under its disk spelling and re-keys the tab and Recent entry to it. */
 describe("a route pinned to another case spelling of its file (GH #597)", () => {
   it("opens the file under its disk spelling and re-keys the tab and Recent entry", async () => {
+    const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
     const dto: PageRead = { name: "contents", title: "contents", kind: "page", id: "pages/contents.md",
       pre_block: null, rev: "disk-rev",
       blocks: [{ id: "contents-root", raw: "Table of contents", children: [], collapsed: false }] };
@@ -41,8 +42,9 @@ describe("a route pinned to another case spelling of its file (GH #597)", () => 
     const { root, dispose } = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(root.textContent).toContain("Table of contents"));
-      expect(read).toHaveBeenCalledWith("pages/Contents.md");
+      expect(read).toHaveBeenCalledWith("pages/Contents.md", expect.any(Function));
       expect(root.textContent).not.toContain("no longer available at that path");
+      expect(diagnostic).not.toHaveBeenCalled();
       expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "contents", path: "pages/contents.md" });
       expect(recentPages().filter((r) => r.path === "pages/Contents.md")).toEqual([]);
       expect(recentPages()).toContainEqual({ name: "contents", kind: "page", path: "pages/contents.md" });

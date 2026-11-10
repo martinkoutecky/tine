@@ -435,7 +435,7 @@ fn page_reports_invalid_missing_and_undecodable() {
     let store = f.store();
     assert!(matches!(
         store.page(&PageId::from("pages/missing.md")),
-        Err(StoreError::NotFound)
+        Err(StoreError::NotFound(_))
     ));
     assert!(matches!(
         store.page(&PageId::from("pages/../Bad.md")),

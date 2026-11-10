@@ -195,6 +195,33 @@ it("GH #745: a structural edit inside a window keeps its other blocks, and the w
   } finally { dispose(); }
 });
 
+it("GH #745: successive structural edits retain the editor, window shells and later rows", async () => {
+  const { host, dispose } = await mount(400);
+  try {
+    const windows = [...host.querySelectorAll("[data-outline-window]")];
+    for (const window of windows) WindowObserver.set(window, true);
+    for (const [row, at, key] of [[115, 8, "Enter"], [112, 0, "Enter"], [118, 0, "Backspace"], [104, -1, "Delete"]] as const) {
+      endEdit("page-navigation");
+      const id = `window-${row}`;
+      startEditing(id, at < 0 ? node(id)!.raw.length : at);
+      await vi.waitFor(() => expect(maybeEditorIn(host)?.blockId).toBe(id));
+      const editor = maybeEditorIn(host)!;
+      editor.focus();
+      editor.select(at < 0 ? editor.value().length : at);
+      editor.keydown({ key, bubbles: true, cancelable: true });
+      expect(host.querySelector(".region-failure")).toBeNull();
+      expect(maybeEditorIn(host)).not.toBeNull();
+      await vi.waitFor(() => expect(maybeEditorIn(host)?.element).toBe(document.activeElement));
+      expect(windows.filter(window => !window.isConnected)).toHaveLength(0);
+      expect(host.querySelector('[data-block-id="window-110"]')).not.toBeNull();
+    }
+    expect(node("window-105")).toBeUndefined();
+    expect(host.querySelector('[data-block-id="window-105"]')).toBeNull();
+    expect(node("window-104")?.raw).toContain("Row 105 unique content");
+    expect(maybeEditorIn(host)?.blockId).toBe("window-104");
+  } finally { dispose(); }
+});
+
 it("revealing an already-visible row does not pin its window after scrolling away", async () => {
   const { host, dispose } = await mount();
   try {

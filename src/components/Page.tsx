@@ -15,7 +15,7 @@ import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed } from "../changeKeys";
-import { PageLoadError, createPinnedPathRecovery, type PinnedPathRefusal } from "./pageLoadRecovery";
+import { PageLoadError, createPinnedPathRecovery, refusedPageOpen, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableResource } from "../tagTable";
@@ -46,7 +46,7 @@ import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
-import type { JournalFeedPage, PageRead, RefGroup } from "../types";
+import type { JournalFeedPage, PageRead, PageReadSource, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
@@ -544,9 +544,10 @@ export function PageView(): JSX.Element {
           // This is a snapshot for the route request, not an effect dependency:
           // loadRoutedPage publishes loadedPage below and must not restart us.
           const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
-          const result = await readOwned(routeOwner, r.path || loadedPath
-            ? backend().getPageByPath(r.path ?? loadedPath!)
-            : backend().getPage(r.name, r.pageKind));
+          let readSource: PageReadSource | null = null;
+          const result = await readOwned(routeOwner, r.path
+            ? backend().getPageByPath(r.path, source => { readSource = source; })
+            : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;
           // A saved path can use another case spelling on a case-insensitive
@@ -574,7 +575,7 @@ export function PageView(): JSX.Element {
             rewritePageTargetAcrossPanes(from, to);
             return;
           }
-          if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
+          if (r.path && refusedPageOpen("route", r, dto, readSource)) {
             pathRefusal = dto ? "mismatch" : "missing";
             throw new Error("The selected physical page is no longer available at that path.");
           }
