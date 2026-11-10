@@ -90,6 +90,16 @@ it("medium highlights open the selected live editable thread on tap", async () =
   popup().querySelector<HTMLButtonElement>(".comment-popup-close")!.click();
   tapHighlight(pane.querySelector<HTMLElement>('[data-comment-id="one"]')!); expect(popup().textContent).toContain("First thread");
 });
+it("the wide margin appears for the first quote property and disappears for the last", () => {
+  const pane = mount(1400, "main", [b("p", "First passage", [b("one", "Ordinary child")])]);
+  expect(pane.querySelector(".margin-column")).toBeNull();
+  setRaw("one", "First thread\ntine.quote:: First");
+  expect(pane.querySelector('.margin-column [data-block-id="one"]')?.textContent).toContain("First thread");
+  expect(pane.querySelector('.page-blocks [data-block-id="one"]')).toBeNull();
+  setRaw("one", "Ordinary child again");
+  expect(pane.querySelector(".margin-column")).toBeNull();
+  expect(pane.querySelector('.page-blocks [data-block-id="one"]')?.textContent).toContain("Ordinary child again");
+});
 it("phone navigation preserves unsent drafts while moving between threads", () => {
   const pane = mount(390); chip(pane).click();
   const draft = popup().querySelector<HTMLTextAreaElement>(".comment-reply-draft")!;
@@ -355,6 +365,29 @@ describe("hovering a highlight", () => {
     draft.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
     expect(node("one")!.children.map(id => node(id)!.raw.split("\n")[0])).toContain("Hovered reply");
     expect(popup().textContent).toContain("Hovered reply");
+  });
+  it.each(["focused composer", "unfocused draft", "live block editor"])("hovering another passage preserves the %s", async held => {
+    const pane = mount(800);
+    hoverHighlight(mark(pane, "one")); await advance(1000);
+    const draft = popup().querySelector<HTMLTextAreaElement>('[data-reply-root="one"]')!;
+    let editor: ReturnType<typeof editorIn> | undefined;
+    if (held === "live block editor") {
+      startEditing("one", 0); await Promise.resolve();
+      editor = editorIn(popup()); editor.input("Editing the first thread", 24);
+    } else {
+      draft.focus();
+      if (held === "unfocused draft") {
+        draft.value = "Keep this reply"; draft.dispatchEvent(new Event("input", { bubbles: true })); draft.blur();
+      }
+    }
+    const focused = document.activeElement;
+    hoverHighlight(mark(pane, "two")); await advance(1000);
+    expect(draft.isConnected, "the first passage's composer stays mounted").toBe(true);
+    expect(popup().querySelector('[data-reply-root="one"]')).toBe(draft);
+    expect(popup().textContent).not.toContain("Second thread");
+    if (held === "unfocused draft") expect(draft.value).toBe("Keep this reply");
+    else expect(document.activeElement).toBe(focused);
+    if (editor) expect(editor.value()).toContain("Editing the first thread");
   });
   it("a mouse press during the dwell places the caret and the preview never opens", async () => {
     const pane = mount(800);

@@ -14,7 +14,6 @@ import { facetsOf } from "./render/facets";
 import { splitProps, BUILTIN_HIDE } from "./editor/properties";
 import { pushToast } from "./toasts";
 import { msg, t } from "./i18n";
-import { commentsWritten } from "./margin";
 import { revealCommentMargin, hasPendingReplyDraft } from "./commentMargin";
 import { commentAuthorName } from "./commentIdentity";
 import { runWithCommentName } from "./commentNamePrompt";
@@ -62,7 +61,6 @@ export function createComment(parentId: string, editorText: string, start: numbe
     if (id) {
       // GH #845: a comment is never written into a hidden margin.
       revealCommentMargin();
-      commentsWritten();
     }
   });
   return id;
@@ -128,7 +126,7 @@ export function appendThreadForPassage(commentId: string, surface: string | null
       id = insertEmptyChildBlock(parent.id, parent.children.length);
       if (id) setRaw(id, stampCommentDate(commentRaw(freshSelector, format, commentAuthorName()), format), { timetracking: false });
     });
-    if (id) { revealCommentMargin(); commentsWritten(); startEditing(id, 0, null, surface); }
+    if (id) { revealCommentMargin(); startEditing(id, 0, null, surface); }
   }));
   return id;
 }

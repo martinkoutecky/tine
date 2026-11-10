@@ -14,7 +14,7 @@ import { MarginContext } from "./marginContext";
 import { CommentResolutionScope } from "./CommentResolutionScope";
 import { blockRegions, initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
-import { resetStore } from "../document";
+import { insertEmptyChildBlock, resetStore } from "../document";
 import { setDoc } from "../document/model";
 import { pageByName } from "../document/model";
 import { persistCommentMarginHidden } from "../commentMarginPref";
@@ -179,4 +179,31 @@ it("opening one passage mounts that passage's cards only at 4, 16 and 64 passage
   // Generous on purpose (shared host, jsdom); it fails when every passage's
   // live tree is mounted (review probe: 53/207/401 ms at 4/16/64).
   expect(results[2].ms, "opening at 64 passages vs 4").toBeLessThan(results[0].ms * 3 + 25);
+});
+
+it.each([0, 1])("a structural edit reruns constant comment-index work at 16, 64 and 256 groups (%s comments)", comments => {
+  const results = [16, 64, 256].map(n => {
+    const blocks = Array.from({ length: n }, (_, i) => b(`g${i}`, `Group ${i}`, [b(`k${i}`, `Child ${i}`),
+      ...(i === 0 && comments ? [b("t", "Comment\ntine.quote:: Group")] : [])]));
+    loadSingle({ name: "Structure", title: "Structure", kind: "page", pre_block: null, format: "md", blocks });
+    const pane = document.createElement("main"); pane.className = "main-content";
+    Object.defineProperty(pane, "clientWidth", { configurable: true, get: () => 1400 }); document.body.append(pane);
+    dispose = render(() => {
+      let outline: HTMLDivElement | undefined;
+      const margin = createMarginSurface({ page: () => pageByName("Structure"), eligible: () => true, outline: () => outline });
+      return <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Structure")?.roots ?? []}><MarginContext.Provider value={margin.placement}>
+        <div class="page-section"><div class="page-blocks" ref={outline}><BlockList ids={pageByName("Structure")?.roots ?? []} /></div><margin.Column /></div>
+      </MarginContext.Provider></CommentResolutionScope></SurfaceContext.Provider>;
+    }, pane);
+    let inserted: string | null = null;
+    const m = measure("k0", () => { inserted = insertEmptyChildBlock("k0", 0); });
+    expect(inserted).not.toBeNull();
+    expect(pane.querySelector(`[data-block-id="${inserted}"]`)).not.toBeNull();
+    const sites = [...m.bySite].filter(([site]) => site.includes("src/commentIndex.ts:"));
+    const indexRuns = sites.reduce((sum, [, stat]) => sum + stat.runs, 0);
+    dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren();
+    return { n, indexRuns, totalRuns: m.runs, ms: m.ms, sites: sites.map(([site, stat]) => [site, stat.runs]) };
+  });
+  console.log(JSON.stringify({ measurement: "structural edit", comments, results }));
+  expect(results.map(r => r.indexRuns)).toEqual([results[0].indexRuns, results[0].indexRuns, results[0].indexRuns]);
 });

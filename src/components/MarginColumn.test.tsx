@@ -21,6 +21,7 @@ import { BlockList } from "./BlockList";
 import { SurfaceContext } from "./Block";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { CommentResolutionScope } from "./CommentResolutionScope";
 
 const PAGE = "MarginColumn";
 
@@ -51,14 +52,14 @@ function Host(props: { eligible?: boolean }): JSX.Element {
   let outline: HTMLDivElement | undefined;
   const margin = createMarginSurface({ page: () => pageByName(PAGE), eligible: () => props.eligible ?? true, outline: () => outline });
   return (
-    <div class="page-section">
+    <CommentResolutionScope roots={pageByName(PAGE)?.roots ?? []}><div class="page-section">
       <MarginContext.Provider value={margin.placement}>
         <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
           <BlockList ids={pageByName(PAGE)?.roots ?? []} />
         </div>
       </MarginContext.Provider>
       <margin.Column />
-    </div>
+    </div></CommentResolutionScope>
   );
 }
 
@@ -223,7 +224,7 @@ describe("the margin column on a wide main pane", () => {
       let ref: HTMLDivElement | undefined;
       const margin = createMarginSurface({ page: () => pageByName(PAGE), eligible: () => true, outline: () => ref });
       return (
-        <div class="page-section">
+        <CommentResolutionScope roots={pageByName(PAGE)?.roots ?? []}><div class="page-section">
           <MarginContext.Provider value={margin.placement}>
             <div class="page-blocks" ref={ref} classList={{ "margin-active": margin.active() }}>
               <BlockList ids={pageByName(PAGE)?.roots ?? []} />
@@ -231,7 +232,7 @@ describe("the margin column on a wide main pane", () => {
             </div>
           </MarginContext.Provider>
           <margin.Column />
-        </div>
+        </div></CommentResolutionScope>
       );
     });
     try {

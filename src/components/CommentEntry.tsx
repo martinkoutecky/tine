@@ -43,6 +43,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   const secondary = place?.surface !== surface && (surface.startsWith("ref:") || surface.startsWith("embed:"));
   const wide = () => !!place && place.thread === null && !secondary && place.api.active();
   let host!: HTMLSpanElement;
+  let popupContent: HTMLDivElement | undefined;
   let row: HTMLElement | null = null;
   const [width, setWidth] = createSignal(800);
   const phone = () => commentTier(width()) === "phone";
@@ -157,7 +158,12 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
     const over = (event: PointerEvent) => {
       const mark = markOf(event);
       if (wide() || phone() || !mark || (event.relatedTarget as Node | null) && mark.contains(event.relatedTarget as Node)) return;
-      peek.anchorEnter(event, () => setTarget({ id: mark.dataset.commentId!, anchor: mark }));
+      peek.anchorEnter(event, () => {
+        const popup = opened() ? popupContent?.closest(".comment-thread-popup") : null;
+        if (popup?.contains(host.ownerDocument.activeElement) ||
+          [...popup?.querySelectorAll<HTMLTextAreaElement>(".comment-reply-draft") ?? []].some(draft => draft.value.length > 0)) return;
+        setTarget({ id: mark.dataset.commentId!, anchor: mark });
+      });
     };
     const out = (event: PointerEvent) => {
       const mark = markOf(event);
@@ -186,7 +192,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
     if (id && presented().has(id) && (!opened() || groupOf().get(id) !== index())) open(id, blockText());
   });
   let touch: { x: number; y: number } | undefined;
-  const content = () => <div class="comment-popup-content"
+  const content = () => <div class="comment-popup-content" ref={popupContent}
     onTouchStart={event => { const first = event.touches[0]; touch = first && !(event.target as Element).closest("textarea,[contenteditable=true]") ? { x: first.clientX, y: first.clientY } : undefined; }}
     onTouchEnd={event => {
       const last = event.changedTouches[0];

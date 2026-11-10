@@ -13,11 +13,12 @@
 // or one of its comments changed. Typing in any other block that keeps its
 // height costs nothing; one that grows costs one pass.
 
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, type Accessor, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack, useContext, type Accessor, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { t } from "../i18n";
 import { MarginContext, type MarginApi, type MarginPlacement } from "./marginContext";
-import { countMarginMeasurePass, commentTier, marginColumnWidth, pageHasComment, stackThreads, watchCommentsWritten } from "../margin";
+import { countMarginMeasurePass, commentTier, marginColumnWidth, stackThreads } from "../margin";
+import { CommentIndexContext } from "../commentIndex";
 import { node, type FeedPage } from "../document";
 import { commentMarginHidden } from "../commentMarginPref";
 import { newResizeObserver, requestFrame } from "../windowRealm";
@@ -67,12 +68,7 @@ export function createMarginSurface(opts: {
   outline: () => HTMLElement | undefined;
   pane?: () => HTMLElement | undefined;
 }): MarginSurface {
-  const hasComment = createMemo(() => {
-    if (!opts.eligible() || commentMarginHidden()) return false;
-    watchCommentsWritten();
-    const page = opts.page();
-    return !!page && pageHasComment(page.roots, page.format);
-  });
+  const [hasComment, setHasComment] = createSignal(false);
   // The pane's width (its scroller), watched only while the page has comments.
   const [paneWidth, setPaneWidth] = createSignal(0);
   createEffect(() => {
@@ -297,6 +293,10 @@ export function createMarginSurface(opts: {
   return {
     active,
     placement: { api, thread: null },
-    Column: () => <Show when={active()}><ColumnView /></Show>,
+    Column: () => {
+      const index = useContext(CommentIndexContext);
+      createEffect(() => setHasComment(opts.eligible() && !commentMarginHidden() && !!index?.roots().length));
+      return <Show when={active()}><ColumnView /></Show>;
+    },
   };
 }

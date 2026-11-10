@@ -14,7 +14,7 @@ import { commentMarginHidden } from "../commentMarginPref";
  * the same array when no comment follows an ordinary child (the common case,
  * allocation-free). Reads block text untracked: a structural change re-asks, a
  * keystroke never does (visibleOrderCost.test.ts); a block edited by hand into a
- * comment moves at the next structural change, as `pageHasComment` notices it.
+ * comment moves at the next structural change.
  * O(children) regex screens. */
 export function commentsFirst(children: readonly string[]): readonly string[] {
   if (children.length < 2) return children;

@@ -4,12 +4,11 @@
 // arrow keys go when part of the outline is drawn beside it. Everything is
 // derived from the outline at render time, with a device-local display policy.
 
-import { createSignal } from "solid-js";
 import { anchorQuote, type QuoteSelector } from "./comments";
 import { commentChildOf } from "./commentChildren";
-import { nextVisible, prevVisible, node as docNode, someBlockInTrees, type OutlineScope } from "./document";
+import { nextVisible, prevVisible, node as docNode, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
-import { isCommentId, bodyNeighbor } from "./document";
+import { bodyNeighbor } from "./document";
 import { commentsInPopup } from "./commentMarginPref";
 export { isCommentId, threadRootOf } from "./document";
 
@@ -63,24 +62,6 @@ export function orderedCommentIds(parentId: string, format: Format): string[] {
     const child = docNode(id);
     return (child && commentChildOf(id, child.raw, format)) || [];
   }), format);
-}
-
-// Bumped when a comment is written, so the margin re-asks `pageHasComment`
-// although writing it changes only the new block's text (see below).
-const [commentsEpoch, setCommentsEpoch] = createSignal(0);
-export const commentsWritten = (): void => void setCommentsEpoch((n) => n + 1);
-export const watchCommentsWritten = (): number => commentsEpoch();
-
-/** Whether some block of the page is a comment. Stops at the first one.
- *
- * Depends on the document's structure revision only, and reads the blocks
- * untracked (BIGLOAD-090b): opening a large page must not subscribe to every
- * block, and a keystroke in any block must not make the margin look at the
- * other blocks (GH #248, keystrokeScaling.guard). A comment arrives as a new
- * child, so a structural change re-asks; a block edited by hand into (or out of)
- * a comment is noticed at the next structural change or page reload. */
-export function pageHasComment(roots: readonly string[], format: Format): boolean {
-  return someBlockInTrees(roots, (n) => isCommentId(n.id, format));
 }
 
 /** Top offsets for threads already sorted in document order: each sits at its

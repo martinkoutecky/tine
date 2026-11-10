@@ -18,6 +18,7 @@ import { BlockList } from "./BlockList";
 import { Block, SurfaceContext } from "./Block";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { CommentResolutionScope } from "./CommentResolutionScope";
 import { forceCommentMarginShown } from "../commentMarginPref";
 import { revealCommentMargin, setCommentMarginVisible } from "../commentMargin";
 
@@ -43,14 +44,14 @@ function Host(): JSX.Element {
   let outline: HTMLDivElement | undefined;
   const margin = createMarginSurface({ page: () => pageByName(PAGE), eligible: () => true, outline: () => outline });
   return (
-    <div class="page-section">
+    <CommentResolutionScope roots={pageByName(PAGE)?.roots ?? []}><div class="page-section">
       <MarginContext.Provider value={margin.placement}>
         <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
           <BlockList ids={pageByName(PAGE)?.roots ?? []} />
         </div>
       </MarginContext.Provider>
       <margin.Column />
-    </div>
+    </div></CommentResolutionScope>
   );
 }
 

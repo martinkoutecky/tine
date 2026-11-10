@@ -30,7 +30,9 @@ findings 1 and 2.
   pen taps open the thread; Enter or Space on a focused highlight opens it.
   The thread opens in `PeekPopup`, sharing preview placement and outside-press,
   Escape, scroll and resize dismissal; it stays live and editable, and a
-  focused comment editor or reply draft holds it open past pointer exit. Only
+  focused comment editor or reply draft holds it open past pointer exit.
+  Hovering another passage preserves the current popup while it contains focus
+  or a non-empty reply draft. Only
   an open thread the renderer drew no highlight for gives its block one small
   glyph marker, labelled with the number of such threads, that opens the first
   of them. That covers a quote that changed, matches more than once or covers
@@ -77,8 +79,9 @@ findings 1 and 2.
   their selectors and resolution), which comments are thread roots rather than
   replies, and which roots lie under a subtree. The "N resolved" control, the
   folded "N below" count, and every block's comment children (outline filter,
-  highlights, compact entry and popup, margin column) read it. A structural
-  change rescans the scope's trees once with untracked reads. A raw edit of any
+  highlights, compact entry and popup, margin column) and margin eligibility
+  read it. A structural change rescans the scope's trees once with untracked
+  reads. A raw edit of any
   block on those pages runs one key screen (plus one facet lookup if it may
   quote): a comment whose selector or resolution changed is updated in place
   and notifies only its parent's readers and, for a root, the root readers; a
