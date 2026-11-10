@@ -267,7 +267,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         fs::create_dir_all(temp.path().join("pages")).unwrap();
         fs::write(temp.path().join("pages/a.md"), "- disk\n").unwrap();
-        let (store, _) = Store::open(temp.path(), Default::default()).unwrap();
+        let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
         store.whole_graph().unwrap();
         store
             .watch
