@@ -27,6 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A relative PDF link such as `![paper](../papers/x.pdf)`, `![paper](file:../x.pdf)` or Org `[[file:../x.pdf][paper]]` now opens in Tine's read-only reader (desktop), like an embedded `file://` PDF, instead of the system viewer. The path is read from the graph folder, as for other file links; `![paper](assets/x.pdf)` still opens the annotated reader (#732).
 - A query or table no longer stays empty or stale until reload when a page it lists starts or stops existing without a file of its own: linking a new `[[Page]]`, giving a blank `Brand/Child` file its first text (which makes `Brand` a page), or removing a page's last reference now refreshes the queries that can list that page, and only those (internal: hHbdR0, REG-QUERY-FILELESS-PAGE-STALE).
 - Merging or deleting a block no longer replaces a long page with an error and loses the editor after earlier structural edits (GH #745).
 - Page and block properties now have a tinted, rounded panel, following the active theme and Logseq's `--ls-block-properties-background-color` custom CSS variable (#920).
