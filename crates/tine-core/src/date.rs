@@ -254,6 +254,11 @@ pub struct Format {
     toks: Vec<Tok>,
 }
 
+/// The most width renderings one journal pattern may contribute to
+/// [`JournalFormat::accepted_stems`] (GH #863 D3): an upper bound on the product
+/// of each numeric field's possible widths, so a pattern that repeats fields
+/// cannot make an absent-day lookup allocate or stat exponentially many names.
+pub const WIDTH_RENDERINGS_MAX: usize = 16;
 impl Format {
     pub fn compile(pat: &str) -> Format {
         let b: Vec<char> = pat.chars().collect();
@@ -358,15 +363,30 @@ impl Format {
     /// past 999, so at most 4 for a pattern with one year, month and day
     /// field. Not checked to parse back.
     fn renderings_by_width(&self, d: JournalDate) -> Vec<String> {
+        // A numeric field's value and the most digits the parser reads for it.
+        let field = |t: &Tok| match t {
+            Tok::Year(2) => Some((d.year.rem_euclid(100), 2)),
+            Tok::Year(_) => Some((d.year, 4)),
+            Tok::MonthNum(_) => Some((d.month as i32, 2)),
+            Tok::DayNum(_) | Tok::DayOrd => Some((d.day as i32, 2)),
+            _ => None,
+        };
+        // A format may repeat numeric fields (config accepts "yyyy-MM-dd M M M …"),
+        // and each occurrence multiplies the product: past the bound the pattern
+        // contributes nothing here, and only its ordinary spelling is tried.
+        let within = self.toks.iter().try_fold(1usize, |n, t| {
+            let widths = field(t).map_or(1, |(value, max)| {
+                let digits = value.to_string().len();
+                max.max(digits) - digits + 1
+            });
+            Some(n * widths).filter(|&n| n <= WIDTH_RENDERINGS_MAX)
+        });
+        if within.is_none() {
+            return Vec::new();
+        }
         let mut out = vec![String::new()];
         for t in &self.toks {
-            let (value, max) = match t {
-                Tok::Year(2) => (d.year.rem_euclid(100), 2),
-                Tok::Year(_) => (d.year, 4),
-                Tok::MonthNum(_) => (d.month as i32, 2),
-                Tok::DayNum(_) | Tok::DayOrd => (d.day as i32, 2),
-                _ => (-1, 0),
-            };
+            let (value, max) = field(t).unwrap_or((-1, 0));
             let single = Format {
                 toks: vec![t.clone()],
             };
@@ -685,7 +705,9 @@ impl JournalFormat {
     /// back (a two-digit year outside 2000-2099 does not): where a file of the
     /// day may be found by name without listing a directory (GH #863 D3).
     /// Bounded by `renderings_by_width`: at most 4 per parse-list pattern
-    /// with one year, month and day field, for a year past 999.
+    /// with one year, month and day field, for a year past 999, and never more
+    /// than [`WIDTH_RENDERINGS_MAX`] per pattern (a pattern whose width product
+    /// would exceed it contributes only its ordinary spelling).
     /// Other accepted forms (a month name's other length, any ordinal
     /// suffix, another weekday, case, surrounding space) are not listed.
     pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
@@ -693,9 +715,11 @@ impl JournalFormat {
             .parse_list
             .iter()
             .flat_map(|f| f.renderings_by_width(d));
+        let mut seen = std::collections::HashSet::new();
         let mut out: Vec<String> = Vec::new();
         for s in self.spellings(d).into_iter().chain(widths) {
-            if !out.contains(&s) && self.parse(&s) == Some(d) {
+            if !seen.contains(&s) && self.parse(&s) == Some(d) {
+                seen.insert(s.clone());
                 out.push(s);
             }
         }
@@ -1155,5 +1179,22 @@ mod fmt_tests {
             .accepted_stems(d(1999, 1, 5))
             .iter()
             .all(|s| !s.contains(".99")));
+    }
+
+    #[test]
+    fn accepted_stems_stay_bounded_when_a_format_repeats_numeric_fields() {
+        // Merge review r2 (GH #863): "yyyy-MM-dd" + " M" x 14 made 65,546 stems
+        // for January 1 and ~196k stats under the writer, growing exponentially.
+        let repeated = format!("yyyy-MM-dd{}", " M".repeat(14));
+        let fmt = JournalFormat::new(Some(&repeated), Some("MMM do, yyyy"));
+        let day = d(2026, 1, 1);
+        let stems = fmt.accepted_stems(day);
+        let bound = fmt.spellings(day).len() + 2 * 16; // two patterns, WIDTH_RENDERINGS_MAX each
+        assert!(stems.len() <= bound, "{} stems", stems.len());
+        // The pattern's ordinary spelling is still tried.
+        assert!(
+            stems.iter().any(|s| s.starts_with("2026-01-01 1 1")),
+            "{stems:?}"
+        );
     }
 }

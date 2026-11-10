@@ -823,8 +823,9 @@ ended, it reads again without asking. Before the owner's first publication it
 parses the file without publishing it. `page()` is never called on the host
 driver's thread (a debug assertion). A journal day the index has no file for
 first stats the day's other accepted file names (its spellings at every
-numeric width the parser reads, `JournalFormat::accepted_stems`, times the
-graph-text extensions) and reads a file the watcher has not observed before
+numeric width the parser reads, `JournalFormat::accepted_stems`, at most
+`WIDTH_RENDERINGS_MAX` width renderings per pattern, times the graph-text
+extensions) and reads a file the watcher has not observed before
 resolving the name again: an unheld one through the watcher's exact-path
 reconcile, a held one through its owner as `page()` reads it, whose read error
 is the answer (GH #863). So a creating save finds a day delivered unobserved
