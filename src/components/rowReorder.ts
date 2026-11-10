@@ -107,11 +107,12 @@ export function beginRowReorderDrag(
   };
   // A released hold that left its menu open owns the release's compatibility
   // click (it could land on the menu, under the finger) and any late platform
-  // menu, until that click or the next gesture.
+  // menu, until that click, the next gesture, or keyboard input.
   const releaseMenuOwnership = () => {
     doc.removeEventListener("contextmenu", swallowMenu, true);
     doc.removeEventListener("click", swallowReleaseClick, true);
     doc.removeEventListener("pointerdown", nextGesture, true);
+    doc.removeEventListener("keydown", releaseMenuOwnership, true);
   };
   const swallowReleaseClick = (ev: MouseEvent) => {
     if (ev.detail === 0) return; // keyboard activation, not the hold's click
@@ -159,6 +160,7 @@ export function beginRowReorderDrag(
     if (heldMenu && contextMenu() === heldMenu) {
       doc.addEventListener("click", swallowReleaseClick, true);
       doc.addEventListener("pointerdown", nextGesture, true);
+      doc.addEventListener("keydown", releaseMenuOwnership, true);
     } else if (hold) {
       // The hold's own (native) contextmenu can arrive just after release.
       setTimeout(() => doc.removeEventListener("contextmenu", swallowMenu, true), 0);
