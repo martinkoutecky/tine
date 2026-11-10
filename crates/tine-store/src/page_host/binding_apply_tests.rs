@@ -283,6 +283,7 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
         moves: Vec::new(),
         publications: None,
         view: None,
+        saved: Vec::new(),
     }
 }
 

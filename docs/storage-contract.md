@@ -1048,6 +1048,23 @@ submits on the 60-block page: 1 file, 541 B, 2 syncs). Measured by
 sync counted at the `HostIo` seam. A save also costs 2 whole-file reads and
 3 parses (1 of the old source) per edit.
 
+**Command-line block edit unit cost (I-25, card DuDHQ).** A `block.edit` of an
+existing page's block is one request and one reply, and one host operation,
+so it drafts: two files (the page's temporary file, and the draft carrying the
+new and the old page; 216 B on a 1-block page, 2873 B on a 60-block one) and
+five syncs (the page's temp file and directory; the draft's temp file,
+directory and retirement). It reads the whole file 5 times, each owed above:
+the owner's read (`PageHost::read`), the plan's staging, the host's admission,
+the save's base guard and the publication read after the rename (GH #623).
+It parses 4 times: the owner's parse of the bytes its
+revision guards (A-V4b), the serializer's parse of the old source and its
+round-trip parse of the new bytes, and the publication's row (R8). The owner
+checks and answers from the serializer's parse, which the plan hands it
+(`HostOp::saved`). It does not parse again. It reads a page's name once.
+Transport bytes are unchanged. Proof
+`src-tauri/src/owner/owner_tests/write_cost_tests.rs`
+`a_block_edit_spends_its_lower_bound` (1-block, 60-block and 2 MiB pages).
+
 **Sessions.** Every host launch and every `page_window_reloaded` draws a
 process-unique session; the reload answers it with `next_id`, one past the
 host's last admitted request. Every mutating page command (`page_open`,

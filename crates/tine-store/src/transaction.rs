@@ -392,6 +392,9 @@ struct Prepared {
     old: Option<Vec<u8>>,
     new: Option<Vec<u8>>,
     opaque_rev: Option<FileRev>,
+    /// A page save's new bytes as the serializer parsed them (its round-trip
+    /// parse), which `PagePlan::plan` hands its caller (`HostOp::saved`).
+    parsed: Option<tine_core::doc::Document>,
 }
 
 enum Expected {

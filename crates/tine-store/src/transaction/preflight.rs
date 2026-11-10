@@ -112,6 +112,7 @@ impl<'a> PagePlan<'a> {
                 old: Some(self.stage(file, expected)?),
                 new: None,
                 opaque_rev: None,
+                parsed: None,
             }),
             Step::Save {
                 id,
@@ -131,7 +132,7 @@ impl<'a> PagePlan<'a> {
                     }
                     SaveBase::CreateNew => None,
                 };
-                let (new, _) =
+                let (new, parsed) =
                     self.serialize_page(&file, doc, old.as_deref(), *markers == Markers::Resolve)?;
                 Ok(Prepared {
                     src: file,
@@ -139,6 +140,7 @@ impl<'a> PagePlan<'a> {
                     old,
                     new: Some(new),
                     opaque_rev: None,
+                    parsed: Some(parsed),
                 })
             }
             Step::Create { file, content } => {
@@ -163,6 +165,7 @@ impl<'a> PagePlan<'a> {
                     old: None,
                     new: None,
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Unique {
@@ -227,6 +230,7 @@ impl<'a> PagePlan<'a> {
                     old: None,
                     new: None,
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Replace {
@@ -253,6 +257,7 @@ impl<'a> PagePlan<'a> {
                     old: Some(old),
                     new: Some(bytes.clone()),
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Rewrite {
@@ -288,6 +293,7 @@ impl<'a> PagePlan<'a> {
                     old: Some(old),
                     new: Some(new),
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Move {
@@ -331,6 +337,7 @@ impl<'a> PagePlan<'a> {
                     old,
                     new,
                     opaque_rev,
+                    parsed: None,
                 })
             }
             Step::Trash {
@@ -356,6 +363,7 @@ impl<'a> PagePlan<'a> {
                     old,
                     new: None,
                     opaque_rev,
+                    parsed: None,
                 })
             }
         }

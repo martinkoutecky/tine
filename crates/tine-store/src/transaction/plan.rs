@@ -84,6 +84,7 @@ impl PagePlan<'_> {
             publications: None,
             creation_checks: Vec::new(),
             view: self.view.clone(),
+            saved: Vec::new(),
         };
         for (step, prepared) in self.steps.iter().zip(prepared) {
             let page = self.store.as_page(&prepared.src);
@@ -142,6 +143,24 @@ impl PagePlan<'_> {
                     return Err(Why::Refused(Refusal::InvalidTarget(
                         "a host operation requires staged page bytes".into(),
                     )));
+                }
+                if let (Some(document), Some(bytes)) = (prepared.parsed, new.as_deref()) {
+                    // Named from the bytes as a read of them would be (`Store::page_of`).
+                    let path = self.path(&prepared.src)?;
+                    let entry = std::str::from_utf8(bytes)
+                        .ok()
+                        .and_then(|text| self.store.graph.page_entry_in(&path, Some(text)));
+                    if let Some(entry) = entry {
+                        let (name, kind) = (entry.name, entry.kind);
+                        op.saved.push((
+                            page.clone(),
+                            crate::HostSaved {
+                                name,
+                                kind,
+                                document,
+                            },
+                        ));
+                    }
                 }
                 let effect =
                     new.map_or(HostEffect::Delete, |bytes| HostEffect::Write(bytes.into()));

@@ -4277,7 +4277,7 @@ impl Graph {
     }
 
     /// The page entry `path` names, its page name from `text` when given.
-    fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
+    pub(crate) fn page_entry_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
         if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
