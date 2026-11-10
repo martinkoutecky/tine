@@ -830,7 +830,17 @@ the close, working-set eviction (`unsettledPages`), the recovery panel and
 close prompt (`unsavedDrafts`, state "Saving") and reload blocking
 (`hostBlocksReload`). Natively, `page_wait` answers false once the driver has
 ended, the host is down or its state is poisoned. A down host dropped its
-pages, which would otherwise read as owing nothing. Proofs
+pages, which would otherwise read as owing nothing. A driver that ends on a
+panic (a host bug) releases the store writer before unwinding and the host's
+drop hands its pages back to the watcher, so the Store's other writers go on
+(s3b O6; proof `binding_tests.rs`
+`a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable`).
+`Store::close` never panics: it takes over a lock a panicked writer poisoned,
+and so does every later close (the slot's and the Store's drops), since
+closing only marks state closed and writes nothing; proofs
+`load_panic_tests.rs` `close_after_a_writer_panicked_completes_and_drops`
+and `host_retirement.rs`
+`a_retirement_after_a_writer_panicked_closes_and_releases_the_root`. Proofs
 `src/document/host/client.test.ts` "keeps a page open while a version the host
 took from it is unpublished (J6)", "lets go when the session ends (J6)", the
 B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`

@@ -671,6 +671,28 @@ mod tests {
         *fresh.host.write().unwrap() = PageHostSlot::Off;
     }
 
+    /// Review R1 of audit-storage-1109: a writer that panicked leaves the
+    /// Store's writer lock poisoned. Retiring the slot still stops the host,
+    /// closes the Store and takes the slot out of the retirement, and
+    /// dropping the last slot and Store references (each closes again) does
+    /// not panic or abort.
+    #[test]
+    fn a_retirement_after_a_writer_panicked_closes_and_releases_the_root() {
+        let f = Fixture::new("writer-poisoned");
+        let mut registry = GraphRegistry::default();
+        let slot = f.bind(&mut registry, "graph-1");
+        f.store.poison_writer_for_tests();
+        assert!(registry.remove("graph-1").is_none());
+        let retirement = registry.retirement.clone();
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+        assert!(f.closed(), "the Store closed");
+        drop(slot);
+        drop(retirement);
+        drop(registry);
+        f.store.close();
+        assert!(f.closed());
+    }
+
     /// The registry hands a host-less slot straight back, for the caller to
     /// drop outside the lock (today's path).
     #[test]

@@ -609,7 +609,7 @@ impl ChangeFeed {
     }
 
     fn close(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.closed = true;
         state.queue.clear();
         self.ready.notify_all();
@@ -1368,18 +1368,33 @@ impl Store {
 
     /// Stop observation, wait for an in-flight writer, end the subscription,
     /// release load waiters, and refuse later I/O. Idempotent; no timeout.
+    /// Never panics: a lock a panicked writer poisoned is taken over, since
+    /// closing only marks state closed and writes nothing. `Drop` closes
+    /// again, so a panic here would abort the process while it unwinds
+    /// (`close_after_a_writer_panicked_completes_and_drops`).
     pub fn close(&self) {
         self.changes
             .checkpoint
             .get()
             .inspect(|signal| signal.stop());
         self.watch.stop();
-        let _writer = self.writer.lock().unwrap();
+        let _writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
         self.load.closed.store(true, Ordering::Release);
         self.load.cancelled.store(true, Ordering::Release);
-        *self.load.status.lock().unwrap() = LoadStatus::Closed;
+        *self.load.status.lock().unwrap_or_else(|e| e.into_inner()) = LoadStatus::Closed;
         self.load.ready.notify_all();
         self.changes.close();
+    }
+
+    /// Poison the writer lock, as a writer that panicked while holding it does
+    /// (on the calling thread: a panic unwinding past the guard poisons it).
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn poison_writer_for_tests(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("test writer panicked while holding the writer lock");
+        }));
+        debug_assert!(self.writer.is_poisoned());
     }
 
     /// Start the sole app-wide change stream without replay. A second
