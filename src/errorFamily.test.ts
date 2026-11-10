@@ -18,6 +18,8 @@ it("recognizes the config-unreadable refusal family, with its read error after i
   expect(errorFamily("config-unreadable: invalid utf-8 sequence of 1 bytes from index 35")).toBe("config-unreadable");
   expect(errorFamily(new Error("config-unreadable: config.edn is too large"))).toBe("config-unreadable");
   expect(errorFamily("a config-unreadable happened")).toBe("unknown");
+  expect(errorFamily("config-unreadable-after: The highlights were saved\ninvalid utf-8")).toBe("config-unreadable");
+  expect(errorFamily("config-unreadable-after: no detail line")).toBe("unknown");
   expect(errorFamily("Couldn't read config.edn.")).toBe("unknown");
 });
 

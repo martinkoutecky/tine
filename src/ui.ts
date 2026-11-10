@@ -1,5 +1,5 @@
-import { msg, t } from "./i18n";
-import { errorFamily } from "./errorFamily";
+import { msg } from "./i18n";
+import { configUnreadableText, errorFamily } from "./errorFamily";
 import type { ShortcutBinding } from "./shortcutBindings";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -237,7 +237,7 @@ export function journalMigrationSkipMessage(result: import("./types").JournalMig
   const count = result.skipped.length;
   if (!count) return null;
   // A graph read-only for an unreadable config.edn skips every file for that one reason.
-  const why = (reason: string) => errorFamily(reason) === "config-unreadable" ? t("ui-failure-config-read") : reason;
+  const why = (reason: string) => errorFamily(reason) === "config-unreadable" ? configUnreadableText(reason) : reason;
   return `${count} journal file${count === 1 ? "" : "s"} skipped during migration: ${result.skipped.map(({ file, reason }) => `${file} (${why(reason)})`).join("; ")}`;
 }
 

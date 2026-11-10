@@ -401,6 +401,8 @@ ui-failure-sheet-export = Couldn't read the sheets for export. They are exported
 
 ui-failure-config-read = Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.
 
+ui-failure-config-read-after = { $done }, but config.edn couldn't be read. The graph is open read-only; repair the config and reopen the graph.
+
 ui-failure-conflict-inventory = Couldn't refresh conflicts. The last successful inventory is kept.
 
 ui-failure-graph-verification = Couldn't verify graph files.

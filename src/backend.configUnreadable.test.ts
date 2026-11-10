@@ -58,3 +58,21 @@ it("an unrelated rejection passes through unchanged", async () => {
   const { backend } = await import("./backend");
   await expect(backend().mergePages("a.md", "b.md", ["insert-blocks", "delete-page"])).rejects.toBe("conflict");
 });
+
+it("a refusal after part of the operation was saved says both, in both languages (review: PDF highlights)", async () => {
+  // graph-features `after_partial` keeps the family and names what was saved.
+  const after = "config-unreadable-after: The highlights were saved\ninvalid utf-8 sequence of 1 bytes from index 35";
+  vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  invoke.mockImplementation(() => Promise.reject(after));
+  const { backend } = await import("./backend");
+  const expected: Record<string, string> = {
+    en: "The highlights were saved, but config.edn couldn't be read. The graph is open read-only; repair the config and reopen the graph.",
+    "zh-CN": "The highlights were saved，但无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。",
+  };
+  for (const locale of ["en", "zh-CN"]) {
+    await setActiveLocale(locale);
+    const failure = await backend().mergePages("a.md", "b.md", ["insert-blocks", "delete-page"]).catch((error: unknown) => error);
+    expect(String(failure)).toBe(expected[locale]);
+    expect(String(failure)).not.toMatch(/utf-8|config-unreadable/);
+  }
+});
