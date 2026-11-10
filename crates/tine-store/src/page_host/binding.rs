@@ -1242,7 +1242,7 @@ mod apply;
 mod spelling;
 #[cfg(test)]
 pub(super) use apply::creation_refusal;
-pub use apply::{ApplyRefusal, Effect, Expected, HostInputs, HostOp};
+pub use apply::{ApplyRefusal, Effect, Expected, HostInputs, HostOp, Saved};
 #[cfg(test)]
 pub(super) use retained::unsaved;
 pub(super) use retained::FlushRefusal;

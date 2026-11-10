@@ -119,6 +119,8 @@ try {
   // to Install and then failed its metadata comparison.
   await page.setViewportSize({ width: 1280, height: 860 });
   await page.getByRole("button", { name: "Appearance", exact: true }).click();
+  const showAllThemes = page.getByRole("button", { name: /^Show all \d+ theme packages$/ });
+  if (await showAllThemes.count()) await showAllThemes.click();
   const devTheme = page.locator(".settings-field", { hasText: "Dev Theme Colors" }).first();
   await devTheme.getByRole("button", { name: "Install", exact: true }).waitFor({ timeout: 15_000 });
   await devTheme.getByRole("button", { name: "Install", exact: true }).click();

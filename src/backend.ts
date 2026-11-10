@@ -684,8 +684,10 @@ class TauriBackend implements Backend {
   readJournalFile(name: string) {
     return this.call<string>("read_journal_file", { name });
   }
-  getPageByPath(path: string) {
-    return this.call<import("./types").PageRead | null>("get_page_by_path", { path });
+  async getPageByPath(path: string, source?: (value: import("./types").PageReadSource | null) => void) {
+    const answer = await this.call<{ page: import("./types").PageRead | null; source: import("./types").PageReadSource | null }>("get_page_by_path", { path });
+    source?.(answer.source);
+    return answer.page;
   }
   mergePages(src: string, dst: string) {
     dropDisplayedFor({ name: src });
