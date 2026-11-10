@@ -4,13 +4,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   canIndentBlock, deleteBlock, extendSelectionTo, indentBlock, indentSelection, insertOutlineAfter, insertOutlineBefore,
   insertOutlineChildren, mergeWithNext, mergeWithPrev, moveBlock, moveBlocksRelative, moveItem,
-  node, nextVisible, prevVisible, outdentBlock, outdentSelection, pageByName, pasteClipboardPayload, replaceEmptyBlockWithOutline,
+  node, nextVisible, prevVisible, outdentBlock, outdentSelection, pageByName, pasteClipboardPayload,
   resetStore, selectBlock, selectedIds, moveSelection, setRaw, splitBlock, undo,
 } from ".";
 import { loadSingle } from "./workingSet";
 import { persistCommentMarginHidden } from "../commentMarginPref";
 import type { BlockDto, Format } from "../types";
 import { blockRegions } from "../render/parse";
+import { pasteOutlineInto } from "../tests/pasteOutline";
 import { trailingVisibleEmptyLeaf } from "./tree";
 
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({
@@ -202,7 +203,7 @@ describe.each(["md", "org"] as const)("body structure around %s threads", fmt =>
     expect(insertOutlineAfter(id, pasted)).toBeNull();
     expect(insertOutlineBefore(id, pasted)).toBeNull();
     expect(insertOutlineChildren(id, pasted)).toBeNull();
-    expect(replaceEmptyBlockWithOutline(id, pasted)).toBeNull();
+    expect(pasteOutlineInto(id, pasted)).toBeNull();
     expect(originalThread()).toEqual(before);
   });
 

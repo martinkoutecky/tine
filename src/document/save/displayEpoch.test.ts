@@ -14,6 +14,7 @@ import { setToasts, toasts } from "../../toasts";
 import { setGraphMeta } from "../../graphSession";
 import { changeJournalTitleFormat, setTypographyMode } from "../../ui";
 import { refreshAfterRename } from "../../graph";
+import { followRename } from "../graphRewrite";
 import { startEditing } from "../../editorController";
 import { flushPage, isConflicted, loadFeed, resetStore, setRaw, unsavedDrafts } from "../index";
 import { bindTestHost, submittedPages, type TestHost } from "../host/wiring.test.support";
@@ -60,7 +61,7 @@ const repaints: [string, () => void][] = [
     vi.spyOn(backend(), "setJournalTitleFormat").mockReturnValue(new Promise(() => {}));
     changeJournalTitleFormat("yyyy-MM-dd");
   }],
-  ["a rename of another page", () => refreshAfterRename("Other", "Renamed")],
+  ["a rename of another page", () => refreshAfterRename(followRename([{ from: "Other", to: "Renamed", path: null }]))],
 ];
 
 for (const [label, repaint] of repaints) {

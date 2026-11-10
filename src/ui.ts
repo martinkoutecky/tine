@@ -19,7 +19,7 @@ import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedR
 import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
 import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, forgetArrivalNotice, setConflictInventory, trackArrivalNotice } from "./conflictQueue";
 export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts } from "./conflictQueue";
-import { parseBlockPos, type PageTarget } from "./routeTypes";
+import { parseBlockPos, type PageFollower, type PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
@@ -692,12 +692,8 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   if (nextSidebar.length !== rightSidebar().length) setRightSidebar(nextSidebar);
 }
 
-/** After backend rename, re-key recent and sidebar entries in order,
- * deduplicating destinations even if source is absent. Favorites are not
- * re-keyed here: config.edn's favorites have one answerer, the backend's
- * rename config step, whose answer `adoptRenamedFavorites` takes in. Only
- * changed stores schedule persistence. Does not rename or open a page.
- * O(recents² + sidebar items). */
+/** Re-key one resolved page identity in Recent and the sidebar, deduplicating
+ * destinations even if the source is absent. O(recents² + sidebar items). */
 export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
 export function renamePageInNavigation(from: string, to: string): void;
 export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
@@ -707,10 +703,16 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
   const to: PageTarget = typeof toOrName === "string"
     ? { name: toOrName, pageKind: from.pageKind }
     : toOrName;
+  followPagesInNavigation((page) => page.pageKind === from.pageKind && page.name === from.name
+    && (from.path === undefined || page.path === from.path) ? to : null);
+}
+
+/** Re-key the recent and sidebar entries of every page `follow` moved (a
+ * rename's `followRename` map). O(recents² + sidebar items). */
+export function followPagesInNavigation(follow: PageFollower): void {
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
-    const matches = item.kind === from.pageKind && item.name === from.name
-      && (from.path === undefined || item.path === from.path);
-    const next = matches
+    const to = follow({ name: item.name, pageKind: item.kind, path: item.path });
+    const next = to
       ? { name: to.name, kind: to.pageKind, ...(to.path ? { path: to.path } : {}) }
       : item;
     if (!out.some((seen) => seen.kind === next.kind && seen.name === next.name)) out.push(next);
@@ -724,10 +726,8 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
   const seenSidebar = new Set<string>();
   const nextSidebar: SidebarItem[] = [];
   for (const item of rightSidebar()) {
-    const matches = item.kind === "page"
-      ? item.name === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path)
-      : item.page === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path);
-    const next: SidebarItem = !matches ? item : item.kind === "page"
+    const to = follow({ name: item.kind === "page" ? item.name : item.page, pageKind: item.pageKind, path: item.path });
+    const next: SidebarItem = !to ? item : item.kind === "page"
       ? { ...item, name: to.name, pageKind: to.pageKind, path: to.path }
       : { ...item, page: to.name, pageKind: to.pageKind, path: to.path };
     const key = sidebarItemKey(next);

@@ -86,6 +86,7 @@ graphRewriteFrozen  # why: hide query crossing Undo while graph rewrites freeze 
 hasSelection
 indentBlock
 indentSelection
+insertEditorOutline  # why: a template completion and a multi-line paste in either editor choose where their outline goes and say why it was refused in one place; batch-og-enter-family-1109
 insertEmptyChildBlock
 insertOutlineAfter
 insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
@@ -159,7 +160,6 @@ reloadHlsIfLoaded
 removeOwnNumberedList
 renamePageOnDisk
 replaceChildOrders
-replaceEmptyBlockWithOutline
 replayDeferredExternalReloads  # why: returning to the window replays reloads deferred mid-edit (family 10 focus refresh); batch22a
 reportPageLoadRefusal  # why: every refused load is reported the same way; batchJ1
 reportQueryFoldOption  # why: a query macro reports its authored :collapsed? default so the bullet and arrow share one fold; batch-og-query-fold-arrow

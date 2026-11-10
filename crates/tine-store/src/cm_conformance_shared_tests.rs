@@ -51,6 +51,30 @@ pub fn fixture_dir(manifest_dir: &str) -> std::path::PathBuf {
 }
 
 /// Tine's identity fold, as the model's `key`.
+/// Whether each of `rels`, once written under `root`, is listed by its
+/// directory under exactly that name. A case-insensitive volume (NTFS, APFS)
+/// folds `Abc.md` and `abc.md` into one file, and APFS also folds NFC and NFD
+/// spellings: a fixture with such twins describes a graph that cannot exist on
+/// that volume, so a harness skips its answers there ([`Section::skip_on_volume`])
+/// instead of comparing a different graph. One listing per directory.
+pub fn listed_apart<'a>(root: &Path, rels: impl IntoIterator<Item = &'a str>) -> bool {
+    let mut listed: BTreeMap<std::path::PathBuf, BTreeSet<std::ffi::OsString>> = BTreeMap::new();
+    rels.into_iter().all(|rel| {
+        let path = root.join(rel);
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return false;
+        };
+        listed
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| {
+                fs::read_dir(dir)
+                    .map(|entries| entries.filter_map(|e| Some(e.ok()?.file_name())).collect())
+                    .unwrap_or_default()
+            })
+            .contains(name)
+    })
+}
+
 pub fn fold(journal: &JournalFormat, s: &str) -> String {
     match journal.parse(s.trim()) {
         Some(day) => page_key(&journal.title(day)),
@@ -563,6 +587,12 @@ impl GraphSpec {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, text).unwrap();
         }
+    }
+
+    /// Whether the graph written under `root` has every fixture file as its
+    /// own directory entry: see [`listed_apart`].
+    pub fn listed_apart(&self, root: &Path) -> bool {
+        listed_apart(root, self.files.iter().map(|(rel, _)| rel.as_str()))
     }
 
     /// Page-name arguments of `{{query …}}` macros in the graph's text, the
@@ -2653,9 +2683,30 @@ pub struct Section {
     pub random: BTreeMap<String, (usize, Value)>,
     pub random_graphs: usize,
     pub harness_skipped: Vec<String>,
+    /// Fixture difference lines this volume cannot pose, as (fixture, line
+    /// prefix; empty for the whole fixture). Never written to the file.
+    pub volume_skipped: BTreeSet<(String, String)>,
 }
 
 impl Section {
+    /// This volume folds two of the fixture's file names into one
+    /// ([`listed_apart`]): its lines starting with `prefix` are not compared
+    /// here, and are kept as recorded by a case-sensitive volume.
+    pub fn skip_on_volume(&mut self, fixture: &str, prefix: &str) {
+        eprintln!(
+            "SKIP on this volume: fixture {fixture} {prefix:?}: two of its file names name one file here"
+        );
+        self.volume_skipped
+            .insert((fixture.to_owned(), prefix.to_owned()));
+    }
+
+    /// Whether `line` of `fixture` is one this volume cannot pose.
+    pub fn volume_skips(&self, fixture: &str, line: &str) -> bool {
+        self.volume_skipped
+            .iter()
+            .any(|(name, prefix)| name == fixture && line.starts_with(prefix.as_str()))
+    }
+
     /// Record a random graph's differences, keeping the smallest example per class.
     pub fn add_random(&mut self, spec: &GraphSpec, diffs: &[Diff]) {
         self.random_graphs += 1;
@@ -2690,8 +2741,22 @@ pub fn check_expected(manifest_dir: &str, part: &str, section: &Section, refresh
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_else(|| json!({}));
-    let now = section.to_json();
+    let mut now = section.to_json();
     if std::env::var_os("CM_REFRESH").is_some() {
+        // A folding volume cannot pose the skipped lines: keep them as recorded.
+        for (name, lines) in file[part]["fixtures"].as_object().into_iter().flatten() {
+            let kept: Vec<String> = strings(lines)
+                .into_iter()
+                .filter(|line| section.volume_skips(name, line))
+                .collect();
+            if kept.is_empty() {
+                continue;
+            }
+            let mut merged: BTreeSet<String> =
+                strings(&now["fixtures"][name]).into_iter().collect();
+            merged.extend(kept);
+            now["fixtures"][name] = json!(merged);
+        }
         file[part] = now;
         fs::write(&path, serde_json::to_string_pretty(&file).unwrap() + "\n").unwrap();
         eprintln!("cm conformance: refreshed {} [{part}]", path.display());
@@ -2717,10 +2782,10 @@ pub fn check_expected(manifest_dir: &str, part: &str, section: &Section, refresh
     for name in names {
         let a = fixtures_was.get(name).unwrap_or(&empty);
         let b = fixtures_now.get(name).unwrap_or(&empty);
-        for d in b.difference(a) {
+        for d in b.difference(a).filter(|d| !section.volume_skips(name, d)) {
             problems.push(format!("NEW in fixture {name}: {d}"));
         }
-        for d in a.difference(b) {
+        for d in a.difference(b).filter(|d| !section.volume_skips(name, d)) {
             problems.push(format!("GONE from fixture {name}: {d}"));
         }
     }

@@ -81,6 +81,22 @@
           "id": "journals/2026_10_17.md",
           "others": []
         }
+      },
+      {
+        "key": "proj",
+        "name": "Proj",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Project.md"
+          ]
+        },
+        "link": {
+          "name": "Project",
+          "kind": "page"
+        }
       }
     ],
     "content_days": [
@@ -434,6 +450,22 @@
           "id": "pages/Project.md",
           "others": []
         }
+      },
+      {
+        "key": "proj",
+        "name": "Proj",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "pages/Project.md"
+          ]
+        },
+        "link": {
+          "name": "Project",
+          "kind": "page"
+        }
       }
     ],
     "content_days": [],
@@ -757,6 +789,22 @@
           "kind": "existing",
           "id": "pages/n___y.md",
           "others": []
+        }
+      },
+      {
+        "key": "launch day",
+        "name": "launch day",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "journals/2026_10_26.md"
+          ]
+        },
+        "link": {
+          "name": "Oct 26th, 2026",
+          "kind": "journal"
         }
       }
     ],
@@ -1238,6 +1286,22 @@
           "kind": "existing",
           "id": "pages/n___y.md",
           "others": []
+        }
+      },
+      {
+        "key": "launch day",
+        "name": "launch day",
+        "is_journal": false,
+        "day": null,
+        "target": {
+          "kind": "alias",
+          "owners": [
+            "journals/2026_10_26.md"
+          ]
+        },
+        "link": {
+          "name": "Oct 26th, 2026",
+          "kind": "journal"
         }
       }
     ],

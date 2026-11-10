@@ -1,13 +1,14 @@
 import { afterEach, expect, it } from "vitest";
 import { loadSingle } from "./workingSet";
 import { doc } from "./model";
-import { resetStore, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, replaceEmptyBlockWithOutline, undo, redo } from ".";
+import { resetStore, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, undo, redo } from ".";
+import { pasteOutlineInto } from "../tests/pasteOutline";
 import { pageToDto } from "./convert";
 
 afterEach(() => resetStore());
 
 for (const format of ["md", "org"] as const) {
-  for (const insert of [insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, replaceEmptyBlockWithOutline]) {
+  for (const insert of [insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, pasteOutlineInto]) {
     it(`${insert.name} derives saved collapse from parser metadata (${format}) and keeps it through undo/redo`, () => {
       loadSingle({ name: "Target", title: "Target", kind: "page", format, pre_block: null,
         blocks: [{ id: "host", raw: "", collapsed: false, children: [] }] });

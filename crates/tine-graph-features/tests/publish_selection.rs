@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tine_graph_features::publish;
 use tine_graph_features::publish_query::publish_static;
 use tine_store::Store;
 
@@ -82,7 +81,7 @@ fn all_pages_public_config_still_excludes_public_false_pages() {
     let pages: Vec<_> = pages.iter().map(|(f, t)| (*f, t.as_str())).collect();
     let dir = graph("optout", "{:publishing/all-pages-public? true}\n", &pages);
     let store = Store::open(&dir, Default::default()).unwrap().0;
-    let (out, count) = publish::publish_html(&store).unwrap();
+    let (out, count) = crate::published_site(&store).unwrap();
     let files = site(Path::new(&out));
     assert_no_opted_out(&files);
     assert_eq!(count, 1, "only Open is published: {:?}", files.keys());
@@ -122,7 +121,7 @@ fn pages_named_like_site_files_publish_beside_them() {
         ],
     );
     let store = Store::open(&dir, Default::default()).unwrap().0;
-    let (out, count) = publish::publish_html(&store).unwrap();
+    let (out, count) = crate::published_site(&store).unwrap();
     assert_eq!(count, 2);
     let files = site(Path::new(&out));
     let index_page = files
@@ -160,7 +159,7 @@ fn reverse_ref_links_land_on_the_referring_block() {
         ],
     );
     let store = Store::open(&dir, Default::default()).unwrap().0;
-    let (out, _) = publish::publish_html(&store).unwrap();
+    let (out, _) = crate::published_site(&store).unwrap();
     let files = site(Path::new(&out));
     let source_html = &files["source.html"];
     let li = source_html.find("REFERRER_TEXT").unwrap();

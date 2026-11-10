@@ -16,8 +16,14 @@ pub(crate) fn rewrite(
     crate::cost_counters::transaction_rewrite();
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     let is_org = Format::from_path(path) == Format::Org;
-    let rewritten =
-        tine_core::refs::rename_rewrite_with_queries(text, is_org, &map.0, &map.1, name_format);
+    let rewritten = tine_core::refs::rename_rewrite_with_queries(
+        text,
+        is_org,
+        &map.0,
+        &map.1,
+        name_format,
+        None,
+    );
     refuse_read_only_org(text.as_bytes(), rewritten.as_bytes(), is_org)?;
     Ok(rewritten.into_bytes())
 }

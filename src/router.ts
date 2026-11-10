@@ -22,14 +22,14 @@ import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
 import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { applyQueryRoutePatch, type QueryRoutePatch } from "./queryRoutePatch";
-import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+import type { PageFollower, PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 import { mainWindow } from "./windowRealm";
 import { captureScrollAnchor, pursueScroll, type ScrollAnchor } from "./routeScrollAnchor";
 import {
   moveTabOutOfGroup as treeMoveOutOfGroup, moveTabSubtree, removeTabPromoting,
   rootSlot, setTabCollapsed as treeSetCollapsed, settleTabTree,
 } from "./tabTree";
-export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+export type { PageFollower, PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 export { normalizeQueryPresentation, applyQueryRoutePatch, type QueryRoutePatch } from "./queryRoutePatch";
 
 /** One logical page plus its optional concrete graph-relative file owner. */
@@ -155,6 +155,7 @@ export interface PaneRouter {
   openPageTargetInNewTab(target: PageTarget, foreground?: boolean): void;
   openPageInNewTab(name: string, pageKind?: "journal" | "page", block?: string, foreground?: boolean): void;
   rewritePageTarget(from: PageTarget, to: PageTarget): void;
+  rewritePages(follow: PageFollower): void;
   removePageTarget(target: PageTarget): void;
   canGoBack(): boolean;
   canGoForward(): boolean;
@@ -846,14 +847,20 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     route.kind === "page" && route.name === target.name && route.pageKind === target.pageKind
       && (target.path !== undefined ? route.path === target.path : route.path === undefined);
 
-  function rewritePageTarget(from: PageTarget, to: PageTarget) {
+  /** Point every history entry (open and closed tabs) that shows a page `follow` moved at its new place. */
+  function rewritePages(follow: PageFollower) {
     const rewrite = (r: Route): Route => {
-      if (r.kind !== "page" || !targetIdentityMatches(r, from)) return r;
-      return { ...r, name: to.name, pageKind: to.pageKind, path: to.path };
+      if (r.kind !== "page") return r;
+      const to = follow(r);
+      return to ? { ...r, name: to.name, pageKind: to.pageKind, path: to.path } : r;
     };
     setTabs(tabs().map((tab) => ({ ...tab, history: tab.history.map(rewrite) })));
     for (const closed of closedTabs) closed.history = closed.history.map(rewrite);
     persist();
+  }
+
+  function rewritePageTarget(from: PageTarget, to: PageTarget) {
+    rewritePages((page) => targetIdentityMatches({ kind: "page", ...page }, from) ? to : null);
   }
 
   function removePageTarget(target: PageTarget) {
@@ -1198,6 +1205,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openPageTargetInNewTab,
     openPageInNewTab,
     rewritePageTarget,
+    rewritePages,
     removePageTarget,
     canGoBack,
     canGoForward,

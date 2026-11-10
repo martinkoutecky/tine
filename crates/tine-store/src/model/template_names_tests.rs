@@ -14,7 +14,9 @@ fn picker_cost_is_independent_of_non_template_pages() {
             };
             let file = root.path().join(format!("pages/P{i:04}.md"));
             std::fs::write(&file, text).unwrap();
-            std::fs::File::open(file)
+            std::fs::File::options()
+                .write(true)
+                .open(file)
                 .unwrap()
                 .set_times(std::fs::FileTimes::new().set_modified(
                     std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000),
@@ -95,7 +97,9 @@ fn names_follow_headers_nested_templates_edits_deletions_and_warm_load() {
     )
     .unwrap();
     for path in [&a, &b] {
-        std::fs::File::open(path)
+        std::fs::File::options()
+            .write(true)
+            .open(path)
             .unwrap()
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000))
             .unwrap();
@@ -165,7 +169,9 @@ fn names_follow_headers_nested_templates_edits_deletions_and_warm_load() {
     assert_eq!(check(&store), ["Changed", "New"]);
     assert_eq!(held.template_names(), expected);
     for rel in ["pages/A.md", "pages/C.md"] {
-        std::fs::File::open(root.path().join(rel))
+        std::fs::File::options()
+            .write(true)
+            .open(root.path().join(rel))
             .unwrap()
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000))
             .unwrap();

@@ -138,6 +138,12 @@ fn publish_keys_pages_like_the_reader() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let store = graph(dir.path(), &[(a, "- TODO one\n"), (b, "- TODO two\n")]);
+        if !shared::listed_apart(dir.path(), [a, b]) {
+            // One file here, so no two claims to tell apart.
+            section.skip_on_volume("duplicate-claim", &format!("{label} ({a}, {b}): "));
+            store.close();
+            continue;
+        }
         let outcome = plan_query(&store, &request("Out"));
         owners.push(format!(
             "{label} ({a}, {b}): {}",

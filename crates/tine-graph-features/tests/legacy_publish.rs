@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tine_graph_features::print;
 use tine_graph_features::print::PrintOpts;
-use tine_graph_features::{print, publish};
 use tine_store::Store;
 
 fn publish_graph(store: &Store) -> std::io::Result<(String, usize)> {
-    publish::publish_html(store)
+    crate::published_site(store)
 }
 
 const PRINT_ASSET_MAX_BYTES: u64 = 12 * 1024 * 1024;
@@ -147,8 +147,16 @@ fn publish_emits_sidebar_search_and_block_anchors() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A public page and a private file that claim one name. The live site renders
+/// from the private build graph (CM step 2, census Q13), which holds only the
+/// exported documents, so the other file is not in it at all: nothing from it,
+/// and no query result for it, can reach the site, and the private file's
+/// existence changes nothing the site says (`published_answers.rs`). The site
+/// publishes the file that owns the name, as the app opens it
+/// (`cm_conformance_published`). The earlier whole-graph export published
+/// neither file; that rule would let a private file decide what is published.
 #[test]
-fn publish_fails_closed_when_public_and_private_files_claim_one_page_identity() {
+fn publish_carries_nothing_of_a_private_file_that_shares_a_public_pages_name() {
     let _integration_guard = crate::integration_lock();
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -169,10 +177,16 @@ fn publish_fails_closed_when_public_and_private_files_claim_one_page_identity() 
     let graph = Store::open(&dir, Default::default()).unwrap().0;
     let (outdir, count) = publish_graph(&graph).unwrap();
     let out = Path::new(&outdir);
-    assert_eq!(count, 1);
-    assert!(!out.join("twin.html").exists());
-    let all = fs::read_to_string(out.join("search-index.js")).unwrap();
-    assert!(!all.contains("PRIVATE SENTINEL"), "{all}");
+    assert_eq!(count, 2);
+    let twin = fs::read_to_string(out.join("twin.html")).unwrap();
+    assert!(twin.contains("public sentinel"), "{twin}");
+    for entry in fs::read_dir(out).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            let text = fs::read_to_string(&path).unwrap_or_default();
+            assert!(!text.contains("PRIVATE SENTINEL"), "{}", path.display());
+        }
+    }
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -278,8 +292,12 @@ fn publish_uses_one_fresh_snapshot_after_external_visibility_rewrite() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A republish after a page stops being public leaves that page out. The live
+/// site is create-only (each publish writes a new folder, never over an old
+/// one), so nothing stays deployable by being reused; the old folder is the
+/// earlier publication, untouched.
 #[test]
-fn republish_retires_pages_that_are_no_longer_public() {
+fn republish_omits_pages_that_are_no_longer_public() {
     let _integration_guard = crate::integration_lock();
     let dir =
         std::env::temp_dir().join(format!("tine-publish-retire-stale-{}", std::process::id()));
@@ -299,20 +317,24 @@ fn republish_retires_pages_that_are_no_longer_public() {
     .unwrap();
 
     let graph = Store::open(&dir, Default::default()).unwrap().0;
-    let (outdir, count) = publish_graph(&graph).unwrap();
+    let (first, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 2);
-    let out = std::path::Path::new(&outdir);
-    assert!(out.join("secret.html").exists());
+    let first = std::path::Path::new(&first);
+    assert!(first.join("secret.html").exists());
 
     atomic_fixture_write(&dir.join("pages/Secret.md"), "- stale private token\n");
     let graph = Store::open(&dir, Default::default()).unwrap().0;
-    let (outdir, count) = publish_graph(&graph).unwrap();
+    let (second, count) = publish_graph(&graph).unwrap();
     assert_eq!(count, 1);
-    let out = std::path::Path::new(&outdir);
-    assert!(out.join("visible.html").exists());
+    let second = std::path::Path::new(&second);
+    assert_ne!(
+        first, second,
+        "a publication never reuses an earlier folder"
+    );
+    assert!(second.join("visible.html").exists());
     assert!(
-        !out.join("secret.html").exists(),
-        "a formerly public page must not remain deployable after republish"
+        !second.join("secret.html").exists(),
+        "a formerly public page must not be in the next publication"
     );
     let _ = fs::remove_dir_all(&dir);
 }
@@ -738,7 +760,7 @@ fn publish_begin_query_preserves_decoded_title_inputs_and_discards() {
 }
 
 #[test]
-fn publish_begin_query_reports_private_rows_without_leaking_them() {
+fn publish_begin_query_names_no_private_rows_and_leaks_nothing() {
     let _integration_guard = crate::integration_lock();
     let dir = std::env::temp_dir().join(format!(
         "tine-publish-begin-query-private-{}",
@@ -765,9 +787,14 @@ fn publish_begin_query_reports_private_rows_without_leaking_them() {
     let dashboard =
         fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
 
-    assert!(dashboard.contains("class=\"query-omitted\""), "{dashboard}");
+    // The count of results on pages the site leaves out changed with the
+    // reader's private pages, so the site no longer says it
+    // (REG-Q13-PUBLISHED-HTML-PRIVATE-COUNT): the query runs over the
+    // published pages only, and the authored title stays.
+    assert!(dashboard.contains("Private-aware work"), "{dashboard}");
+    assert!(!dashboard.contains("query-omitted"), "{dashboard}");
     assert!(
-        dashboard.contains("1 result on non-public pages omitted."),
+        !dashboard.contains("non-public pages omitted"),
         "{dashboard}"
     );
     assert!(
@@ -1142,8 +1169,9 @@ fn gen_sample_export() {
 
 /// og-surface row 2: an export sees every byte on disk. A sync client or a
 /// restore tool can rewrite a page with the same length and put its stamp
-/// back; the stamp-trusting refresh misses that, so `publish_html` refreshes
-/// at `Depth::Bytes` and publishes the new text, not the cached document.
+/// back; the stamp-trusting refresh misses that, so the live export refreshes
+/// at `Depth::Bytes` (`publish_query::export_view`) and publishes the new
+/// text, not the cached document.
 #[test]
 fn publish_sees_a_same_size_rewrite_with_its_stamp_restored() {
     let _integration_guard = crate::integration_lock();

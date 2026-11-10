@@ -101,6 +101,7 @@ pub(super) fn discover_restore_recovery(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn custody_rejects_undeclared_retained_bytes() {
+    let _guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let hidden = root.join("assets/.not-declared-recovery");
@@ -136,6 +137,7 @@ fn custody_rejects_undeclared_retained_bytes() {
 
 #[test]
 fn restore_custody_rejects_undeclared_roots_and_checks_all_displaced_inputs() {
+    let _guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
     let id = "2026-10-23_12-34-56-pre-restore-extras-123-0";
