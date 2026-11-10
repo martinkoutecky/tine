@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("onboarding explains mouse block-range selection from editing (GH #924)", () => {
+  const tips = guide("tips");
+  for (const detail of ["**Shift+click** another block's text", "leave the editor", "first and last blocks", "cutting or moving the range also takes their children"]) expect(tips).toContain(detail);
+});
+
 it("the 0.9 Beta Guide explains creating ordinary comment blocks from the CLI", () => {
   const cli = guide("command-line");
   for (const detail of [

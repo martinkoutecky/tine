@@ -21,6 +21,7 @@ icon:: ⌨️
 - ## Follow a link without the mouse — Ctrl+O
 	- With the caret inside a `[[link]]` or a `#tag`, **Ctrl+O** opens that page and **Ctrl+Shift+O** opens it in the right sidebar. This works while you are editing, so you can follow a name you just typed without reaching for the mouse.
 - ## Select whole blocks — Ctrl+A
+	- While editing, **Shift+click** another block's text to select the whole range as blocks and leave the editor. The first and last blocks are included in full; cutting or moving the range also takes their children. Shift-click again to adjust the range from the same starting block.
 	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. **Shift+Up** onto a parent always takes all of that parent's children with it.
 	- **Edit selected block** returns one selected block to editing. It starts unbound; assign a key in **Settings → Shortcuts**. You can bind it to **Escape** if you prefer that way back into editing; without that binding, Escape keeps its ordinary selection steps.
 - ## Copy a link to a block — Ctrl+C

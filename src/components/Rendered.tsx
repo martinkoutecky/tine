@@ -123,14 +123,14 @@ function RenderedContent(props: {
   // continuing the gesture within the block selects editor text, while crossing
   // into another block escalates to outline selection (see beginEditGesture).
   const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (readOnly()) return; // read-only org page — never enter the editor
     if (forbidsEditEntry(e)) return;
     e.stopPropagation(); // keep the row wrapper from arming a second gesture
     beginEditGesture(
       e,
       props.id,
-      clickOffset(e) ?? node().raw.length,
+      e.shiftKey ? 0 : clickOffset(e) ?? node().raw.length,
       props.owner ?? null,
       props.outlineScope ?? null,
     );

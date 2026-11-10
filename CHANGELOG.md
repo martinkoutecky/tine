@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Shift-clicking another block while editing selects the whole block range and leaves the editor, including on journal pages and in the sidebar (GH #924).
 - On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (internal: REG-AUDIT1109-FLIGHT-LOCK-ANDROID).
 - If the page host fails with an internal error while publishing a save, the graph's other writes continue, its open pages go back to file watching, and closing the graph no longer crashes Tine (internal: REG-AUDIT1109-DRIVER-PANIC-WRITER).
 - After such a page host failure, closing its window now finishes closing the graph: Tine can quit, the command line can use the graph again, and reopening it starts a working page host that recovers any crash-recovery copies (REG-AUDIT1109-RETIRE-ENDED-HOST).
