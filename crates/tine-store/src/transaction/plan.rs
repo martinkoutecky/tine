@@ -144,9 +144,9 @@ impl PagePlan<'_> {
                         "a host operation requires staged page bytes".into(),
                     )));
                 }
-                if let (Some(document), Some(bytes)) = (prepared.parsed, new.as_deref()) {
-                    // Named from the bytes as a read of them would be (`Store::page_of`).
-                    let path = self.path(&prepared.src)?;
+                if let (Some((path, document)), Some(bytes)) = (prepared.parsed, new.as_deref()) {
+                    // Named from the bytes as a read of them would be (`Store::page_of`),
+                    // at the path serialization already validated.
                     let entry = std::str::from_utf8(bytes)
                         .ok()
                         .and_then(|text| self.store.graph.page_entry_in(&path, Some(text)));
