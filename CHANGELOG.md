@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On a touch screen, holding a sidebar **Favorites** row still opens its menu again, the same one a right-click opens (so **Open in new tab** is back within reach); holding a nested **Open tabs** row opens its **Move out of group** menu. Holding and then dragging still picks the row up to reorder it (the menu closes as you drag), a finger that moves first still scrolls, and a tap still opens it (GH #921).
 - Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).
 - Context-menu rows use a consistent font size and family, including the page menu's **Copy as** submenu (GH #916).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).

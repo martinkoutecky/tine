@@ -7,7 +7,8 @@
 // the mechanism this and the outline bullet drag (GH #424) both use.
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { documentOf } from "../windowRealm";
-import { LONG_PRESS_DELAY, LONG_PRESS_MOVE_TOLERANCE } from "../render/longPress";
+import { LONG_PRESS_DELAY, LONG_PRESS_MOVE_TOLERANCE, dispatchLongPressContextMenu, isLongPressContextMenu } from "../render/longPress";
+import { closeContextMenu, contextMenu } from "../ui";
 
 const DRAG_THRESHOLD_PX = 4;
 let suppressClick = false;
@@ -30,8 +31,10 @@ export interface RowDropTarget {
 export interface RowReorderOptions {
   /** Touch and pen start the drag only after a still hold (LONG_PRESS_DELAY),
    *  so a finger moving at once still scrolls the list; once held, the page
-   *  does not scroll and the hold's own context menu is swallowed. Mouse drags
-   *  are unchanged. Opt-in: the sidebar Tabs list (GH #704). */
+   *  does not scroll. The hold opens the row's own context menu, as a
+   *  right-click does (the platform's is swallowed); moving the held finger
+   *  past LONG_PRESS_MOVE_TOLERANCE closes it and drags (GH #921). Mouse drags
+   *  are unchanged. Opt-in: the sidebar Tabs and Favorites lists (GH #704). */
   touchHold?: boolean;
   /** A pointer beside the rows (left or right of every row, e.g. past the
    *  list's edge while dragging left to un-nest) still targets the row at its
@@ -62,14 +65,19 @@ export function beginRowReorderDrag(
   const startY = event.clientY;
   // The drag's own window: listeners and hit tests follow the pointer's document.
   const doc = documentOf(event);
+  const pressed = event.target as Element | null;
   let dragging = false;
+  /** The row menu this hold opened, while the drag has not yet taken over. */
+  let heldMenu: ReturnType<typeof contextMenu> = null;
   let target: RowDropTarget | null = null;
   const hold = !!opts.touchHold && (event.pointerType === "touch" || event.pointerType === "pen");
   let holdTimer: ReturnType<typeof setTimeout> | undefined;
   const blockScroll = (ev: Event) => { if (ev.cancelable) ev.preventDefault(); };
-  // The hold's own menu: neither the platform's nor the row's (a capture
-  // listener on the document runs first and keeps it from the row).
+  // The platform's own hold menu never opens (a capture listener on the
+  // document runs first and keeps it from the row); the row's menu opens from
+  // Tine's own hold event instead (GH #921).
   const swallowMenu = (ev: Event) => {
+    if (isLongPressContextMenu(ev)) return;
     ev.preventDefault();
     ev.stopImmediatePropagation();
   };
@@ -86,8 +94,31 @@ export function beginRowReorderDrag(
       holdTimer = undefined;
       startDragging();
       dropSelection(doc);
+      // GH #921: the still hold also opens the row's menu, as on iOS and
+      // Android launchers: the menu shows on the hold, and moving the held
+      // finger lifts the row into the drag and dismisses it.
+      if (pressed?.isConnected && dispatchLongPressContextMenu(pressed, startX, startY).defaultPrevented) heldMenu = contextMenu();
     }, LONG_PRESS_DELAY);
   }
+  const closeHeldMenu = () => {
+    if (heldMenu && contextMenu() === heldMenu) closeContextMenu();
+    heldMenu = null;
+  };
+  // A released hold that left its menu open owns the release's compatibility
+  // click (it could land on the menu, under the finger) and any late platform
+  // menu, until that click or the next gesture.
+  const releaseMenuOwnership = () => {
+    doc.removeEventListener("contextmenu", swallowMenu, true);
+    doc.removeEventListener("click", swallowReleaseClick, true);
+    doc.removeEventListener("pointerdown", nextGesture, true);
+  };
+  const swallowReleaseClick = (ev: MouseEvent) => {
+    if (ev.detail === 0) return; // keyboard activation, not the hold's click
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    releaseMenuOwnership();
+  };
+  const nextGesture = (ev: PointerEvent) => { if (ev.isPrimary !== false) releaseMenuOwnership(); };
   const onMove = (ev: PointerEvent) => {
     if (!mine(ev)) return;
     if (!dragging) {
@@ -99,6 +130,11 @@ export function beginRowReorderDrag(
       }
       if (moved < DRAG_THRESHOLD_PX) return;
       startDragging();
+    }
+    if (heldMenu) {
+      // The hold's menu stays open under a still finger; beyond the tolerance the drag takes over.
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) <= LONG_PRESS_MOVE_TOLERANCE) return;
+      closeHeldMenu();
     }
     dropSelection(doc); // WebKit can re-anchor a selection mid-drag
     let row = doc.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(rowSelector) ?? null;
@@ -119,8 +155,14 @@ export function beginRowReorderDrag(
     clearTimeout(holdTimer);
     holdTimer = undefined;
     doc.removeEventListener("touchmove", blockScroll);
-    // The hold's own (native) contextmenu can arrive just after release.
-    if (hold) setTimeout(() => doc.removeEventListener("contextmenu", swallowMenu, true), 0);
+    if (heldMenu && contextMenu() === heldMenu) {
+      doc.addEventListener("click", swallowReleaseClick, true);
+      doc.addEventListener("pointerdown", nextGesture, true);
+    } else if (hold) {
+      // The hold's own (native) contextmenu can arrive just after release.
+      setTimeout(() => doc.removeEventListener("contextmenu", swallowMenu, true), 0);
+    }
+    heldMenu = null;
     doc.removeEventListener("pointermove", onMove);
     doc.removeEventListener("pointerup", onUp);
     doc.removeEventListener("pointercancel", onCancel);
