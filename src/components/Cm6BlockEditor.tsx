@@ -56,8 +56,9 @@ import { effectiveHeadingLevel } from "../render/facets";
 import { parserReady } from "../render/parse";
 import { blockDirAttr } from "../render/textDirection";
 import "./cm6-editor.css";
+import type { PendingEditorInput } from "./EditorGate";
 
-export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
+export function Cm6BlockEditor(props: { id: string; surface: string; scope: OutlineScope | null; propertySession?: ReturnType<typeof propertyEditorSession>; pendingInput?: PendingEditorInput }): JSX.Element {
   const owner = getOwner();
   let host!: HTMLDivElement;
   let editorHost!: HTMLDivElement;
@@ -486,6 +487,12 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     focusMountedEditor(props.id, props.surface, () => view!.contentDOM, again => {
       if (current()) focusNow(again);
     });
+    props.pendingInput?.((text, target, kind) => {
+      const focused = EditorView.findFromDOM(target);
+      if (!focused) return;
+      const { from, to } = focused.state.selection.main;
+      focused.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length }, userEvent: kind === "type" ? "input.type" : kind === "paste" ? "input.paste" : "input" });
+    }, view.contentDOM);
     const caretReveal = cm6CaretReveal(view);
     view.dispatch({ effects: StateEffect.appendConfig.of(caretReveal.extension) });
     onCleanup(caretReveal.cancel);

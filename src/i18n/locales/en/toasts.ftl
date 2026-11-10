@@ -398,6 +398,7 @@ ui-failure-page-property-edit = Couldn't change this page property. The page was
 ui-failure-export-preview = Couldn't prepare a block for the export preview. It is shown unresolved.
 
 ui-failure-sheet-export = Couldn't read the sheets for export. They are exported as plain outlines.
+ui-failure-editor-load = Couldn't load the CodeMirror editor. You can keep editing with the classic editor.
 
 ui-failure-config-read = Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.
 

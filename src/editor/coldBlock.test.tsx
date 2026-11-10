@@ -6,6 +6,8 @@ it("cold capture Block mounts before parser init and publishes identity when rea
   vi.resetModules();
   const { render } = await import("solid-js/web");
   const { Block } = await import("../components/Block");
+  const { cm6EditorEnabled } = await import("./cm6Setting");
+  if (cm6EditorEnabled()) await (await import("../components/EditorGate")).preloadCm6Editor();
   const { ensurePageLoaded, resetStore } = await import("../document/workingSet");
   const { startEditing, endEdit } = await import("../editorController");
   const { initParser, parserReady } = await import("../render/parse");

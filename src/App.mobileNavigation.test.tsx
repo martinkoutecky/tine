@@ -23,6 +23,8 @@ async function mount(platform: "android" | "ios" | "desktop", bottom: boolean) {
   const nav = await import("./navSettings");
   nav.resetMobileNavigationAtBottomForTests(bottom);
   const { App } = await import("./App");
+  const { cm6EditorEnabled } = await import("./editor/cm6Setting");
+  if (cm6EditorEnabled()) await (await import("./components/EditorGate")).preloadCm6Editor();
   const host = document.createElement("div");
   document.body.appendChild(host);
   const dispose = render(() => <App />, host);

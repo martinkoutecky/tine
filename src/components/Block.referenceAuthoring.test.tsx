@@ -12,13 +12,14 @@ import { initParser } from "../render/parse";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import type { BlockDto, PageDto, PageEntry, PageRead } from "../types";
 import { Block } from "./Block";
+import { preloadCm6Editor } from "./EditorGate";
 import { isConflicted } from "../document/host/wiring";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { openAsLoaded } from "./hostConflict.test.support";
 import { setPinyinMatchingEnabled } from "../launcherRanking";
 import { setActiveLocale } from "../i18n";
 
-beforeAll(() => initParser());
+beforeAll(async () => { await initParser(); await preloadCm6Editor(); });
 
 const V4_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

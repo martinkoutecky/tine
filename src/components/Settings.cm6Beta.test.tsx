@@ -1,4 +1,6 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { preloadCm6Editor } from "./EditorGate";
+beforeAll(preloadCm6Editor);
 import { render } from "solid-js/web";
 // Exercise the shipped Beta gate even when the source identity changes later.
 vi.mock("../appIdentity", () => ({ APP_UPDATE_CHANNEL: "beta", APP_PRODUCT_NAME: "Tine" }));

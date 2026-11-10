@@ -90,7 +90,8 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { initCm6EditorSetting } from "./editor/cm6Setting";
+import { cm6EditorEnabled, initCm6EditorSetting } from "./editor/cm6Setting";
+import { preloadCm6Editor } from "./components/EditorGate";
 import { initNoteLayoutSetting } from "./noteLayoutSetting";
 import { rootIsRtl } from "./render/textDirection";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
@@ -898,7 +899,9 @@ export function App(): JSX.Element {
   onMount(() => void initSpellcheckSettings());
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());
-  onMount(() => void initCm6EditorSetting());
+  onMount(() => void initCm6EditorSetting().then(() => {
+    if (cm6EditorEnabled()) void preloadCm6Editor();
+  }));
   onMount(initNoteLayoutSetting);
 
   // Android/iOS WebViews otherwise navigate raw target=_blank links in-app.

@@ -367,6 +367,7 @@ ui-failure-page-property-edit = 无法修改此页面属性，页面未作更改
 ui-failure-export-preview = 无法为导出预览准备块，将显示未解析的内容。
 
 ui-failure-sheet-export = 无法读取要导出的表格视图，将以普通大纲导出。
+ui-failure-editor-load = 无法加载 CodeMirror 编辑器。你可以继续使用经典编辑器编辑。
 
 ui-failure-config-read = 无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。
 

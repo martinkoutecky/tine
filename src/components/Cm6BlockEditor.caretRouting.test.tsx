@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { preloadCm6Editor } from "./EditorGate";
+beforeAll(preloadCm6Editor);
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 

@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { preloadCm6Editor } from "./EditorGate";
+beforeAll(preloadCm6Editor);
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 
@@ -60,11 +62,18 @@ it("the first editor opened while the stored choice is still being read gets the
   // Not the default engine: the editor waits for the reply instead of mounting on the default.
   expect(kinds(host)).toEqual({ cm6: false, textarea: false });
 
+  // Native typing during the preference read belongs to this first edit too.
+  const pending = document.activeElement as HTMLTextAreaElement;
+  pending.value = "X";
+  pending.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "X" }));
+
   reply(true);
   await loading;
   await flush();
   expect(cm6EditorEnabled()).toBe(true);
   expect(kinds(host)).toEqual({ cm6: true, textarea: false });
+  expect(maybeEditorIn(host)!.value()).toBe("Xhello");
+  expect(maybeEditorIn(host)!.selection()).toEqual([1, 1]);
 });
 
 it("opens at once with the current engine when nothing is being read", async () => {

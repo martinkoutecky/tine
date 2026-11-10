@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Startup loads less JavaScript: the optional CodeMirror editor loads only when enabled or first used (internal: UI-LAZY-CM6; D-20261110-LZ).
 - Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
 - `tine edit` saves a large page faster: it no longer parses the bytes it has just written a second time or reads their page name again, so each edit does one parse and one name read fewer (a 2 MiB page saves about 15 % faster). The written bytes, files, syncs and reply are unchanged (internal: REG-COST-BLOCK-EDIT-REPARSE; card DuDHQ).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).

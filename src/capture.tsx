@@ -17,6 +17,7 @@ import { initParser } from "./render/parse";
 import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { cm6EditorEnabled, initCm6EditorSetting } from "./editor/cm6Setting";
+import { preloadCm6Editor } from "./components/EditorGate";
 import { DatePicker } from "./components/DatePicker";
 import { applyTaskWorkflow, datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
@@ -282,6 +283,7 @@ function Capture() {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
     const result = await readOwned(owner, Promise.all([initCm6EditorSetting(), initLinkDefault(), refreshCaptureConfig(owner)]));
     if (result.kind === "stale") return;
+    if (cm6EditorEnabled()) void preloadCm6Editor();
     // The editor opened at startup (before the stored CodeMirror choice was
     // read) or before a Settings change: end that session so the activation
     // below opens the editor kind the setting names.

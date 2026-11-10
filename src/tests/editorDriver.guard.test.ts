@@ -13,6 +13,10 @@ const LEGACY = new Set<string>();
 
 /** Test files whose textarea is a different control than the block editor. */
 const OTHER_TEXTAREAS = new Map<string, string>([
+  ["src/components/Block.lazyCm6.test.tsx", "Native input buffer while the optional engine loads; mounted editor assertions use the driver."],
+  ["src/components/Block.lazyCm6Failure.test.tsx", "Native input buffer during a failed import; mounted editor assertions use the driver."],
+  ["src/components/Block.lazyCm6Blur.test.tsx", "Native preedit buffer before engine handoff; mounted editor assertions use the driver."],
+  ["src/components/Block.cm6SettingLoad.test.tsx", "Native input buffer while the device preference loads; mounted editor assertions use the driver."],
   ["src/blockKeyboardCommands.test.tsx", "Standalone selected-text search fixture; mounted block-editor access uses the driver."],
   ["src/components/Block.mobileSelectionToolbar.test.tsx", "Standalone competing-focus textarea; native selection getter tests are textarea-kind guarded."],
   ["src/components/SheetBoard.test.tsx", "Standalone data-outside-editor focus fixture; block-editor access uses the driver."],

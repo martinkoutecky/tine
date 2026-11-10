@@ -14,11 +14,19 @@
  * selection APIs. A test of a textarea-only quirk (e.g. WebView selection
  * getters) may use `element` as a textarea, says so in a comment, and guards
  * on `kind === "textarea"`.
+ * The chosen optional engine is preloaded in beforeAll. Tests that reset their
+ * module graph preload its fresh engine explicitly.
  */
 
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { cm6InputData } from "../editor/cm6InputIntent";
+import { beforeAll } from "vitest";
+
+beforeAll(async () => {
+  const { cm6EditorEnabled } = await import("../editor/cm6Setting");
+  if (cm6EditorEnabled()) await (await import("../components/EditorGate")).preloadCm6Editor();
+});
 
 export type EditorKind = "textarea" | "cm6";
 export type SelectionDirection = "forward" | "backward" | "none";
