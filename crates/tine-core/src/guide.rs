@@ -1276,6 +1276,8 @@ mod rename_guide_tests {
             "refuses folders from other Files providers",
             "a remembered graph reopens after an app update",
             "**Plugins do not run on iOS yet.**",
+            // D-20261107-ASL: Betas come through the separate Tine Beta app's public link (GH #890).
+            "](https://testflight.apple.com/join/f2HQgJGn)",
         ] {
             assert!(
                 mobile.contains(outcome),
@@ -1283,6 +1285,10 @@ mod rename_guide_tests {
             );
         }
         assert!(!mobile.contains("there is no public iOS build yet"));
+        assert!(
+            !mobile.contains("join/rpGGpTVW"),
+            "the retired TestFlight link must not come back"
+        );
     }
 
     #[test]

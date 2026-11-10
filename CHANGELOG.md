@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- iOS: Tine is on the App Store, and Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
+
 ### Fixed
 
 - Shift-clicking another block while editing selects the whole block range and leaves the editor, including on journal pages and in the sidebar (GH #924).
