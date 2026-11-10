@@ -793,6 +793,18 @@ pub(crate) async fn set_show_brackets(
 }
 
 #[tauri::command]
+pub(crate) async fn set_enable_tooltip(
+    enabled: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_enable_tooltip(store, enabled).map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn set_doc_mode_enter_for_new_block(
     enabled: bool,
     state: GraphContext<'_>,

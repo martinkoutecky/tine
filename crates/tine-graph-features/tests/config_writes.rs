@@ -75,6 +75,11 @@ fn setters() -> Vec<(&'static str, Setter, fn(&Config) -> bool)> {
             |c| !c.show_brackets,
         ),
         (
+            ":ui/enable-tooltip?",
+            |s| config::set_enable_tooltip(s, false),
+            |c| !c.enable_tooltip,
+        ),
+        (
             ":shortcut/doc-mode-enter-for-new-block?",
             |s| config::set_doc_mode_enter_for_new_block(s, true),
             |c| c.doc_mode_enter_for_new_block,
@@ -389,7 +394,7 @@ fn every_config_setter_goes_through_the_one_guarded_update() {
     let setters: Vec<&str> = SOURCE.split("\npub fn set_").skip(1).collect();
     assert_eq!(
         setters.len(),
-        12,
+        13,
         "a new config setter must be added to `setters()` above"
     );
     for body in setters {

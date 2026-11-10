@@ -358,6 +358,7 @@ const ORDERED_WRITES: &[&str] = &[
     "set_preferred_workflow",
     "set_timetracking_enabled",
     "set_show_brackets",
+    "set_enable_tooltip",
     "set_doc_mode_enter_for_new_block",
     "set_logical_outdenting",
     "set_guide_announced",

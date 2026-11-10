@@ -913,6 +913,10 @@ pub struct GraphMeta {
     pub enable_search_remove_accents: bool,
     /// `:ui/show-brackets?` effective value; default true.
     pub show_brackets: bool,
+    /// `:ui/enable-tooltip?` effective value; default true. False turns the
+    /// page, tag and block-reference previews off (GH #824).
+    #[serde(default = "default_true")]
+    pub enable_tooltip: bool,
     /// `:feature/enable-journals?` effective value; default true. False turns
     /// the sidebar's Journals entry into the configured home page (OG
     /// `container.cljs` `home-nav`).
@@ -1043,6 +1047,7 @@ impl GraphMeta {
             enable_timetracking: config.enable_timetracking,
             enable_search_remove_accents: config.enable_search_remove_accents,
             show_brackets: config.show_brackets,
+            enable_tooltip: config.enable_tooltip,
             enable_journals: config.enable_journals,
             linkable_property_keys: crate::query::atom::linkable_property_keys(
                 &crate::query::atom::ParseConfig::from_config(config),

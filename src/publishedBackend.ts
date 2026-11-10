@@ -435,6 +435,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           macros: {},
           enable_timetracking: true,
           show_brackets: true,
+          enable_tooltip: true,
           doc_mode_enter_for_new_block: false,
           logical_outdenting: false,
           logbook_with_second_support: true,

@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-10, D-20261110-TT / GH #824: `settings.editor.advanced` 13→14 on Beta/development
+  (12→13 without the Beta-only CM6 switch) for the explicitly decided **Reference previews**
+  switch, Logseq's `:ui/enable-tooltip?`, beside the hover delay (which stays). It sits in
+  Advanced, not Basic; the open count is unchanged.
 - 2026-11-07, GH #805 (0.10 lane brief, Martin's 10/30 AA and TRIAGE-1031 placement):
   `commands.registry` 148→149 for the explicitly requested remappable **Quit Tine**
   command (`app/quit`, Ctrl+Q on Linux/Windows). It reaches the existing safe Quit

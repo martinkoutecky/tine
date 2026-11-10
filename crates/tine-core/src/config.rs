@@ -163,6 +163,9 @@ pub struct Config {
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
+    /// `:ui/enable-tooltip?` — OG default ON (`state/enable-tooltip?`); only
+    /// explicit false switches the page, tag and block-reference previews off.
+    pub enable_tooltip: bool,
     /// `:feature/enable-journals?` — OG default ON (`state/enable-journals?`:
     /// `(not (false? …))`); only explicit false turns the journals feature off
     /// (the sidebar offers the configured home page instead of Journals).
@@ -290,6 +293,7 @@ impl Default for Config {
             enable_timetracking: true,
             enable_search_remove_accents: true,
             show_brackets: true,
+            enable_tooltip: true,
             enable_journals: true,
             doc_mode_enter_for_new_block: false,
             logical_outdenting: false,
@@ -441,6 +445,7 @@ impl Config {
                 })
                 .unwrap_or(cfg.enable_search_remove_accents);
         cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(cfg.show_brackets);
+        cfg.enable_tooltip = bool_value(edn, ":ui/enable-tooltip?").unwrap_or(cfg.enable_tooltip);
         cfg.enable_journals =
             bool_value(edn, ":feature/enable-journals?").unwrap_or(cfg.enable_journals);
         cfg.doc_mode_enter_for_new_block =
@@ -2092,16 +2097,40 @@ mod defaults_tests {
         }
     }
 
+    /// GH #824: Logseq's `:ui/enable-tooltip?` (OG `state/enable-tooltip?`)
+    /// reads true, false or absent; absent means previews on, as in OG.
+    #[test]
+    fn enable_tooltip_reads_true_false_and_absent() {
+        assert!(Config::parse("{}").enable_tooltip, "absent: on");
+        assert!(
+            Config::parse("{:ui/enable-tooltip? true}").enable_tooltip,
+            "true: on"
+        );
+        assert!(
+            !Config::parse("{:ui/enable-tooltip? false}").enable_tooltip,
+            "false: off"
+        );
+        assert!(
+            !Config::parse(
+                "{:ui/show-brackets? true\n :ui/enable-tooltip? false,\n :start-of-week 1}"
+            )
+            .enable_tooltip,
+            "false among other keys"
+        );
+    }
+
     #[test]
     fn an_empty_or_malformed_config_serves_the_declared_defaults() {
         for edn in [
             "",
             "{}",
             "{:ui/show-brackets? maybe :logbook/settings {:with-second-support? 3}}",
+            "{:ui/enable-tooltip? maybe}",
         ] {
             let cfg = Config::parse(edn);
             let default = Config::default();
             assert_eq!(cfg.show_brackets, default.show_brackets, "{edn}");
+            assert_eq!(cfg.enable_tooltip, default.enable_tooltip, "{edn}");
             assert_eq!(
                 cfg.enable_timetracking, default.enable_timetracking,
                 "{edn}"

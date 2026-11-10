@@ -195,6 +195,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setPreferredWorkflow",
   "setTimetrackingEnabled",
   "setShowBrackets",
+  "setEnableTooltip",
   "setDocModeEnterForNewBlock",
   "setLogicalOutdenting",
   "setPreferredFormat",

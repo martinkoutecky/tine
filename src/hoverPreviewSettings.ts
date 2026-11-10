@@ -1,7 +1,12 @@
-// Device-local mouse-hover delay, in seconds (GH #824). Touch hold has its own
-// gesture delay. Reads and writes use the shared preference ownership/rollback.
+// The preview settings (GH #824). The device-local mouse-hover delay, in
+// seconds: touch hold has its own gesture delay, and reads and writes use the
+// shared preference ownership/rollback. And the graph's preview switch,
+// Logseq's `:ui/enable-tooltip?`, read from the served graph config and written
+// through the shared graph-setting path.
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { graphMeta } from "./graphSession";
+import { changeGraphSetting } from "./graphPreferences";
 import { loadPreference, writePreference } from "./preferenceWrites";
 
 const KEY = "hover_preview_delay_seconds";
@@ -29,4 +34,15 @@ export function initHoverPreviewSettings(): void {
 export function hoverPreviewDelayMs(): number | null {
   const ms = delay() * 1000;
   return ms <= 2_147_483_647 ? ms : null;
+}
+
+/** Whether page, tag and block-reference previews are on. OG's
+ *  `:ui/enable-tooltip?` (`state/enable-tooltip?`, `src/main/frontend/state.cljs:688`
+ *  at `6e7afa8eb`): on when absent, only an explicit false turns them off. */
+export function previewsEnabled(): boolean {
+  return graphMeta()?.enable_tooltip ?? true;
+}
+
+export function changePreviewsEnabled(on: boolean): void {
+  changeGraphSetting("enable_tooltip", on, (next) => backend().setEnableTooltip(next!), "preview preference");
 }
