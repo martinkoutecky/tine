@@ -28,7 +28,7 @@ import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
-import { rowHostOf } from "./block/embedRowHost";
+import { rowHostOf, rowPositionOf } from "./block/embedRowHost";
 import { threadRootOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -196,8 +196,10 @@ export function beginEditGesture(
     e.preventDefault();
     dropSelection(e);
     if (editing) {
+      // The editing row's own outline (an embed's rows sit in the embed's scope),
+      // so a click outside that outline cannot extend across it.
       const row = documentOf(e).activeElement?.closest(".ls-block");
-      const from = rowHostOf(row) ?? { id: editing, scope: outlineScope };
+      const from = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
       selectBlock(from.id, from.scope);
     }
     extendSelectionTo(anchor.id, anchor.scope);
