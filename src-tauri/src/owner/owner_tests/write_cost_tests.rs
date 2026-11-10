@@ -72,43 +72,53 @@ fn race(graph: &Graph, slot: &crate::state::GraphSlot, first: &str, second: &str
     })
 }
 
+/// The upper median of `samples`.
+fn median(mut samples: Vec<Duration>) -> Duration {
+    samples.sort();
+    samples[samples.len() / 2]
+}
+
 /// Timings catch added complexity nothing counts (PC-3). Each command dials the
 /// owner, as `tine add` does. On the base of this budget (round 1, debug build,
 /// loaded host) a command took about 50 ms and a raced pair 16 ms; the budget is
-/// five times that, per command, as wide as the debug budget it copies.
+/// five times that, per command, as wide as the debug budget it copies. Each
+/// kind is judged by its median, as `sorted_search_budget` is: added work slows
+/// every command, while a stall of the machine (a hosted runner, the lib's
+/// parallel tests beside this one) slows a few, and a mean let those decide.
+/// Hosted Windows run 42741207249 failed on a raced pair's mean, 389 ms beside
+/// 140 ms adds, with no samples to tell a stall from a cost; they are printed
+/// now. A machine slow for more than half of a kind's commands still fails.
 #[test]
 fn page_creation_timing_budget() {
     const N: usize = 16;
     let (graph, slot, _served) = served();
-    let time = |args: &dyn Fn(usize) -> Value| {
-        let start = Instant::now();
-        for i in 0..N {
-            add(&graph, args(i));
-        }
-        start.elapsed()
+    let time = |args: &dyn Fn(usize) -> Value| -> Vec<Duration> {
+        (0..N)
+            .map(|i| {
+                let start = Instant::now();
+                add(&graph, args(i));
+                start.elapsed()
+            })
+            .collect()
     };
     let existing = time(&|i| json!({ "page": "a", "content": format!("- more {i}") }));
     let created = time(&|i| json!({ "page": format!("New {i}"), "content": "- new" }));
-    let lost: Duration = (0..N)
+    let lost: Vec<Duration> = (0..N)
         .map(|i| race(&graph, &slot, &format!("Pair {i}"), &format!("pair {i}")))
-        .sum();
+        .collect();
     assert!(disk(&graph, "pages/Pair 0.md").contains("- by pair 0"));
-    eprintln!(
-        "page creation, {N} each on {FILLER_PAGES} pages: existing {:?}/add, created {:?}/add, \
-         raced pair {:?}",
-        existing / N as u32,
-        created / N as u32,
-        lost / N as u32,
-    );
-    for (what, elapsed) in [
+    for (what, samples) in [
         ("an add to an existing page", existing),
         ("an add creating a page", created),
         ("a raced creating pair", lost),
     ] {
-        let each = elapsed / N as u32;
+        let typical = median(samples.clone());
+        eprintln!(
+            "page creation, {N} on {FILLER_PAGES} pages: {what}: median {typical:?} of {samples:?}"
+        );
         assert!(
-            each < Duration::from_millis(250),
-            "{what} exceeded the 250 ms debug budget: {each:?}"
+            typical < Duration::from_millis(250),
+            "{what} exceeded the 250 ms debug budget: median {typical:?} of {samples:?}"
         );
     }
 }
