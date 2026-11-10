@@ -111,7 +111,7 @@ fn all_production_refusals_have_scenarios() {
         .split("impl SaveOutcome {")
         .nth(1)
         .unwrap()
-        .split_once("/// Parsed page and the raw-byte revision used for a guarded save.")
+        .split_once("/// Result of resolving a page name or journal day in one snapshot.")
         .expect("the item after `impl SaveOutcome` ends the mapping");
     actual.extend(constructions("store.rs", mapping));
     let contract = fs::read_to_string(root.join("docs/storage-contract.md")).unwrap();

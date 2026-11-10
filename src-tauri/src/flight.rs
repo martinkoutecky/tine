@@ -583,17 +583,10 @@ const UPDATER_CAUSES: [&str; 7] = [
     "unknown",
 ];
 
-/// Record one frontend event. Accepted kinds and their fields:
-/// `uncaught_error`/`unhandled_rejection`/`heartbeat_delay` (`frontend.health`:
-/// line, column, delay), `updater_failure` (`updater.failure`: stage and cause
-/// from closed lists), `updater_manual_only` (`updater.manual_only`: a build
-/// that updates manually by policy, not a failure — GH #594) and
-/// `close_discarded_unsaved` (`runtime.close_discarded_unsaved`: reason
-/// `failed`/`still-saving` and a page count — GH #540) and `error_toast`
-/// (`frontend.error_toast`: that an error toast was shown; never its text,
-/// which may name pages — the opt-in debug log has it). Any other kind, or a
-/// token outside its list, drops the event.
-/// `journal_feed` records only an allowlisted publication-stage reason.
+mod page_open;
+
+/// Record closed frontend health, updater, close, toast, journal-feed and
+/// page-refusal facts. Free text never enters these event fields.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diagnostic_frontend_event(
@@ -607,7 +600,12 @@ pub(crate) fn diagnostic_frontend_event(
     pages: Option<u64>,
     journal_feed_reason: Option<String>,
     journal_feed_cause: Option<String>,
+    page_open: Option<page_open::Refusal>,
 ) {
+    if kind == "page_open_refused" {
+        page_open::record(page_open);
+        return;
+    }
     if kind == "journal_feed" {
         if let Some(fields) = journal_feed_event_fields(
             journal_feed_reason.as_deref(),

@@ -10,10 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
 - iOS: Tine is on the App Store, and Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 
 ### Fixed
 
+- Merging or deleting a block no longer replaces a long page with an error and loses the editor after earlier structural edits (GH #745).
 - In a query's results, a page whose properties row is listed beside one of its ordinary blocks no longer swaps that whole group for static copies while you edit: the first click on the block opens its editor, and the editor keeps its caret and text through your own typing and save, and through Enter, Tab or another structural edit on any page. Reloading the page from disk still shows the static copy until the query reruns. Before, the click could open no editor, and once it did the first keystroke closed it and dropped the rest of what you typed (internal: UI-HCP6JS-QUERY-GROUP-LIVE-WHILE-EDITING).
 - On a touch screen, holding a sidebar **Favorites** row still opens its menu again, the same one a right-click opens (so **Open in new tab** is back within reach); holding a nested **Open tabs** row opens its **Move out of group** menu. Holding and then dragging still picks the row up to reorder it (the menu closes as you drag), a finger that moves first still scrolls, and a tap still opens it (GH #921).
 - On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (internal: REG-AUDIT1109-FLIGHT-LOCK-ANDROID).

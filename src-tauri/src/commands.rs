@@ -34,34 +34,12 @@ fn feature_pdf_error(error: std::io::Error) -> String {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct PageWire {
-    id: String,
-    #[serde(flatten)]
-    doc: PageDto,
-}
-
-impl std::ops::Deref for PageWire {
-    type Target = PageDto;
-
-    fn deref(&self) -> &PageDto {
-        &self.doc
-    }
-}
-
-fn page_dto(read: tine_store::PageRead) -> PageWire {
-    let mut doc = read.doc;
-    doc.rev = Some(read.rev.into());
-    doc.read_only = read.read_only.is_some();
-    PageWire {
-        id: read.id.into(),
-        doc,
-    }
-}
-
+mod page_read;
+pub(crate) use page_read::PageWire;
+use page_read::{page_dto, PagePathAnswer};
 fn store_error(error: StoreError) -> String {
     match error {
-        StoreError::NotFound => std::io::ErrorKind::NotFound.to_string(),
+        StoreError::NotFound(_) => std::io::ErrorKind::NotFound.to_string(),
         StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
             "invalid page path".into()
         }
@@ -75,7 +53,7 @@ fn store_error(error: StoreError) -> String {
 
 fn asset_error(error: StoreError) -> String {
     match error {
-        StoreError::NotFound => std::io::Error::from_raw_os_error(2).to_string(),
+        StoreError::NotFound(_) => std::io::Error::from_raw_os_error(2).to_string(),
         StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
             "invalid asset".into()
         }
@@ -387,7 +365,7 @@ mod wire_family_tests {
         );
         assert_eq!(
             read_asset_error(tine_graph_features::assets::AssetAccessError::Store(
-                StoreError::NotFound
+                StoreError::NotFound(tine_store::PageReadSource::Disk)
             )),
             "not-found",
             "{RULE}"
@@ -1366,7 +1344,7 @@ pub(crate) async fn read_asset(
 /// reported to the user.
 fn read_asset_error(error: tine_graph_features::assets::AssetAccessError) -> String {
     match error {
-        tine_graph_features::assets::AssetAccessError::Store(StoreError::NotFound) => {
+        tine_graph_features::assets::AssetAccessError::Store(StoreError::NotFound(_)) => {
             "not-found".into()
         }
         other => feature_asset_access_error(other),
@@ -2235,11 +2213,21 @@ pub(crate) async fn read_journal_file(
 pub(crate) async fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
-) -> Result<Option<PageWire>, String> {
+) -> Result<PagePathAnswer, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || match slot.store.page(&PageId::from(path)) {
-        Ok(read) => Ok(Some(page_dto(read))),
-        Err(StoreError::NotFound | StoreError::InvalidTarget(_)) => Ok(None),
+        Ok(read) => Ok(PagePathAnswer {
+            source: Some(read.source),
+            page: Some(page_dto(read)),
+        }),
+        Err(StoreError::NotFound(source)) => Ok(PagePathAnswer {
+            source: Some(source),
+            page: None,
+        }),
+        Err(StoreError::InvalidTarget(_)) => Ok(PagePathAnswer {
+            source: None,
+            page: None,
+        }),
         Err(error) => Err(store_error(error)),
     })
     .await

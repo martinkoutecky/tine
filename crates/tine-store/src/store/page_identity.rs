@@ -55,7 +55,7 @@ impl Store {
         let id = PageId::from(self.graph.rel_path(&entry.path));
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
-            Err(StoreError::NotFound) => Ok(None),
+            Err(StoreError::NotFound(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }

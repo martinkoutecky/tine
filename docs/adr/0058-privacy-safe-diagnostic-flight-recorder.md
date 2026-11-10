@@ -22,6 +22,15 @@ command names, closed-vocabulary tokens, booleans, counts and durations. It
 never accepts note content, paths, page titles, queries, URLs, credentials,
 error text or the opt-in `TINE_DEBUG` log.
 
+**Page route refusals (GH #863).** `page.open-refused` records `stage`
+(`route` or `probe`), `readSource` (`disk`, `held-bytes`, `held-absent`,
+`held-unindexed`, or `not-read` for a rejected target), and boolean
+`pathMismatch`, `nameMismatch`, `kindMismatch`. An absent answer mismatches
+all three operands. Provenance accompanies the original answer; it is never
+rechecked against later owner state. Successful opens omit this refusal event.
+These events use the existing bounded buffer, persistence worker and report
+export. They add no path, title, content or timestamp field.
+
 **Workspace-window stages (GH #809).** `workspace.open` carries a process-local
 `sequence` (the numeric popup counter, never its label), a fixed `stage`, and
 `openElapsedMs`. The usual `elapsedMs` is still time since recorder startup.

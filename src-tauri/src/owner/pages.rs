@@ -126,9 +126,12 @@ pub(super) fn delete_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         })
     })
     .map_err(host_failed)??;
-    let bytes = read
-        .bytes
-        .ok_or_else(|| store_refused(tine_store::StoreError::NotFound, &page))?;
+    let bytes = read.bytes.ok_or_else(|| {
+        store_refused(
+            tine_store::StoreError::NotFound(tine_store::PageReadSource::Disk),
+            &page,
+        )
+    })?;
     let parsed = slot
         .store
         .page_of(&page, &bytes)

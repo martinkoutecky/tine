@@ -95,7 +95,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     }
     let (bytes, _) = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
         Ok(value) => value,
-        Err(tine_store::StoreError::NotFound) => return Ok(None),
+        Err(tine_store::StoreError::NotFound(_)) => return Ok(None),
         Err(error) => return Err(crate::store_error(error)),
     };
     if !tine_core::concord_queue::has_vcs_anchor(&bytes) {
@@ -396,7 +396,7 @@ impl ConflictQueue {
                 let file = id(store, rel)?;
                 match store.open_read(&file) {
                     Ok(_) => Ok(true),
-                    Err(tine_store::StoreError::NotFound) => Ok(false),
+                    Err(tine_store::StoreError::NotFound(_)) => Ok(false),
                     Err(error) => Err(crate::store_error(error)),
                 }
             };
