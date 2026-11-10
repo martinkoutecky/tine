@@ -64,7 +64,7 @@
    desktop window's three window buttons, and a tab strip (shown only at 640px
    and wider, tabStripFits() in viewportClass.ts), which needs room for at least one readable tab pill. Only those topbars
    collapse here, not every phone (GH #205, master a006f1308; og H). */
-@container topbar (max-width: 460px) {
+@container topbar (max-width: 28.75rem) {
   .topbar:where(:has(.win-controls, .tab-bar)) .topbar-optional-action,
   .topbar:has(.win-controls) .topbar-sidebar-action {
     display: none;
@@ -87,13 +87,19 @@
   }
 }
 
-@container topbar (max-width: 345px) {
+/* Every tier is in rem, never px: WebKit (iOS, macOS, Linux) compares a px
+   container length with the zoomed box under interface zoom, so px tiers never
+   engaged there and the toolbar ran off the screen (GH #926). rem resolves
+   through the same zoom in every engine; Tine never sets the root font size. */
+@container topbar (max-width: 24.125rem) {
   /* The tab strip is the flexible middle (.tab-bar flex:1 1 auto, min-width:0;
      .tab-strip-scroll overflow-x:auto) — it shrinks and scrolls, so it never
      clips the fixed clusters and must stay reachable on a narrow desktop window.
      Only the fixed-width low-priority action buttons overflow into the "…" menu.
-     345px is the measured CONTENT-BOX fit boundary (28px of inline padding): at
-     a 390px phone every frequent action fits directly. */
+     386px is the measured CONTENT-BOX fit boundary (28px of inline padding) of a
+     phone topbar with the compact workspace switcher and Share: a 390px phone
+     (362px) no longer fits them all, so its optional actions use the menu. The
+     "…" trigger is as wide as Share, so moving Share alone does not fit either. */
   .topbar .topbar-optional-action {
     display: none;
   }
@@ -115,7 +121,7 @@
    below a 440px window it would be squeezed to a couple of letters (og-f).
    Desktop has Back/Forward shortcuts and mouse buttons, so the pair moves to
    the menu here; a topbar without a strip (a phone-width window) keeps it inline until 300px (og H). */
-@container topbar (max-width: 411px) {
+@container topbar (max-width: 25.6875rem) {
   .topbar:where(:has(.tab-bar)) .topbar-navigation-action {
     display: none;
   }
@@ -129,7 +135,7 @@
 /* At this floor the ~76px Back/Forward pair no longer has reliable room beside
    the fixed toolbar controls. At 390px, the measured budget retains ~75px of
    slack after the pair, so phones keep navigation as the higher priority. */
-@container topbar (max-width: 300px) {
+@container topbar (max-width: 18.75rem) {
   .topbar .topbar-navigation-action {
     display: none;
   }
@@ -178,7 +184,7 @@
 /* Last-resort floor for the fixed clusters themselves. The 280px viewport has
    a 252px content box and still fits right-sidebar exactly once; only below
    that measured boundary does it join the overflow menu. */
-@container topbar (max-width: 250px) {
+@container topbar (max-width: 15.625rem) {
   /* No room for even one tab here: the strip goes (keyboard tab switching stays). */
   .topbar .tab-bar {
     display: none;
@@ -188,5 +194,29 @@
   }
   .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
     display: block;
+  }
+}
+
+/* Below the floor's measured 195px content box (a 390px phone above ~185%
+   interface zoom) the compact workspace switcher goes: it duplicates the one
+   in the navigation sidebar's header, one tap away. If even that does not fit
+   (higher zoom still), the navigation cluster shrinks and scrolls sideways, as
+   the bottom navigation row does, so "…" and Settings never leave the screen
+   (GH #926). */
+@container topbar (max-width: 12.125rem) {
+  /* .topbar-right already takes the free space (margin-inline-start: auto), so
+     the spacer only cost a gap; the divider before Settings goes too. */
+  .topbar [data-workspace-switcher-compact],
+  .topbar .topbar-spacer,
+  .topbar .topbar-sep {
+    display: none;
+  }
+  .topbar .topbar-left {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow-x: auto;
+    /* A classic scrollbar would cover these 30px buttons; the cut-off button
+       already shows that the row scrolls. */
+    scrollbar-width: none;
   }
 }
