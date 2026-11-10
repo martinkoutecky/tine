@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 - `tine page rename --json` reports each page the rename moved in `report.renamed`: its old name, its new name and the file it moved from (`null` for a page with no file, such as a namespace child that exists only through links). The app's tabs, Recent and sidebar follow exactly that list ([CLI output contract](docs/contracts/cli-output.md), `page.rename`).
 - A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).

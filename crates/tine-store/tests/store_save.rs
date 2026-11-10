@@ -487,7 +487,7 @@ fn run(case: Case) -> (Result<String, String>, BTreeMap<String, Vec<u8>>) {
                     }
                     SaveBase::Existing(rev)
                 }
-                Err(StoreError::NotFound) => SaveBase::CreateNew,
+                Err(StoreError::NotFound(_)) => SaveBase::CreateNew,
                 Err(error) => panic!("unexpected pre-read error: {error:?}"),
             }
         } else {
