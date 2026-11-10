@@ -70,6 +70,8 @@ describe("batch 11e page identity and journal continuity", () => {
     try {
       const id = second.blocks[0].id;
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${id}"]`)).not.toBeNull());
+      // A move between pages runs through the page host, which the app binds at startup.
+      await bindTestHost();
       startEditing(id, 2);
       await vi.waitFor(() => expect(maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)).not.toBeNull());
       const editor = maybeEditorIn(mounted.root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!)!;

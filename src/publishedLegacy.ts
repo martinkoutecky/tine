@@ -11,9 +11,12 @@
 // day, the default journal formats, and a permalink that opens a page of
 // either kind. It is that logic moved, not improved, so every existing share
 // keeps showing what it shows; the frozen generation-1 fixtures pin it
-// (`publishedLegacy.test.ts`). Nothing else may compute a name answer from a
-// snapshot (`publishedBackend.ts` and `publishedPermalink.ts` ask the
-// answerer only).
+// (`publishedLegacy.test.ts`). One declared improvement (HFh-eo): the
+// inventory also lists the snapshot's alias pairs as the alias rows Rust
+// writes into `answers`, so a link to an alias opens its owner, a journal's
+// included, by the app's own reader (`linkTargetIn`). Nothing else may compute
+// a name answer from a snapshot (`publishedBackend.ts` and
+// `publishedPermalink.ts` ask the answerer only).
 import type { PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 import type { PublishedSnapshot } from "./publishedBackend";
 import type { PublishedAnswerer } from "./publishedAnswers";
@@ -34,12 +37,31 @@ export function upgradeLegacySnapshot(snapshot: PublishedSnapshot): PublishedAns
     const found = pageByName(name);
     return found && found.kind === kind ? found : null;
   };
+  // The alias rows `answers.inventory` holds (`published_answers.rs`): a name
+  // no exported page spells, opening its one owner (`link`, whatever the
+  // owner's kind). The first pair of a name wins, as `pageByName` reads them.
+  const aliasRows = (): PageInventoryEntry[] => {
+    const owners = new Map<string, PublishedPage>();
+    for (const candidate of snapshot.pages) {
+      const key = pageIdentityKey(candidate.name);
+      if (!owners.has(key)) owners.set(key, candidate);
+    }
+    const rows = new Map<string, PageInventoryEntry>();
+    for (const [from, to] of snapshot.aliases) {
+      const key = pageIdentityKey(from);
+      const owner = owners.get(pageIdentityKey(to));
+      if (!owner || owners.has(key) || rows.has(key)) continue;
+      rows.set(key, { key, name: from, is_journal: false, day: null,
+        target: { kind: "alias", owners: [owner.path] }, link: { name: owner.name, kind: owner.kind } });
+    }
+    return [...rows.values()];
+  };
   return {
-    inventory: (): PageInventoryEntry[] => snapshot.entries.map((entry) => ({
+    inventory: (): PageInventoryEntry[] => [...snapshot.entries.map((entry): PageInventoryEntry => ({
       key: pageIdentityKey(entry.name), name: entry.name,
       is_journal: entry.kind === "journal", day: entry.date_key,
       target: { kind: "existing" as const, id: entry.path, others: [] },
-    })),
+    })), ...aliasRows()],
     resolve(name, kind): ResolvedPage {
       const found = page(name, kind);
       return found ? { kind: "existing", id: found.path, others: [] } : { kind: "absent", id: "" };
