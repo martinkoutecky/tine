@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
-import { saveJourneyScreenshot } from "./lib/e2e-comment-structure.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
