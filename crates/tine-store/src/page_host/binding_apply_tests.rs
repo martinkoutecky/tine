@@ -283,6 +283,7 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
         moves: Vec::new(),
         publications: None,
         view: None,
+        saved: Vec::new(),
     }
 }
 
@@ -1073,7 +1074,7 @@ fn flush_input_saves_a_page_that_exists_only_as_typed_input() {
     assert!(
         matches!(
             live.store.read(&new.file(), None),
-            Err(crate::StoreError::NotFound)
+            Err(crate::StoreError::NotFound(_))
         ),
         "the plan's read sees no file"
     );

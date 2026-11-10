@@ -939,7 +939,7 @@ fn sync_file_detects_external_change_and_suppresses_self() {
     assert!(store.whole_graph().unwrap().rev() > changed.rev());
     assert!(matches!(
         store.page(&id),
-        Err(tine_store::StoreError::NotFound)
+        Err(tine_store::StoreError::NotFound(_))
     ));
     assert_eq!(search_count(&store, "after"), 0);
 
@@ -1073,7 +1073,7 @@ fn self_write_marker_does_not_outlive_its_save() {
     assert!(removed_rev > saved_rev, "page deletion must be published");
     assert!(matches!(
         store.page(&id),
-        Err(tine_store::StoreError::NotFound)
+        Err(tine_store::StoreError::NotFound(_))
     ));
     std::fs::write(&path, saved_bytes).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();

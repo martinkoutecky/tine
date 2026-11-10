@@ -19,7 +19,7 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed" | "page_open_refused";
 
 /** Closed tokens only: journal names, paths and backend error text never enter
  * the always-on report (I-5). These describe the read/publication boundary. */
@@ -35,6 +35,13 @@ export type JournalFeedCause = "empty-rejection" | "other-rejection";
 export type DiscardReason = "failed" | "still-saving";
 
 export interface DiagnosticFrontendFields {
+  pageOpen?: {
+    stage: "route" | "probe";
+    readSource: import("./types").PageReadSource | null;
+    pathMismatch: boolean;
+    nameMismatch: boolean;
+    kindMismatch: boolean;
+  };
   journalFeedReason?: JournalFeedReason;
   journalFeedCause?: JournalFeedCause;
   line?: number;
