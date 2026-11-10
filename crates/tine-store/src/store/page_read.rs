@@ -185,8 +185,9 @@ impl Store {
     /// published before this returns: an unheld one by the watcher's
     /// exact-path reconcile under the writer, a held one through its owner
     /// as a held page's read is (`Store::page`, writer released), whose read
-    /// error this returns. `None` when none was found. A bounded number of
-    /// stats under the writer; nothing is read unless found.
+    /// error this returns. `None` when none exists; a stat error other than
+    /// NotFound is returned. A bounded number of stats under the writer;
+    /// nothing is read unless found.
     pub(super) fn reconcile_unindexed_day(
         &self,
         name: &str,
@@ -205,29 +206,43 @@ impl Store {
         if self.is_closed() {
             return Ok(None);
         }
-        let (held, unheld): (Vec<_>, Vec<_>) = (format.accepted_stems(day).into_iter())
-            .filter(|stem| !stem.contains(['/', '\\']))
-            .flat_map(|stem| {
-                crate::file_kind::GRAPH_TEXT_EXTENSIONS.map(|extension| {
-                    let id = PageId::from(format!("{directory}/{stem}.{extension}").as_str());
-                    (self.graph.root.join(id.as_str()), id)
-                })
-            })
-            .filter(|(path, _)| {
-                let now = fs::symlink_metadata(path)
-                    .ok()
-                    .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata));
-                now.is_some() && !self.watch.unchanged_since_observed(path, now.as_ref())
-            })
-            .partition(|(path, _)| !matches!(self.graph.source(path), crate::model::Source::Disk));
+        // Every existing candidate is kept for the fallback read (review r4):
+        // a file the watcher already refused stays unchanged since observed,
+        // yet it is still no absence. Only unobserved ones are reconciled. A
+        // stat error other than NotFound is no absence either.
+        let mut held = Vec::new();
+        let mut unheld = Vec::new();
+        let mut fresh = HashSet::new();
+        for stem in format.accepted_stems(day) {
+            if stem.contains(['/', '\\']) {
+                continue;
+            }
+            for extension in crate::file_kind::GRAPH_TEXT_EXTENSIONS {
+                let id = PageId::from(format!("{directory}/{stem}.{extension}").as_str());
+                let path = self.graph.root.join(id.as_str());
+                let now = match fs::symlink_metadata(&path) {
+                    Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(StoreError::Io(error.into())),
+                };
+                let disk = matches!(self.graph.source(&path), crate::model::Source::Disk);
+                if disk && !self.watch.unchanged_since_observed(&path, now.as_ref()) {
+                    fresh.insert(path);
+                }
+                if disk {
+                    unheld.push(id)
+                } else {
+                    held.push(id)
+                }
+            }
+        }
         if held.is_empty() && unheld.is_empty() {
             return Ok(None);
         }
-        let (paths, unheld): (HashSet<_>, Vec<_>) = unheld.into_iter().unzip();
-        self.watch.reconcile_raced(&paths);
+        self.watch.reconcile_raced(&fresh);
         drop(writer);
         let mut read = None;
-        for (_, id) in held {
+        for id in held {
             match self.page(&id) {
                 Ok(page) => read = read.or(Some(page)),
                 Err(StoreError::NotFound(_)) => {}

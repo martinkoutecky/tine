@@ -494,11 +494,45 @@ fn an_absent_day_whose_unobserved_delivery_cannot_be_read_answers_the_error() {
     let live = Live::build(&[], false, crate::WatchMode::Notify);
     deaf(&live);
     deliver(&live, "journals/2026-11-10.md", b"- \xff\xfe not UTF-8\n");
-    match (live.store).page_named("Nov 10th, 2026", tine_core::model::PageKind::Journal) {
-        Err(crate::StoreError::NotFound(_)) | Ok(None) => {
-            panic!("an unreadable delivered day answered absent")
+    // The watcher's refusal keeps the file's stamp: a second lookup sees it
+    // unchanged since observed and must still answer the error (review r4).
+    for lookup in 1..=2 {
+        match (live.store).page_named("Nov 10th, 2026", tine_core::model::PageKind::Journal) {
+            Err(crate::StoreError::NotFound(_)) | Ok(None) => {
+                panic!("lookup {lookup}: an unreadable delivered day answered absent")
+            }
+            Ok(Some(read)) => panic!(
+                "lookup {lookup}: read {:?} from invalid UTF-8",
+                read.doc.blocks
+            ),
+            Err(_) => {}
         }
-        Ok(Some(read)) => panic!("read {:?} from invalid UTF-8", read.doc.blocks),
+    }
+}
+
+/// GH #863 (D3, review r4 finding 2): a journals folder whose entries
+/// cannot be stat'ed (here no search permission) answers that error, never
+/// an empty day.
+#[cfg(unix)]
+#[test]
+fn an_absent_day_in_an_unsearchable_journals_folder_answers_the_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    deaf(&live);
+    deliver(&live, "journals/2026-11-10.md", b"- delivered\n");
+    let journals = live.root.join("journals");
+    fs::set_permissions(&journals, fs::Permissions::from_mode(0o600)).unwrap();
+    let probe = fs::symlink_metadata(journals.join("2026-11-10.md"));
+    let named = (live.store).page_named("Nov 10th, 2026", tine_core::model::PageKind::Journal);
+    fs::set_permissions(&journals, fs::Permissions::from_mode(0o755)).unwrap();
+    if probe.is_ok() {
+        return; // running with privileges that bypass the permission bits
+    }
+    match named {
+        Err(crate::StoreError::NotFound(_)) | Ok(None) => {
+            panic!("an unsearchable journals folder answered absent")
+        }
+        Ok(Some(read)) => panic!("read {:?} without permission", read.doc.blocks),
         Err(_) => {}
     }
 }
