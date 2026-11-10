@@ -971,7 +971,7 @@ pub(super) fn store_refused(error: StoreError, page: &PageId) -> ErrorBody {
             format!("the page is {len} bytes, over the {limit}-byte parse limit"),
             false,
         ),
-        StoreError::NotFound => ErrorBody::new(
+        StoreError::NotFound(_) => ErrorBody::new(
             "not-found",
             format!("{} does not exist", page.as_str()),
             false,

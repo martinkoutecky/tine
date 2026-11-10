@@ -33,6 +33,7 @@
 "src/components/Settings.tsx\ttoast\treconcile\t{ok}",
 "src/components/SheetTable.tsx\ttoast\tcommitFieldRename\t{result.error}",
 "src/defenderHint.ts\ttoast\trun\t{text}",
+"src/document/edits/blocks.ts\ttoast\tinsertEditorOutline\t{result.refused === \"too_deep\" ? opts.tooDeep : opts.refused}",
 "src/document/host/wiring.ts\ttoast\tdeletePageOnDisk\t{reason}",
 "src/document/host/wiring.ts\ttoast\tdeletePageOnDisk\t{why}",
 "src/document/host/wiring.ts\ttoast\treportProblems\t{text}",

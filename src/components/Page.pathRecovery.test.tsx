@@ -10,6 +10,62 @@ import type { PageRead } from "../types";
 import { PageView } from "./Page";
 
 beforeAll(initParser);
+
+it.each(["disk", "held-bytes", "held-unindexed"] as const)(
+  "records %s when a concrete but different page answers the route", async source => {
+    const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async (_path, receiveSource) => {
+      receiveSource?.(source);
+      return { id: "pages/Other.md", name: "Other", title: "Other", kind: "page", blocks: [], pre_block: null };
+    });
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Chosen", pageKind: "page", path: "pages/Chosen.md" });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <PageView />, root);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("no longer available at that path"));
+      expect(diagnostic).toHaveBeenCalledExactlyOnceWith("page_open_refused", { pageOpen: {
+        stage: "route", readSource: source, pathMismatch: true, nameMismatch: true, kindMismatch: false,
+      } });
+    } finally { dispose(); }
+  },
+);
+
+it.each(["disk", "held-bytes", "held-absent", "held-unindexed"] as const)(
+  "exports the %s answer's source and mismatch flags on route refusal and recovery probe", async source => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
+    const page: PageRead = { id: "pages/Other.md", name: "Other", title: "Other", kind: "journal",
+      pre_block: null, blocks: [] };
+    const read = vi.spyOn(backend(), "getPageByPath").mockImplementation(async (_path, receiveSource) => {
+      receiveSource?.(source);
+      return null;
+    });
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Private title", pageKind: "page", path: "pages/Private title.md" });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <PageView />, root);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(root.textContent).toContain("no longer available at that path");
+      expect(diagnostic).toHaveBeenCalledWith("page_open_refused", { pageOpen: {
+        stage: "route", readSource: source, pathMismatch: true, nameMismatch: true, kindMismatch: true,
+      } });
+      read.mockImplementation(async (_path, receiveSource) => { receiveSource?.(source); return page; });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(diagnostic).toHaveBeenLastCalledWith("page_open_refused", { pageOpen: {
+        stage: "probe", readSource: source, pathMismatch: true, nameMismatch: true, kindMismatch: true,
+      } });
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(diagnostic).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(6000 + 12_000);
+      expect(read).toHaveBeenCalledTimes(4);
+      expect(diagnostic).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/Private|Other|\.md/);
+    } finally { dispose(); }
+  },
+);
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -44,7 +100,7 @@ it("keeps a still-missing route's refusal visible while silent probes settle and
       expect(read).toHaveBeenCalledTimes(previousReads);
       await vi.advanceTimersByTimeAsync(1);
       expect(read).toHaveBeenCalledTimes(previousReads + 1);
-      expect(read).toHaveBeenLastCalledWith("pages/Missing.md");
+      expect(read).toHaveBeenLastCalledWith("pages/Missing.md", expect.any(Function));
       expect(root.textContent).toBe(refusal);
       expect(root.querySelector('[role="status"]')).toBeNull();
       // A slow read must finish before the next delay starts.
@@ -60,6 +116,7 @@ it("keeps a still-missing route's refusal visible while silent probes settle and
 
 it("opens a restored file without a watcher event and cancels retries after opening", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
   const page: PageRead = { name: "Restored", title: "Restored", kind: "page", id: "pages/Restored.md", rev: "unchanged",
     pre_block: null, blocks: [{ id: "restored", raw: "Identical bytes restored by sync", children: [], collapsed: false }] };
   const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
@@ -76,6 +133,7 @@ it("opens a restored file without a watcher event and cancels retries after open
     await vi.advanceTimersByTimeAsync(30_000);
     expect(root.textContent).toContain("Identical bytes restored by sync");
     expect(root.textContent).not.toContain("no longer available at that path");
+    expect(diagnostic).toHaveBeenCalledTimes(1);
   } finally { dispose(); }
 });
 
@@ -113,6 +171,7 @@ it.each([
   { id: "pages/Twin.md", name: "Twin", kind: "journal" as const },
 ])("keeps a probe silent when the returned identity differs: %j", async identity => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
   const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
   mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Twin", pageKind: "page", path: "pages/Twin.md" });
   const root = document.createElement("div");
@@ -126,6 +185,10 @@ it.each([
     await vi.advanceTimersByTimeAsync(3000);
     expect(read).toHaveBeenCalledTimes(2);
     expect(root.textContent).toBe(refusal);
+    expect(diagnostic).toHaveBeenLastCalledWith("page_open_refused", { pageOpen: {
+      stage: "probe", readSource: null,
+      pathMismatch: identity.id !== "pages/Twin.md", nameMismatch: identity.name !== "Twin", kindMismatch: identity.kind !== "page",
+    } });
     expect(mainPaneRouter.route()).toMatchObject({ name: "Twin", pageKind: "page", path: "pages/Twin.md" });
     await vi.advanceTimersByTimeAsync(6000);
     expect(read).toHaveBeenCalledTimes(3);
