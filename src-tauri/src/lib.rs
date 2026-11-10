@@ -1181,6 +1181,7 @@ pub fn run() {
             page_commands::page_window_reloaded,
             page_commands::page_open,
             page_commands::owner_flush_answer,
+            page_commands::owner_current_page_answer,
             page_commands::page_submit,
             page_commands::page_move,
             page_commands::page_discard,

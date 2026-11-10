@@ -66,6 +66,7 @@ import { dragOpeningMobileDrawer, settleMobileDrawer } from "./mobileDrawerMotio
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
+import { subscribeCurrentPage } from "./currentPage";
 import { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 export { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 import { backend, isTauri } from "./backend";
@@ -887,6 +888,7 @@ export function App(): JSX.Element {
     onCleanup(subscribeWatcherFreshness());
     onCleanup(subscribeAssetChanges());
     onCleanup(subscribeOwnerFlush());
+    onCleanup(subscribeCurrentPage());
     installReloadOnFocus();
     void initConflictPolicy();
   });

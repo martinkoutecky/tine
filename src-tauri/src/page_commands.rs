@@ -322,3 +322,18 @@ pub(crate) fn owner_flush_answer(
     }
     Ok(())
 }
+
+/// Answer the owner's one route question using the existing graph binding.
+#[tauri::command]
+pub(crate) fn owner_current_page_answer(
+    id: u64,
+    page: crate::owner::window::CurrentPage,
+    binding_generation: u64,
+    state: crate::state::GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    if let Some(window) = slot.window.get() {
+        window.answer_current_page(id, page, binding_generation);
+    }
+    Ok(())
+}

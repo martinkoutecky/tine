@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-cli-page-current.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A script obtains the focused page name and URL, the editing block URL, and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; discussion 925"}],
+      "acceptableVariations": ["URL encoding follows the shared link producer; CLI prose may vary while JSON fields and exit codes follow the contract."],
+      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, graph-qualified page bookmarks, and other platform runtime certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-context-menu-font.mjs": {
       "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Every visible page and block context-menu row, including hovered Copy as and view submenu rows, uses the same font size and interface font family on a routed page in desktop and narrow touch-stylesheet layouts.","blocking":false,"authority":"GH #916; UI-GH916-CONTEXT-MENU-FONT"}],
       "acceptableVariations": ["Font face, common size, menu geometry and theme may vary; equality across rows and inheritance of the interface family are material."],

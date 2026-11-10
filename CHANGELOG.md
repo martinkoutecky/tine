@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- `tine page current` reports the focused page name and Tine URL, plus the editing block's URL, with text and JSON output for scripts such as Hookmark integrations ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 - A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
