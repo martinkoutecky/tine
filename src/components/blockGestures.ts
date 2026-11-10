@@ -15,7 +15,7 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -202,6 +202,9 @@ export function beginEditGesture(
       const from = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
       selectBlock(from.id, from.scope);
     }
+    // Never across an outline boundary: an unscoped selection must not run into an
+    // embed's rows (it would take the source parent with it), nor out of one.
+    if (selectionScope() !== anchor.scope) return;
     extendSelectionTo(anchor.id, anchor.scope);
     return;
   }
