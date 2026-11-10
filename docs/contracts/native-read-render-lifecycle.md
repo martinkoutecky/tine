@@ -1,5 +1,14 @@
 # Native reads and renderer work ownership
 
+Live block rows and their editors read the live node while it exists. During the
+reactive flush that deletes or merges a block, render facts retain the node
+captured at mount until the owner retires; they must not take down the containing
+page. Both use the shared block node binding. Writes still require a live slot,
+and detached editors cannot write into a replacement node. The retiring-row and
+stale-input cases in `Block.deleteRendered.test.tsx` enforce these lifetimes;
+`Page.windowing.test.tsx` also checks successive structural edits keep the editor,
+later rows and unchanged window shells.
+
 Read-only IPC for assets, opted-in local images, dropped CSV/TSV files,
 journal inspection and sync-conflict diffs runs blocking I/O on the blocking
 pool. Graph reads capture their admitted graph slot before dispatch. Device
