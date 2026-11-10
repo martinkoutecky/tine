@@ -1998,6 +1998,7 @@ mod customize_look_guide_tests {
         let page = page();
         for needed in [
             "logseq/custom.css",
+            "--ls-block-properties-background-color",
             "**Edit global CSS**",
             "**Open in default app**",
             "**Open custom.css in default app**",
