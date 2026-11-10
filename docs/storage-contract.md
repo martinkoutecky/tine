@@ -828,8 +828,10 @@ numeric width the parser reads, `JournalFormat::accepted_stems`, at most
 extensions) and reads a file the watcher has not observed before
 resolving the name again: an unheld one through the watcher's exact-path
 reconcile, a held one through its owner as `page()` reads it, whose read error
-is the answer (GH #863). So a creating save finds a day delivered unobserved
-instead of making a duplicate. A write computed
+is the answer (GH #863). If the name still resolves absent (an owner before
+its first publication, a file the watcher could not read), that file's own
+read or read error is the answer, never an empty day. So a creating save finds
+a day delivered unobserved instead of making a duplicate. A write computed
 from a page parses the bytes whose revision guards it (`Store::read` then
 `Store::page_of`; A-V4b), never `page()`. With no host running nothing is
 held and every path reads the file. Proof:

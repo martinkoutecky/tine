@@ -3,6 +3,14 @@
 //! read observed (GH #623 BR3 split these out of `Store::page`).
 use super::*;
 
+/// The journal files `Store::reconcile_unindexed_day` found for a day the
+/// index resolved absent: the first held one's read, and the unheld ones it
+/// asked the watcher to take in.
+pub(super) struct UnindexedDay {
+    read: Option<PageRead>,
+    unheld: Vec<PageId>,
+}
+
 /// Provenance of a page answer, carried from the content-selection seam.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -177,22 +185,25 @@ impl Store {
     /// published before this returns: an unheld one by the watcher's
     /// exact-path reconcile under the writer, a held one through its owner
     /// as a held page's read is (`Store::page`, writer released), whose read
-    /// error this returns. True when one was found. A bounded number of
+    /// error this returns. `None` when none was found. A bounded number of
     /// stats under the writer; nothing is read unless found.
-    pub(super) fn reconcile_unindexed_day(&self, name: &str) -> Result<bool, StoreError> {
+    pub(super) fn reconcile_unindexed_day(
+        &self,
+        name: &str,
+    ) -> Result<Option<UnindexedDay>, StoreError> {
         let format = self.graph.current_journal_format();
         let Some(day) = format.parse(name) else {
-            return Ok(false);
+            return Ok(None);
         };
         // From Ready only: a served launch checkpoint's diff holds the writer
         // and reconciles every file itself, and a read never waits for it.
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
-            return Ok(false);
+            return Ok(None);
         }
         let directory = self.graph.current_config().journals_dir.clone();
         let writer = self.writer.lock().unwrap();
         if self.is_closed() {
-            return Ok(false);
+            return Ok(None);
         }
         let (held, unheld): (Vec<_>, Vec<_>) = (format.accepted_stems(day).into_iter())
             .filter(|stem| !stem.contains(['/', '\\']))
@@ -209,17 +220,45 @@ impl Store {
                 now.is_some() && !self.watch.unchanged_since_observed(path, now.as_ref())
             })
             .partition(|(path, _)| !matches!(self.graph.source(path), crate::model::Source::Disk));
-        let found = !held.is_empty() || !unheld.is_empty();
-        let unheld = unheld.into_iter().map(|(path, _)| path).collect();
-        self.watch.reconcile_raced(&unheld);
+        if held.is_empty() && unheld.is_empty() {
+            return Ok(None);
+        }
+        let (paths, unheld): (HashSet<_>, Vec<_>) = unheld.into_iter().unzip();
+        self.watch.reconcile_raced(&paths);
         drop(writer);
+        let mut read = None;
         for (_, id) in held {
             match self.page(&id) {
-                Ok(_) | Err(StoreError::NotFound(_)) => {}
+                Ok(page) => read = read.or(Some(page)),
+                Err(StoreError::NotFound(_)) => {}
                 Err(error) => return Err(error),
             }
         }
-        Ok(found)
+        Ok(Some(UnindexedDay { read, unheld }))
+    }
+
+    /// The day `reconcile_unindexed_day` found when the name still resolves
+    /// absent after it (GH #863 review r3): a held file's read (an owner's
+    /// first publication may not have happened yet; the read stays
+    /// unpublished, owner-only indexing), else the first unheld file the
+    /// watcher could not take in, read through `page` so its read error
+    /// (invalid UTF-8, a sharing violation) reaches the caller instead of an
+    /// empty day. One page read at most per candidate.
+    pub(super) fn unindexed_day_read(
+        &self,
+        day: UnindexedDay,
+    ) -> Result<Option<PageRead>, StoreError> {
+        if day.read.is_some() {
+            return Ok(day.read);
+        }
+        for id in day.unheld {
+            match self.page(&id) {
+                Ok(read) => return Ok(Some(read)),
+                Err(StoreError::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(None)
     }
 
     /// The listing entry of the page file at `path` (its preamble names it).

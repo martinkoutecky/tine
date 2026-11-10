@@ -2060,6 +2060,9 @@ impl Store {
     /// unobserved under another accepted name (GH #863): a bounded number of
     /// stats, and a hit is read and published (a held one through its owner,
     /// as `page` reads it) before the name resolves again; its read error.
+    /// A hit that still resolves absent (an owner before its first
+    /// publication, a file the watcher could not read) answers with its own
+    /// read or read error, never an empty day.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
@@ -2071,6 +2074,7 @@ impl Store {
         }
         let journal = kind == PageKind::Journal;
         let mut looked = false;
+        let mut day = None;
         let resolved = loop {
             let resolved = match self.whole_graph() {
                 Ok(view) => view.resolve(name, journal),
@@ -2082,7 +2086,8 @@ impl Store {
             // resolves it.
             if journal && !looked && matches!(resolved, Resolved::Absent { .. }) {
                 looked = true;
-                if self.reconcile_unindexed_day(name)? {
+                day = self.reconcile_unindexed_day(name)?;
+                if day.is_some() {
                     continue;
                 }
             }
@@ -2095,7 +2100,9 @@ impl Store {
                 Some(id) => id,
                 None => return Ok(None),
             },
-            Resolved::Absent { .. } => return Ok(None),
+            Resolved::Absent { .. } => {
+                return day.map_or(Ok(None), |day| self.unindexed_day_read(day))
+            }
         };
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),

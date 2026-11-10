@@ -485,6 +485,58 @@ fn a_held_absent_day_opens_by_name_a_missed_delivery_its_busy_owner_observes() {
     assert_eq!(read.doc.blocks[0].raw, "Journal delivered by sync");
 }
 
+/// GH #863 (D3, review r3 finding 1): a day delivered unobserved under
+/// another accepted name that cannot be read (here invalid UTF-8) answers
+/// its read error, never an empty day the user would then fill as a
+/// duplicate.
+#[test]
+fn an_absent_day_whose_unobserved_delivery_cannot_be_read_answers_the_error() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    deaf(&live);
+    deliver(&live, "journals/2026-11-10.md", b"- \xff\xfe not UTF-8\n");
+    match (live.store).page_named("Nov 10th, 2026", tine_core::model::PageKind::Journal) {
+        Err(crate::StoreError::NotFound(_)) | Ok(None) => {
+            panic!("an unreadable delivered day answered absent")
+        }
+        Ok(Some(read)) => panic!("read {:?} from invalid UTF-8", read.doc.blocks),
+        Err(_) => {}
+    }
+}
+
+/// GH #863 (D3, review r3 finding 2): a day delivered unobserved under
+/// another accepted name that a host holds before its owner's first
+/// publication (its Open read still waiting) opens with that file's read,
+/// which stays unpublished: the owner alone indexes it.
+#[test]
+fn an_absent_day_held_before_its_first_publication_opens_its_delivered_file() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    deaf(&live);
+    let rel = "journals/2026-11-10.md";
+    deliver(&live, rel, b"- delivered before the owner read it\n");
+    let id = PageId::from(rel);
+    let busy = live.host.pause_for_tests(std::slice::from_ref(&id));
+    let generation = live.host.session();
+    live.host.open(generation, 1, &id, "2026-11-10").unwrap();
+    assert!(matches!(
+        live.store.graph.source(&live.root.join(rel)),
+        crate::model::Source::HeldUnindexed
+    ));
+    let read = (live.store)
+        .page_named("Nov 10th, 2026", tine_core::model::PageKind::Journal)
+        .unwrap()
+        .expect("the held delivered day opens");
+    assert_eq!(read.id.as_str(), rel);
+    assert_eq!(read.doc.blocks[0].raw, "delivered before the owner read it");
+    assert!(
+        matches!(
+            live.store.graph.source(&live.root.join(rel)),
+            crate::model::Source::HeldUnindexed
+        ),
+        "the lookup published a held page"
+    );
+    drop(busy);
+}
+
 /// GH #863 (D3): a day delivered unobserved under an unpadded name the
 /// parser accepts (by default `2026-11-1` is November 1) opens by name, and
 /// a creating save targets it rather than a duplicate day.
