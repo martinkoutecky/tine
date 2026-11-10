@@ -3345,7 +3345,7 @@ html[data-system-insets="native-viewport"] {
 .page-properties, .block-properties, .peek-page-properties, .page-property-reference > .block-main > .block-content-wrapper > .block-content {
   margin: 4px 0;
   padding: 4px 8px;
-  background-color: var(--ls-block-properties-background-color, var(--bg-secondary));
+  background-color: var(--ls-block-properties-background-color, var(--bg-tertiary));
   border-radius: var(--ls-border-radius-low);
   color: var(--text-secondary);
 }
