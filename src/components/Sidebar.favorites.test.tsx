@@ -346,6 +346,33 @@ describe("favorites arrangement in the sidebar", () => {
       dispose();
     });
 
+    it.each(["touch", "pen"])("GH #921: Escape after a released %s hold lets another row open its keyboard context menu", (pointerType) => {
+      vi.useFakeTimers();
+      const { dispose, rows } = mount();
+      const menuRoot = document.body.appendChild(document.createElement("div"));
+      const disposeMenu = render(() => <ContextMenu />, menuRoot);
+      const heldPointer = (type: string) => {
+        const event = pointer(type, 10, 40);
+        Object.defineProperty(event, "pointerType", { value: pointerType });
+        return event;
+      };
+      try {
+        rows()[1].dispatchEvent(heldPointer("pointerdown"));
+        vi.advanceTimersByTime(600);
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta" });
+        document.dispatchEvent(heldPointer("pointerup")); // no compatibility click
+        menuRoot.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        expect(contextMenu()).toBeFalsy();
+        rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, detail: 0 }));
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+      } finally {
+        document.dispatchEvent(heldPointer("pointerdown")); // retire ownership even on failure
+        vi.advanceTimersByTime(10);
+        disposeMenu();
+        dispose();
+      }
+    });
+
     it("GH #921: moving the held finger closes the hold's menu and drags; a move before the hold opens none", async () => {
       vi.useFakeTimers();
       const { dispose, rows, layoutRows } = mount();
