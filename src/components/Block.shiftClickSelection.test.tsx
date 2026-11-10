@@ -86,7 +86,9 @@ describe("Shift+click selects whole blocks from the editing caret (GH #924)", ()
       editor.select(7);
       const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, shiftKey: true });
       editor.element.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(false);
+      // The textarea keeps the browser's own Shift+click text extension; CodeMirror
+      // extends its selection itself and cancels the default (view handlers.mousedown).
+      if (editor.kind === "textarea") expect(event.defaultPrevented).toBe(false);
       expect(editingId()).toBe("A");
       expect(hasSelection()).toBe(false);
     } finally { dispose(); }
