@@ -103,6 +103,26 @@
   .topbar .topbar-optional-action {
     display: none;
   }
+  /* The menu then holds most actions, and its trigger sits right of center:
+     anchored to the trigger, a 174px menu runs off the left edge at high zoom
+     (GH #926 review B1). Anchor it to the (relative) topbar instead, bound it
+     to the topbar's width and the window's height (it scrolls), and let long
+     labels wrap. */
+  .topbar .topbar-overflow {
+    position: static;
+  }
+  .topbar .topbar-overflow-menu {
+    inset-inline-end: 4px;
+    min-width: min(174px, calc(100% - 8px));
+    max-width: calc(100% - 8px);
+    max-height: calc(calc(100vh / var(--interface-zoom, 1)) - var(--ls-headbar-height) - 16px);
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+  .topbar .topbar-overflow-menu button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   .topbar .topbar-right {
     margin-inline-start: auto;
   }

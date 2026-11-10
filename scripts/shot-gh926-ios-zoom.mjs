@@ -121,6 +121,37 @@ try {
       });
       assert.deepEqual(missed, [], `unreachable toolbar actions: ${JSON.stringify(missed)}`);
     });
+    // The "…" menu is where collapsed actions go, so its rows must be on screen
+    // too: every row's label fully inside the viewport and hit-testable (review B1).
+    await check(`${scale}: every "…" menu row is on screen and takes a tap`, async () => {
+      const trigger = page.locator(".topbar-overflow-trigger");
+      if (!(await trigger.isVisible())) return;
+      await trigger.click();
+      await page.locator(".topbar-overflow-menu").waitFor();
+      const missed = await page.evaluate(() => {
+        const ruler = document.createElement("div");
+        ruler.style.cssText = "position:fixed;left:0;top:0;width:100px;height:1px";
+        document.body.append(ruler);
+        const zoom = Number.parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+        const k = (100 * zoom) / ruler.getBoundingClientRect().width;
+        ruler.remove();
+        const missed = [];
+        for (const row of document.querySelectorAll(".topbar-overflow-menu button")) {
+          if (!row.getClientRects().length) continue;
+          row.scrollIntoView({ block: "nearest" }); // the menu may scroll at high zoom
+          const range = document.createRange();
+          range.selectNodeContents(row);
+          const text = range.getBoundingClientRect(), r = row.getBoundingClientRect();
+          const inside = text.left * k >= 0 && text.right * k <= innerWidth + 0.5 && r.bottom * k <= innerHeight + 0.5;
+          const x = ((r.left + r.right) / 2) * k, y = ((r.top + r.bottom) / 2) * k;
+          if (!inside || !row.contains(document.elementFromPoint(x, y))) missed.push(`${row.textContent.trim()} [${Math.round(text.left * k)}..${Math.round(text.right * k)}]`);
+        }
+        return missed;
+      });
+      await page.screenshot({ path: `${out}/${label}-${scale}-overflow-menu.png` });
+      await page.keyboard.press("Escape");
+      assert.deepEqual(missed, [], `"…" menu rows off screen: ${JSON.stringify(missed)}`);
+    });
     await check(`${scale}: the page does not scroll sideways`, async () => {
       const wide = await page.evaluate(() => [document.scrollingElement, ...document.querySelectorAll(".app-container, .main-container, .main-content")]
         .filter((el) => el && el.scrollWidth > el.clientWidth + 1)
