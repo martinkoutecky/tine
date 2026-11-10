@@ -216,3 +216,117 @@ fn the_creator_behind_in_line_writes_in_the_turn_it_holds() {
         "{text}"
     );
 }
+
+/// What one `block.edit` of an existing page's block spends below the owner
+/// (card DuDHQ), from the request to the host's quiescence, at every page
+/// size: the old bytes parsed once (by the serializer), the new bytes twice
+/// (the serializer's round-trip check, and the publication's row, R8), never
+/// a third time by the owner; one name read (the owner's read of the page),
+/// not a second for the written bytes. The reads are the owner's read, the
+/// plan's staging, the host's admission, the save's base guard and the
+/// publication read (GH #623); the files and syncs are the page's temp file
+/// and its directory, and the host operation's draft (temp, directory, retire;
+/// storage contract: a host operation drafts). On the base of this test the
+/// owner re-parsed and re-named the bytes it had just serialized: 5 parses and
+/// 2 name reads per edit, about 650 ms of a 3.8 s debug 2 MiB edit. The
+/// counters are process-global: the cases run in a child process of their own.
+#[test]
+fn a_block_edit_spends_its_lower_bound() {
+    const CHILD: &str = "TINE_BLOCK_EDIT_COST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
+            .args([
+                "--exact",
+                "owner::owner_tests::write_cost::a_block_edit_spends_its_lower_bound",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let (out, err) = (
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(output.status.success(), "{out}\n{err}");
+        assert!(
+            out.contains("1 passed"),
+            "the child ran no case:\n{out}\n{err}"
+        );
+        return;
+    }
+    use tine_store::cost_counters;
+    let id = format!("  id:: {}\n", super::UUID);
+    for (label, old, text) in [
+        ("1-block", format!("- one\n{id}"), "edited".to_owned()),
+        (
+            "60-block",
+            format!("- one\n{id}{}", "- filler block\n".repeat(59)),
+            "edited".to_owned(),
+        ),
+        ("2 MiB", format!("- one\n{id}"), "x".repeat(2 << 20)),
+    ] {
+        let graph = Graph::seeded(Default::default(), &[("pages/a.md", &old)]);
+        // Every fixture file older than the watcher's racy window (TE-9).
+        let aged = std::time::SystemTime::now() - Duration::from_secs(3600);
+        for entry in std::fs::read_dir(graph.root.join("pages")).unwrap() {
+            let file = std::fs::File::options()
+                .write(true)
+                .open(entry.unwrap().path());
+            file.unwrap().set_modified(aged).unwrap();
+        }
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = Arc::new(graph.slot());
+        let _served = super::endpoint(&graph, slot.clone());
+        let mut conn = graph.connect();
+        let quiet = || {
+            let quiet = crate::page_commands::with_host(&slot, |host| {
+                host.quiesce_for_tests(Duration::from_secs(30))
+            });
+            assert_eq!(quiet, Ok(true), "{label}: the host settles");
+        };
+        quiet();
+        spent(&slot);
+        cost_counters::reset();
+        let start = Instant::now();
+        let written = conn
+            .call("block.edit", json!({ "handle": super::UUID, "text": text }))
+            .unwrap();
+        let elapsed = start.elapsed();
+        quiet();
+        let c = cost_counters::snapshot();
+        assert_eq!(written["kind"], "written", "{label}: {written}");
+        let new = std::fs::metadata(graph.root.join("pages/a.md"))
+            .unwrap()
+            .len();
+        println!("{label}: {new} B page, {elapsed:?}, {c:?}");
+        let counts = (
+            c.parses,
+            c.old_source_parses,
+            c.full_reads,
+            c.store_reads,
+            c.preamble_reads,
+            c.readdir,
+        );
+        assert_eq!(
+            counts,
+            (4, 1, 4, 1, 1, 0),
+            "{label}: parses, old-source parses, full reads, store reads, name reads, listings"
+        );
+        assert_eq!((c.fsyncs, c.files_written), (5, 2), "{label}: syncs, files");
+        // The page, and the draft carrying the new and the old page under its header.
+        let carried = 2 * new + old.len() as u64;
+        let header = c.bytes_written.checked_sub(carried);
+        assert!(
+            header.is_some_and(|header| header <= 256),
+            "{label}: {} bytes written for a {new} B page over {} B",
+            c.bytes_written,
+            old.len()
+        );
+        assert_eq!(
+            spent(&slot),
+            cost(1, 1, 1, 1),
+            "{label}: the owner's own counts"
+        );
+    }
+}

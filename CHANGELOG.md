@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
+- `tine edit` saves a large page faster: it no longer parses the bytes it has just written a second time or reads their page name again, so each edit does one parse and one name read fewer (a 2 MiB page saves about 15 % faster). The written bytes, files, syncs and reply are unchanged (internal: REG-COST-BLOCK-EDIT-REPARSE; card DuDHQ).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 - `tine page rename --json` reports each page the rename moved in `report.renamed`: its old name, its new name and the file it moved from (`null` for a page with no file, such as a namespace child that exists only through links). The app's tabs, Recent and sidebar follow exactly that list ([CLI output contract](docs/contracts/cli-output.md), `page.rename`).
 - A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
@@ -27,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - A query or table no longer stays empty or stale until reload when a page it lists starts or stops existing without a file of its own: linking a new `[[Page]]`, giving a blank `Brand/Child` file its first text (which makes `Brand` a page), or removing a page's last reference now refreshes the queries that can list that page, and only those (internal: hHbdR0, REG-QUERY-FILELESS-PAGE-STALE).
+- Merging or deleting a block no longer replaces a long page with an error and loses the editor after earlier structural edits (GH #745).
 - Pressing Enter over selected text in the default editor now deletes the selection and splits the block where it began, as Logseq and the CodeMirror editor do; it used to keep the selected text in the new block. In both editors one Undo now restores the block with its selected text (internal: UI-EDITOR-ENTER-SELECTION-DELETES).
 - Choosing a template from the slash menu, or pasting several lines, no longer changes the block when the insert then fails: the `/template` text stays where it was, the block keeps its open editor and nothing is left to save, with one error message instead of two. A template that is inserted now undoes in one step. In the CodeMirror editor, pasting one block with children into an empty block now leaves the caret at the end of its text, as in the default editor (internal: UI-EDITOR-TEMPLATE-TRIGGER-REFUSED, UI-EDITOR-PASTE-OUTLINE-REFUSED).
 - Rename navigation now follows names actually rewritten in macro, query and Org link targets, and keeps reference-only children named solely in skipped conflicted files at their old names (REG-RENAME-REPORT-APPLIED-TARGETS).
