@@ -995,7 +995,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return collect((b) => blockRefIds(b.raw).includes(uuid));
     },
     async renamePage(): Promise<import("./types").RenameDone> {
-      return { outcome: "unchanged", touched: [] }; // no-op in mock
+      return { outcome: "unchanged", touched: [], renamed: [] }; // no-op in mock
     },
     async renameOffer(): Promise<import("./types").RenameOffer> {
       return { kind: "rename" }; // the mock renames nothing (renamePage above)
