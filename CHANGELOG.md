@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Printed and published pages list a `{{namespace X}}` macro's pages by page identity, as the live macro and Logseq do, so `project/y` appears under `{{namespace Project}}`; printing such a page no longer copies or sorts the whole graph (REG-PRINT-NAMESPACE-COST).
 - An empty page now opens itself instead of jumping to the page that lists it as an alias. Renaming onto it targets that page too (REG-CM-REAL-FILE-FIRST, UI-CM-REAL-FILE-FIRST).
 - Phone sidebars slide in and out from their edges with a fading shade and follow touch drags; Reduce Motion makes them open and close instantly (GH #501).
+- Editing a link to a namespaced page such as `[[Project/Task]]`, or giving a blank `Project/Task` page its first text, no longer looks through every page under `Project` to update the page list; the time no longer grows with the size of the namespace, and the page list is the same (internal: hehIo).
 - When two files claim one page name, Tine opens the ordinary page before a journal, then the file whose graph-relative path sorts first by UTF-8 bytes. Only that file supplies aliases, references and query results; the Journals feed hides a journal masked by an ordinary page. Both files are kept (REG-CM-ACTIVE-TWINS).
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
