@@ -3171,6 +3171,7 @@ export interface MessageArgs {
   "ui-failure-capture-preference": {};
   "ui-failure-clipboard-association": {};
   "ui-failure-config-read": {};
+  "ui-failure-config-read-after": { "done": string | number };
   "ui-failure-conflict-inventory": {};
   "ui-failure-css-draft": {};
   "ui-failure-custom-css": {};
