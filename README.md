@@ -53,7 +53,14 @@ instead of re-parsing.
 
 ## Install
 
-Grab a prebuilt installer from the **[Releases](https://github.com/martinkoutecky/tine/releases)**
+<p>
+  <a href="https://apps.apple.com/us/app/tineoutline/id6804403687"><img src="website/img/badge-app-store.svg" alt="Download on the App Store" height="40"></a>
+  <a href="https://play.google.com/store/apps/details?id=page.tine.app"><img src="website/img/badge-google-play.png" alt="Get it on Google Play" height="58"></a>
+  <a href="https://apps.microsoft.com/detail/9NCZ9VKJ1TXJ"><img src="website/img/badge-microsoft-store.svg" alt="Get it from Microsoft" height="40"></a>
+  <a href="https://f-droid.org/packages/page.tine.app/"><img src="website/img/badge-f-droid.png" alt="Get it on F-Droid" height="58"></a>
+</p>
+
+Or grab a prebuilt installer from the **[Releases](https://github.com/martinkoutecky/tine/releases)**
 page. macOS builds are signed and notarized; Windows builds aren't code-signed yet, so Windows may
 warn the first time — here's how to get past it:
 
@@ -67,18 +74,29 @@ warn the first time — here's how to get past it:
   and drag Tine into Applications. If Tine
   **keeps asking to access your Documents folder on every launch**, see the
   [workaround](#macos-repeated-documents-permission-prompt) below.
-- **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
+- **Windows** — install from the **[Microsoft Store](https://apps.microsoft.com/detail/9NCZ9VKJ1TXJ)**
+  (it appears as *TineOutline*), which keeps it updated, or run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
   anyway**. Prefer no installer? Grab the portable **`Tine_*_x64-portable.zip`**, unzip, and run
   `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11. The portable
   Tine keeps its settings and WebView2 data in the `tine-data` folder next to `Tine.exe`, not in
   AppData, so it runs from a USB drive; to update it, quit Tine and unzip the new version into the
   same folder.
-- **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic
-  updates, or take the signed **`Tine_*_android-arm64.apk`** from Releases.
+- **Android** — install from **[Google Play](https://play.google.com/store/apps/details?id=page.tine.app)**
+  or **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic updates, or take the
+  signed **`Tine_*_android-arm64.apk`** from Releases.
 - **iPhone and iPad** — install Tine from the **[App Store](https://apps.apple.com/us/app/tineoutline/id6804403687)** (it appears as
-  *TineOutline*). Betas come through TestFlight as a separate app, *Tine Beta*:
-  install Apple's TestFlight app, then open **[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)**.
-  Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
+  *TineOutline*). Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
+
+**Test the Betas.** Beta testers are welcome and genuinely help: Betas get the fixes first, and what
+you notice shapes the next stable release. *Tine Beta* is a separate app that installs next to Tine,
+so you can keep both.
+- **iPhone and iPad** — install Apple's TestFlight app, then open
+  **[the Tine Beta link](https://testflight.apple.com/join/f2HQgJGn)**.
+- **Desktop and Android** — take the newest pre-release from
+  **[Releases](https://github.com/martinkoutecky/tine/releases)**; on desktop it updates itself to
+  each new Beta.
+
+Report what you find in [Issues](https://github.com/martinkoutecky/tine/issues).
 
 **Updates.** On desktop, Tine tells you when a new version is out and installs it in place when
 you click **Install update**: this covers the AppImage, `.deb`, `.rpm`, macOS app and Windows
