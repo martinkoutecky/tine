@@ -213,6 +213,7 @@ fn guide_explains_following_the_link_at_the_caret() {
 
 #[test]
 fn guide_explains_margin_comments() {
+    let _integration_guard = crate::integration_lock();
     // Margin dialogue slice 1 (vision 2026-10 §3.7): Ctrl/Cmd+R comments on a
     // selection as a `tine.quote::` child; a stale quote is kept, never dropped.
     let tips = bundled_guide_pages()
@@ -537,6 +538,7 @@ fn guide_explains_missing_links_and_old_web_engines() {
 
 #[test]
 fn guide_explains_phone_drawer_motion() {
+    let _integration_guard = crate::integration_lock();
     let pages = bundled_guide_pages();
     for title in ["Reference/Platforms and mobile", "Start/Where things are"] {
         let page = pages.iter().find(|page| page.title == title).unwrap();

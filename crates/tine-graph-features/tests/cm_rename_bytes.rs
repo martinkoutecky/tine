@@ -139,6 +139,7 @@ fn sample(root: &Path) -> Vec<String> {
 #[test]
 #[ignore]
 fn cm_rename_bytes() {
+    let _integration_guard = crate::integration_lock();
     let Some(root) = std::env::var_os("CM_ANON") else {
         return;
     };
