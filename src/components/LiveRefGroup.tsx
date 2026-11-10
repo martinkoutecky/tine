@@ -21,7 +21,7 @@ import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
-import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
@@ -247,8 +247,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { geometryHost: () => HTMLEl
   const evidenceById = createMemo<Map<string, ReferenceBlockEvidence>>((previous) =>
     keepUnchanged(previous, (props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
+  // A synthetic row is judged exactly as the ordinary rows are (resolveResultRow):
+  // actionable, so the user's own typing and save, which leave results unsettled
+  // without moving the epoch, do not swap the whole group to static rows and
+  // unmount the editor they are typing in.
   const queryReady = createMemo(() => props.surface !== "query"
-    || props.blocks.every(block => block.page_property ? resultsTicketCurrent(resultTicket(block)) : !!liveNode(block.id)));
+    || props.blocks.every(block => block.page_property ? resultsTicketActionable(resultTicket(block)) : !!liveNode(block.id)));
   // OG groups a page's matches by `:block/parent` and renders ONE breadcrumb per
   // parent group (block.cljs custom-query-results: `(group-by :block/parent ..)` +
   // `breadcrumb-with-container`), with the page's own top-level blocks first.

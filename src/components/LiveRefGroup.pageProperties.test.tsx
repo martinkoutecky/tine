@@ -1,6 +1,6 @@
 import { editorIn, maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { type JSX } from "solid-js";
+import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { flushAll, isDirty, pageByName, readPageProperty, resetStore } from "../document";
@@ -12,6 +12,7 @@ import { LiveRefGroup } from "./LiveRefGroup";
 import { ensurePageLoaded, forgetPage } from "../document/workingSet";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
+import { adoptResults, advanceResultsEpoch, captureResultsTicket, installResultsPendingGate, resultsSettled } from "../queryResultsEpoch";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
 // References as its properties row. OG lists the referencing page's
@@ -196,5 +197,80 @@ describe("page properties in Linked References (GH #486)", () => {
     } finally {
       dispose();
     }
+  });
+});
+
+// Card hCP6Js: a query result group that lists a page's properties row next to an
+// ordinary block of the same page decides live vs static for the WHOLE group. The
+// user's own editing leaves results unsettled (the page-open handshake, then every
+// keystroke until the save is published) without moving the epoch, and that must
+// not swap the group's rows for static copies: it would unmount the editor they
+// are typing in (editable everywhere, PRINCIPLES 6).
+describe("page-properties row beside an ordinary row in a query group (card hCP6Js)", () => {
+  const body = (): BlockDto => ({ id: "body", raw: "Body block", collapsed: false, children: [] });
+  const liveBody = (root: HTMLElement) => root.querySelector('.ls-block:not(.ref-block)[data-block-id="body"]');
+  const openBody = async (root: HTMLElement) => {
+    await vi.waitFor(() => expect(liveBody(root)).not.toBeNull());
+    const content = root.querySelector<HTMLElement>('[data-block-id="body"] .block-content')!;
+    for (const type of ["mousedown", "mouseup", "click"]) {
+      content.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    }
+    return await vi.waitFor(() => { expect(maybeEditorIn(root)).not.toBeNull(); return editorIn(root); });
+  };
+  const stays = async (root: HTMLElement, editor: EditorDriver) => {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(editorIn(root).element).toBe(editor.element);
+    expect(editorIn(root).value()).toBe("Body block typed");
+    expect(editingId()).toBe("body");
+    expect(liveBody(root)).not.toBeNull();
+  };
+
+  it("keeps the editor mounted while the user's own typing leaves results unsettled", async () => {
+    // Only the own-work gate: the editor opens, then the save window starts.
+    const [typing, setTyping] = createSignal(false);
+    installResultsPendingGate(typing, "own-work");
+    ensurePageLoaded(sourcePage());
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      const editor = await openBody(root);
+      replaceValue(editor, "Body block typed");
+      setTyping(true);
+      expect(resultsSettled()).toBe(false);
+      await stays(root, editor);
+      setTyping(false);
+      await stays(root, editor);
+    } finally { setTyping(false); dispose(); }
+  });
+
+  it("opens an editor and keeps it through the page-open handshake and the first keystroke (wired host)", async () => {
+    const host = await bindTestHost();
+    answerOpensFromDocument(host);
+    ensurePageLoaded(sourcePage());
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      const editor = await openBody(root);
+      await vi.waitFor(() => expect(resultsSettled()).toBe(true));
+      replaceValue(editor, "Body block typed");
+      // The premise: typing alone makes the answer unsettled, without moving the epoch.
+      expect(resultsSettled()).toBe(false);
+      await stays(root, editor);
+    } finally { dispose(); }
+  });
+
+  it("still shows static rows once the answer is replaced (the epoch moved), until the rerun lands", async () => {
+    ensurePageLoaded(sourcePage());
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      await vi.waitFor(() => expect(liveBody(root)).not.toBeNull());
+      advanceResultsEpoch();
+      await vi.waitFor(() => expect(liveBody(root)).toBeNull());
+      expect(root.textContent).toContain("Body block");
+    } finally { dispose(); }
   });
 });
