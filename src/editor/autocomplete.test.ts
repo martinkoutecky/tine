@@ -621,3 +621,45 @@ describe("withRefCompletionSpace (GH #35)", () => {
     expect(r.caret).toBe(11);
   });
 });
+
+// GH #888 (D-20261109-LK): inside a complete link the page query is the whole
+// link text. A deliberate difference from Logseq, which searches `[[` to the
+// caret (components/editor.cljs:105-121 page-search, 6e7afa8eb).
+describe("detectTrigger inside a complete link (GH #888)", () => {
+  it("queries the whole link text, through the closer a pick replaces", () => {
+    const raw = "see [[Sat, 07.11.2026]] later";
+    const caret = raw.indexOf(",") + 1;
+    expect(detectTrigger(raw, caret)).toEqual({ kind: "page", query: "Sat, 07.11.2026", start: 4, end: caret });
+    // A tag's bracketed form shares the page path.
+    expect(detectTrigger("a #[[multi word]]", 11)).toMatchObject({ kind: "page", query: "multi word" });
+  });
+
+  it("leaves a link being typed as it was", () => {
+    expect(detectTrigger("[[Sat]]", 5)).toMatchObject({ kind: "page", query: "Sat" }); // ]] auto-paired after the caret
+    expect(detectTrigger("[[Sat", 5)).toMatchObject({ kind: "page", query: "Sat" }); // no ]] yet
+    expect(detectTrigger("[[Sa and [[b]]", 4)).toMatchObject({ kind: "page", query: "Sa" }); // a later link is not this one
+    expect(detectTrigger("[[Sa\nt]]", 4)).toMatchObject({ kind: "page", query: "Sa" }); // never across lines
+  });
+
+  it("keeps block references at the caret: their text is an id, not a page name", () => {
+    expect(detectTrigger("((ab cd))", 4)).toEqual({ kind: "block", query: "ab", start: 0, end: 4 });
+  });
+});
+
+// CM6-D9 (Martin 2026-11-09): no menu opens inside a fenced code block, in
+// either editor. A deliberate difference from Logseq, whose `[[` and `/`
+// handlers ignore code (handler/editor.cljs:1606 and :1894, 6e7afa8eb).
+describe("detectTrigger inside code (CM6-D9)", () => {
+  it.each([["page", "[[Top"], ["block", "((Top"], ["tag", "#Top"], ["command", "/Top"], ["advanced", "<Top"], ["property", "alpha::"]])(
+    "opens no %s menu in a fence body or on its closer line", (_kind, typed) => {
+      for (const raw of [`\`\`\`\n${typed}`, `\`\`\`js\nx = 1\n${typed}\n\`\`\``, `intro\n~~~\n${typed}\n~~~`])
+        expect(detectTrigger(raw, raw.indexOf(typed) + typed.length)).toBeNull();
+      expect(detectTrigger(`\`\`\`\nx\n\`\`\`${typed}`, 8 + typed.length)).toBeNull();
+    });
+
+  it("still opens menus outside the fence, in inline code, and the fence's language picker", () => {
+    expect(detectTrigger("```\nx\n```\n[[Top", 15)).toMatchObject({ kind: "page", query: "Top" });
+    expect(detectTrigger("`[[Top", 6)).toMatchObject({ kind: "page", query: "Top" });
+    expect(detectTrigger("```js", 5)).toEqual({ kind: "code-language", query: "js", start: 3, end: 5 });
+  });
+});

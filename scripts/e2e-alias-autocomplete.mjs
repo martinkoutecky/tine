@@ -26,6 +26,9 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH,
 for (const dir of ["data", "config", "cache", "state", "home"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{}\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Tine.md"), "alias:: TineOutline, [[Tine Outliner]], SSE\n- body\n");
+// GH #888: two pages sharing a prefix; the link being changed names the second one.
+fs.writeFileSync(path.join(GRAPH, "pages/sat-01.md"), "title:: Sat, 01.11.2026\n\n- first\n");
+fs.writeFileSync(path.join(GRAPH, "pages/sat-07.md"), "title:: Sat, 07.11.2026\n\n- second\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 if (!latency) fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- Complete a reference here\n");
@@ -80,6 +83,27 @@ try {
     }, selected);
     await browser.waitUntil(async () => (await browser.$("textarea.block-editor").getValue()).trim() === inserted, { timeout: 5000 });
     observations.push({ typed, choices: actual, inserted });
+  }
+  // GH #888 (D-20261109-LK): typing inside a complete link searches the whole
+  // link text, so the link's own page is the first choice (Logseq searches
+  // only up to the caret); picking it leaves one link.
+  if (!latency) {
+    await browser.execute(() => {
+      const editor = document.querySelector("textarea.block-editor");
+      const text = "[[Sat, 07.11.2026]]", caret = "[[Sat,".length;
+      editor.focus(); editor.value = text; editor.setSelectionRange(caret, caret);
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "," }));
+    });
+    const labels = () => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")].map((el) => el.textContent.trim()));
+    await browser.waitUntil(async () => (await labels()).includes("Sat, 07.11.2026"), { timeout: 10000 });
+    const choices = await labels();
+    assert.equal(choices[0], "Sat, 07.11.2026");
+    await browser.execute(() => {
+      const row = document.querySelector(".autocomplete .ac-label").parentElement;
+      row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+    await browser.waitUntil(async () => (await browser.$("textarea.block-editor").getValue()).trim() === "[[Sat, 07.11.2026]]", { timeout: 5000 });
+    observations.push({ typed: "[[Sat,| 07.11.2026]]", choices, inserted: "[[Sat, 07.11.2026]]" });
   }
   await browser.saveScreenshot(path.join(TMP, "completion.png"));
   fs.writeFileSync(path.join(TMP, "receipt.json"), JSON.stringify({ testedCommit, binarySha256, candidate, outcome: "pass", observations }, null, 2));

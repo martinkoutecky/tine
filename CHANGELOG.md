@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - `tine edit` saves a large page faster: it no longer parses the bytes it has just written a second time or reads their page name again, so each edit does one parse and one name read fewer (a 2 MiB page saves about 15 % faster). The written bytes, files, syncs and reply are unchanged (internal: REG-COST-BLOCK-EDIT-REPARSE; card DuDHQ).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 - `tine page rename --json` reports each page the rename moved in `report.renamed`: its old name, its new name and the file it moved from (`null` for a page with no file, such as a namespace child that exists only through links). The app's tabs, Recent and sidebar follow exactly that list ([CLI output contract](docs/contracts/cli-output.md), `page.rename`).
+- Changing the text inside an existing `[[link]]` now searches the whole link text, not only the part before the caret, so the link's own page is the first suggestion, in both editors. Typing a new link works as before. This differs from Logseq, which searches only up to the caret (GH #888).
+- No suggestion menu (page link, tag, block reference, slash command, `<` section or property) opens while you type inside a fenced code block, in either editor. The CodeMirror editor already behaved this way in a code body; the default editor now matches it, and neither opens one in a code block whose source Escape has revealed. Logseq opens these menus in code too; inline code still offers them (internal: CM6-D9, UI-CM6-D9-NO-MENU-IN-CODE).
 - A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
 - Scrolling the Journals feed loads each next set of days from a bounded slice of the day index instead of re-sorting every journal day, with the same days, referenced-only days and order (REG-JOURNAL-STEP-WINDOW).
@@ -160,6 +162,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
 - Hover a block's bullet to see when its text last changed in git. Uncommitted edits, unavailable dates and the history limit are shown explicitly, without storing timestamp properties (GH #831).
 - Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
 - Commands can have several hotkeys in Settings → Keyboard shortcuts: keep the default and add alternatives, remove individual bindings, and see conflicts. OG `config.edn` shortcut vectors use every binding (GH #878).

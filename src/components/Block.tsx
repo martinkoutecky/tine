@@ -666,8 +666,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     id: props.id, format: pageFmt,
     current: () => editorMounted && !!liveNode() && !!ref?.isConnected,
     composing: () => compositionActive,
-    // Census D9: retain the shipped textarea's code-body completion policy.
-    suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell,
+    // CM6-D9: a projected code body is code, as in CM6 (detectTrigger owns the raw-fence rule).
+    suppressTriggers: () => isCalc() || isAnnot() || !!sheetCell || codeShown() !== null,
     text: () => ref.value, caret: () => ref.selectionStart,
     selection: () => [ref.selectionStart, ref.selectionEnd],
     rawBeforeCommit: () => rawBeforeLastCommit, visible: editorValue,
