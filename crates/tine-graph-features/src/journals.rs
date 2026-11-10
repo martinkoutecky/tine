@@ -853,7 +853,14 @@ fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
 }
 
 fn migration_error(error: io::Error) -> io::Error {
-    if error.kind() == io::ErrorKind::AlreadyExists {
+    // A read-only graph (config.edn unreadable) keeps its wire family: the
+    // window words it, so a prefix here would hide it.
+    if error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<crate::ConfigUnreadable>())
+    {
+        error
+    } else if error.kind() == io::ErrorKind::AlreadyExists {
         io::Error::other("same-day .md/.org twin would be created")
     } else {
         io::Error::other(format!("move refused: {error}"))
@@ -887,6 +894,18 @@ fn planning_busy_migration_keeps_retryable_kind_and_message() {
     });
     assert_eq!(conflict.kind(), io::ErrorKind::Other);
     assert_eq!(conflict.to_string(), "move refused: concurrent graph write");
+    // Card HVgII: a graph read-only for an unreadable config.edn keeps its wire
+    // family, so the window can word the skip reason from its catalog.
+    let read_only = migration_plan_error(Why::Refused(tine_store::Refusal::ConfigUnreadable(
+        tine_store::IoError {
+            kind: io::ErrorKind::InvalidData,
+            message: "invalid utf-8 sequence of 1 bytes from index 35".into(),
+        },
+    )));
+    assert_eq!(
+        read_only.to_string(),
+        "config-unreadable: invalid utf-8 sequence of 1 bytes from index 35"
+    );
 }
 
 /// One eligible journal file's move to `to` as one host operation (DESIGN
