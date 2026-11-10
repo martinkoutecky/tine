@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { openPageByName } from "./e2e-navigation.mjs";
 import { waitForFileText } from "../e2e-file-poll.mjs";
-import { saveJourneyScreenshot } from "./e2e-comment-structure.mjs";
+import { saveJourneyScreenshot } from "./e2e-screenshot.mjs";
 
 const PAGE = "Margin Thread Order";
 const IDS = {

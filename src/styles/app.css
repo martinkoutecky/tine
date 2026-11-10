@@ -3256,12 +3256,14 @@ html[data-system-insets="native-viewport"] {
   color: var(--link-color);
 }
 
-.page-properties {
-  margin: 0 0 10px;
-  padding: 6px 0;
-  font-size: 14px;
+.page-properties, .block-properties, .peek-page-properties, .page-property-reference > .block-main > .block-content-wrapper > .block-content {
+  margin: 4px 0;
+  padding: 4px 8px;
+  background-color: var(--ls-block-properties-background-color, var(--bg-tertiary));
+  border-radius: var(--ls-border-radius-low);
   color: var(--text-secondary);
 }
+.page-properties { font-size: 14px; }
 
 /* Read-only org page: a quiet banner + a non-text cursor on every block, so it's
    clear the page is viewable but not editable here. */
@@ -4467,8 +4469,6 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
 .block-properties {
   display: block;
   font-size: 0.85em;
-  color: var(--text-muted);
-  margin-top: 2px;
 }
 
 .block-properties .prop {
@@ -6986,7 +6986,6 @@ img.emoji {
 .peek-ref-edit, .peek-ref-remove { color: var(--link-color); white-space: nowrap; }
 .peek-page-actions { flex-shrink: 0; min-width: 36px; min-height: 36px; border-radius: 4px; }
 .peek-page-actions:hover, .peek-page-actions:focus-visible { background: var(--bg-tertiary); }
-.peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
 /* GH #440: the same muted trail as Linked References (.ref-breadcrumb), starting
    at the embedded block's bullet column (18px toggle + bullet ring inset). */
 .embed-source-breadcrumb { display: none; color: var(--text-muted); font-size: 0.78em; padding-block: 4px 0; padding-inline: 22px 8px; }
