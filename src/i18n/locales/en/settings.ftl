@@ -518,3 +518,5 @@ settings-hover-preview-delay-seconds = Hover preview delay (seconds)
 settings-hover-preview-delay-hint = Seconds before a page or block reference opens its preview on mouse hover. Default 1. Use a large value, such as 100, to keep previews out of the way. Touch long-press is unchanged.
 settings-auto-embed-video-links = Auto-embed pasted video links
 settings-auto-embed-video-links-hint = Turn off to keep pasted YouTube, Vimeo, Loom and Bilibili URLs as plain links. On by default. Video titles are never fetched on paste.
+settings-show-workspaces = Show Workspaces
+settings-show-workspaces-hint = Show saved-workspace controls and commands on this device. Turning this off keeps your existing workspaces.
