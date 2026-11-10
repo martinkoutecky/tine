@@ -114,7 +114,7 @@ async function loadHarness(
     setRightSidebar: vi.fn(),
     seedFavorites: vi.fn(),
     favorites: () => [],
-    renamePageInNavigation: vi.fn(),
+    followPagesInNavigation: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
     pushToast: vi.fn(),
     refreshJournalConflicts: vi.fn(async () => {}),
@@ -163,7 +163,7 @@ async function loadHarness(
     flushSession: vi.fn(async () => {}),
   }));
   const focused = { activeId: () => "tab", routeIntentRevision: () => 0, route: () => ({ kind: "journals" }), openPage };
-  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), focusedRouter: () => focused }));
+  vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), removePageTargetAcrossPanes: vi.fn(), rewritePagesAcrossPanes: vi.fn(), focusedRouter: () => focused }));
   vi.doMock("./journal", () => ({
     journalTitle: journal?.journalTitle ?? (() => "Jul 10th, 2026"),
     appNow: () => new Date(),
@@ -754,7 +754,7 @@ describe("default journal template graph bind", () => {
   it("resets the page index after a rename, before the epoch bump", async () => {
     const { refreshAfterRename, events, resetPageIndex, resetAt } = await loadHarness(null);
 
-    refreshAfterRename("Old", "New");
+    refreshAfterRename((page) => page.name === "Old" ? { name: "New", pageKind: page.pageKind } : null);
     expect(resetPageIndex).toHaveBeenCalledTimes(1);
     expect(resetAt).toEqual([0]);
     expect(events).toEqual(["bump-epoch"]);

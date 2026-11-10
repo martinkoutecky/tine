@@ -6,6 +6,7 @@ import { initParser } from "../render/parse";
 import { blockProperty, pageByName, readPageProperty, resetStore, setPageProperty } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
+import type { RenameDone } from "../types";
 import { doc, setDoc } from "../document/model";
 import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
 import { closeShareDialog, shareTarget } from "../shareState";
@@ -650,7 +651,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       ? (outcome === "merged" ? { kind: "existing", id: "pages/Q.md", others: [] } : { kind: "absent", id: "pages/Q.md" })
       : { kind: "existing", id: "pages/P.md", others: [] });
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
-    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome, touched: [{ path: "pages/P.md", moved: true }] });
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome, touched: [{ path: "pages/P.md", moved: true }], renamed: [{ from: "P", to: "Q", path: "pages/P.md" }] });
     document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
     await Promise.resolve();
     const input = document.querySelector<HTMLInputElement>(".ctx-rename-name")!;
@@ -669,7 +670,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Q.md" });
-    let finish!: (value: { outcome: "renamed"; touched: [] }) => void;
+    let finish!: (value: RenameDone) => void;
     vi.spyOn(backend(), "renamePage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
     await Promise.resolve();
@@ -679,7 +680,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(finish).toBeDefined());
     focusedRouter().openPage("Elsewhere", "page");
-    finish({ outcome: "renamed", touched: [] });
+    finish({ outcome: "renamed", touched: [], renamed: [{ from: "P", to: "Q", path: null }] });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(focusedRouter().route()).toMatchObject({ kind: "page", name: "Elsewhere" });
     expect(toasts().map((toast) => toast.message)).not.toContain("Renamed to “Q”");

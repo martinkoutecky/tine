@@ -77,7 +77,7 @@ fn build_and_answer<T>(
             std::fs::create_dir_all(dir.join("logseq"))?;
             std::fs::write(dir.join("logseq/config.edn"), bytes)?;
         }
-        Err(StoreError::NotFound) => {}
+        Err(StoreError::NotFound(_)) => {}
         Err(error) => return Err(io::Error::other(format!("{error:?}"))),
     }
     for page in pages {

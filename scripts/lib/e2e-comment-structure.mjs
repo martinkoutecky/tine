@@ -1,7 +1,7 @@
 // GH #891 / #110, DESIGN §1. A routed synthetic page, literal native keys and
 // pointer gestures, and saved outline semantics. No application test hooks.
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { saveJourneyScreenshot } from "./e2e-screenshot.mjs";
 import { openPageByName } from "./e2e-navigation.mjs";
 import { waitForFileText } from "../e2e-file-poll.mjs";
 
@@ -20,13 +20,6 @@ export const STRUCTURE_INITIAL = `- Merge parent
   - Target remark
     tine.quote:: Drag target
 `;
-
-// WebKitWebDriver can stall on a second screenshot after a resize. As in the
-// existing native editor journeys, capture Xvfb directly; images are artifacts.
-export async function saveJourneyScreenshot(browser, file) {
-  if (process.platform === "linux") execFileSync("import", ["-window", "root", file], { timeout: 10_000 });
-  else await browser.saveScreenshot(file);
-}
 
 export async function checkCommentStructure(browser, pageFile, artifacts) {
   await browser.setWindowSize(1600, 1000); // visible margin cards expose thread drag/drop guards

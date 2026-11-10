@@ -56,7 +56,7 @@ fn g7_production_process_crashes_preserve_relaunch_survivors() {
     ] {
         let scratch = tempfile::tempdir().unwrap();
         let output = scratch.path().join("worker.log");
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut child = Command::new(crate::test_binary::own_test_binary())
             .args(["--exact", WORKER, "--nocapture"])
             .env("TINE_G7_SCRATCH", scratch.path())
             .env("TINE_G7_CUT", cut)

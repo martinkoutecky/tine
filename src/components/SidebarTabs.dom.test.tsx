@@ -258,26 +258,65 @@ describe("SidebarTabs tree (GH #704 v2)", () => {
     } finally { dispose(); vi.useRealTimers(); }
   });
 
-  it("touch: the hold's context menu opens neither the platform's nor the row's menu; a mouse right-click still does", async () => {
+  // GH #921: the still hold opens the row's own menu (here a nested row's
+  // Move out of group), never the platform's; moving the held finger drags.
+  it("touch: a still hold opens the row's menu, not the platform's; moving on closes it and drags", async () => {
     const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
     try {
       await drag(host, "Beta", 20, ROW_H + ROW_H / 2 + 2); // nest Beta: its row has the custom menu
       expect(depths(host)).toEqual([0, 1, 0]);
       vi.useFakeTimers();
       layOut(host);
-      const beta = rows(host)[1]!.querySelector(".nav-tab-main")!;
-      beta.dispatchEvent(pointer("pointerdown", 50, 45, "touch"));
+      const main = (i: number) => rows(host)[i]!.querySelector(".nav-tab-main")!;
+      main(1).dispatchEvent(pointer("pointerdown", 50, 45, "touch"));
       vi.advanceTimersByTime(600);
-      const hold = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 45 });
-      beta.dispatchEvent(hold);
-      expect(hold.defaultPrevented).toBe(true);
-      expect(contextMenu()).toBeFalsy();
+      expect(contextMenu()?.kind).toBe("action-menu");
+      const opened = contextMenu();
+      const platform = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 45 });
+      main(1).dispatchEvent(platform);
+      expect(platform.defaultPrevented).toBe(true);
+      expect(contextMenu()).toBe(opened);
       document.dispatchEvent(pointer("pointerup", 50, 45, "touch"));
       vi.advanceTimersByTime(10);
-      vi.useRealTimers();
+      expect(contextMenu()).toBe(opened);
       expect(depths(host)).toEqual([0, 1, 0]);
-      beta.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 45 }));
+      setContextMenu(null);
+      // A root row has no menu: its hold only picks it up, as before.
+      main(2).dispatchEvent(pointer("pointerdown", 50, 75, "touch"));
+      vi.advanceTimersByTime(600);
+      expect(contextMenu()).toBeFalsy();
+      document.dispatchEvent(pointer("pointerup", 50, 75, "touch"));
+      vi.advanceTimersByTime(10);
+      // Hold the nested row, then drag it to the top: the menu closes and the drag lands.
+      main(1).dispatchEvent(pointer("pointerdown", 50, 45, "touch"));
+      vi.advanceTimersByTime(600);
       expect(contextMenu()?.kind).toBe("action-menu");
+      document.dispatchEvent(pointer("pointermove", 50, 20, "touch"));
+      expect(contextMenu()).toBeFalsy();
+      document.dispatchEvent(pointer("pointermove", 50, 2, "touch"));
+      document.dispatchEvent(pointer("pointerup", 50, 2, "touch"));
+      vi.advanceTimersByTime(10);
+      expect(contextMenu()).toBeFalsy();
+      expect(titles(host)).toEqual(["Beta", "Alpha", "Gamma"]);
+      vi.useRealTimers();
+      main(2).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 75 }));
+      expect(contextMenu()).toBeFalsy(); // Gamma is a root: no menu, mouse or touch
+    } finally { dispose(); vi.useRealTimers(); }
+  });
+
+  it("touch: a finger that moves before the hold opens no menu", async () => {
+    const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
+    try {
+      await drag(host, "Beta", 20, ROW_H + ROW_H / 2 + 2);
+      vi.useFakeTimers();
+      layOut(host);
+      rows(host)[1]!.querySelector(".nav-tab-main")!.dispatchEvent(pointer("pointerdown", 50, 45, "touch"));
+      document.dispatchEvent(pointer("pointermove", 50, 70, "touch"));
+      vi.advanceTimersByTime(1000);
+      document.dispatchEvent(pointer("pointerup", 50, 70, "touch"));
+      vi.advanceTimersByTime(10);
+      expect(contextMenu()).toBeFalsy();
+      expect(depths(host)).toEqual([0, 1, 0]);
     } finally { dispose(); vi.useRealTimers(); }
   });
 

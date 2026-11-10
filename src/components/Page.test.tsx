@@ -1407,7 +1407,7 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     let finish!: () => void;
-    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ outcome: "renamed", touched: [] }); }));
+    const rename = vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve({ outcome: "renamed", renamed: [{ from: "Rename away", to: "Renamed away", path: "pages/Rename away.md" }], touched: [] }); }));
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
@@ -1441,7 +1441,7 @@ describe("page actions entry point", () => {
     const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([]));
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
-    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", renamed: [{ from: "Reached rename", to: "Reached renamed", path: "pages/Reached rename.md" }], touched: [] });
     if (previous === "journals") resetTabsToJournals();
     else mainPaneRouter.openPage(previous, "page", { inPlace: true });
     mainPaneRouter.openFile(dto.id, dto.name, "page");
@@ -1472,7 +1472,7 @@ describe("page actions entry point", () => {
     };
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
     const resolve = vi.spyOn(backend(), "resolvePage");
-    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", touched: [] });
+    const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", renamed: [], touched: [] });
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
     setToasts([]);
     const { root, dispose } = mount(() => <PageView />);
@@ -1540,8 +1540,8 @@ describe("page actions entry point", () => {
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     let finishFirstRename!: () => void;
     const rename = vi.spyOn(backend(), "renamePage")
-      .mockImplementationOnce(() => new Promise((resolve) => { finishFirstRename = () => resolve({ outcome: "renamed", touched: [] }); }))
-      .mockResolvedValue({ outcome: "renamed", touched: [] });
+      .mockImplementationOnce((from, to) => new Promise((resolve) => { finishFirstRename = () => resolve({ outcome: "renamed", touched: [], renamed: [{ from, to, path: dto.id }] }); }))
+      .mockImplementation(async (from, to) => ({ outcome: "renamed", touched: [], renamed: [{ from, to, path: dto.id }] }));
     mainPaneRouter.openFile(dto.id, dto.name, "page", { inPlace: true });
 
     const { root, dispose } = mount(() => <PageView />);
@@ -1849,7 +1849,7 @@ describe("page route loading", () => {
     const { root, dispose } = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "contents", path: "pages/contents.md" }));
-      expect(read).toHaveBeenCalledWith("pages/Contents.md");
+      expect(read).toHaveBeenCalledWith("pages/Contents.md", expect.any(Function));
       expect(root.textContent).toContain("Table of contents");
       expect(recentPages().filter((r) => r.path === "pages/Contents.md")).toEqual([]);
     } finally {

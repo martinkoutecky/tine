@@ -107,7 +107,7 @@ export { isCommentId, threadRootOf } from "./commentThreads";
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undoTopTag, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
-export { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, exitMultilineBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertSiblingAfterSubtree, insertOutlineChildren, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, rawToWrite, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
+export { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, canIndentBlock, deleteBlock, ensureEmptyBlock, exitMultilineBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertSiblingAfterSubtree, insertOutlineChildren, insertEditorOutline, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, rawToWrite, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
 export type { PendingEdit } from "./edits/blocks";
 export { reportQueryFoldOption, storedFold } from "./edits/queryFoldOption";
 export { seenPageSnapshot } from "./seenSnapshot";

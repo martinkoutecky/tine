@@ -38,7 +38,7 @@
 //! (`PropertyValueCode`); O(page bytes). Pure.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use crate::config::FileNameFormat;
@@ -62,6 +62,7 @@ pub(crate) struct Renames<'a> {
     queries: Option<&'a HashMap<String, String>>,
     keys: HashMap<String, &'a str>,
     file_name_format: FileNameFormat,
+    record: bool,
 }
 
 impl<'a> Renames<'a> {
@@ -71,6 +72,7 @@ impl<'a> Renames<'a> {
         pages: &'a HashMap<String, String>,
         queries: Option<&'a HashMap<String, String>>,
         file_name_format: FileNameFormat,
+        record: bool,
     ) -> Self {
         let keys = pages
             .iter()
@@ -81,6 +83,7 @@ impl<'a> Renames<'a> {
             queries: queries.filter(|queries| !queries.is_empty()),
             keys,
             file_name_format,
+            record,
         }
     }
 
@@ -95,13 +98,27 @@ impl<'a> Renames<'a> {
             .map(|to| Cow::Borrowed(to.as_str()))
             .or_else(|| self.page(name))
     }
+
+    fn edit(&self, range: Range<usize>, name: &str, to: &str, spelling: String) -> Edit {
+        (
+            range,
+            spelling,
+            self.record
+                .then(|| Box::new((name.to_owned(), to.to_owned()))),
+        )
+    }
 }
 
-type Edit = (Range<usize>, String);
+type Edit = (Range<usize>, String, Option<Box<(String, String)>>);
 
 /// Rewrite a whole page `text` (`.md` or `.org`). Returns `text` unchanged when
 /// nothing names a renamed page.
-pub(crate) fn rewrite_page(text: &str, is_org: bool, renames: &Renames<'_>) -> String {
+pub(crate) fn rewrite_page(
+    text: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    rewritten: Option<&mut HashSet<(String, String)>>,
+) -> String {
     if renames.pages.is_empty() {
         return text.to_owned();
     }
@@ -120,22 +137,41 @@ pub(crate) fn rewrite_page(text: &str, is_org: bool, renames: &Renames<'_>) -> S
         text,
         edits
             .into_iter()
-            .map(|(range, to)| (original(range.start)..original(range.end), to)),
+            .map(|(range, to, name)| (original(range.start)..original(range.end), to, name)),
+        rewritten,
     )
 }
 
 /// Rewrite one block's raw text (a page DTO's block body, as the merge
 /// rewrites it).
-pub(crate) fn rewrite_block(raw: &str, is_org: bool, renames: &Renames<'_>) -> String {
+pub(crate) fn rewrite_block(
+    raw: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    rewritten: Option<&mut HashSet<(String, String)>>,
+) -> String {
     let mut block = DocBlock::new(raw);
     block.set_org(is_org);
-    splice(raw, settle(block_edits(raw, is_org, &block, renames)))
+    splice(
+        raw,
+        settle(block_edits(raw, is_org, &block, renames)),
+        rewritten,
+    )
 }
 
 /// Rewrite a page's pre-block text (its page properties; a page DTO's
 /// `pre_block`, as the merge rewrites it).
-pub(crate) fn rewrite_pre_block(pre: &str, is_org: bool, renames: &Renames<'_>) -> String {
-    splice(pre, settle(pre_block_edits(pre, is_org, renames)))
+pub(crate) fn rewrite_pre_block(
+    pre: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    rewritten: Option<&mut HashSet<(String, String)>>,
+) -> String {
+    splice(
+        pre,
+        settle(pre_block_edits(pre, is_org, renames)),
+        rewritten,
+    )
 }
 
 /// The LF-text offset of the `\n` of every CRLF in `text`.
@@ -148,9 +184,18 @@ fn lf_offsets_of_crlf(text: &str) -> Vec<usize> {
 }
 
 /// Apply source-ordered, non-overlapping edits.
-fn splice(text: &str, edits: impl DoubleEndedIterator<Item = Edit>) -> String {
+fn splice(
+    text: &str,
+    edits: impl DoubleEndedIterator<Item = Edit>,
+    mut rewritten: Option<&mut HashSet<(String, String)>>,
+) -> String {
     let mut out = text.to_owned();
-    for (range, to) in edits.rev() {
+    for (range, to, name) in edits.rev() {
+        if let (Some(names), Some(name)) = (&mut rewritten, name) {
+            if text[range.clone()] != to {
+                names.insert(*name);
+            }
+        }
         out.replace_range(range, &to);
     }
     out
@@ -213,13 +258,13 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
         }
         let mut block = DocBlock::new(raw.as_str());
         block.set_org(is_org);
-        for (range, to) in block_edits(&raw, is_org, &block, renames) {
+        for (range, to, name) in block_edits(&raw, is_org, &block, renames) {
             let at = pieces.partition_point(|(start, _)| *start <= range.start) - 1;
             let (piece_start, page_start) = pieces[at];
             let piece_end = pieces.get(at + 1).map_or(raw.len(), |(start, _)| start - 1);
             if range.end <= piece_end {
                 let shift = page_start - piece_start;
-                edits.push((range.start + shift..range.end + shift, to));
+                edits.push((range.start + shift..range.end + shift, to, name));
             }
         }
     }
@@ -237,7 +282,7 @@ fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> 
         edits.extend(
             block_edits(raw, is_org, &block, renames)
                 .into_iter()
-                .map(|(r, to)| (r.start + range.start..r.end + range.start, to)),
+                .map(|(r, to, name)| (r.start + range.start..r.end + range.start, to, name)),
         );
     }
     edits
@@ -289,17 +334,19 @@ fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
     let block = crate::page_properties::property_projection(&raw, is_org);
     block_edits(&raw, is_org, &block, renames)
         .into_iter()
-        .filter_map(|(range, to)| {
+        .filter_map(|(range, to, name)| {
             let (start, _, at) = pieces
                 .iter()
                 .find(|(start, end, _)| *start <= range.start && range.end <= *end)?;
-            Some((range.start - start + at..range.end - start + at, to))
+            Some((range.start - start + at..range.end - start + at, to, name))
         })
         .collect()
 }
 
 /// The edits of one block, in its raw offsets (unsettled).
 fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>) -> Vec<Edit> {
+    #[cfg(test)]
+    BLOCK_WALKS.with(|walks| walks.set(walks.get() + 1));
     let projection = block.projection();
     let source = projection.reference_source();
     let mut edits = Vec::new();
@@ -321,13 +368,13 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     .get(&property_key_norm(&page_key(&reference.name)))
                 {
                     if let Some(key) = property_key_spelling(to) {
-                        edits.push((range, key));
+                        edits.push(renames.edit(range, &reference.name, to, key));
                     }
                 }
             }
             "implicit_linkable_property" => {
                 if let Some(to) = renames.page(&reference.name) {
-                    edits.push((range, member_spelling(&to)));
+                    edits.push(renames.edit(range, &reference.name, &to, member_spelling(&to)));
                 }
             }
             "explicit_tag" => {
@@ -335,10 +382,10 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     continue;
                 };
                 if node.starts_with('#') {
-                    edits.push((range, tag_for(&to)));
+                    edits.push(renames.edit(range, &reference.name, &to, tag_for(&to)));
                 } else if headline_tag_ok(&to) {
                     // An Org headline tag `:name:`: the range is the name.
-                    edits.push((range, to.into_owned()));
+                    edits.push(renames.edit(range, &reference.name, &to, to.to_string()));
                 }
             }
             "explicit_link" => link_edits(raw, range, &reference.name, renames, &mut edits),
@@ -347,7 +394,12 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                 if let (Some(open), Some(close)) = (node.find("[["), node.rfind("]]")) {
                     if open + 2 <= close {
                         if let Some(to) = renames.page(&node[open + 2..close]) {
-                            edits.push((range.start + open + 2..range.start + close, to.into()));
+                            edits.push(renames.edit(
+                                range.start + open + 2..range.start + close,
+                                &node[open + 2..close],
+                                &to,
+                                to.to_string(),
+                            ));
                         }
                     }
                 }
@@ -363,11 +415,11 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
             match target {
                 RewriteTarget::FileLink(range) => {
                     let inner = range.start + 2..range.end.saturating_sub(2);
-                    if let Some((stem, to)) = raw
+                    if let Some((stem, to, name)) = raw
                         .get(inner.clone())
                         .and_then(|inner| file_link_stem_edit(inner, renames))
                     {
-                        edits.push((inner.start + stem.start..inner.start + stem.end, to));
+                        edits.push((inner.start + stem.start..inner.start + stem.end, to, name));
                     }
                 }
                 // A new name with `}` would end the macro early: the macro keeps
@@ -380,7 +432,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     } else {
                         link_edits(raw, reference.range, &reference.name, renames, &mut local);
                     }
-                    edits.extend(local.into_iter().filter(|(_, to)| !to.contains('}')));
+                    edits.extend(local.into_iter().filter(|(_, to, _)| !to.contains('}')));
                 }
             }
         }
@@ -392,7 +444,12 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
 fn nested_edits(node: &str, at: usize, renames: &Renames<'_>, edits: &mut Vec<Edit>) {
     for inner in crate::block_regions::nested_reference_ranges(node) {
         if let Some(to) = renames.page(&node[inner.clone()]) {
-            edits.push((at + inner.start..at + inner.end, to.into_owned()));
+            edits.push(renames.edit(
+                at + inner.start..at + inner.end,
+                &node[inner],
+                &to,
+                to.to_string(),
+            ));
         }
     }
 }
@@ -412,8 +469,10 @@ fn link_edits(
     let node = &raw[range.clone()];
     let mut push = |inner: Range<usize>| {
         if renames.page(&node[inner.clone()]).as_deref() == Some(to.as_ref()) {
-            edits.push((
+            edits.push(renames.edit(
                 range.start + inner.start..range.start + inner.end,
+                name,
+                &to,
                 to.to_string(),
             ));
         }
@@ -495,6 +554,7 @@ impl<'a> PropertyValueCode<'a> {
 thread_local! {
     /// Property values read for code on this thread (tests reset it first).
     static VALUE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BLOCK_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The page-name arguments of each query macro in `raw` (D-20261031-CMQ):
@@ -545,13 +605,18 @@ fn query_edits(
                 FormFamily::Tql => crate::query::print::sql_string(&to),
                 FormFamily::Edn => og_token_spelling(token, &to),
             };
-            local.push((form_start + range.start..form_start + range.end, spelled));
+            local.push(renames.edit(
+                form_start + range.start..form_start + range.end,
+                &name,
+                &to,
+                spelled,
+            ));
         }
         if local.is_empty() {
             continue;
         }
         let mut argument = extent.argument.clone();
-        for (range, to) in local.iter().rev() {
+        for (range, to, _) in local.iter().rev() {
             argument.replace_range(range.start - argument_start..range.end - argument_start, to);
         }
         if macro_safe(&argument, family).is_ok()
@@ -634,8 +699,10 @@ fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
     let decoded = crate::model::decode_page_name(stem, renames.file_name_format);
     let to = renames.page(&decoded)?;
     let start = "file:".len() + slash;
-    Some((
+    Some(renames.edit(
         start..start + stem_len,
+        &decoded,
+        &to,
         crate::model::encode_page_name(&to, renames.file_name_format),
     ))
 }
@@ -644,9 +711,68 @@ fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
 mod tests {
     //! Rename reads a property value for code once, however many query macros
     //! it holds (qs-leftovers-1109 round 2; PC-1, PC-3, PC-5).
-    use super::VALUE_PARSES;
+    use super::{HashSet, VALUE_PARSES};
     use crate::config::FileNameFormat;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn recording_applied_names_reuses_the_rewrite_walk_within_the_budget() {
+        let map = vec![("Old".into(), "New".into())];
+        for n in [1, 64, 512] {
+            let text = "- [[Old/link]] #Old/tag {{renderer [[Old/macro]]}} {{query (page [[Old/query]])}}\n".repeat(n);
+            super::BLOCK_WALKS.with(|walks| walks.set(0));
+            let plain = crate::refs::rename_rewrite_with_queries(
+                &text,
+                false,
+                &map,
+                &[],
+                FileNameFormat::TripleLowbar,
+                None,
+            );
+            let walks = super::BLOCK_WALKS.with(|walks| walks.replace(0));
+            let mut names = HashSet::new();
+            let start = Instant::now();
+            let recorded = crate::refs::rename_rewrite_with_queries(
+                &text,
+                false,
+                &map,
+                &[],
+                FileNameFormat::TripleLowbar,
+                Some(&mut names),
+            );
+            assert!(
+                start.elapsed() < Duration::from_secs(1),
+                "PC-3: recording 512 blocks must keep the existing one-second rewrite budget"
+            );
+            assert_eq!(recorded, plain);
+            assert_eq!(walks, n);
+            assert_eq!(super::BLOCK_WALKS.with(|walks| walks.replace(0)), n);
+            assert_eq!(
+                names.len(),
+                4,
+                "repeated edits retain one pair per distinct rewrite"
+            );
+            for (from, to) in names {
+                assert_eq!(to, from.replacen("Old/", "New/", 1));
+            }
+        }
+        // Macro safety rejects these proposed edits; collecting at lookup
+        // time would incorrectly report both names as moved.
+        let mut names = HashSet::new();
+        let text = "- {{renderer [[Old/macro]]}} {{query (page [[Old/query]])}}\n";
+        assert_eq!(
+            crate::refs::rename_rewrite_with_queries(
+                text,
+                false,
+                &[("Old".into(), "Bad}name".into())],
+                &[],
+                FileNameFormat::TripleLowbar,
+                Some(&mut names)
+            ),
+            text
+        );
+        assert!(names.is_empty());
+    }
 
     const OLD: &str = "{{tine-query @page and name = 'Old'}}";
     const NEW: &str = "{{tine-query @page and name = 'New'}}";

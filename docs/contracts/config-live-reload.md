@@ -116,7 +116,9 @@ Session state remains outside the graph, with no additional persisted fields.
 | A settings write finds a config whose first form is not a balanced map (truncated, half-saved, not a map) | `InvalidData`; the bytes are left exactly as they are | Sync delivery / external-editor race |
 | An edit would produce a config without a balanced root map | `InvalidData`; nothing is written | Same: never make a malformed file out of a good one |
 | A key's value has a shape Tine does not edit (`(…)`, reader tags, a collection where a scalar belongs) | `InvalidData`; nothing is written | Hand-edited or newer-Logseq config |
-| A rename finds config.edn unreadable or malformed | The rename proceeds; home and favorites are not updated; a value the step cannot edit, or a file it cannot read, is reported as `config_skipped` and the window toasts it | Sync delivery / external-editor race; a bad config must not block page work |
+| A rename finds config.edn malformed, or it becomes unreadable after the graph last loaded it | The rename proceeds; home and favorites are not updated; a value the step cannot edit, or a file it cannot read, is reported as `config_skipped` and the window toasts it | Sync delivery / external-editor race; a bad config must not block page work |
+| config.edn could not be read when the graph last loaded it (not valid UTF-8, or too large to parse) | The graph runs on the default settings and is read-only: a rename, like every page write, is refused with the read error before anything changes, because the graph's `:file/name-format` is unknown and a page file would be written under another name. Fixing or replacing config.edn lifts it | Sync delivery; an undownloaded or corrupted config |
+| A rename's config.edn write fails after its page files were published (disk full, permission, a lost race) | The pages stay renamed and nothing is rolled back; config.edn keeps its old bytes. The app's rename returns the rename as done with the cause in `config_skipped`, so the window refreshes and toasts that the page was renamed but home and favorites may still name the old page; the CLI keeps the error and reports the rename as uncertain (`IncompleteRename`) | Disk error between the last page step and the config step |
 
 A malformed config never blocks opening the graph: the reader is lenient and
 pages open as usual.
@@ -159,6 +161,9 @@ lists the favorite under its old name, as OG never follows title:: edits.
 - crates/tine-graph-features/tests/home_rename.rs::renaming_the_home_page_moves_default_home_with_it
 - crates/tine-graph-features/tests/home_rename.rs::merging_the_home_page_into_another_keeps_default_home
 - crates/tine-graph-features/tests/home_rename.rs::a_malformed_config_neither_blocks_the_rename_nor_is_rewritten
+- crates/tine-graph-features/tests/home_rename.rs::a_non_utf8_config_refuses_the_rename_before_anything_changes
+- crates/tine-graph-features/tests/home_rename.rs::a_failed_config_write_after_the_page_files_moved_reports_the_rename
+- src/document/graphRewrite.test.ts
 - crates/tine-graph-features/tests/home_rename.rs::a_home_rename_killed_at_each_step_reopens_whole
 - crates/tine-graph-features/tests/home_rename.rs::home_and_favorites_move_together_in_the_config_step
 - crates/tine-graph-features/tests/home_rename.rs::a_favorite_renamed_onto_another_favorite_is_deduplicated

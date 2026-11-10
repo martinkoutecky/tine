@@ -14,7 +14,8 @@ import { fileURLToPath } from "node:url";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { seedMarginThreads, checkMarginThreads } from "./lib/margin-thread-journey.mjs";
-import { checkCommentStructure, saveJourneyScreenshot, STRUCTURE_INITIAL, STRUCTURE_PAGE } from "./lib/e2e-comment-structure.mjs";
+import { checkCommentStructure, STRUCTURE_INITIAL, STRUCTURE_PAGE } from "./lib/e2e-comment-structure.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

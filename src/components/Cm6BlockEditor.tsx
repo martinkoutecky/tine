@@ -4,7 +4,7 @@ import { Annotation, Compartment, EditorSelection, EditorState, StateEffect, Sta
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
 import { blockWritable, depthOf, finishPageHeaderEdit, isBlockMoving, node, pageByName, rawToWrite, setRaw, type OutlineScope, type PendingEdit } from "../document";
-import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor } from "../editorController";
+import { captureEditIntent, editingId, editingOwner, endEdit, noteSurfaceFocused, registerHistoryEditorTarget, takeCaretFor, takeHistoryEditorSelectionFor, type CaretPos } from "../editorController";
 import { focusMountedEditor } from "../editor/surfaceFocus";
 import { cm6CaretReveal } from "../editor/cm6CaretReveal";
 import { cm6EmptyCaret } from "../editor/cm6EmptyCaret";
@@ -190,8 +190,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.focus();
     },
   });
-  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, literal, assets, cell, sheet: !!cell && !gridNestedBlock(props.id, cell), hiddenProperties });
+  const clipboard = cm6Clipboard({ id: props.id, format, current, commit, stage, literal, assets, cell, sheet: !!cell && !gridNestedBlock(props.id, cell), hiddenProperties });
   const completion = cm6Completions({ ...props, format, current, literal, sheet: !!cell, view: () => view, visible, rawBeforeCommit: () => rawBeforeCommit,
+    stageDelete: (from, to) => deleteSelection(view!, from, to),
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     assets,
     languagePicker: setPickingLanguage,
@@ -451,12 +452,16 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       host.ownerDocument.defaultView!.removeEventListener("keydown", compositionKeys, true);
       host.removeEventListener("keydown", structuralKeys, true);
     };
-    const focusNow = () => {
+    /** `again`: a later request to this mounted view (see focusMountedEditor), applied, not taken. */
+    const focusNow = (again?: { offset: CaretPos }) => {
       if (!view) return;
       // Mirrored occurrences share this request. Only the view taking focus
       // may consume it, including when a stale surface stamp needs a fallback.
-      const want = takeCaretFor(props.id);
-      const historySelection = takeHistoryEditorSelectionFor(props.id, props.surface);
+      // After its block took a calculator's text (a template in the empty block) the view enters calc
+      // mode, as a fresh mount would.
+      if (!isCalc() && calcSource(visible()) !== null) setCalc(true);
+      const want = again ? again.offset : takeCaretFor(props.id);
+      const historySelection = again ? null : takeHistoryEditorSelectionFor(props.id, props.surface);
       // Numeric targets use visible-source coordinates. History uses body
       // coordinates for whole code and source coordinates for mixed occurrences.
       if (!code() && !isCalc()) {
@@ -484,8 +489,8 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
       view.focus();
     };
-    focusMountedEditor(props.id, props.surface, () => view!.contentDOM, () => {
-      if (current()) focusNow();
+    focusMountedEditor(props.id, props.surface, () => view!.contentDOM, again => {
+      if (current()) focusNow(again);
     });
     const caretReveal = cm6CaretReveal(view);
     view.dispatch({ effects: StateEffect.appendConfig.of(caretReveal.extension) });

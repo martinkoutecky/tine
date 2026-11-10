@@ -183,7 +183,7 @@ mod tests {
                 "tine-crate-diag-test-{}-{enabled}.log",
                 std::process::id()
             ));
-            let mut child = Command::new(std::env::current_exe().unwrap());
+            let mut child = Command::new(tine_store::test_binary::own_test_binary());
             child
                 .args([
                     "--exact",
@@ -219,7 +219,7 @@ mod tests {
                 "tine-panic-hook-test-{}-{enabled}.log",
                 std::process::id()
             ));
-            let mut child = Command::new(std::env::current_exe().unwrap());
+            let mut child = Command::new(tine_store::test_binary::own_test_binary());
             child
                 .args(["--exact", "debug::tests::panic_hook_child", "--nocapture"])
                 .env("TINE_PANIC_HOOK_CHILD", "1")

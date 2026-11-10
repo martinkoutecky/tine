@@ -26,8 +26,7 @@ mod unix {
             return;
         }
 
-        let current_exe = std::env::current_exe().expect("locate integration-test binary");
-        let mut command = Command::new(current_exe);
+        let mut command = Command::new(crate::test_binary::own_test_binary());
         command
             .arg("--exact")
             .arg("logseq_pdf_edn::unix::current_logseq_sidecar_parses_with_bounded_memory")

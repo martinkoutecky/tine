@@ -155,7 +155,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 17)
+## Reads (ceiling: 19)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
@@ -166,6 +166,12 @@ field store::PageRead.doc
 field store::PageRead.id
 field store::PageRead.read_only
 field store::PageRead.rev
+# GH #863: a read's answer names the seam arm that produced it, also for an
+# absence (StoreError::NotFound carries it). No Reads item can say which arm
+# answered a past read, and a parameter cannot return it; asking held state
+# again would describe a newer answer at extra cost.
+enum store::PageReadSource
+field store::PageRead.source
 fn store::Store::may_carry_vcs_markers
 fn store::Store::open_read
 fn store::Store::page
@@ -469,7 +475,16 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 57)
+## Page host (ceiling: 62)
+# Card DuDHQ (57 -> 62): `HostOp.saved`, with `Saved` and its three fields, is
+# what `PagePlan::plan` knew of each page it serialized: the Document its new
+# bytes parse to (the serializer's round-trip parse) and the name and kind they
+# give. The owner's `block.edit` re-parsed, re-named and re-projected bytes it
+# had just planned (`Store::page_of`: a name read, a parse and a DTO, 650 ms of
+# a 3.8 s debug 2 MiB edit) to check them and to answer. No existing item can
+# answer it: `page_of` is the cost removed, `PageRead` carries a projected DTO
+# (the costliest part), and the plan's own return is the `HostOp` the caller
+# hands to `apply`, so the carry is a field of it. The host never reads it.
 # audit-storage-1109 R1 (56 -> 57): `ended`, whether a host's driver ended (a
 # host bug). src-tauri's retirement must not adopt such a host on reopen
 # (host_retirement.rs adopt, state.rs PageHostSlot::ended). No existing item
@@ -549,6 +564,11 @@ field page_host::HostOp.moves
 field page_host::HostOp.publications
 field page_host::HostOp.policy
 field page_host::HostOp.kinds
+field page_host::HostOp.saved
+struct page_host::Saved
+field page_host::Saved.name
+field page_host::Saved.kind
+field page_host::Saved.document
 fn page_host::PageHost::apply
 enum page_host::Expected
 enum page_host::Effect
@@ -569,22 +589,25 @@ field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
 # SB1-ACCEPT2 merge with SB2-DIAG: both branches added one re-export (13 -> 14).
-## Re-exports (ceiling: 14)
+## Re-exports (ceiling: 15)
 # SB1's existing app-facing directory identity/containment witness, above.
 use crate::root_binding::BoundDirectory
 use crate::storage_diag::DraftAdoptionReason
 # GX4 S4: typed parameters/results for the existing reader registration door.
 use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.
 use store::inventory::{Inventory,InventoryEntry,InventoryScope,LinkTarget}
+# GH #863: PageRead moved beside its producer in store/page_read.rs with its
+# source enum (size ratchet seam, as hB9Zjw); the same items, re-exported by store.
+use store::page_read::{PageRead,PageReadSource}

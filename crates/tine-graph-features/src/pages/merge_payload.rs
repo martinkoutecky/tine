@@ -6,7 +6,46 @@ use std::collections::HashSet;
 use tine_core::model::{Format, PageDto};
 use tine_core::refs;
 
-use super::rename_doc;
+use super::MergeNames;
+
+/// Rewrite the merge payload while carrying the logical names of applied
+/// edits. Both the survivor and source use this same block/pre-block writer.
+pub(super) fn rename_doc(
+    doc: &mut PageDto,
+    names: MergeNames<'_>,
+    org: bool,
+    format: tine_core::config::FileNameFormat,
+) {
+    fn walk(
+        blocks: &mut [tine_core::model::BlockDto],
+        names: MergeNames<'_>,
+        org: bool,
+        format: tine_core::config::FileNameFormat,
+    ) {
+        for block in blocks {
+            block.raw = refs::rename_block_raw(
+                &block.raw,
+                org,
+                names.links,
+                Some(names.queries),
+                format,
+                Some(&mut names.rewritten.borrow_mut()),
+            );
+            walk(&mut block.children, names, org, format);
+        }
+    }
+    if let Some(pre) = doc.pre_block.as_mut() {
+        *pre = refs::rename_pre_block(
+            pre,
+            org,
+            names.links,
+            Some(names.queries),
+            format,
+            Some(&mut names.rewritten.borrow_mut()),
+        );
+    }
+    walk(&mut doc.blocks, names, org, format);
+}
 
 fn lines<'a>(mut parts: impl Iterator<Item = &'a str>) -> String {
     let first = parts.next().unwrap_or_default().to_owned();

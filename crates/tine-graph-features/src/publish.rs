@@ -1,42 +1,10 @@
-//! Static site client. The renderer emits bytes through Store's publish protocol.
+//! The sheet blocks a static export or print hands the app to compute.
+//! The export itself is `publish_query` (live app, static site, query export).
 
 use std::io;
-use tine_store::{IoError, Store};
+use tine_store::Store;
 
 use crate::render::{self, RenderGraph, SheetInput};
-
-/// Export public pages and return the published folder and page count.
-pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
-    // An export must see every byte on disk, including a file a sync client
-    // or restore tool rewrote with its stamp put back.
-    store
-        .refresh(tine_store::Depth::Bytes)
-        .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
-    let whole = store
-        .whole_graph()
-        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let corpus = whole.corpus(None, true);
-    let config = store.config();
-    let graph = RenderGraph::new(&corpus, &whole, store, None);
-    let mut count = 0;
-    let receipt = store
-        .publish(tine_store::PublishDest::GraphSite, &mut |writer| {
-            count = render::publish_graph(
-                &graph,
-                render::PageSelection::every_page(config.all_pages_public),
-                &config.favorites,
-                &mut |name, bytes| {
-                    writer
-                        .write(name, bytes)
-                        .map_err(|error| io::Error::new(error.kind, error.message))
-                },
-            )
-            .map_err(IoError::from)?;
-            Ok(())
-        })
-        .map_err(|failed| io::Error::new(failed.cause.kind, failed.cause.message))?;
-    Ok((receipt.site.display().to_string(), count))
-}
 
 /// Which pages the export that will consume these inputs publishes. A query
 /// sheet's rows on any other page are never handed to the app, so no cell, count

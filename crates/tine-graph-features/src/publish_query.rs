@@ -946,7 +946,7 @@ fn publication_assets(
             Err(tine_store::StoreError::InvalidTarget(_)) => {
                 warnings.push(format!("Asset {name} was omitted: not a regular file."));
             }
-            Err(tine_store::StoreError::NotFound) => {
+            Err(tine_store::StoreError::NotFound(_)) => {
                 warnings.push(format!("Asset {name} was omitted: file not found."));
             }
             Err(tine_store::StoreError::Io(error))
@@ -1214,6 +1214,21 @@ pub fn publish_live_with_sheets_in(
     )
 }
 
+/// The view a whole-graph export (`live`, `publish_static`) publishes from. An
+/// export must see every byte on disk, including a file a sync client or a
+/// restore tool rewrote with its size and stamp put back, which a stamp diff
+/// (`Depth::Stamps`, the poller) misses: hash every graph-text file once
+/// (O(graph bytes), like the export itself), then take the view. The removed
+/// `publish_html` did this; the live exports did not (HF9pAI).
+fn export_view(store: &Store) -> io::Result<WholeGraph> {
+    store
+        .refresh(tine_store::Depth::Bytes)
+        .map_err(|e| io::Error::other(format!("graph refresh failed: {e:?}")))?;
+    store
+        .whole_graph()
+        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))
+}
+
 /// Refusal when an exported page set does not read back as itself in its
 /// build graph (threat: malformed input or a parser round-trip defect;
 /// `build_graph::with_build_graph`).
@@ -1234,9 +1249,7 @@ fn live(
     if name.trim().is_empty() || name.len() > 256 {
         return Err(refusal("live export name is invalid"));
     }
-    let graph = store
-        .whole_graph()
-        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
+    let graph = export_view(store)?;
     let mut corpus = graph.corpus(None, true);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
@@ -1303,9 +1316,7 @@ pub fn publish_static(
     if name.trim().is_empty() || name.len() > 256 {
         return Err(refusal("static export name is invalid"));
     }
-    let graph = store
-        .whole_graph()
-        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
+    let graph = export_view(store)?;
     let mut corpus = graph.corpus(None, true);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
