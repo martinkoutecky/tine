@@ -59,9 +59,10 @@ try {
   await browser.keys(["Control", "Home"]); await browser.keys(["Control"]);
   await browser.keys(["End"]); await browser.keys([..." work"]);
   const edited = await browser.$("textarea.block-editor").getValue();
-  if (!edited.startsWith("DOING work\n") || edited.split("CLOCK:").length !== 2) throw new Error(`wrong task buffer: ${edited}`);
+  if (edited !== "DOING work") throw new Error(`wrong task buffer: ${edited}`);
   await browser.keys(["Escape"]);
   await waitForFileText(running, text => text.includes("DOING work"));
+  if (fs.readFileSync(running, "utf8").split("CLOCK:").length !== 2) throw new Error("editing the task did not retain exactly one hidden clock");
   proof.steps.push(stage);
   stage = "checkbox completes the task and closes the same clock";
   await browser.$(".main-content .block-task-checkbox").click();
