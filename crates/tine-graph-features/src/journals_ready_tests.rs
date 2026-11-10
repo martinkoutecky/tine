@@ -208,10 +208,10 @@ fn gf4_ready_feed_matches_legacy_days_bodies_and_cursors() {
             |id| {
                 Ok(match store.page(id) {
                     Ok(read) => Loaded::Page(feed_read(read)),
-                    Err(StoreError::NotFound) if referenced.contains(&by_id[id]) => {
+                    Err(StoreError::NotFound(_)) if referenced.contains(&by_id[id]) => {
                         Loaded::Page(virtual_day(&store, by_id[id]))
                     }
-                    Err(StoreError::NotFound) => Loaded::Gone,
+                    Err(StoreError::NotFound(_)) => Loaded::Gone,
                     Err(error) => Loaded::Unreadable(store_error(error).to_string()),
                 })
             },
@@ -326,7 +326,7 @@ fn scroll_steps_page_from_the_day_index_and_match_the_listing() {
                 |id| {
                     Ok(match store.page(id) {
                         Ok(read) => Loaded::Page(feed_read(read)),
-                        Err(StoreError::NotFound) => Loaded::Gone,
+                        Err(StoreError::NotFound(_)) => Loaded::Gone,
                         Err(error) => Loaded::Unreadable(store_error(error).to_string()),
                     })
                 },
@@ -420,7 +420,7 @@ fn realistic_graph_scroll_steps() {
             |id| {
                 Ok(match store.page(id) {
                     Ok(read) => Loaded::Page(feed_read(read)),
-                    Err(StoreError::NotFound) => Loaded::Gone,
+                    Err(StoreError::NotFound(_)) => Loaded::Gone,
                     Err(error) => Loaded::Unreadable(store_error(error).to_string()),
                 })
             },

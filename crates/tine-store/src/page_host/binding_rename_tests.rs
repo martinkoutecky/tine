@@ -36,7 +36,7 @@ impl PageHost {
         refs.remove(target);
         let read = |id: &PageId| match self.store.read(&id.file(), None) {
             Ok((bytes, rev)) => Ok(Some((bytes, rev))),
-            Err(crate::StoreError::NotFound) => Ok(None),
+            Err(crate::StoreError::NotFound(_)) => Ok(None),
             Err(_) => Err(RenameRefusal::Refused),
         };
         let mut tx = self.store.page_plan(Some(EditKind::RenamePage));

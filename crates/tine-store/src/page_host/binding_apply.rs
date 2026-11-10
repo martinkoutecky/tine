@@ -89,6 +89,25 @@ pub struct HostOp {
     /// feature replans (in-scope scenario: a sync service or an external
     /// editor changed a page or `config.edn` since the plan). In memory only.
     pub(crate) view: Option<(crate::GraphRev, Arc<tine_core::config::Config>)>,
+    /// What the planner knows of each page it serialized (`PagePlan::plan`
+    /// of a `save_page` step), in `pages` order. The host never reads it:
+    /// a writer that checks what its bytes mean takes it before `apply`
+    /// instead of parsing them again (PRINCIPLES 3). Hand-built operations
+    /// leave it empty. Memory only.
+    pub saved: Vec<(PageId, Saved)>,
+}
+
+/// One page a plan serialized: the name and kind its new bytes give it, and
+/// the Document those bytes parse to (the serializer's own round-trip parse,
+/// `Graph::prepare_page_content`), with the runtime ids of the plan's blocks.
+#[derive(Clone, Debug)]
+pub struct Saved {
+    /// The page's name from its new bytes (`title::`, else its file name).
+    pub name: String,
+    /// Page or journal.
+    pub kind: tine_core::model::PageKind,
+    /// The new bytes' parse.
+    pub document: tine_core::doc::Document,
 }
 
 /// Why a host operation did not apply, or did not finish.
@@ -173,7 +192,10 @@ impl PageHost {
     /// the operation's expected content refuses (`Changed`). Then waits
     /// for the operation's answer and every page's publication, as
     /// `rename` does.
-    pub fn apply(&self, op: HostOp) -> Result<(), ApplyRefusal> {
+    pub fn apply(&self, mut op: HostOp) -> Result<(), ApplyRefusal> {
+        // The plan's knowledge of its pages is its caller's: not held through
+        // the operation (a page's Document is as large as the page).
+        drop(std::mem::take(&mut op.saved));
         // Validate kinds at their admission owner, including before a
         // folded wrapper can move an entry. The wrapper forwards them intact.
         if op.kinds.is_empty() {

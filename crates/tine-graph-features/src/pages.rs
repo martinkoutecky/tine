@@ -382,7 +382,7 @@ pub fn delete_page_expected(
         if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
             let file = text_file(store, path)?;
             match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-                Err(StoreError::NotFound) => {}
+                Err(StoreError::NotFound(_)) => {}
                 Err(error) => return Err(store_error(error)),
                 Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
             }
