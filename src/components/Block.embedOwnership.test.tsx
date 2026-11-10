@@ -181,4 +181,29 @@ describe("Shift+click from an editor inside an embed (GH #924 review)", () => {
       expect(selectedIds()).toEqual(["child"]);
     } finally { dispose(); }
   });
+
+  it("never extends from a row outside the embed into it: the source parent stays out", async () => {
+    const child = leaf("child", "Source child");
+    const source: PageDto = { name: "Source", title: "Source", kind: "page", pre_block: null, blocks: [leaf("source", "Source root", [child])] };
+    loadFeed([
+      { name: "Host", title: "Host", kind: "page", pre_block: null, blocks: [leaf("outside", "Outside row"), leaf("host", "{{embed [[Source]]}}")] },
+      source,
+    ]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source as never);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <For each={pageByName("Host")?.roots}>{id => <Block id={id} />}</For>, root);
+    const press = (id: string, shiftKey = false) => {
+      const target = root.querySelector(`[data-block-id="${id}"] > .block-main .block-content`)!;
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, shiftKey, clientX: 30 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    };
+    try {
+      await vi.waitFor(() => expect(root.querySelector('[data-block-id="child"] > .block-main .block-content')).not.toBeNull());
+      press("outside");
+      press("child", true);
+      expect(selectedIds()).not.toContain("source");
+      expect(selectedIds()).toEqual(["outside"]);
+    } finally { dispose(); }
+  });
 });
