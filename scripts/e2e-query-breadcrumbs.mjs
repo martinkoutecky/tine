@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { installAccountHome } from "./lib/e2e-account-home.mjs";
-import { saveJourneyScreenshot } from "./lib/e2e-comment-structure.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();

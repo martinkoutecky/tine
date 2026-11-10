@@ -49,6 +49,8 @@ const card = () => browser.execute(() => {
 const editing = () => browser.execute(() => !!document.querySelector(".main-content textarea.block-editor"));
 const reset = async () => {
   await browser.keys(["Escape"]);
+  // Code-body Escape reveals the source (GH #865); the next Escape exits it.
+  if (await editing()) await browser.keys(["Escape"]);
   await browser.waitUntil(async () => !(await editing()), { timeout: 5000 });
   await browser.execute(() => { document.querySelector("pre.code-block").scrollLeft = 0; });
 };
