@@ -15,7 +15,9 @@ tine-core = { path = "../tine-core" }
 tine-guide = { path = "../tine-guide" }
 tine-store = { path = "../tine-store" }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `unbounded_depth`: quick share's `validate_document` reads a document nested
+# deeper than serde's default 128 containers, after bounding it itself.
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 sha2 = "0.10"
 tempfile = "3"
 # Quick share (docs/contracts/quick-share.md): HKDF + AES-256-GCM, gzip,
@@ -34,12 +36,8 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 tempfile = "3"
 
-# Keep general integration cases in one linked executable. Allocation accounting
-# has its own target so its allocator cannot affect unrelated timing guards.
+# One linked executable for every integration case (scripts/test-rust-integration-layout.mjs).
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
 
-[[test]]
-name = "journal-step-cost"
-path = "tests/journal_step_cost.rs"

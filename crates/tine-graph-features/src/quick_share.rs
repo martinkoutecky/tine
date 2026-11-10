@@ -249,8 +249,20 @@ pub fn validate_document(document: &[u8]) -> io::Result<()> {
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(refusal("the shared pages exceed the 32 MiB share limit"));
     }
-    let value: serde_json::Value = serde_json::from_slice(document)
-        .map_err(|_| refusal("the shared pages nest too deeply to share"))?;
+    if !json_nesting_within(document, VIEWER_MAX_DEPTH) {
+        return Err(refusal("the shared pages nest too deeply to share"));
+    }
+    // serde's default ceiling is 128 containers, and a block costs two (its
+    // object and its `children` array), so the default would refuse pages the
+    // viewer admits (a page 62 blocks deep). The scan above bounds the
+    // recursion at the viewer's own depth instead.
+    let value = {
+        let mut reader = serde_json::Deserializer::from_slice(document);
+        reader.disable_recursion_limit();
+        serde::Deserialize::deserialize(&mut reader)
+            .and_then(|value: serde_json::Value| reader.end().map(|()| value))
+            .map_err(|_| refusal("the share document is not valid JSON"))?
+    };
     let snapshot = &value["snapshot"];
     let count = |key: &str| snapshot[key].as_array().map_or(0, Vec::len);
     if count("pages") > VIEWER_MAX_PAGES {
@@ -288,20 +300,18 @@ pub fn validate_document(document: &[u8]) -> io::Result<()> {
             )));
         }
     }
-    fn walk(v: &serde_json::Value, depth: usize) -> Result<(), &'static str> {
-        if depth > VIEWER_MAX_DEPTH {
-            return Err("the shared pages nest too deeply to share");
-        }
+    // Bounded by `json_nesting_within` above.
+    fn walk(v: &serde_json::Value) -> Result<(), &'static str> {
         match v {
             serde_json::Value::String(s) if s.len() > VIEWER_MAX_STRING_BYTES => {
                 Err("a shared block is larger than 1 MiB")
             }
-            serde_json::Value::Array(items) => items.iter().try_for_each(|c| walk(c, depth + 1)),
-            serde_json::Value::Object(map) => map.values().try_for_each(|c| walk(c, depth + 1)),
+            serde_json::Value::Array(items) => items.iter().try_for_each(walk),
+            serde_json::Value::Object(map) => map.values().try_for_each(walk),
             _ => Ok(()),
         }
     }
-    walk(&value, 0).map_err(refusal)?;
+    walk(&value).map_err(refusal)?;
     fn count_blocks(v: &serde_json::Value) -> usize {
         v.as_array().map_or(0, |items| {
             items.iter().map(|b| 1 + count_blocks(&b["children"])).sum()
@@ -314,6 +324,36 @@ pub fn validate_document(document: &[u8]) -> io::Result<()> {
         return Err(refusal("the shared pages hold too many blocks"));
     }
     Ok(())
+}
+
+/// Whether `json` holds at most `max` containers inside one another, counted
+/// without recursion (the viewer's "JSON depth"). Strings are skipped, so a
+/// bracket in text does not count.
+fn json_nesting_within(json: &[u8], max: usize) -> bool {
+    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
+    for &byte in json {
+        if quoted {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => quoted = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > max {
+                    return false;
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    true
 }
 
 const VIEWER_MAX_PAGES: usize = 201;
@@ -450,6 +490,35 @@ pub fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A page's blocks cost two containers a level (the block and its
+    /// `children`), so the viewer's 512 admits a page 253 blocks deep. Parsed
+    /// on the default test stack in a debug build, the worst case for the
+    /// recursion the depth scan bounds.
+    #[test]
+    fn a_document_nests_as_deep_as_the_viewer_admits() {
+        let document = |levels: usize| {
+            let mut blocks = String::from("[]");
+            for _ in 0..levels {
+                blocks = format!("[{{\"children\":{blocks}}}]");
+            }
+            format!("{{\"snapshot\":{{\"pages\":[{{\"path\":\"p\",\"blocks\":{blocks}}}]}}}}")
+        };
+        for levels in [1, 62, 63, 100, 253] {
+            validate_document(document(levels).as_bytes())
+                .unwrap_or_else(|e| panic!("{levels} levels: {e}"));
+        }
+        let refused = validate_document(document(254).as_bytes()).unwrap_err();
+        assert!(refused.to_string().contains("nest too deeply"), "{refused}");
+        let arrays = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+        validate_document(arrays(VIEWER_MAX_DEPTH).as_bytes()).unwrap();
+        let refused = validate_document(arrays(VIEWER_MAX_DEPTH + 1).as_bytes()).unwrap_err();
+        assert!(refused.to_string().contains("nest too deeply"), "{refused}");
+        // The scan counts containers, not brackets inside text.
+        assert!(json_nesting_within(br#"{"a":"[[[[\"[[["}"#, 1));
+        assert!(!json_nesting_within(br#"{"a":[{"b":1}]}"#, 2));
+        assert!(json_nesting_within(br#"{"a":[{"b":1}]}"#, 3));
+    }
 
     #[test]
     fn limits_match_the_contract_file() {

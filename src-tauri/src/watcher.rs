@@ -308,6 +308,14 @@ fn emit_rescan_complete(app: &tauri::AppHandle, label: &str, sequence: u64) {
 }
 
 impl RescanCursor {
+    /// The last publication whose events this binding's dispatch thread has
+    /// emitted (from the subscription's start on). Every later publication's
+    /// events follow it, so the window takes this as its change-summary
+    /// baseline at graph open. O(1): one uncontended lock.
+    pub(crate) fn emitted(&self) -> Option<GraphRev> {
+        self.state.lock().unwrap().0
+    }
+
     /// The dispatch thread emitted every event up to publication `rev`;
     /// returns the rescans that are now complete.
     fn dispatched(&self, rev: GraphRev) -> Vec<u64> {
@@ -631,6 +639,43 @@ mod tests {
 
     fn rev(value: u64) -> GraphRev {
         GraphRev::try_from(value.to_string()).unwrap()
+    }
+
+    /// UI-FEED-FIRST-CHANGE-RESTART: the open answer's `published_rev` is the
+    /// dispatch cursor, seeded with the subscription's start. The first
+    /// publication the window then receives is the next revision, so the
+    /// window reads its summary as a delta; a publication made before the
+    /// subscription is inside the baseline, never a gap.
+    #[test]
+    fn open_baseline_is_the_revision_before_the_first_delivered_summary() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let slot = GraphSlot::new(store, root.path().to_path_buf());
+        // Published before the window subscribes: covered by the baseline.
+        tine_graph_features::config::set_preferred_workflow(&slot.store, "now").unwrap();
+        assert_eq!(slot.rescan.emitted(), None);
+        let subscription = slot.store.subscribe();
+        slot.rescan.dispatched(subscription.start_rev());
+        let baseline = slot.rescan.emitted().expect("a bound slot has a baseline");
+        assert_eq!(baseline, subscription.start_rev());
+        assert!(
+            baseline > rev(0),
+            "the earlier publication is inside the baseline"
+        );
+        tine_graph_features::config::set_preferred_workflow(&slot.store, "todo").unwrap();
+        let change = subscription.try_recv().unwrap().expect("first publication");
+        let answers = serde_json::to_value(&change).unwrap();
+        let next = (String::from(baseline).parse::<u64>().unwrap() + 1).to_string();
+        assert_eq!(answers["rev"], next.as_str());
+        assert_eq!(answers["summary"]["rev"], next.as_str());
+        // The cursor never moves backwards on a late or repeated dispatch.
+        slot.rescan.dispatched(change.graph_rev);
+        slot.rescan.dispatched(baseline);
+        assert_eq!(slot.rescan.emitted(), Some(change.graph_rev));
     }
 
     #[test]
