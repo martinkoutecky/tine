@@ -55,7 +55,7 @@ try {
   assert.equal((await current(3)).reason, "no-owner-endpoint");
   assert(!fs.existsSync(path.join(graph, "logseq/tine-graph-id")));
   const log = fs.openSync(path.join(run, "driver.log"), "w");
-  driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, native), { env, detached: true, stdio: ["ignore", log, log] });
+  driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, native, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, detached: true, stdio: ["ignore", log, log] });
   fs.closeSync(log);
   // HTTP readiness, bounded to this driver's endpoint; no host process polling.
   for (let attempts = 0; ; attempts++) {
@@ -71,7 +71,8 @@ try {
   await browser.$(".page-title").click();
   assert.deepEqual(await current(), { schema: "tine.cli/1", kind: "current-page", name: "Current", url: "tine://page/Current", block_url: null });
   assert.equal(await current(0, false), "Current\ntine://page/Current\n");
-  await browser.$(`[data-block-id="${uuid}"] .block-content-wrapper`).click();
+  // data-block-id is the session id, not the `id::` uuid; the page has exactly one block.
+  await browser.$(".ls-block .block-content-wrapper").click();
   await browser.waitUntil(() => browser.execute(() => !!document.activeElement?.closest("[data-block-id]")), { timeout: 10_000 });
   assert.equal((await current()).block_url, `tine://block/${uuid}`);
   await browser.$("button=All pages").click();
