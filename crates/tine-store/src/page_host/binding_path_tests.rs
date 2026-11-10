@@ -2,6 +2,59 @@
 use super::*;
 
 #[test]
+fn a_fileless_held_journal_reads_a_late_sync_delivery_without_a_watcher_event() {
+    let live = Live::build(&[], false, crate::WatchMode::Notify);
+    let core = live.store.watch.core_for_load();
+    core.deaf.store(true, std::sync::atomic::Ordering::Release);
+    let (key, _) = live.open("journals/2026_11_10.md");
+    assert!(matches!(
+        live.store.graph.source(&live.root.join(&key)),
+        crate::model::Source::HeldAbsent
+    ));
+    let temp = live.root.join("journals/.syncthing.2026_11_10.md.tmp");
+    let bytes = b"- Journal delivered by sync\n";
+    fs::write(&temp, bytes).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(&temp).unwrap();
+    file.set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .unwrap();
+    drop(file);
+    fs::rename(&temp, live.root.join(&key)).unwrap();
+    assert_eq!(
+        live.store
+            .read(&crate::FileId::from(key.clone()), None)
+            .unwrap()
+            .0,
+        bytes
+    );
+    let read = live
+        .store
+        .page(&PageId::from(key))
+        .expect("the delivered file must open without a touch or watcher publication");
+    assert_eq!(read.doc.blocks[0].raw, "Journal delivered by sync");
+}
+
+#[test]
+fn a_fileless_held_journal_reads_a_backdated_sync_delivery_with_a_watcher_event() {
+    for watch in [crate::WatchMode::Notify, crate::WatchMode::Poll] {
+        let live = Live::build(&[], false, watch);
+        let (key, _) = live.open("journals/2026_11_10.md");
+        let temp = live.root.join("journals/.syncthing.2026_11_10.md.tmp");
+        fs::write(&temp, "- Journal delivered by sync\n").unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&temp).unwrap();
+        file.set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+            .unwrap();
+        drop(file);
+        fs::rename(&temp, live.root.join(&key)).unwrap();
+        live.wait(&key, "the host observes the delivered journal", |mail| {
+            matches!(mail.page.as_ref().map(|page| &page.text),
+                Some(MailText::Page { dto }) if dto.blocks[0].raw == "Journal delivered by sync")
+        });
+        let read = live.store.page(&PageId::from(key)).unwrap();
+        assert_eq!(read.doc.blocks[0].raw, "Journal delivered by sync");
+    }
+}
+
+#[test]
 fn a_live_subfolder_move_of_a_clean_held_page_retires_its_old_claimant() {
     for watch in [crate::WatchMode::Notify, crate::WatchMode::Poll] {
         let live = Live::build(
