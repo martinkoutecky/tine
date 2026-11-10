@@ -2618,6 +2618,43 @@ fn a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable() {
     assert!(closed.is_ok(), "the Store closes after a host bug");
 }
 
+/// R1 (the s3b O6 neighbour): every stop of a host whose driver ended says
+/// so instead of panicking (`orphan_stop`, `stop_state`), a restore's stop
+/// never closes over it, and `stop_finish` ends it for good without
+/// rethrowing the driver's panic. The page it held goes back to the
+/// watcher, which indexes an external edit from disk, and the Store closes.
+#[test]
+fn an_ended_host_retires_for_good_and_hands_its_pages_back() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let _ = live.open("pages/a.md");
+    let Live {
+        root, store, host, ..
+    } = live;
+    assert!(!host.ended());
+    host.crash_driver_for_tests();
+    assert!(host.ended());
+    assert_eq!(host.orphan_stop(), StopState::Ended);
+    assert_eq!(host.stop_state(), StopState::Ended);
+    let Err((host, pages)) = host.stop_saved(0, StopMode::Restore) else {
+        panic!("a restore closed over a dead host");
+    };
+    assert!(pages.is_empty());
+    let Ok(_stopped) = host.stop_finish() else {
+        panic!("a dead host's stop never ends");
+    };
+    fs::write(root.join("pages/a.md"), "- three\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while store.graph.cached_rev(&root.join("pages/a.md")) != Some(content_rev("- three\n")) {
+        assert!(
+            Instant::now() < deadline,
+            "the dead host's page never indexed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let closed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.close()));
+    assert!(closed.is_ok(), "the Store closes after the host bug");
+}
+
 /// CLI PROTOCOL §5: the host read returns a held page's buffer, unsaved
 /// input included, while its file still has the old bytes; a page the host
 /// does not hold reads from its file with no revision; no file reads absent.

@@ -165,6 +165,11 @@ pub enum StopState {
     /// cannot be listed). The caller aborts (`stop_abort`), unfreezes and
     /// shows them; nothing closes over missing custody.
     Aborted(BTreeSet<PageKey>),
+    /// The driver ended (a host bug panicked it): nothing is left that can
+    /// save or draft. Every draft it wrote stays on disk for the next host's
+    /// recovery. A retirement ends the host with `stop_finish`; a restore
+    /// does not close over it.
+    Ended,
 }
 
 /// The disk state a window was shown, named by revision: a Keep-mine
