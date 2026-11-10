@@ -140,7 +140,7 @@ impl Store {
             .map_err(|e| format!("{e:?}"))?;
         match self.read(&file, Some(128)) {
             Ok((bytes, _)) => return decode(&bytes),
-            Err(StoreError::NotFound) => {}
+            Err(StoreError::NotFound(_)) => {}
             Err(e) => return Err(format!("{e:?}")),
         }
         let id = uuid::Uuid::new_v4().to_string();

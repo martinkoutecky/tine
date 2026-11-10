@@ -15,6 +15,7 @@ fn create_nested(live: &Live) -> Result<(), ApplyRefusal> {
         publications: None,
         creation_checks: vec![],
         view: None,
+        saved: Vec::new(),
     })
 }
 

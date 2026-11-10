@@ -62,7 +62,7 @@ impl PageHost {
                 let cap = Some(crate::PARSE_INPUT_MAX_BYTES);
                 let bytes = match store.read(&spelling.file(), cap) {
                     Ok((bytes, _)) => Some(Arc::from(bytes)),
-                    Err(StoreError::NotFound) => None,
+                    Err(StoreError::NotFound(_)) => None,
                     Err(error) => return Err(HostReadError::Store(error)),
                 };
                 Ok(HostRead {
