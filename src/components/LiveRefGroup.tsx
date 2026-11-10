@@ -22,7 +22,7 @@ import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
-import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket } from "../queryResultsEpoch";
 import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
@@ -359,8 +359,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     // ticket. Its stale DTO must not hide the editor whose exact live source
     // this group still owns. Other rows still resolve through liveNode.
     || (!!promotedPreambleId() && props.blocks.some(block => block.page_preamble))
+    // A synthetic row is judged exactly as the ordinary rows are (resolveResultRow):
+    // actionable, so the user's own typing and save, which leave results unsettled
+    // without moving the epoch, do not swap the whole group to static rows and
+    // unmount the editor they are typing in.
     || props.blocks.every(block => block.page_property || block.page_preamble
-      ? (block.page_preamble && !!promotedPreambleId()) || resultsTicketCurrent(resultTicket(block))
+      ? (block.page_preamble && !!promotedPreambleId()) || resultsTicketActionable(resultTicket(block))
       : !!liveNode(block.id)));
   // OG groups a page's matches by `:block/parent` and renders ONE breadcrumb per
   // parent group (block.cljs custom-query-results: `(group-by :block/parent ..)` +
