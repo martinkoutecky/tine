@@ -13,6 +13,11 @@ describe("late conflict lists (I-20)", () => {
       { file: "Jun 20th, 2026.md", reason: "target 2026_06_20.md already exists" },
     ] })).toContain("2 journal files skipped during migration: Jun 18th, 2026.org (same-day .md/.org twin would be created); Jun 20th, 2026.md (target 2026_06_20.md already exists)");
   });
+  it("explains a migration refused because config.edn is unreadable in the catalog's words (card HVgII)", () => {
+    expect(journalMigrationSkipMessage({ migrated: 0, skipped: [
+      { file: "Jun 20th, 2026.md", reason: "config-unreadable: invalid utf-8 sequence of 1 bytes from index 35" },
+    ] })).toBe("1 journal file skipped during migration: Jun 20th, 2026.md (Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.)");
+  });
   it("discards a duplicate-journal list and notification from the old graph", async () => {
     setJournalConflicts([]);
     setToasts([]);

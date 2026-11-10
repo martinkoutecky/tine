@@ -164,7 +164,7 @@
    TEXT — the one thing the user must read to decide — because the per-row
    segments carry side labels and don't shrink. Stack the cells full-width and
    turn the segments into one compact equal-width strip: dot + short word. */
-@container conflict (max-width: 560px) {
+@container conflict (max-width: 35rem) {
   .conflict-wide {
     display: none;
   }

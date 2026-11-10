@@ -1,0 +1,128 @@
+/* Settings row primitives (.settings-row, .settings-field, .settings-field-row,
+   the OG divergence note), split out of app.css along the Settings seam (GH #926).
+   main.tsx imports this sheet right after app.css, so it keeps its original
+   cascade position relative to every app.css rule that could match the same
+   elements (the later ones are more specific or set other properties). */
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 14px;
+}
+/* Both setting row primitives (.settings-row, .settings-field-row): a control
+   that does not fit beside its label moves to its own line, and one longer than
+   the pane (a path, a list) wraps inside it. A non-wrapping row with a
+   non-shrinking control overflowed the pane, which then scrolled sideways and
+   moved every label left (GH #926). The label keeps 8rem before the control
+   drops below it; basis 0 so the phone column overrides keep their height. */
+:is(.settings-row, .settings-field-row) > .settings-label {
+  flex: 1 1 0;
+  min-width: min(8rem, 100%);
+}
+.settings-row > :not(.settings-label),
+.settings-field-control {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+:is(.settings-row, .settings-field-control) :is(input, select, textarea) {
+  max-width: 100%;
+}
+/* WebKit lets an appearance:none select's option text overflow its box into the
+   pane's scroll range; clip it like the native widget does. */
+:is(.settings-row, .settings-field-control) select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.settings-value {
+  color: var(--text-primary);
+}
+.settings-value.mono {
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
+  font-size: 12px;
+}
+.settings-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+/* A setting laid out vertically: label + control on the top line, the
+   explanatory hint on its own full-width line below (so long hints wrap
+   cleanly instead of being crammed into the right column). Matches the
+   .settings-row border/padding so the two can be mixed within a tab. */
+.settings-field {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+/* Option where Tine's behavior can diverge from Logseq. A left accent bar + the
+   note line make it scannable; the accent turns amber while it actually differs. */
+.og-field {
+  border-inline-start: 3px solid var(--border-color);
+  padding-inline-start: 10px;
+  margin-inline-start: -13px;
+}
+.og-field.og-diverges {
+  border-inline-start-color: #d9930a;
+}
+.og-badge {
+  /* A pill that moves to the next line whole; it wraps inside only when wider
+     than the label itself (a phone at high interface zoom, GH #926). */
+  display: inline-block;
+  max-width: 100%;
+  margin-inline-start: 8px;
+  padding: 0 7px;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  color: #8a5a00;
+  background: rgba(217, 147, 10, 0.16);
+  vertical-align: middle;
+}
+.og-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.og-revert {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.og-revert:hover {
+  background: var(--bg-tertiary);
+}
+.settings-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+}
+.settings-field-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+.settings-field-hint {
+  margin-top: 5px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
