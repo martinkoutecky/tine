@@ -663,6 +663,8 @@ impl Core {
     fn observe_assets(&self, exact: &HashSet<PathBuf>, full: bool) {
         let waiting = Instant::now();
         let _writer = self.writer.lock().unwrap();
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::rename_reads::event("lock.observe_assets.writer");
         let (writer_wait, held) = (waiting.elapsed(), Instant::now());
         if self.closed.load(Ordering::Acquire) {
             return;

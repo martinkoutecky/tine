@@ -32,6 +32,8 @@ impl RenamePlan {
     /// markers) is not written, so its unsaved input blocks nothing. The
     /// reads are kept for the commit, which decides on the same bytes.
     pub(super) fn pages(&mut self, store: &Store) -> io::Result<Vec<PageId>> {
+        #[cfg(feature = "test-faults")]
+        let _rr = tine_store::cost_counters::rename_reads::span("pages_read_and_rewrite");
         let format = self.config.file_name_format;
         let mut pages = Vec::new();
         for id in &self.candidates {
@@ -114,6 +116,8 @@ pub(super) fn plan_rename(
     merge_into: Option<&str>,
     #[cfg(test)] after_inventory: &dyn Fn(),
 ) -> io::Result<RenamePlan> {
+    #[cfg(feature = "test-faults")]
+    let _rr = tine_store::cost_counters::rename_reads::span("planner");
     let graph = refreshed_view(store)?;
     // The planning context: every format decision below uses this config,
     // and commit checks it is still the view's (B2).

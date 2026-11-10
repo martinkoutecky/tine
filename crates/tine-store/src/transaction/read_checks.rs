@@ -3,6 +3,8 @@ use super::*;
 impl PagePlan<'_> {
     // Initial parsing can need the writer; wait before commit acquires it.
     pub(super) fn await_reference_publication(&self) {
+        #[cfg(feature = "test-faults")]
+        let _rr = crate::cost_counters::rename_reads::span("await_reference_publication");
         if self.steps.iter().any(|step| {
             matches!(
                 step,

@@ -113,6 +113,8 @@ impl PageHost {
     /// for the operation's answer and every page's publication, as
     /// `rename` does.
     pub fn apply(&self, op: HostOp) -> Result<(), ApplyRefusal> {
+        #[cfg(feature = "test-faults")]
+        let _rr = crate::cost_counters::rename_reads::span("host_apply");
         // Validate kinds at their admission owner, including before a
         // folded wrapper can move an entry. The wrapper forwards them intact.
         if op.kinds.is_empty() {
@@ -388,6 +390,8 @@ impl PageHost {
     /// `apply`'s to flush. `Unsaved` names a page whose save cannot
     /// complete (a conflict or a persistent save error).
     pub fn flush_input(&self, pages: &[PageId]) -> Result<(), ApplyRefusal> {
+        #[cfg(feature = "test-faults")]
+        let _rr = crate::cost_counters::rename_reads::span("flush_input");
         // `apply`'s invalid-target refusal, as `open`'s.
         if pages.iter().any(|page| self.store.page_spot(page).is_err()) {
             return Err(ApplyRefusal::Refused);

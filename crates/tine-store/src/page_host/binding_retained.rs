@@ -214,6 +214,8 @@ impl PageHost {
         view: &crate::WholeGraph,
         prepared: Arc<PreparedRewrite>,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
+        #[cfg(feature = "test-faults")]
+        let _rr = crate::cost_counters::rename_reads::span("host_special_rename");
         crate::bench_events::mark("rename_enter", referrers.len() as u64);
         // A host that ended renames nothing.
         let ended = || RenameRefusal::Refused;

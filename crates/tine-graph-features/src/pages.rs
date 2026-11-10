@@ -549,7 +549,11 @@ fn multi_rename(
         refused,
         || {
             built.replace(None);
-            let mut plan = plan()?;
+            let mut plan = {
+                #[cfg(feature = "test-faults")]
+                let _rr = tine_store::cost_counters::rename_reads::span("replan");
+                plan()?
+            };
             let single = plan.single(store)?.is_some();
             // The isolated D4 cost probe compares this writer with the
             // special writer before any production routing changes.
@@ -641,6 +645,8 @@ fn rename_transaction<'s>(
     plan: RenamePlan,
     unsaved_paths: &[String],
 ) -> io::Result<RenameTransaction<'s>> {
+    #[cfg(feature = "test-faults")]
+    let _rr = tine_store::cost_counters::rename_reads::span("rename_transaction");
     let RenamePlan {
         graph,
         config,
@@ -975,6 +981,8 @@ fn commit_home_after(
     lookup: &HashMap<String, String>,
     merged_old: Option<&String>,
 ) -> io::Result<Option<String>> {
+    #[cfg(feature = "test-faults")]
+    let _rr = tine_store::cost_counters::rename_reads::span("home_post_step");
     commit_home(store, lookup, merged_old).map_err(|source| {
         io::Error::new(
             source.kind(),

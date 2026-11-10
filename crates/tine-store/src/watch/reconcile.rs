@@ -22,6 +22,8 @@ impl Core {
             return self.reconcile_full(include_config, scan_semantics, None, trigger);
         }
         let _writer = self.writer.lock().unwrap();
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::rename_reads::event("lock.reconcile.writer");
         self.reconcile_locked(paths, include_config, scan_semantics, trigger)
     }
 
@@ -41,6 +43,8 @@ impl Core {
             return self.reconcile_full(include_config, false, Some(batch), trigger);
         }
         let _writer = self.writer.lock().unwrap();
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::rename_reads::event("lock.reconcile_batch.writer");
         self.reconcile_inner(paths, include_config, false, Some(batch), trigger)
     }
 
@@ -58,6 +62,8 @@ impl Core {
     ) -> Result<(), LoadError> {
         if include_config {
             let _writer = self.writer.lock().unwrap();
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::rename_reads::event("lock.reconcile_config.writer");
             // An actual config change retains its existing full reparse protocol.
             // Otherwise this bounded check visits no page paths.
             self.reconcile_inner(Some(&HashSet::new()), true, scan_semantics, batch, trigger)?;
@@ -80,6 +86,8 @@ impl Core {
                 times,
             };
             let _writer = self.writer.lock().unwrap();
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::rename_reads::event("lock.reconcile_full.writer");
             if generation != self.graph.cache_generation() || revision != self.changes.rev() {
                 continue;
             }

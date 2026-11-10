@@ -46,6 +46,8 @@ impl Sink for Bridge {
             },
         };
         if let Some(writer) = writer {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::rename_reads::event("lock.bridge.writer");
             for (key, _, observed) in delivery.claimed {
                 store.watch.hold_observed(key, observed);
             }

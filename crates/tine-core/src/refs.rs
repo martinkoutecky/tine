@@ -380,6 +380,8 @@ pub fn rename_rewrite(
     renames: &[(String, String)],
     file_name_format: FileNameFormat,
 ) -> String {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = crate::render::RENAME_READS_HOOK.get() { hook("rewrite.rename"); }
     let renames: std::collections::HashMap<String, String> = renames
         .iter()
         .map(|(from, to)| (normalize(from), to.clone()))

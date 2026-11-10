@@ -401,3 +401,4 @@ pub(crate) fn hash_read() {
 pub(crate) fn transaction_record_probe() {
     TRANSACTION_RECORD_PROBES.fetch_add(1, Ordering::Relaxed);
 }
+pub mod rename_reads;

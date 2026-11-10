@@ -24,6 +24,9 @@ fn measure(blocks: usize, referrers: usize, multi: bool) -> (Counts, Duration) {
     // Exclude graph/host startup; include every operation write through
     // publication and cleanup, including first-use trash directories.
     cost_counters::reset();
+    let label = format!("{blocks}b-{referrers}r-{}", if multi { "multi" } else { "special" });
+    fs::write(temp.path().join(format!("rr-BEGIN-{label}")), root.to_str().unwrap()).unwrap();
+    cost_counters::rename_reads::begin();
     let started = Instant::now();
     let report = if multi {
         let plan = || plan_rename(&store, "Target", "Renamed", None, None, &|| {});
@@ -39,6 +42,9 @@ fn measure(blocks: usize, referrers: usize, multi: bool) -> (Counts, Duration) {
     let call = started.elapsed();
     assert!(host.quiesce_for_tests(Duration::from_secs(60)));
     let counts = cost_counters::snapshot();
+    cost_counters::rename_reads::finish(&label);
+    fs::write(temp.path().join("rr-END"), b"").unwrap();
+    println!("RRCOUNTS {label} {counts:?}");
 
     assert_eq!(report.outcome, RenameOutcome::Renamed);
     assert_eq!(report.touched.len(), referrers + 1);
@@ -72,17 +78,17 @@ fn single_vs_multi_cost_gate() {
     // Alternate order to reduce warm-cache bias; report raw call timings and
     // their median. This probe prints the gate outcome rather than turning
     // noisy wall-clock timing into a correctness assertion.
-    const SAMPLES: usize = 7;
+    let sample_count: usize = std::env::var("RR_SAMPLES").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
     let mut increases = Vec::new();
     println!(
-        "D4 platform={} samples={SAMPLES} boundary=call-through-cleanup latency=call-median",
+        "D4 platform={} samples={sample_count} boundary=call-through-cleanup latency=call-median",
         std::env::consts::OS
     );
     println!("D4 blocks refs path files bytes fsyncs median_call_us raw_call_us");
     for blocks in [1, 60] {
         for referrers in [0, 1, 10] {
             let mut samples = [Vec::new(), Vec::new()];
-            for round in 0..SAMPLES {
+            for round in 0..sample_count {
                 for path in [round % 2, 1 - round % 2] {
                     samples[path].push(measure(blocks, referrers, path == 1));
                 }
@@ -97,7 +103,7 @@ fn single_vs_multi_cost_gate() {
                 }
                 let mut times = raw.clone();
                 times.sort_unstable();
-                (counts, times[SAMPLES / 2], raw)
+                (counts, times[sample_count / 2], raw)
             });
             for (path, (counts, median, raw)) in ["special", "multi"].into_iter().zip(&costs) {
                 println!(

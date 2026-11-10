@@ -37,6 +37,8 @@ impl<'a> PagePlan<'a> {
     }
 
     pub(super) fn prepare_steps(&self) -> Result<Vec<Prepared>, (usize, Why)> {
+        #[cfg(feature = "test-faults")]
+        let _rr = crate::cost_counters::rename_reads::span("preflight_prepare_steps");
         let mut allocated = HashSet::new();
         let mut prepared = Vec::new();
         for (index, step) in self.steps.iter().enumerate() {

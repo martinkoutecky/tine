@@ -757,7 +757,11 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
         let mut held_elsewhere = None;
         for (_, lock, key) in &handles {
             match lock.try_lock() {
-                Ok(guard) => guards.push(guard),
+                Ok(guard) => {
+                    #[cfg(feature = "test-faults")]
+                    crate::cost_counters::rename_reads::event(format!("lock.host.page:{key}"));
+                    guards.push(guard);
+                }
                 Err(std::sync::TryLockError::WouldBlock) => {
                     held_elsewhere = Some(key.clone());
                     break;
@@ -839,6 +843,8 @@ fn dispatch<F: HostIo, C: Clock>(
     if !claim(&command.claim, QUEUED) {
         return Dispatched::Done;
     }
+    #[cfg(feature = "test-faults")]
+    if _writer.is_some() { crate::cost_counters::rename_reads::event("lock.dispatch.writer"); }
     let state = shared.state.lock().unwrap();
     let (state, again) = (command.run)(shared, state);
     drop(state);

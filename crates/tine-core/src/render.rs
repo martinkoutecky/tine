@@ -21,6 +21,8 @@ use tine_outline::lsdoc_block_parse;
 /// (marker / priority / heading size); any continuation constructs follow as
 /// sibling blocks.
 pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = RENAME_READS_HOOK.get() { hook("parse.block"); }
     lsdoc_block_parse::parse_block(raw, is_org)
 }
 
@@ -30,6 +32,8 @@ pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
 /// sorted+deduped (`lsdoc::refs`). Tine layers tags::/alias::/namespace + rename
 /// on top of this; `refs.rs` keeps that app-layer.
 pub fn block_refs(raw: &str, is_org: bool) -> lsdoc::ast::Refs {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = RENAME_READS_HOOK.get() { hook("parse.block_refs"); }
     lsdoc_block_parse::parse_projection(raw, is_org).refs
 }
 
@@ -38,13 +42,21 @@ pub fn block_refs(raw: &str, is_org: bool) -> lsdoc::ast::Refs {
 /// both (as `projection()` did) parses the same block twice; this parses once and the
 /// caller takes `.blocks` (facets / visible / body) and `.refs` (backlinks).
 pub fn parse_projection(raw: &str, is_org: bool) -> lsdoc::ast::Projection {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = RENAME_READS_HOOK.get() { hook("parse.projection"); }
     lsdoc_block_parse::parse_projection(raw, is_org)
 }
 
 /// Free text that is not a block body (a property value), parsed without
 /// re-bulleting under the block boundary's depth bound; `None` when deeper
 /// (I-22). The one door for such reparses.
+#[cfg(feature = "test-faults")]
+/// Uncommitted rename investigation hook; unset outside the isolated probe.
+pub static RENAME_READS_HOOK: std::sync::OnceLock<fn(&'static str)> = std::sync::OnceLock::new();
+
 pub fn parse_text_bounded(text: &str, is_org: bool) -> Option<lsdoc::ast::Projection> {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = RENAME_READS_HOOK.get() { hook("parse.text"); }
     lsdoc_block_parse::parse_text_bounded(text, if is_org { "org" } else { "md" })
 }
 
@@ -58,11 +70,15 @@ pub fn line_quote_depth(line: &str) -> usize {
 /// A whole page's lsdoc outline headers under the free-text bound; `None`
 /// when refused (I-22). Read through `crate::outline`, the outline authority.
 pub(crate) fn parse_outline_bounded(text: &str, is_org: bool) -> Option<Vec<lsdoc::OutlineHeader>> {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = RENAME_READS_HOOK.get() { hook("parse.outline"); }
     lsdoc_block_parse::parse_outline_bounded(text, if is_org { "org" } else { "md" })
 }
 
 /// [`lsdoc::inline`] under the same depth bound; `None` when deeper (I-22).
 pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::ast::Inline>> {
+    #[cfg(feature = "test-faults")]
+    if let Some(hook) = RENAME_READS_HOOK.get() { hook("parse.inline"); }
     lsdoc_block_parse::parse_inline_bounded(text, format)
 }
 

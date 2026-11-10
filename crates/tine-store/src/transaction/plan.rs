@@ -14,6 +14,8 @@ impl PagePlan<'_> {
         self.for_host = true;
         self.await_reference_publication();
         let _writer = self.store.writer.lock().unwrap();
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::rename_reads::event("lock.plan.writer");
         let names = self.preflight_names().map_err(|(_, why)| why)?;
         let locks: Vec<_> = names
             .iter()
@@ -24,6 +26,10 @@ impl PagePlan<'_> {
             })
             .collect();
         let _guards: Vec<_> = locks.iter().map(|lock| lock.lock().unwrap()).collect();
+        #[cfg(feature = "test-faults")]
+        for file in &names {
+            crate::cost_counters::rename_reads::event(format!("lock.plan.page:{}", file.as_str()));
+        }
         let prepared = self.prepare_steps().map_err(|(_, why)| why)?;
         let mut op = HostOp {
             pages: Vec::new(),
