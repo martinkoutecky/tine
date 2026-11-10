@@ -70,6 +70,21 @@ impl std::fmt::Display for IncompleteTransaction {
 }
 impl std::error::Error for IncompleteTransaction {}
 
+/// A write refused because `logseq/config.edn` could not be read when the graph
+/// loaded, which keeps the graph read-only ([`Refusal::ConfigUnreadable`]). The
+/// refusal's type survives native adapters as the fixed wire family
+/// `config-unreadable`, and the read error follows it for logs and the CLI; the
+/// window shows its own catalog sentence for the family, never the detail.
+/// Inspection/display costs O(1)/O(detail bytes), with no graph work.
+#[derive(Debug)]
+pub struct ConfigUnreadable(pub String);
+impl std::fmt::Display for ConfigUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "config-unreadable: {}", self.0)
+    }
+}
+impl std::error::Error for ConfigUnreadable {}
+
 /// Preserve the original transaction refusal and every rollback/publication
 /// failure location so callers can inspect disk before retrying.
 fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
@@ -136,6 +151,9 @@ fn why_error(why: Why) -> io::Error {
             }
             Refusal::Twin { .. } => io::Error::new(io::ErrorKind::AlreadyExists, "twin page"),
             Refusal::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
+            Refusal::ConfigUnreadable(cause) => {
+                io::Error::new(cause.kind, ConfigUnreadable(cause.message))
+            }
             Refusal::RepeatedFile(_) => {
                 io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
             }

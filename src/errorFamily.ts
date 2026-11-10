@@ -1,6 +1,7 @@
 export type ErrorFamily =
   | "conflict" | "deleted" | "twin" | "repeated" | "read-only" | "invalid-target"
   | "closed" | "not-found" | "asset-too-large" | "result-too-large" | "stale-graph-binding" | "io" | "rollback-incomplete" | "publication-incomplete"
+  | "config-unreadable"
   | "unreadable-owner" | "graph-app-owner" | "conflict-copy-gone" | "unknown";
 
 /** Classify exact Tauri wire tokens for control flow. Cost O(message length);
@@ -8,8 +9,8 @@ export type ErrorFamily =
 export function errorFamily(error: unknown): ErrorFamily {
   const message = error instanceof Error ? error.message : String(error);
   if (/^io:[A-Za-z]+$/.test(message)) return "io";
-  const incomplete = /^(rollback-incomplete|publication-incomplete):[\s\S]*$/.exec(message);
-  if (incomplete) return incomplete[1] as "rollback-incomplete" | "publication-incomplete";
+  const withDetail = /^(rollback-incomplete|publication-incomplete|config-unreadable):[\s\S]*$/.exec(message);
+  if (withDetail) return withDetail[1] as "rollback-incomplete" | "publication-incomplete" | "config-unreadable";
   switch (message) {
     case "conflict":
     case "deleted":

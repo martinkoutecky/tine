@@ -14,6 +14,13 @@ it("recognizes the unreadable-owner creation refusal (R-CREATE-UNREADABLE-OWNER)
   expect(errorFamily("an unreadable-owner happened")).toBe("unknown");
 });
 
+it("recognizes the config-unreadable refusal family, with its read error after it (card HVgII)", () => {
+  expect(errorFamily("config-unreadable: invalid utf-8 sequence of 1 bytes from index 35")).toBe("config-unreadable");
+  expect(errorFamily(new Error("config-unreadable: config.edn is too large"))).toBe("config-unreadable");
+  expect(errorFamily("a config-unreadable happened")).toBe("unknown");
+  expect(errorFamily("Couldn't read config.edn.")).toBe("unknown");
+});
+
 it("recognizes the exact not-found wire token for a missing graph asset, and never its prose", () => {
   expect(errorFamily("not-found")).toBe("not-found");
   expect(errorFamily("No such file or directory (os error 2)")).toBe("unknown");

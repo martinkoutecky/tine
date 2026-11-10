@@ -1577,6 +1577,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
 | `transaction.rs::page_content_bytes<'a>::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. Shared validation supplies staged bytes to planning too. |
 | `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
+| `transaction.rs::config_write_failure::ConfigUnreadable` | 1 | config.edn could not be read when the graph loaded (not valid UTF-8, too large, or an iCloud placeholder), so the page file-name format is unknown and a page file would be written under another name; refuse every write before anything changes, as the typed reason the window words from its catalog instead of the raw read error (card HVgII). |
 
 The following rows cover refusals outside the constructor family counted
 above. Their individual call sites are inventoried in `og/batches/E-survey-errors.md`
