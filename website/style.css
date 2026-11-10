@@ -136,6 +136,11 @@ h3 { font-size: 1.12rem; letter-spacing: -.01em; }
 .lede strong { color: var(--ink); }
 .cta-row { display: flex; gap: .8rem; justify-content: center; flex-wrap: wrap; margin: 2rem 0 0; }
 .cta-row.center { margin-top: 1.7rem; }
+.store-badges { display: flex; gap: .6rem; justify-content: center; align-items: center; flex-wrap: wrap; margin: 1.4rem 0 0; }
+.store-badges a { display: inline-flex; line-height: 0; }
+.store-badges img { height: 40px; width: auto; }
+/* Google's and F-Droid's badges carry a transparent margin inside the image. */
+.store-badges img.badge-padded { height: 58px; margin: -9px -6px; }
 .btn {
   display: inline-block; font-weight: 700; font-size: 1rem; padding: .8rem 1.5rem;
   border-radius: 11px; transition: transform .08s ease, background .15s ease, box-shadow .15s ease;

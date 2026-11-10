@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-shift-click-selection.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Shift-click from the editing caret to another block selects the complete range and closes the editor on a routed page, sidebar and journal; cutting the range includes the last block's collapsed children and Undo restores them.","blocking":false,"authority":"GH #924; UI-GH924-SHIFT-CLICK-BLOCK-RANGE"}],
+      "acceptableVariations": ["Theme, layout, exact click column and save latency may vary."],
+      "nonRequirements": ["No keyboard selection changes, reporter attachments, Windows/macOS certification or final release acceptance."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-context-menu-font.mjs": {
       "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Every visible page and block context-menu row, including hovered Copy as and view submenu rows, uses the same font size and interface font family on a routed page in desktop and narrow touch-stylesheet layouts.","blocking":false,"authority":"GH #916; UI-GH916-CONTEXT-MENU-FONT"}],
       "acceptableVariations": ["Font face, common size, menu geometry and theme may vary; equality across rows and inheritance of the interface family are material."],
@@ -801,7 +807,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-alias-autocomplete.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Page and hashtag completion display every matching alias alongside its owner page and insert the selected alias with its authored casing. Optional TINE_LATENCY_GRAPH mode measures real keystrokes to painted rows for page/tag completion and quick-switcher page search on a synthetic graph (GH #899).","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page and hashtag completion display every matching alias alongside its owner page and insert the selected alias with its authored casing. Typing inside an existing [[link]] offers the link's own page first and picking it leaves one link (GH #888). Optional TINE_LATENCY_GRAPH mode measures real keystrokes to painted rows for page/tag completion and quick-switcher page search on a synthetic graph (GH #899).","blocking":true}],
       "acceptableVariations":["Popup geometry, highlighting, fonts and timing may vary while the ordered choices and inserted spelling remain correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting or platform certification outside Linux WebKitGTK.","Graph search continues to present one result per page identity."],
       "stability":"burn-in"

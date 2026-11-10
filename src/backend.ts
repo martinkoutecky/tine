@@ -1,5 +1,5 @@
 import { t } from "./i18n";
-import { errorFamily } from "./errorFamily";
+import { configUnreadableText, errorFamily } from "./errorFamily";
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
@@ -164,7 +164,11 @@ class TauriBackend implements Backend {
     } catch (error) {
       this.reportIpcPhase(cmd, "failed", started);
       dbg(`command ${cmd} failed: ${String(error)}`); // opt-in --debug log only (GH #594)
-      throw error;
+      // A write refused because config.edn could not be read arrives as a wire
+      // family plus the read error. Every caller prints the rejection as it
+      // prints any other (a string, as Tauri rejects), so it carries the sentence
+      // the open-time notice gives, not the raw read error.
+      throw errorFamily(error) === "config-unreadable" ? configUnreadableText(error) : error;
     } finally {
       clearTimeout(slowTimer);
       settleSlow?.();

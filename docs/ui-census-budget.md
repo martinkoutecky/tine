@@ -61,6 +61,11 @@ journey (`scripts/e2e-*.mjs`), not here.
   (12→13 without the Beta-only CM6 switch) for the explicitly decided **Reference previews**
   switch, Logseq's `:ui/enable-tooltip?`, beside the hover delay (which stays). It sits in
   Advanced, not Basic; the open count is unchanged.
+- 2026-11-10, GH #918 (D-20261109-SG, card G-WTQ): `commands.registry` 149→150 for the
+  explicitly requested bindable **Remove author** command (`editor/remove-author`, no default
+  key). It runs the block context menu's own Remove author and is offered in the palette only
+  where that menu offers it (one authored, writable block), so the default palette count stays
+  at 90; no new Settings control or chrome.
 - 2026-11-07, GH #805 (0.10 lane brief, Martin's 10/30 AA and TRIAGE-1031 placement):
   `commands.registry` 148→149 for the explicitly requested remappable **Quit Tine**
   command (`app/quit`, Ctrl+Q on Linux/Windows). It reaches the existing safe Quit

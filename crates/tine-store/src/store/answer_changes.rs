@@ -30,8 +30,10 @@ impl Snapshot {
     /// only when the graph-wide answer for one of its keys moved: typing
     /// inside `[[Existing Page]]` changes nothing graph-wide. Cost O(changed
     /// pages x their names x log V) with the resident name table and alias
-    /// relation; without either (not built for this generation) any own-set
-    /// change refetches, as before, and nothing is built here.
+    /// relation, a namespace parent's entry being one read of the resident
+    /// parents support (`name_entry`); without either (not built for this
+    /// generation) any own-set change refetches, as before, and nothing is
+    /// built here.
     pub(super) fn answer_changes(
         &self,
         old: Option<&Self>,

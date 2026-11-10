@@ -197,6 +197,7 @@ export interface MessageArgs {
   "command-editor-paste-as-link": {};
   "command-editor-quick-capture-file": {};
   "command-editor-redo": {};
+  "command-editor-remove-author": {};
   "command-editor-select-all": {};
   "command-editor-select-block-down": {};
   "command-editor-select-block-up": {};
@@ -3172,6 +3173,7 @@ export interface MessageArgs {
   "ui-failure-capture-preference": {};
   "ui-failure-clipboard-association": {};
   "ui-failure-config-read": {};
+  "ui-failure-config-read-after": { "done": string | number };
   "ui-failure-conflict-inventory": {};
   "ui-failure-css-draft": {};
   "ui-failure-custom-css": {};
