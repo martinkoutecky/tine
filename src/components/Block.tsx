@@ -368,7 +368,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             // Mousedown anywhere in the row (not on a link/chip) arms the same
             // click-or-drag gesture as block content, with an end-of-block caret
             // (the row padding has no text to map). Read-only org pages don't edit.
-            if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
             if (!editing() && !readOnly() && !forbidsEditEntry(e))
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}

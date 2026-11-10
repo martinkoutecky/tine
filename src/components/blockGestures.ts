@@ -15,10 +15,10 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
-import { endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { EDGE_ZONE_PX, PRESS_ZONE_PX, scrollHome, startEdgeAutoscroll, type EdgeAutoscroll } from "../edgeAutoscroll";
 import { codeFences } from "../editor/fences";
@@ -184,12 +184,27 @@ export function beginEditGesture(
   owner: string | null,
   outlineScope: OutlineScope | null,
 ): void {
-  const home = scrollHome(e.target); // before the press re-renders its target
   // A selection over a whole-block embed's root row selects its host, and never
   // extends from there into the source rows inside it (D-20261030-EMB).
   const startRow = (e.target as Element | null)?.closest?.(".ls-block");
   const startHost = rowHostOf(startRow);
   const anchor = startHost ?? { id: blockId, scope: outlineScope };
+  if (e.shiftKey) {
+    const editing = editingId();
+    if (!editing && !hasSelection()) return;
+    // OG block.cljs block-content-on-mouse-down: suppress native text
+    // selection, leave editing and highlight the complete block range (#924).
+    e.preventDefault();
+    dropSelection(e);
+    if (editing) {
+      const row = documentOf(e).activeElement?.closest(".ls-block");
+      const from = rowHostOf(row) ?? { id: editing, scope: outlineScope };
+      selectBlock(from.id, from.scope);
+    }
+    extendSelectionTo(anchor.id, anchor.scope);
+    return;
+  }
+  const home = scrollHome(e.target); // before the press re-renders its target
   clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
   const g: EditGesture = {
     blockId,
