@@ -46,6 +46,7 @@ fn m3_transaction_apply_and_apply_move_c2_c3_escape_only() {
                         old: (operation != "create").then(|| old.to_vec()),
                         new: Some(new.to_vec()),
                         opaque_rev: None,
+                        parsed: None,
                     };
                     let mut undo = Undo {
                         kind: UndoKind::Replace,

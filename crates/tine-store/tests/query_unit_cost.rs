@@ -20,6 +20,10 @@ use tine_store::{IrAnswer, IrRequest, PageId, QueryDialect, SaveBase, Store, Who
 /// debounce), as on a loaded host. That is the watcher's cost, billed apart
 /// from the edit (K5, as `watcher_reads`), and it made the bounds below
 /// flaky (GH #715 lane: 82-101 kB in one measured save on a 10k graph).
+/// notify's event thread counts as the watcher too: on Windows it allocates a
+/// 16 KiB buffer per ReadDirectoryChangesW completion, and how a save's
+/// notifications batch into completions is the host's scheduling (hosted CI
+/// 2026-11-10: the same save measured 944 kB on 20 pages, 1037 kB on 10k).
 struct Counting;
 static COUNTING: AtomicBool = AtomicBool::new(false);
 static ALLOCATED: AtomicU64 = AtomicU64::new(0);
@@ -300,6 +304,13 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
     // A first edit settles one-time work (the seed's first patch), so the
     // measured edit is the steady state.
     for text in edits {
+        // The window opens only once the watcher has settled every earlier
+        // write (the previous edit's echo, the launch's racy follow-up) and
+        // the host holds nothing, so only the edit's own work lands in it.
+        // The drain's notification also reaches notify's event thread, which
+        // bills itself as the watcher from then on (watch.rs install_watch).
+        assert!(store.watcher_drained_for_tests(std::time::Duration::from_secs(60)));
+        host_writer.settle();
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = text.into();
@@ -403,7 +414,8 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
         // probes alone misses a graph-sized allocation common to both.
         // Measured 20 -> 10k growth is about 1.1 KiB for both page sizes;
         // 64 KiB allows fixed noise while rejecting even 16 bytes per page.
-        // Count helper threads too; only watcher work is billed separately.
+        // Count helper threads too; only watcher work (its thread and
+        // notify's event thread) is billed separately.
         assert!(
             large.save_bytes <= small.save_bytes + 64 * 1024,
             "I-25: save-side bytes per edit grew with the graph: {} (20 pages) → {} (10k pages)",

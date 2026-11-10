@@ -15,6 +15,31 @@ async function tauriBackend() {
 
 const phases = () => invoke.mock.calls.filter(([cmd]) => cmd === "diagnostic_ipc_event").map(([, args]) => args);
 
+it.each(["disk", "held-bytes", "held-absent", "held-unindexed", null])(
+  "carries %s from the original path answer without a second read", async source => {
+    invoke.mockResolvedValue({ page: null, source });
+    const backend = await tauriBackend();
+    const receive = vi.fn();
+    expect(await backend.getPageByPath("journals/private.md", receive)).toBeNull();
+    expect(receive).toHaveBeenCalledExactlyOnceWith(source);
+    expect(invoke.mock.calls).toEqual([
+      ["get_page_by_path", { path: "journals/private.md" }],
+      ["diagnostic_timing_event", { name: "get_page_by_path", elapsedMs: expect.any(Number) }],
+    ]);
+  },
+);
+
+it("returns a successful path answer without a refusal event or another page read", async () => {
+  const page = { name: "Private", kind: "page", id: "pages/private.md", blocks: [], pre_block: null };
+  invoke.mockResolvedValue({ page, source: "disk" });
+  const backend = await tauriBackend();
+  expect(await backend.getPageByPath(page.id)).toBe(page);
+  expect(invoke.mock.calls).toEqual([
+    ["get_page_by_path", { path: page.id }],
+    ["diagnostic_timing_event", { name: "get_page_by_path", elapsedMs: expect.any(Number) }],
+  ]);
+});
+
 it("sends the same bounded renderer snapshot through copy and save export paths", async () => {
   invoke.mockResolvedValue(null);
   const backend = await tauriBackend();

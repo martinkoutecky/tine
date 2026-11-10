@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
@@ -63,7 +64,7 @@ try {
   await browser.keys(["Control", "ArrowDown", "NULL"]);
   await browser.keys(["Escape"]);
   await browser.$(".embed-page .embed-page .block-content").waitForExist();
-  await browser.saveScreenshot(path.join(RUN, "nested-fold.png"));
+  await saveJourneyScreenshot(browser, path.join(RUN, "nested-fold.png"));
   await browser.waitUntil(() => fs.readFileSync(nestedSourcePath, "utf8").includes(org ? ":collapsed: false" : "collapsed:: false"), { timeout: 15000 });
   const nestedAfterUnfold = fs.readFileSync(nestedSourcePath, "utf8");
   assert.equal(fs.readFileSync(sourcePath, "utf8"), source);
@@ -89,7 +90,7 @@ try {
   await browser.$(".right-sidebar .embed-page").waitForExist({ timeout: 10000 });
   await browser.execute(() => document.querySelector(".right-sidebar .embed-page").closest(".ls-block").querySelector(".collapse-toggle").click());
   await browser.waitUntil(() => browser.execute(() => !document.querySelector(".right-sidebar .embed-page .block-content")), { timeout: 10000 });
-  await browser.saveScreenshot(path.join(RUN, "fold.png"));
+  await saveJourneyScreenshot(browser, path.join(RUN, "fold.png"));
   stage = "rendered selection Find";
   await openPageByName(browser, "Source");
   await browser.execute(() => {
@@ -111,13 +112,13 @@ try {
   await browser.execute(() => { const el = document.querySelector("textarea.block-editor"); el.focus(); el.setSelectionRange(7, 13); });
   await browser.keys(["Control", "f", "NULL"]);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".inpage-find-input")?.value === "source" && document.querySelector(".inpage-find-count")?.textContent.startsWith("1 /")), { timeout: 10000 });
-  await browser.saveScreenshot(path.join(RUN, "find.png"));
+  await saveJourneyScreenshot(browser, path.join(RUN, "find.png"));
   assert.equal(fs.readFileSync(sourcePath, "utf8"), source);
   assert.equal(fs.readFileSync(nestedSourcePath, "utf8"), nestedAfterUnfold);
   fs.writeFileSync(path.join(RUN, "receipt.json"), JSON.stringify({ tested: testedCommit, app: APP, format: ext, outcome: "PASS" }, null, 2));
   console.log(`PASS: native page-embed fold and selected-text Find (${RUN})`);
 } catch (error) {
-  try { await browser?.saveScreenshot(path.join(RUN, "failure.png")); } catch {}
+  try { if (browser) await saveJourneyScreenshot(browser, path.join(RUN, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(RUN, "failure-dom.html"), await browser.getPageSource()); } catch {}
   fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit}\nJourney: ${stage}\nExpected: outer fold saves only the host, inner fold saves its source host, deeper source stays unchanged, and selected text seeds Find with first match active.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
   throw error;

@@ -471,6 +471,7 @@ impl Snapshot {
         paths: &[String],
         names_changed: bool,
         inventory_changed: bool,
+        moved_keys: &[String],
         edits: Option<
             &[(
                 PageEntry,
@@ -607,6 +608,12 @@ impl Snapshot {
                             || plan.reads_tag_targets() && was.tags() != now.tags()
                     })
                 });
+            // A page that started or stopped existing without a file of its
+            // own (answer_changes' moved keys) is in no edited document.
+            let listed = target
+                .plan
+                .as_ref()
+                .is_some_and(|plan| plan.may_list_fileless(moved_keys, &self.journal_format));
             // Time can change a displayed answer even when this publication
             // has no changed document to pass to the shared edit predicate.
             // Fileless rows that could not be compared (their inputs not
@@ -649,7 +656,7 @@ impl Snapshot {
                         }
                     },
                 );
-            if touched || target.dirty || dirty {
+            if touched || listed || target.dirty || dirty {
                 summary.query_to.insert(id.clone());
             }
             // A stale global dependency cannot classify future edits safely.

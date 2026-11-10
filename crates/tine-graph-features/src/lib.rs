@@ -36,7 +36,7 @@ use tine_store::{FileId, Refusal, Store, StoreError, TxOutcome, Why};
 
 fn store_error(error: StoreError) -> io::Error {
     match error {
-        StoreError::NotFound => io::Error::from(io::ErrorKind::NotFound),
+        StoreError::NotFound(_) => io::Error::from(io::ErrorKind::NotFound),
         StoreError::InvalidTarget(message) => io::Error::new(io::ErrorKind::InvalidInput, message),
         StoreError::PageSource(message) => io::Error::new(io::ErrorKind::InvalidInput, message),
         StoreError::StreamSymlink(file) => io::Error::new(
@@ -209,7 +209,9 @@ fn trash_current(
 ) -> io::Result<Option<()>> {
     let rev = match store.read(id, max_bytes) {
         Ok((_, rev)) => rev,
-        Err(StoreError::NotFound) => return Err(io::Error::new(io::ErrorKind::NotFound, missing)),
+        Err(StoreError::NotFound(_)) => {
+            return Err(io::Error::new(io::ErrorKind::NotFound, missing))
+        }
         Err(error) => return Err(store_error(error)),
     };
     // Only called for a file that is not a page (`Store::as_page`); a page

@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ARTIFACTS = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/gh433"));
@@ -70,7 +71,7 @@ async function withApp(index, journey) {
     await journey(browser);
   } catch (error) {
     if (browser) {
-      await browser.saveScreenshot(path.join(TMP, `failure-${index}.png`)).catch(() => {});
+      await saveJourneyScreenshot(browser, path.join(TMP, `failure-${index}.png`)).catch(() => {});
       fs.writeFileSync(path.join(TMP, `failure-${index}.json`), JSON.stringify(await browser.execute(() => ({ text: document.body.innerText })).catch(() => null), null, 2));
     }
     throw error;
@@ -91,7 +92,7 @@ await withApp(0, async browser => {
   await browser.waitUntil(() => fs.readFileSync(targetFile, "utf8").includes('filters:: {"Germany" false}'), { timeout: 10000, timeoutMsg: "Canonical filter did not reach the graph through guarded save" });
   // Restart proof must come from the graph property, not the device fallback.
   await browser.execute(() => localStorage.removeItem("logseq-claude.refFilters"));
-  await browser.saveScreenshot(path.join(TMP, "excluded.png"));
+  await saveJourneyScreenshot(browser, path.join(TMP, "excluded.png"));
 });
 await withApp(1, async browser => {
   await expectCount(browser, 2);

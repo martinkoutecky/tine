@@ -44,6 +44,7 @@ pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_WORKER_KEY_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static HOST_DEBOUNCED_SAVES: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
@@ -250,6 +251,10 @@ pub struct Counts {
     /// candidates (with their queued requests and pending publications) and
     /// subscribed pages' notices.
     pub host_book_visits: u64,
+    /// Page saves the host started at the edit debounce's deadline (the
+    /// page idle for 400 ms, or dirty for 1 s), not at once: an operation's
+    /// or a barrier's saves skip it (`progress.rs` `Timing::deadline`).
+    pub host_debounced_saves: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -296,6 +301,7 @@ pub fn reset() {
         &HOST_CANDIDATE_VISITS,
         &HOST_WORKER_KEY_VISITS,
         &HOST_BOOK_VISITS,
+        &HOST_DEBOUNCED_SAVES,
         &ASSET_REF_DOCUMENTS,
         &ORPHAN_CHECK_DOCUMENTS,
         &ORPHAN_CHECK_NANOS,
@@ -348,6 +354,7 @@ pub fn snapshot() -> Counts {
         host_candidate_visits: HOST_CANDIDATE_VISITS.load(Ordering::Relaxed),
         host_worker_key_visits: HOST_WORKER_KEY_VISITS.load(Ordering::Relaxed),
         host_book_visits: HOST_BOOK_VISITS.load(Ordering::Relaxed),
+        host_debounced_saves: HOST_DEBOUNCED_SAVES.load(Ordering::Relaxed),
         asset_ref_documents: ASSET_REF_DOCUMENTS.load(Ordering::Relaxed),
         orphan_check_documents: ORPHAN_CHECK_DOCUMENTS.load(Ordering::Relaxed),
         orphan_check_nanos: ORPHAN_CHECK_NANOS.load(Ordering::Relaxed),

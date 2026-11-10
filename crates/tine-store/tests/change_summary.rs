@@ -9,6 +9,205 @@ use tine_core::model::{BlockDto, PageDto, RefGroup};
 use tine_core::refs::page_key;
 
 const PERSISTED: &str = "00000000-0000-4000-8000-000000000001";
+
+fn mount_fileless_query(store: &Store, id: &str, source: &str) -> tine_core::query::ir::Query {
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    let query = parse_query_pair(
+        source,
+        QueryTextDialect::MacroTql,
+        &[],
+        tine_core::query::registry::Registry::none(),
+    )
+    .query;
+    store
+        .register_query_subscription(
+            id.into(),
+            Some(crate::QuerySubscription::Query {
+                query: query.clone(),
+                context: Default::default(),
+            }),
+            None,
+        )
+        .unwrap();
+    query
+}
+
+fn fileless_query_names(
+    store: &Store,
+    query: &tine_core::query::ir::Query,
+    presentation: &str,
+) -> Vec<String> {
+    let settings = tine_core::query::ir::ViewSettings {
+        columns: vec![tine_core::query::ir::Field(presentation.into())],
+        ..Default::default()
+    };
+    let IrAnswer::Result(result) = store
+        .whole_graph()
+        .unwrap()
+        .query_ir(
+            IrRequest::Run {
+                query,
+                view: &settings,
+                context: &Default::default(),
+            },
+            &Cancel::default(),
+        )
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("query answer");
+    };
+    let tine_core::query::ir::QueryRows::Page { pages } = result.rows else {
+        panic!("page rows");
+    };
+    pages.into_iter().map(|row| row.name).collect()
+}
+
+#[test]
+fn review_fileless_query_rerun_does_not_return_old_memo() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(3);
+    let query = mount_fileless_query(&store, "newref-page", "@page and name = 'Newref'");
+    assert!(fileless_query_names(&store, &query, "mounted").is_empty());
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "see [[Newref]]".into()
+    });
+    let invalidated = wire["summary"]["full"] == true
+        || strings(&wire["summary"]["queryTo"]).contains("newref-page");
+    let rerun = fileless_query_names(&store, &query, "mounted");
+    let fresh = fileless_query_names(&store, &query, "fresh");
+    println!("F4 invalidated={invalidated}, same-key={rerun:?}, fresh={fresh:?}, wire={wire}");
+    assert_eq!(fresh, vec!["Newref"]);
+    assert_eq!(
+        rerun,
+        vec!["Newref"],
+        "same presentation must show the new row"
+    );
+    assert!(invalidated, "the mounted query must rerun: {wire}");
+    store.close();
+}
+
+#[test]
+fn review_blank_namespace_child_starts_supplying_parent() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let path = "pages/Brand%2FChild.md";
+    fs::write(dir.path().join(path), "").unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
+    crate::test_host_writer::HostWriter::for_store(&store).settle();
+    let query = mount_fileless_query(&store, "brand-parent", "@page and name = 'Brand'");
+    let before = fileless_query_names(&store, &query, "mounted");
+    assert!(before.is_empty());
+    let base = store.page(&PageId::from(path)).unwrap();
+    let mut doc = store.page(&PageId::from("pages/A.md")).unwrap().doc;
+    doc.pre_block = None;
+    doc.blocks.truncate(1);
+    doc.blocks[0].raw = "child body".into();
+    doc.blocks[0].children.clear();
+    let wire = commit(&store, &[(path, doc, SaveBase::Existing(base.rev))]);
+    let fresh = fileless_query_names(&store, &query, "fresh");
+    let invalidated = wire["summary"]["full"] == true
+        || strings(&wire["summary"]["queryTo"]).contains("brand-parent");
+    let mounted = if invalidated {
+        fileless_query_names(&store, &query, "mounted")
+    } else {
+        before
+    };
+    println!("F5 invalidated={invalidated}, mounted={mounted:?}, fresh={fresh:?}, wire={wire}");
+    assert_eq!(fresh, vec!["Brand"]);
+    assert_eq!(
+        mounted,
+        vec!["Brand"],
+        "the mounted query must show the new parent: {wire}"
+    );
+    assert!(
+        invalidated,
+        "the new parent must refresh the mounted query: {wire}"
+    );
+    assert_eq!(wire["inventoryChanged"], true, "{wire}");
+    store.close();
+}
+
+#[test]
+fn fileless_pages_vanishing_rerun_the_queries_that_listed_them() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let newref = mount_fileless_query(&store, "newref-page", "@page and name = 'Newref'");
+    let brand = mount_fileless_query(&store, "brand-parent", "@page and name = 'Brand'");
+    let path = "pages/Brand%2FChild.md";
+    fs::write(dir.path().join(path), "- child body\n").unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
+    crate::test_host_writer::HostWriter::for_store(&store).settle();
+    edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "see [[Newref]]".into()
+    });
+    assert_eq!(
+        fileless_query_names(&store, &newref, "mounted"),
+        vec!["Newref"]
+    );
+    assert_eq!(
+        fileless_query_names(&store, &brand, "mounted"),
+        vec!["Brand"]
+    );
+    // The last reference goes: Newref stops existing.
+    let wire = edit(&store, "pages/A.md", |doc| {
+        doc.blocks[0].raw = "no reference".into()
+    });
+    assert!(
+        fileless_query_names(&store, &newref, "mounted").is_empty(),
+        "same presentation must drop the vanished row: {wire}"
+    );
+    assert!(
+        strings(&wire["summary"]["queryTo"]).contains("newref-page"),
+        "{wire}"
+    );
+    assert_eq!(wire["summary"]["full"], false, "{wire}");
+    assert_eq!(wire["inventoryChanged"], true, "{wire}");
+    // The only child goes blank: Brand stops being a namespace parent.
+    let wire = edit(&store, path, |doc| {
+        doc.blocks.clear();
+    });
+    assert!(
+        fileless_query_names(&store, &brand, "mounted").is_empty(),
+        "same presentation must drop the vanished parent: {wire}"
+    );
+    assert!(
+        strings(&wire["summary"]["queryTo"]).contains("brand-parent"),
+        "{wire}"
+    );
+    assert_eq!(wire["summary"]["full"], false, "{wire}");
+    assert_eq!(wire["inventoryChanged"], true, "{wire}");
+    store.close();
+}
+
+#[test]
+fn an_edit_that_changes_no_page_existence_drops_no_fileless_listing() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (_dir, store) = fixture(3);
+    let query = mount_fileless_query(&store, "newref-page", "@page and name = 'Newref'");
+    assert!(fileless_query_names(&store, &query, "mounted").is_empty());
+    let retained = store.whole_graph().unwrap().graph.query_memo_len();
+    assert!(retained > 0, "the mounted answer is memoized");
+    // An ordinary block edit, a reference to a page that has a file, and a
+    // reference-only page the query cannot list: none can change its answer.
+    for raw in ["unrelated writing", "see [[A]]", "see [[Other]]"] {
+        let wire = edit(&store, "pages/B.md", |doc| {
+            doc.blocks[0].raw = format!("{raw}\nid:: {PERSISTED}")
+        });
+        assert_eq!(wire["summary"]["full"], false, "{raw}: {wire}");
+        assert!(
+            !strings(&wire["summary"]["queryTo"]).contains("newref-page"),
+            "{raw}: {wire}"
+        );
+        assert_eq!(
+            store.whole_graph().unwrap().graph.query_memo_len(),
+            retained,
+            "{raw}: the carried answer survives"
+        );
+    }
+    store.close();
+}
+
 const TARGETS: &[&str] = &[
     "A",
     "B",

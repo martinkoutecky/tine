@@ -32,6 +32,23 @@ it("a retiring editor cannot take down its page while its block is removed", () 
   } finally { view.dispose(); }
 });
 
+it.each(["delete", "merge-backward", "merge-forward"])("a retiring rendered row preserves its page during %s", action => {
+  loadSingle(page("Deletion", [blk("before", "Before"), blk("retiring", "Ordinary text"), blk("after", "After")]));
+  // A window's row computations can run before its For retires the removed row.
+  // Keep that owner alive to exercise this interval independently of scheduling.
+  const view = mount(() => <FailureBoundary region="This page"><Block id="before" /><Block id="retiring" /><Block id="after" /></FailureBoundary>);
+  try {
+    if (action === "delete") deleteBlock("retiring");
+    else if (action === "merge-backward") expect(mergeWithPrev("retiring")).toBe(true);
+    else expect(mergeWithNext("before")).toBe(true);
+    expect(doc.byId.retiring).toBeUndefined();
+    expect(view.root.querySelector(".region-failure")).toBeNull();
+    expect(view.root.querySelector('[data-block-id="after"]')?.textContent).toContain("After");
+    startEditing("before", 0);
+    expect(editorIn(view.root).blockId).toBe("before");
+  } finally { view.dispose(); }
+});
+
 it.each(["backspace-start", "context-delete"])("a windowed outline stays rendered after %s", action => {
   const blocks = Array.from({ length: 120 }, (_, i) => blk(`row-${i}`, `Row ${i}`));
   blocks[1] = blk("rule", "---");

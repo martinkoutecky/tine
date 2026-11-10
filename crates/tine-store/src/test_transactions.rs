@@ -18,7 +18,7 @@ fn isolated_cost_case(name: &str) -> bool {
     if std::env::var(CASE).as_deref() == Ok(name) {
         return false;
     }
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(crate::test_binary::own_test_binary())
         .args(["--exact", name, "--test-threads=1", "--nocapture"])
         .env(CASE, name)
         .output()

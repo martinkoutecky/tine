@@ -96,6 +96,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-beta-page-paths.mjs": {
+      "setup": "Build cargo build -p tine-store --features test-faults --example checkpoint_launch_bench first, or set TINE_CHECKPOINT_BENCH to that helper; the final crash/restart case writes its checkpoint with it.",
       "contracts": [{"class":"stateful-ux","userOutcome":"A page moved into a subfolder while Tine is closed opens its real content after a checkpoint restart with a stale sidebar session; GUI saves, CLI reads and tine://block links agree on the real file. Live sync-style moves and a manually repaired flattened rename also recover; CLI rename retains the folder.","blocking":false,"authority":"GH #904; GH #905; docs/storage-contract.md; REG-GH904-RENAME-SUBFOLDER; REG-GH905-MOVED-PAGE-CHECKPOINT"}],
       "acceptableVariations": ["Watcher, save and checkpoint latency; navigation and notice layout."],
       "nonRequirements": ["Exact pixels; automatic retargeting of an explicitly pinned missing sidebar file; reporter attachments, real Syncthing or macOS/Windows runtime certification. Malformed checkpoint coverage is tested at the store layer."],
@@ -273,6 +274,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-quick-share-viewer.mjs": {
+      "setup": "Build the quick-share viewer and verify its compatibility with scripts/check-quick-share-readiness.mjs before building TINE_APP with TINE_QUICK_SHARE_VIEWER_G1_READY; QUICK_SHARE_VIEWER_DIR selects the matching built viewer.",
       "contracts": [{"class":"stateful-ux","userOutcome":"A native share dialog uploads its reviewed pages to mocked GitHub, records the share without its key in the graph, and the built browser viewer renders the uploaded copy and follows a shared page link while preserving the secret prefix. After a page edit, Re-share from Exports previews membership, waits for confirmation, updates one gist and shows the edit at the same link without a duplicate definition. Delete changes nothing when declined and removes the gist and graph marker when confirmed.","blocking":true,"authority":"UI-QUICK-SHARE-VIEWER-G1; UI-QUICK-SHARE-EXPORT-ACTIONS; UI-QUICK-SHARE-RESHARE; generation 1 DESIGN sections 3.7, 3.8, 5 and 8"}],
       "acceptableVariations": ["Dialog layout, connection timing and rendered styling may vary."],
       "nonRequirements": ["No live GitHub writes, real Pages deployment, mobile device HTTPS, exact pixels or complete enumeration of envelope boundary cases."],
@@ -373,6 +375,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-ref-body-bench.mjs": {
+      "setup": "Set REF_BENCH_OUT to a new disposable output directory for every run; existing profiles are deliberately rejected so cold A/B measurements cannot reuse warm state.",
       "contracts": [{"class":"core-operation","userOutcome":"A large linked-reference panel settles with its nested rows present and native typing remains focused while the panel is visible.","blocking":false,"authority":"M-19 Wave 4 measure-first; provisional GH #746 stall budget 100 ms/s"}],
       "acceptableVariations": ["Expansion latency, frame timing and memory vary with the host; compare repeated baseline and prototype samples."],
       "nonRequirements": ["Exact pixels or DOM shape; unsupported WebKit performance APIs; final release acceptance or burn-in."],
@@ -1255,12 +1258,14 @@
       "stability": "stable"
     },
     "scripts/e2e-og-published-guide.mjs": {
+      "setup": "Run npm run docs:build first to generate target/guide/demo, or set TINE_PUBLISHED_ROOT to the generated Selected tasks query-export fixture.",
       "contracts": [{ "class": "stateful-ux", "userOutcome": "The generated live Guide opens a reviewed page permalink in the read-only app, and a baked query block shows its rows without a backend.", "blocking": true }, { "class": "exact-safety-interoperability", "authority": "og published-export read-only contract: the published backend refuses every write verb (src/publishedBackend.ts)", "userOutcome": "The published Guide offers no New page or Settings control, and ?static=1 keeps the static site.", "blocking": true }],
       "acceptableVariations": ["Guide page wording, layout and styling may change while the permalink, baked query rows, missing write controls and static fallback hold."],
       "nonRequirements": ["No screenshots, geometry, row order, or bundle file names are asserted."],
       "stability": "stable"
     },
     "scripts/e2e-view-fold.mjs": {
+      "setup": "Build npx vite build --mode quick-share first, then generate artifacts/view-fold/static/folds.html with TINE_VIEW_FOLD_STATIC_DIR=$PWD/artifacts/view-fold/static cargo test -p tine-graph-features --lib static_child_folds_keep_authored_state_and_all_content.",
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Readers expand and collapse authored folds in the built quick-share and published viewers, keep choices across page navigation, and restore original folds on reload without mutation requests. Static HTML opens and closes child folds with JavaScript disabled.", "blocking": false }],
       "acceptableVariations": ["Arrow styling, page layout and bundle filenames can change."],
       "nonRequirements": ["Exact pixels, native desktop launch, or deployed G1 attestation."],
@@ -1307,6 +1312,7 @@
       "stability": "stable"
     },
     "scripts/e2e-plugins.mjs": {
+      "setup": "Build npx vite build before the Vite preview journey. Requires network access to the signed community registry and the Dev Theme Colors package used by its install/uninstall fixture.",
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Signed community plugin and theme metadata remains bound to the reviewed package identity, and executable plugins install disabled until explicitly enabled.", "blocking": true, "authority": "Tine signed plugin registry and capability-review contract" },
         { "class": "stateful-ux", "userOutcome": "Users can inspect safety evidence, install, enable, configure, and uninstall a community plugin or theme on desktop and compact settings layouts.", "blocking": true }

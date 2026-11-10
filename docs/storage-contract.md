@@ -1048,6 +1048,23 @@ submits on the 60-block page: 1 file, 541 B, 2 syncs). Measured by
 sync counted at the `HostIo` seam. A save also costs 2 whole-file reads and
 3 parses (1 of the old source) per edit.
 
+**Command-line block edit unit cost (I-25, card DuDHQ).** A `block.edit` of an
+existing page's block is one request and one reply, and one host operation,
+so it drafts: two files (the page's temporary file, and the draft carrying the
+new and the old page; 216 B on a 1-block page, 2873 B on a 60-block one) and
+five syncs (the page's temp file and directory; the draft's temp file,
+directory and retirement). It reads the whole file 5 times, each owed above:
+the owner's read (`PageHost::read`), the plan's staging, the host's admission,
+the save's base guard and the publication read after the rename (GH #623).
+It parses 4 times: the owner's parse of the bytes its
+revision guards (A-V4b), the serializer's parse of the old source and its
+round-trip parse of the new bytes, and the publication's row (R8). The owner
+checks and answers from the serializer's parse, which the plan hands it
+(`HostOp::saved`). It does not parse again. It reads a page's name once.
+Transport bytes are unchanged. Proof
+`src-tauri/src/owner/owner_tests/write_cost_tests.rs`
+`a_block_edit_spends_its_lower_bound` (1-block, 60-block and 2 MiB pages).
+
 **Sessions.** Every host launch and every `page_window_reloaded` draws a
 process-unique session; the reload answers it with `next_id`, one past the
 host's last admitted request. Every mutating page command (`page_open`,
@@ -1791,7 +1808,7 @@ page-property keys. These are invalidation hints, not result patches.
 a page file claimed or released a name, an alias changed, or a name entered,
 left or changed its spelling in the graph-wide referenced-name set (another
 page's existing reference, or a page file of that name, makes a link edit
-silent). A session that has not yet answered an inventory or completion read
+silent), or a namespace parent started or ended. A session that has not yet answered an inventory or completion read
 has no name table, so there any change of a saved page's own alias or
 reference set signals, as before. When no file claim, unreadable file or configuration changed and the
 previous generation had already answered an inventory or completion read,
@@ -1808,6 +1825,18 @@ inherited by later generations through per-page patches, never persisted or
 checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
 `crates/tine-store/tests/inventory_delta.rs`, `src/pageIndex.test.ts`).
 
+A page that starts or stops existing without a file of its own (a
+reference-only page, a namespace parent) is in no edited document, so the
+edit predicate cannot see it. The publication's inventory comparison
+(`Snapshot::answer_changes`) is its one producer: the keys whose entry moved
+(the delta's keys, or every changed own name when no delta is expressible).
+A mounted query that a fileless row of one of those keys could meet fires in
+`queryTo`, and a carried memo answer it could list is dropped; the test is
+the names execution narrows fileless rows by (`Plan::may_list_fileless`), so
+a block-anchored query, a property-only query or a different exact name is
+untouched. An edit that moves no key fires nothing extra. Proof:
+`crates/tine-store/tests/change_summary.rs`.
+
 Namespace parents have one answerer, `model/namespace_parents.rs` (conceptual
 model rule 1, CM3-3; CM step 2 batch 10). A name `n/y` makes `n` a page: every
 proper `/`-prefix of a non-blank active page file's name (journals included;
@@ -1817,8 +1846,9 @@ it or a reference names it directly. `page_inventory` lists each as an absent
 entry with `namespace_parent: true` (sent only when true), spelled by the least
 prefix spelling of its seeds so the whole answer and an `inventoryDelta`'s
 one-key answer agree. The delta carries a parent's key whenever a changed
-reference name lies under it, so a live edit that adds or removes its last
-child updates it. A parent opens itself (`Absent`, no `link`), is listed in All
+reference name lies under it, or a page file under it gains its first content
+or loses its last, so a live edit that adds or removes its last child updates
+it. A parent opens itself (`Absent`, no `link`), is listed in All
 pages and in page queries' page sets (`reference_only_page_names`), and its
 Linked References are the blocks under it by the namespace closure of
 references (Q6, `namespace_refs`), unchanged. Nothing is persisted: it is
