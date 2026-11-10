@@ -21,8 +21,8 @@ import { foldsByDefaultInResults } from "../refOpenLevel";
 import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
-import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
-import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget, syntheticResultRowLive } from "./queryResultIdentity";
+import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
@@ -35,7 +35,6 @@ import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
 import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
-import { resultsTicketActionable } from "../queryResultsEpoch";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
 
@@ -360,8 +359,12 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     // ticket. Its stale DTO must not hide the editor whose exact live source
     // this group still owns. Other rows still resolve through liveNode.
     || (!!promotedPreambleId() && props.blocks.some(block => block.page_preamble))
+    // A synthetic row follows the ordinary rows' mount rule (syntheticResultRowLive):
+    // neither the user's own typing and save (results unsettled, epoch unmoved) nor
+    // a structural edit (epoch moved, page instance unchanged) swaps the whole group
+    // to static rows and unmounts the editor being typed in.
     || props.blocks.every(block => block.page_property || block.page_preamble
-      ? (block.page_preamble && !!promotedPreambleId()) || resultsTicketCurrent(resultTicket(block))
+      ? (block.page_preamble && !!promotedPreambleId()) || syntheticResultRowLive(block, props.page)
       : !!liveNode(block.id)));
   // OG groups a page's matches by `:block/parent` and renders ONE breadcrumb per
   // parent group (block.cljs custom-query-results: `(group-by :block/parent ..)` +
