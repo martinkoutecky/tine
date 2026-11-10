@@ -421,6 +421,7 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
 /// block's text twice, losing the other.
 #[test]
 fn keep_both_never_hands_the_window_two_blocks_under_one_key() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("unique-keys");
     fs::write(root.join(PAGE), "- alpha\n- beta\n- gamma\n").unwrap();
     let store = open(&root);
