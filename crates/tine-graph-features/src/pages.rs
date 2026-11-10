@@ -914,16 +914,10 @@ fn rename_transaction<'s>(
             continue;
         }
         if org_refuses {
-            let display = store
+            let path = store
                 .path_for_os_handoff(&file, false)
                 .map_err(store_error)?;
-            return Err(error(
-                io::ErrorKind::PermissionDenied,
-                &format!(
-                    "cannot rename: {} is a read-only .org file (does not round-trip)",
-                    display.display()
-                ),
-            ));
+            return Err(read_only_org(&path));
         }
         if marked && rebind {
             // References unchanged, but the interrupted rename's title
@@ -1080,19 +1074,24 @@ fn unsaved_error(graph: &tine_store::WholeGraph, path: &str) -> io::Error {
     )
 }
 
+/// The refusal of a rename that would rewrite a read-only Org file. It names
+/// the file as the user knows it: the canonical OS path is `\\?\C:\...` on
+/// Windows, so it goes through the shared display boundary first.
+fn read_only_org(path: &std::path::Path) -> io::Error {
+    let shown = tine_core::graph_paths::normalize_graph_path(&path.display().to_string());
+    error(
+        io::ErrorKind::PermissionDenied,
+        &format!("cannot rename: {shown} is a read-only .org file (does not round-trip)"),
+    )
+}
+
 /// The refusal of a rename that would change a page it cannot rewrite: a
 /// read-only Org file, or one that is not UTF-8.
 fn unwritable(store: &Store, page: &PageId) -> io::Error {
     let file = page.file();
     if Format::from_path(page.as_str().as_ref()) == Format::Org {
-        if let Ok(display) = store.path_for_os_handoff(&file, false) {
-            return error(
-                io::ErrorKind::PermissionDenied,
-                &format!(
-                    "cannot rename: {} is a read-only .org file (does not round-trip)",
-                    display.display()
-                ),
-            );
+        if let Ok(path) = store.path_for_os_handoff(&file, false) {
+            return read_only_org(&path);
         }
     }
     error(

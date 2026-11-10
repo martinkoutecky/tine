@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Windows: refusing to rename a page whose Org file is read-only names the file as `C:\…\pages\Old.org`, without the internal `\\?\` prefix (REG-WIN-RENAME-REFUSAL-VERBATIM-PATH).
 - `tine page rename OLD DATE` when that day already has a journal now refuses with `page-exists` and says nothing changed, as for any taken name. It used to answer `uncertain` ("inspect disk before retrying") although it had written nothing (internal: REG-CLI-RENAME-DATE-JOURNAL-REFUSAL).
 - Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).
 - An IME composition cancelled by losing focus (the window switched away, a picker took focus) no longer leaves the editor, or Quick Capture's File capture, ignoring what you type next (internal: UI-OG-L9-18-IME-BLUR-ABANDONED; OG audit L9-18).
