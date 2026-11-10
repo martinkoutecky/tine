@@ -5,6 +5,21 @@ import { changed, pageChangeKey } from "../changeKeys";
 import { graphOwner, readOwned, type Owner } from "../owned";
 import { backend } from "../backend";
 import type { Route } from "../router";
+import type { PageRead, PageReadSource } from "../types";
+import { recordDiagnostic } from "../debug";
+
+/** Compare the exact selection once; successful answers allocate no mismatch record. */
+export function pageOpenMismatch(r: Extract<Route, { kind: "page" }>, dto: PageRead | null) {
+  const pathMismatch = dto?.id !== r.path;
+  const nameMismatch = dto?.name !== r.name;
+  const kindMismatch = dto?.kind !== r.pageKind;
+  return pathMismatch || nameMismatch || kindMismatch ? { pathMismatch, nameMismatch, kindMismatch } : null;
+}
+
+/** Record the comparisons that refused this read, without its identity operands. */
+export function recordPageOpenRefusal(stage: "route" | "probe", mismatch: NonNullable<ReturnType<typeof pageOpenMismatch>>, source: PageReadSource | null): void {
+  void recordDiagnostic("page_open_refused", { pageOpen: { stage, readSource: source, ...mismatch } });
+}
 
 /** The refusal a routed page shows in place of its content when it could not be opened. */
 export function PageLoadError(props: { error: string }): JSX.Element {
@@ -57,6 +72,9 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
       const owner = graphOwner(live);
       const path = r.path;
       let delay = 3000;
+      // A probe records a flight event only when its facts change: the probe
+      // repeats for as long as the route stays refused.
+      let recorded = "";
       let cancel = () => {};
       const arm = () => {
         const timer = setTimeout(() => { void probe(); }, delay);
@@ -64,17 +82,24 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
       };
       const probe = async () => {
         if (!owner()) return;
+        let source: PageReadSource | null = null;
         try {
-          const result = await readOwned(owner, backend().getPageByPath(path));
+          const result = await readOwned(owner, backend().getPageByPath(path, value => { source = value; }));
           if (result.kind === "stale") return;
           const dto = result.value;
-          if (dto?.id === path && dto.name === r.name && dto.kind === r.pageKind) {
+          const mismatch = pageOpenMismatch(r, dto);
+          if (!mismatch) {
             retry();
             return;
           }
+          const facts = JSON.stringify([source, mismatch.pathMismatch, mismatch.nameMismatch, mismatch.kindMismatch]);
+          if (facts !== recorded) {
+            recorded = facts;
+            recordPageOpenRefusal("probe", mismatch, source);
+          }
         } catch {
-          // Keep the original refusal on a probe failure, with no repeated
-          // toast or flight event; a publication can still recover the route.
+          // Keep the original refusal on a probe failure, with no toast or
+          // flight event; a publication can still recover the route.
         }
         if (!owner()) return;
         delay = Math.min(delay * 2, 60_000);

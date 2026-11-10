@@ -46,12 +46,12 @@ fn a_path_saved_under_another_case_spelling_opens_the_file() {
         );
         assert_eq!(read.doc.name, "contents");
     } else {
-        assert!(matches!(store.page(&alias), Err(StoreError::NotFound)));
+        assert!(matches!(store.page(&alias), Err(StoreError::NotFound(_))));
     }
     // Never a different page: a name that differs by more than case is absent.
     assert!(matches!(
         store.page(&PageId::from("pages/Contents-2.md")),
-        Err(StoreError::NotFound)
+        Err(StoreError::NotFound(_))
     ));
     let exact = store
         .page(&PageId::from("pages/contents.md"))
