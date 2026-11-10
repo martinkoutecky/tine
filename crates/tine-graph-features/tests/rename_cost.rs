@@ -426,26 +426,25 @@ fn a_250_referrer_rename_completes_inside_the_caller_bound() {
     release_rename_gate(250);
 }
 
-/// Caller urgency: an operation's pages save without the 400 ms edit
-/// debounce, so a small rename returns well inside it. Before, the debounce
-/// floored every run at 400 ms; load only adds time, so the fastest of three
-/// runs decides.
+/// Caller urgency: an operation's pages save at once, without the 400 ms
+/// edit debounce (`Timing::deadline`), so a small rename returns well inside
+/// it. The host counts each save it starts at the debounce's deadline. A
+/// count, not the call's wall time: the floored call took 400 ms, and so may
+/// an unfloored one on a loaded runner (flakes-1110: 430 ms on hosted
+/// Windows).
 #[test]
 fn a_small_rename_is_not_floored_by_the_edit_debounce() {
     let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let runs = [0; 3].map(|_| {
-        let (_, call, heard) = rename_through_cleanup(20, 2);
+    for _ in 0..3 {
+        let (counts, call, heard) = rename_through_cleanup(20, 2);
         heard.unwrap();
-        call
-    });
-    eprintln!("2-referrer rename calls: {runs:?}");
-    let fastest = runs.into_iter().min().unwrap();
-    assert!(
-        fastest < std::time::Duration::from_millis(400),
-        "an operation's caller waits for its pages' saves, which skip the edit \
-         debounce (exemplar page_host/progress.rs reconcile): fastest {fastest:?}"
-    );
+        assert_eq!(
+            counts.host_debounced_saves, 0,
+            "an operation's caller waits for its pages' saves, which skip the edit \
+             debounce (exemplar page_host/progress.rs reconcile): call {call:?}, {counts:?}"
+        );
+    }
 }
 
 // Fixed from the reviewed measurement (RECEIPT "M4": 27, 7, 8, 106 and 24

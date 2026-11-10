@@ -529,7 +529,7 @@ fn a_duplicate_day_fold_killed_before_the_strays_deletion_completes_at_relaunch(
     let _integration_guard = crate::integration_lock();
     let root = graph("crash");
     let app_data = tempfile::tempdir().unwrap();
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(tine_store::test_binary::own_test_binary())
         .args([
             "--exact",
             "host_op_conflicts::crash_duplicate_day_fold_worker",
@@ -748,7 +748,7 @@ fn a_crash_during_resolution_never_loses_a_side() {
         let root = graph("markers-crash");
         fs::write(root.join(MARKED), MARKED_TEXT).unwrap();
         let app_data = tempfile::tempdir().unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "host_op_conflicts::crash_marker_resolution_worker",

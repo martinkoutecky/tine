@@ -43,6 +43,16 @@ pub(crate) fn parent_prefixes(name: &str) -> impl Iterator<Item = (&str, String)
         .filter(|(_, key)| !key.is_empty())
 }
 
+/// Whether a page file holding `doc` supplies its name's prefixes: its
+/// content is not blank (OG's `extract` skips blank content).
+pub(crate) fn document_supplies_parents(doc: &tine_core::doc::Document) -> bool {
+    !doc.roots.is_empty()
+        || doc
+            .pre_block
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty())
+}
+
 fn keep_least<'a>(slot: &mut Option<&'a str>, spelling: &'a str) {
     if slot.is_none_or(|kept| spelling < kept) {
         *slot = Some(spelling);
@@ -59,13 +69,9 @@ impl ReadSnapshot {
         let Some(&slot) = self.pages.positions.get(entry.rel_path_str()) else {
             return false;
         };
-        self.pages.get(slot).is_some_and(|(_, doc)| {
-            !doc.roots.is_empty()
-                || doc
-                    .pre_block
-                    .as_deref()
-                    .is_some_and(|p| !p.trim().is_empty())
-        })
+        self.pages
+            .get(slot)
+            .is_some_and(|(_, doc)| document_supplies_parents(doc))
     }
 
     /// Every namespace seed key of this generation with its spelling (see the

@@ -671,7 +671,7 @@ fn entry_first_retained_key_draft_recovers_through_disk_alias() {
         let app = dir.path().join("app");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(crate::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "page_host::binding::tests::apply_tests::entry_first_retained_key_crash_worker",

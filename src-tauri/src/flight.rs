@@ -1766,7 +1766,7 @@ mod tests {
     }
 
     fn launch_output(dir: &std::path::Path, mode: &str) -> String {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "flight::tests::persisted_run_child_probe",
