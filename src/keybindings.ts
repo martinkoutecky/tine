@@ -1232,6 +1232,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     seqTimer = setTimeout(resetSeq, 800);
 
     for (const cmd of commands) {
+      // A hidden command keeps no live shortcut: Settings and conflict checks omit it (#927).
+      if (cmd.hidden?.()) continue;
       const cs = cmd.chords;
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);
