@@ -9,12 +9,18 @@ import type { PageRead, PageReadSource } from "../types";
 import { recordDiagnostic } from "../debug";
 
 /** Compare the exact selection once. A refusal records which comparisons failed and
- *  the read's source, never its identity operands; a matching answer records nothing. */
-export function refusedPageOpen(stage: "route" | "probe", r: Extract<Route, { kind: "page" }>, dto: PageRead | null, readSource: PageReadSource | null): boolean {
+ *  the read's source, never its identity operands; a matching answer records nothing.
+ *  With `seen`, a refusal whose facts equal the last recorded ones records nothing. */
+export function refusedPageOpen(stage: "route" | "probe", r: Extract<Route, { kind: "page" }>, dto: PageRead | null, readSource: PageReadSource | null, seen?: { facts: string }): boolean {
   const pathMismatch = dto?.id !== r.path;
   const nameMismatch = dto?.name !== r.name;
   const kindMismatch = dto?.kind !== r.pageKind;
   if (!pathMismatch && !nameMismatch && !kindMismatch) return false;
+  if (seen) {
+    const facts = JSON.stringify([readSource, pathMismatch, nameMismatch, kindMismatch]);
+    if (facts === seen.facts) return true;
+    seen.facts = facts;
+  }
   void recordDiagnostic("page_open_refused", { pageOpen: { stage, readSource, pathMismatch, nameMismatch, kindMismatch } });
   return true;
 }
@@ -72,6 +78,8 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
       const owner = graphOwner(live);
       const path = r.path;
       let delay = 3000;
+      // The probe repeats while the route stays refused; it records only changed facts.
+      const seen = { facts: "" };
       let cancel = () => {};
       const arm = () => {
         const timer = setTimeout(() => { void probe(); }, delay);
@@ -84,13 +92,13 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
           const result = await readOwned(owner, backend().getPageByPath(path, value => { source = value; }));
           if (result.kind === "stale") return;
           const dto = result.value;
-          if (refusal === "unreadable" || !refusedPageOpen("probe", r, dto, source)) {
+          if (refusal === "unreadable" || !refusedPageOpen("probe", r, dto, source, seen)) {
             retry();
             return;
           }
         } catch {
-          // Keep the original refusal on a probe failure, with no repeated
-          // toast or flight event; a publication can still recover the route.
+          // Keep the original refusal on a probe failure, with no toast or
+          // flight event; a publication can still recover the route.
         }
         if (!owner()) return;
         delay = Math.min(delay * 2, 60_000);

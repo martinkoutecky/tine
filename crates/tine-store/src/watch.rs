@@ -1292,6 +1292,13 @@ fn install_watch(
     #[cfg(test)]
     let barrier = Arc::clone(&core.barrier);
     let mut created = notify::recommended_watcher(move |event| {
+        // notify's own event thread delivers the watcher's notifications, so
+        // a cost test bills its work as the watcher's (K5), as `run` does for
+        // the watcher thread. On Windows it allocates a fresh 16 KiB request
+        // buffer per ReadDirectoryChangesW completion; how many completions
+        // land in a measured save depends on the host's scheduling.
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::mark_watcher_thread();
         #[cfg(test)]
         barrier.pass_gate(&event);
         #[cfg(feature = "test-faults")]

@@ -102,6 +102,7 @@ impl PagePlan<'_> {
             old: Some(bytes.to_vec()),
             new: Some(bytes.to_vec()),
             opaque_rev: None,
+            parsed: None,
         };
         let before = BTreeMap::from([
             (from.as_str().to_owned(), Some(bytes.to_vec())),
@@ -439,6 +440,7 @@ impl PagePlan<'_> {
                 old: None,
                 new: Some(bytes),
                 opaque_rev: None,
+                parsed: None,
             };
             let before = BTreeMap::from([(id.as_str().to_owned(), None)]);
             let starting = self.store.graph.cache_generation();

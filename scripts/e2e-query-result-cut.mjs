@@ -9,6 +9,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 
@@ -152,12 +153,12 @@ try {
   await closeMenu();
   passed.push(stage); console.log(`PASS ${stage}`);
 
-  await browser.saveScreenshot(path.join(run, "pass.png"));
+  await saveJourneyScreenshot(browser, path.join(run, "pass.png"));
   fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "pass", testedCommit, passed, graph }, null, 2));
 } catch (error) {
   if (browser) {
     try { fs.writeFileSync(path.join(run, "failure-dom.html"), await browser.execute(() => document.documentElement.outerHTML)); } catch {}
-    try { await browser.saveScreenshot(path.join(run, "failure.png")); } catch {}
+    try { await saveJourneyScreenshot(browser, path.join(run, "failure.png")); } catch {}
   }
   fs.writeFileSync(path.join(run, "result.json"), JSON.stringify({ outcome: "fail", testedCommit, classification: "ambiguous", expected: stage, observed: String(error), passed, graph }, null, 2));
   console.error(`FAIL ${stage}: ${error}`);

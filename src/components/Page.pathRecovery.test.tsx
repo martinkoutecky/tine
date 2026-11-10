@@ -58,6 +58,9 @@ it.each(["disk", "held-bytes", "held-absent", "held-unindexed"] as const)(
       } });
       expect(read).toHaveBeenCalledTimes(2);
       expect(diagnostic).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(6000 + 12_000);
+      expect(read).toHaveBeenCalledTimes(4);
+      expect(diagnostic).toHaveBeenCalledTimes(2);
       expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/Private|Other|\.md/);
     } finally { dispose(); }
   },
