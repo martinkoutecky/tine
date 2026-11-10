@@ -181,6 +181,19 @@ fn a_non_utf8_config_refuses_the_rename_before_anything_changes() {
     })
     .unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+    // Card HVgII: the refusal reaches the window as the wire family
+    // `config-unreadable` (which the window words from its catalog), with the
+    // read error after it for logs, never as the bare read error.
+    assert!(
+        error
+            .get_ref()
+            .is_some_and(|cause| cause.is::<tine_graph_features::ConfigUnreadable>()),
+        "the refusal's type survives: {error}"
+    );
+    assert!(
+        error.to_string().starts_with("config-unreadable: "),
+        "{error}"
+    );
     assert!(
         pages::RenameReport::applied_before_error(&error).is_none(),
         "refused before any page file was published"

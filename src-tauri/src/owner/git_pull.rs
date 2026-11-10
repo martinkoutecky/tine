@@ -1096,14 +1096,20 @@ fn late_refusal(outcome: PullOutcome, published: bool) -> PullOutcome {
 fn planned(why: Why, path: &str) -> PullOutcome {
     match why {
         Why::Conflict { file, .. } => changed(file.as_str()),
+        // An unreadable config.edn stays the failure a pull has always
+        // reported (its codes are CLI API); only the window words it.
+        Why::Failed(error) | Why::Refused(tine_store::Refusal::ConfigUnreadable(error))
+            if error.kind == std::io::ErrorKind::WouldBlock =>
+        {
+            PullOutcome::Held(Held::Busy(error.message))
+        }
+        Why::Failed(error) | Why::Refused(tine_store::Refusal::ConfigUnreadable(error)) => {
+            PullOutcome::Incomplete(format!("{error:?}"))
+        }
         Why::Refused(refusal) => PullOutcome::Refused {
             path: path.to_string(),
             reason: format!("{refusal:?}"),
         },
-        Why::Failed(error) if error.kind == std::io::ErrorKind::WouldBlock => {
-            PullOutcome::Held(Held::Busy(error.message))
-        }
-        Why::Failed(error) => PullOutcome::Incomplete(format!("{error:?}")),
     }
 }
 
