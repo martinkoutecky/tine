@@ -26,6 +26,24 @@ export function isLongPressContextMenu(event: Event): boolean {
   return ownedContextMenuEvents.has(event);
 }
 
+/** Fire the hold's owned (synthetic) contextmenu at `el`, at the press point, so
+ *  the element's ordinary menu handler runs. Shared by createLongPress and the
+ *  sidebar rows' touch hold (rowReorder.ts, GH #921). */
+export function dispatchLongPressContextMenu(el: Element, x: number, y: number): MouseEvent {
+  const contextMenu = new (windowOf(el) as Window & typeof globalThis).MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+  });
+  ownedContextMenuEvents.add(contextMenu);
+  // The OS recognizer may have selected the held word first; the menu is
+  // about to open over it.
+  dropSelection(el);
+  el.dispatchEvent(contextMenu);
+  return contextMenu;
+}
+
 export interface LongPressHandlers {
   onPointerDown(e: PointerEvent): void;
   onPointerMove(e: PointerEvent): void;
@@ -113,17 +131,7 @@ export function createLongPress(target: () => HTMLElement | undefined): LongPres
         clickDocument.addEventListener("contextmenu", consumeOwnedContextMenu, true);
         clickDocument.addEventListener("click", consumeOwnedClick, true);
         clickDocument.addEventListener("pointerdown", nextGesture, true);
-        const contextMenu = new (windowOf(el) as Window & typeof globalThis).MouseEvent("contextmenu", {
-          bubbles: true,
-          cancelable: true,
-          clientX: armedNow.x,
-          clientY: armedNow.y,
-        });
-        ownedContextMenuEvents.add(contextMenu);
-        // The OS recognizer may have selected the held word first; the menu is
-        // about to open over it.
-        dropSelection(el);
-        el.dispatchEvent(contextMenu);
+        dispatchLongPressContextMenu(el, armedNow.x, armedNow.y);
       }, LONG_PRESS_DELAY);
     },
     onPointerMove(e: PointerEvent) {

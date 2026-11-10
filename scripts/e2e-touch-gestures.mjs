@@ -16,6 +16,11 @@
 // pointerType "touch" (the recognizer is pointer-based, not touch-event
 // based), dispatched here as synthetic PointerEvents through the page's real
 // hit test and layout; the result is read from config.edn on disk.
+//
+// GH #921: the same still hold also opens the row's own menu (the one a
+// right-click opens), and moving the held finger closes it and drags. The
+// journey holds a favorite, keeps the menu through the release, and uses its
+// Open in new tab, as the reporter does.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -217,6 +222,9 @@ async function touchPointer(browser, type, x, y) {
   }, type, x, y);
   assert(r.ok, "touch pointer dispatch failed", r);
 }
+const menuOpen = (browser) => browser.execute(() => Boolean(document.querySelector(".ctx-menu")));
+const openTabCount = (browser) => browser.execute(() =>
+  Number(document.querySelector("[data-sidebar-section='tabs'] .nav-section-count")?.textContent ?? 1));
 async function fingerMove(browser, from, to, steps = 6) {
   for (let i = 1; i <= steps; i++) {
     await touchPointer(browser, "pointermove", from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps);
@@ -360,18 +368,55 @@ await withApp(1, "android", async (browser) => {
   await sleep(500);
   assert(JSON.stringify(savedFavorites()) === JSON.stringify(lowered(FAVORITES)), "a finger that moved at once reordered the favorites", savedFavorites());
   assert(!(await browser.execute(() => document.documentElement.classList.contains("drag-selection-suppressed"))), "a scroll left the drag active");
-  note("a finger that moves first on a Favorites row scrolls: no reorder, nothing written");
+  assert(!(await menuOpen(browser)), "a finger that moved at once opened a menu");
+  note("a finger that moves first on a Favorites row scrolls: no reorder, no menu, nothing written");
 
   // A still hold, then a drag to the lower half of the last row, reorders and persists.
   await touchPointer(browser, "pointerdown", start.x, start.y);
   await sleep(800);
   assert(await browser.execute(() => document.documentElement.classList.contains("drag-selection-suppressed")), "the hold did not pick the row up");
+  assert(await menuOpen(browser), "the still hold did not open the row's menu (GH #921)");
   await fingerMove(browser, start, { x: start.x, y: Math.round(gamma.top + gamma.height * 0.75) });
+  assert(!(await menuOpen(browser)), "dragging the held row left its menu open");
   await touchPointer(browser, "pointerup", start.x, Math.round(gamma.top + gamma.height * 0.75));
   const want = ["Fav Beta", "Fav Gamma", "Fav Alpha"];
   await waitForFileText(CONFIG, () => JSON.stringify(savedFavorites()) === JSON.stringify(lowered(want)));
   await browser.waitUntil(async () => JSON.stringify((await shownFavorites(browser)).map((t) => t.replace(/^\W+/, ""))) === JSON.stringify(want), { timeout: 8_000, timeoutMsg: `sidebar Favorites order did not follow: ${JSON.stringify(await shownFavorites(browser))}` });
-  note("a still hold then a drag reorders Favorites and writes config.edn :favorites in that order");
+  assert(!(await menuOpen(browser)), "a menu opened after the drag");
+  note("a still hold then a drag closes the hold's menu, reorders Favorites and writes config.edn :favorites in that order");
+
+  // GH #921: a still hold opens the favorite's page menu, the release keeps it
+  // (its compatibility click included), and Open in new tab opens a tab.
+  const held = await favRect(browser, "Fav Gamma");
+  const tabsBefore = await openTabCount(browser);
+  await touchPointer(browser, "pointerdown", held.x, held.mid);
+  await sleep(800);
+  await touchPointer(browser, "pointerup", held.x, held.mid);
+  await browser.execute((x, y) => document.elementFromPoint(x, y)?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1, clientX: x, clientY: y })), held.x, held.mid);
+  await sleep(300);
+  const menu = await browser.execute(() => ({
+    open: Boolean(document.querySelector(".ctx-menu[role='menu']")),
+    items: [...document.querySelectorAll(".ctx-menu [role='menuitem']")].map((el) => el.textContent.trim()),
+  }));
+  assert(menu.open, "a still hold on a Favorites row did not leave its page menu open after the release (GH #921)", menu);
+  assert(JSON.stringify(savedFavorites()) === JSON.stringify(lowered(want)), "the hold that opened the menu reordered the favorites", savedFavorites());
+  const item = await browser.execute(() => {
+    const el = [...document.querySelectorAll(".ctx-menu [role='menuitem']")].find((e) => e.textContent.trim() === "Open in new tab");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  });
+  assert(item, "the favorite's hold menu has no Open in new tab", menu.items);
+  await touchPointer(browser, "pointerdown", item.x, item.y);
+  await sleep(80);
+  await touchPointer(browser, "pointerup", item.x, item.y);
+  await browser.execute((x, y) => document.elementFromPoint(x, y)?.click(), item.x, item.y);
+  await browser.waitUntil(async () => !(await menuOpen(browser)) && (await openTabCount(browser)) === tabsBefore + 1, { timeout: 8_000, timeoutMsg: `Open in new tab from the hold menu did not add a tab: ${tabsBefore} -> ${await openTabCount(browser)}` });
+  note("a still hold on a Favorites row opens its page menu, the release keeps it, and its Open in new tab adds a tab (GH #921)");
+  if ((await activeDrawer(browser)) !== "left") {
+    await swipe(browser, { x: 10, y: Y, path: steps(120) });
+    await waitDrawer(browser, "left");
+  }
 
   // A tap still opens the favorite (the click a tap produces, after a touch press and release).
   const beta = await favRect(browser, "Fav Beta");

@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On a touch screen, holding a sidebar **Favorites** row still opens its menu again, the same one a right-click opens (so **Open in new tab** is back within reach); holding a nested **Open tabs** row opens its **Move out of group** menu. Holding and then dragging still picks the row up to reorder it (the menu closes as you drag), a finger that moves first still scrolls, and a tap still opens it (GH #921).
 - On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (internal: REG-AUDIT1109-FLIGHT-LOCK-ANDROID).
 - If the page host fails with an internal error while publishing a save, the graph's other writes continue, its open pages go back to file watching, and closing the graph no longer crashes Tine (internal: REG-AUDIT1109-DRIVER-PANIC-WRITER).
 - After such a page host failure, closing its window now finishes closing the graph: Tine can quit, the command line can use the graph again, and reopening it starts a working page host that recovers any crash-recovery copies (REG-AUDIT1109-RETIRE-ENDED-HOST).
