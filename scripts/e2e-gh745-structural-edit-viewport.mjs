@@ -11,6 +11,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const artifactRoot = path.resolve("artifacts/gh745-outdent");
 fs.mkdirSync(artifactRoot, { recursive: true });
@@ -243,7 +244,10 @@ try {
   if (bad.length) throw new Error(`caret lost or view jumped after: ${bad.map((r) => `${r.variant} (visible=${r.caretVisible}, flush=${r.flush}, scrollMoved=${r.scrollMoved}, remountedWindows=${r.remountedWindows})`).join("; ")}`);
   console.log(`PASS: every structural edit kept the caret on screen with a minimal scroll. Artifacts: ${tmp}`);
 } catch (error) {
-  if (browser) { try { await browser.saveScreenshot(`${tmp}/failure.png`); } catch {} }
+  if (browser) {
+    try { await saveJourneyScreenshot(browser, `${tmp}/failure.png`); } catch {}
+    try { fs.writeFileSync(`${tmp}/failure-dom.html`, await browser.getPageSource()); } catch {}
+  }
   console.log(`artifacts: ${tmp}`);
   throw error;
 } finally {
