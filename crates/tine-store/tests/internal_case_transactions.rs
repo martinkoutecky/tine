@@ -305,7 +305,7 @@ fn gs1_a_case_move_killed_between_its_halves_finishes_at_the_next_launch() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("assets")).unwrap();
     fs::write(dir.path().join("assets/old.md"), "- original\n").unwrap();
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .args([
             "--exact",
             "test_transactions::og_gh609_case_rename::gs1_case_move_kill_worker",

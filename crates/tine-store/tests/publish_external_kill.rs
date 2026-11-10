@@ -33,7 +33,7 @@ fn a_killed_external_export_reopens_without_a_partial_site() {
     fs::create_dir_all(base.join("graph/pages")).unwrap();
     fs::create_dir_all(base.join("graph/journals")).unwrap();
     fs::create_dir_all(base.join("out")).unwrap();
-    let status = Command::new(std::env::current_exe().unwrap())
+    let status = Command::new(tine_store::test_binary::own_test_binary())
         .arg("--exact")
         .arg("publish_external_kill::a_killed_external_export_reopens_without_a_partial_site")
         .env(CHILD, &base)

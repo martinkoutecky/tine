@@ -59,7 +59,7 @@ fn recovery_has(root: &Path, expected: &[u8]) -> bool {
 }
 
 fn child(root: &Path, worker: &str, boundary: usize) {
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(tine_store::test_binary::own_test_binary())
         .arg("--exact")
         .arg(worker)
         .arg("--nocapture")
@@ -173,7 +173,7 @@ fn a_receiver_is_durable_before_its_source_is_deleted_for_both_name_orders() {
         let root = scratch("block-reference");
         fs::write(root.join(format!("pages/{source_name}.md")), b"- draft\n").unwrap();
         fs::write(root.join("pages/M target.md"), b"- target\n").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .arg("--exact")
             .arg("test_transactions::i02_crash_gaps::crash_receiver_before_source_worker")
             .arg("--nocapture")
@@ -243,7 +243,7 @@ fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
     ] {
         let root = scratch("rewritten-move");
         fs::write(root.join("assets/Old.md"), b"- [[Old]]\n").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .arg("--exact")
             .arg("test_transactions::i02_crash_gaps::crash_rewritten_move_worker")
             .arg("--nocapture")

@@ -177,7 +177,7 @@ fn a_page_save_transaction_crash_between_steps_keeps_earlier_disk_write() {
         fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
     }
     let app_data = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .arg("--exact")
         .arg("test_transactions::store_save::page_save_transaction_crash_worker")
         .env("TINE_PAGE_SAVE_TX_CRASH_ROOT", &fixture.0)

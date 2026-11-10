@@ -48,6 +48,20 @@ const deferred = <T,>() => {
 async function pastTheReadBound(started: Promise<void>) {
   await started;
 }
+/** Hold startup's 500 ms read bound until the test fires it. `armed` once
+ * startup has subscribed, begun its operation and waits on its read: the
+ * moment a broadcast can supersede that read. */
+function holdReadBound() {
+  const real = globalThis.setTimeout;
+  const bound = { armed: false, fire: () => {} };
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: () => void, ms?: number, ...rest: unknown[]) => {
+    if (ms !== 500) return real(handler, ms, ...rest);
+    bound.armed = true;
+    bound.fire = handler;
+    return 0;
+  }) as typeof setTimeout);
+  return bound;
+}
 async function releaseAll(tag: string) {
   await until(() => held.some((entry) => entry.tag === tag));
   for (const load of held.splice(0).filter((entry) => entry.tag === tag)) await load.release();
@@ -144,9 +158,15 @@ describe("the UI language lifecycle", () => {
   it("startup waits for a broadcast that superseded its read (CODE-2 A)", async () => {
     const read = deferred<string>();
     vi.spyOn(backend(), "getAppString").mockReturnValue(read.promise);
+    // Broadcast once startup has subscribed and begun, while its read is
+    // pending and before its read bound fires. A 20 ms flush raced both on a
+    // loaded host: the broadcast reached an earlier window's subscription
+    // before this startup began, and startup then settled on its own read
+    // (flakes-1110).
+    const bound = holdReadBound();
     let settled = false;
     const started = startUiLanguage().then(() => { settled = true; });
-    await flush();
+    await until(() => bound.armed);
     broadcast("zh-CN");
     await until(() => held.some((entry) => entry.tag === "zh-CN"));
     read.resolve("");
