@@ -1216,6 +1216,22 @@ impl ReadSnapshot {
         }
     }
 
+    /// Drop the carried query answers that can list one of `keys`, page
+    /// keys that started or stopped existing without a file of their own
+    /// (`Snapshot::answer_changes`): the edited documents never name them.
+    pub(crate) fn drop_fileless_listings(&self, keys: &[String]) {
+        if !keys.is_empty() {
+            self.memos
+                .query
+                .drop_fileless_listings(keys, &self.config().journal_format());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn query_memo_len(&self) -> usize {
+        self.memos.query.len()
+    }
+
     /// Whether this generation's alias relation is built (or inherited).
     pub(crate) fn alias_list_built(&self) -> bool {
         self.alias_relation.get().is_some()

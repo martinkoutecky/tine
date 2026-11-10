@@ -20,7 +20,12 @@ impl serde::Serialize for Change {
 
 impl Snapshot {
     /// Whether the inventory changed, its delta when expressible (see
-    /// [`InventoryDelta`]), and the final changed-target block-ref counts.
+    /// [`InventoryDelta`]), the final changed-target block-ref counts, and
+    /// the page keys whose inventory entry moved: the delta's keys, or every
+    /// changed own name when the delta is not expressible (conservative), and
+    /// none when the answer is full or nothing moved. A page that starts or
+    /// stops existing without a file of its own (a reference-only page, a
+    /// namespace parent) is among them, for the readers that can list it.
     /// A saved page's own alias/reference-name change is an inventory change
     /// only when the graph-wide answer for one of its keys moved: typing
     /// inside `[[Existing Page]]` changes nothing graph-wide. Cost O(changed
@@ -32,7 +37,12 @@ impl Snapshot {
         old: Option<&Self>,
         paths: &[String],
         names_changed: bool,
-    ) -> (bool, Option<Arc<InventoryDelta>>, BTreeMap<String, usize>) {
+    ) -> (
+        bool,
+        Option<Arc<InventoryDelta>>,
+        BTreeMap<String, usize>,
+        Vec<String>,
+    ) {
         let Some(old) = old else {
             return (
                 true,
@@ -42,6 +52,7 @@ impl Snapshot {
                     .iter()
                     .map(|(id, count)| (id.clone(), *count))
                     .collect(),
+                Vec::new(),
             );
         };
         let full = names_changed || self.unreadable != old.unreadable;
@@ -64,10 +75,10 @@ impl Snapshot {
                     .positions
                     .get(path)
                     .and_then(|&slot| snapshot.graph.pages.get(slot))
-                    .map(|(_, doc)| Arc::clone(doc))
+                    .map(|(entry, doc)| (entry.name.clone(), Arc::clone(doc)))
             };
-            let before = page(old);
-            let after = page(self);
+            let (before_name, before) = page(old).unzip();
+            let (after_name, after) = page(self).unzip();
             let counts = |doc: Option<&tine_core::doc::Document>| {
                 doc.map(crate::model::document_block_ref_counts)
                     .unwrap_or_default()
@@ -114,6 +125,22 @@ impl Snapshot {
                     }
                 }
             }
+            // A page file's own name seeds its namespace parents only while
+            // its content is not blank, so gaining its first text or losing
+            // its last starts or ends them (`model::namespace_parents`).
+            let supplies = |doc: Option<&Arc<tine_core::doc::Document>>| {
+                doc.is_some_and(|doc| {
+                    crate::model::namespace_parents::document_supplies_parents(doc)
+                })
+            };
+            if supplies(before.as_ref()) != supplies(after.as_ref()) {
+                for name in before_name.iter().chain(&after_name) {
+                    for (prefix, key) in crate::model::namespace_parents::parent_prefixes(name) {
+                        keys.insert(key);
+                        remember_day(&mut days, prefix);
+                    }
+                }
+            }
             // A page that moved slot can change which page spells a key.
             let moved = old.graph.pages.positions.get(path) != self.graph.pages.positions.get(path);
             // A changed name also changes its namespace parents' entries
@@ -155,10 +182,10 @@ impl Snapshot {
                     && (!needs_days || snapshot.graph.day_support_built())
             })
         }
-        let (inventory, delta) = if full {
-            (true, None)
+        let (inventory, delta, moved) = if full {
+            (true, None, Vec::new())
         } else if !own_names_changed {
-            (false, None)
+            (false, None, Vec::new())
         } else if let (Some(before), Some(after)) = (
             resident(old, !days.is_empty()),
             resident(self, !days.is_empty()),
@@ -173,12 +200,13 @@ impl Snapshot {
                 }
             }
             if delta.keys.is_empty() {
-                (false, None)
+                (false, None, Vec::new())
             } else {
-                (true, Some(Arc::new(delta)))
+                let moved = delta.keys.clone();
+                (true, Some(Arc::new(delta)), moved)
             }
         } else {
-            (true, None)
+            (true, None, keys.into_iter().collect())
         };
         let before = old.graph.block_ref_counts();
         let after = self.graph.block_ref_counts();
@@ -189,6 +217,6 @@ impl Snapshot {
                 (count != before.get(&id).copied().unwrap_or(0)).then_some((id, count))
             })
             .collect();
-        (inventory, delta, counts)
+        (inventory, delta, counts, moved)
     }
 }
