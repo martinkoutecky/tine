@@ -7,6 +7,7 @@ use super::*;
 /// index resolved absent: the first held one's read, and the unheld ones it
 /// asked the watcher to take in.
 pub(super) struct UnindexedDay {
+    day: tine_core::date::JournalDate,
     read: Option<PageRead>,
     unheld: Vec<PageId>,
 }
@@ -187,15 +188,21 @@ impl Store {
     /// as a held page's read is (`Store::page`, writer released), whose read
     /// error this returns. `None` when none exists; a stat error other than
     /// NotFound is returned. A bounded number of stats under the writer;
-    /// nothing is read unless found.
+    /// nothing is read unless found. CM's real-name owner must leave the
+    /// canonical day title unclaimed; a masked journal is no day's file.
     pub(super) fn reconcile_unindexed_day(
         &self,
         name: &str,
+        view: &WholeGraph,
     ) -> Result<Option<UnindexedDay>, StoreError> {
-        let format = self.graph.current_journal_format();
+        let format = &view.journal_format;
         let Some(day) = format.parse(name) else {
             return Ok(None);
         };
+        let key = tine_core::refs::page_key(&format.title(day));
+        if view.graph.real_page_owners().get(&key).is_some() {
+            return Ok(None);
+        }
         // From Ready only: a served launch checkpoint's diff holds the writer
         // and reconciles every file itself, and a read never waits for it.
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
@@ -249,7 +256,7 @@ impl Store {
                 Err(error) => return Err(error),
             }
         }
-        Ok(Some(UnindexedDay { read, unheld }))
+        Ok(Some(UnindexedDay { day, read, unheld }))
     }
 
     /// The day `reconcile_unindexed_day` found when the name still resolves
@@ -258,11 +265,17 @@ impl Store {
     /// unpublished, owner-only indexing), else the first unheld file the
     /// watcher could not take in, read through `page` so its read error
     /// (invalid UTF-8, a sharing violation) reaches the caller instead of an
-    /// empty day. One page read at most per candidate.
+    /// empty day. CM's latest real-name owner must still leave the title
+    /// unclaimed after reconciliation. One page read at most per candidate.
     pub(super) fn unindexed_day_read(
         &self,
         day: UnindexedDay,
+        view: &WholeGraph,
     ) -> Result<Option<PageRead>, StoreError> {
+        let key = tine_core::refs::page_key(&view.journal_format.title(day.day));
+        if view.graph.real_page_owners().get(&key).is_some() {
+            return Ok(None);
+        }
         if day.read.is_some() {
             return Ok(day.read);
         }

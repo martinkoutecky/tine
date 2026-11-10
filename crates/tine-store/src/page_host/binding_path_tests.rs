@@ -412,6 +412,47 @@ fn an_absent_day_opens_a_file_delivered_unobserved_under_another_accepted_name()
     );
 }
 
+/// GH #863: a missed delivery cannot make a masked journal the day's file.
+#[test]
+fn a_held_absent_day_keeps_an_unobserved_masked_delivery_absent() {
+    let live = Live::build(
+        &[
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"yyyy_MM_dd\"}\n",
+            ),
+            ("pages/2026_10_23.md", "- ordinary\n"),
+        ],
+        false,
+        crate::WatchMode::Notify,
+    );
+    deaf(&live);
+    let (key, _) = live.open("journals/2026_10_23.md");
+    assert!(matches!(
+        live.store.graph.source(&live.root.join(&key)),
+        crate::model::Source::HeldAbsent
+    ));
+    deliver(&live, &key, b"- masked journal\n");
+    for _ in 0..2 {
+        assert!(live
+            .store
+            .page_named("2026-10-23", tine_core::model::PageKind::Journal)
+            .unwrap()
+            .is_none());
+        let ordinary = live
+            .store
+            .page_named("2026_10_23", tine_core::model::PageKind::Journal)
+            .unwrap()
+            .expect("the ordinary file keeps its literal title");
+        assert_eq!(ordinary.id.as_str(), "pages/2026_10_23.md");
+        assert_eq!(ordinary.doc.blocks[0].raw, "ordinary");
+    }
+    assert_eq!(
+        fs::read(live.root.join(key)).unwrap(),
+        b"- masked journal\n"
+    );
+}
+
 /// The failed observations the driver has counted for `key`.
 fn observe_failures(live: &Live, key: &str) -> u32 {
     (live.host.driver.shared)

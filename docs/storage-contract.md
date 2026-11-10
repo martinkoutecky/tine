@@ -821,18 +821,21 @@ owner read settles the stamp and later reads ask no one. A failed observation
 answers its read error, never `NotFound`. At the bound, or once the host has
 ended, it reads again without asking. Before the owner's first publication it
 parses the file without publishing it. `page()` is never called on the host
-driver's thread (a debug assertion). A journal day the index has no file for
-first stats the day's other accepted file names (its spellings at every
-numeric width the parser reads, `JournalFormat::accepted_stems`, at most
+driver's thread (a debug assertion). A journal day the index has no file for,
+whose canonical title CM's real-name owner leaves unclaimed, first stats
+the day's other accepted file names (its spellings at every numeric width
+the parser reads, `JournalFormat::accepted_stems`, at most
 `WIDTH_RENDERINGS_MAX` width renderings per pattern, times the graph-text
 extensions) and reads a file the watcher has not observed before
 resolving the name again: an unheld one through the watcher's exact-path
 reconcile, a held one through its owner as `page()` reads it, whose read error
 is the answer (GH #863). If the name still resolves absent (an owner before
 its first publication, a file the watcher could not read, also on a later
-lookup), that file's own read or read error is the answer, and so is a stat
-error other than not-found: never an empty day. So a creating save finds
-a day delivered unobserved instead of making a duplicate. A write computed
+lookup), and CM still leaves its canonical title unclaimed, that file's own
+read or read error is the answer, and so is a stat error other than
+not-found: never an empty day. So a creating save finds
+a day delivered unobserved instead of making a duplicate. A journal masked
+by an ordinary file stays absent through this probe. A write computed
 from a page parses the bytes whose revision guards it (`Store::read` then
 `Store::page_of`; A-V4b), never `page()`. With no host running nothing is
 held and every path reads the file. Proof:
