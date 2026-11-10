@@ -103,7 +103,8 @@
       "stability":"burn-in"
     },
     "scripts/e2e-embed-enter-loop.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"In one app session, on three host pages, Enter at the end of a page embed's last source block, typing and Tab add the text once, as a child of that block, in the source file and in the embed, with no parser-failure toast; repeated over fresh sessions to measure how often a parser trap occurs.","blocking":false,"authority":"og-wasm-enter-trap; REG-WASM-UNWOUND-EXCEPTION-POISON; REG-CM6-STRUCTURAL-KEY-THROW"}],
+      "contracts": [{"class":"core-operation","userOutcome":"In one app session, on three host pages, Enter at the end of a page embed's last source block, typing and Tab add the text once, as a child of that block, in the source file and in the embed, with no parser-failure toast; repeated over fresh sessions to measure how often a parser trap occurs.","blocking":false,"authority":"og-wasm-enter-trap; REG-WASM-UNWOUND-EXCEPTION-POISON; REG-CM6-STRUCTURAL-KEY-THROW"},
+        {"class":"core-operation","userOutcome":"On each routed host page, outside the embed, Enter over a keyboard selection in an ordinary block deletes the selected text and splits at its start, as Logseq does: the file holds the text before the selection and, as the next block, the text after it, and the new block is editing with the caret at its start; one Undo restores the single block in the file.","blocking":false,"authority":"og-enter-family-1109; UI-EDITOR-ENTER-SELECTION-DELETES"}],
       "acceptableVariations": ["Theme, window size, click timing and save latency may vary; the source file may indent with tabs or spaces."],
       "nonRequirements": ["No exact pixels, caret geometry or editor engine; the trap rate is recorded, not required to be zero within a fixed number of sessions."],
       "variants": ["E2E_SESSIONS=N fresh sessions (default 1)", "E2E_PAGES=N host/source pairs per session (default 3)", "E2E_DRIVER_PORT (default 4974; the native port is the next one)"],
@@ -1519,10 +1520,11 @@
       "contracts": [
         { "class": "stateful-ux", "userOutcome": "On a phone, a left-edge swipe opens the left drawer (on iOS, with history to pop, it goes Back instead), while short, vertical or mid-screen swipes do nothing.", "blocking": true },
         { "class": "core-operation", "userOutcome": "Swiping a block right indents it, swiping it left outdents it or opens its action menu, and the result is saved to the page file; short or vertical swipes change nothing.", "blocking": true },
-        { "class": "stateful-ux", "userOutcome": "On a phone, holding a sidebar Favorites row still and dragging it reorders the favorites and writes the new order to config.edn; a finger that moves before the hold scrolls without reordering; a tap still opens the favorite.", "blocking": true, "authority": "D-20261019-FT1" }
+        { "class": "stateful-ux", "userOutcome": "On a phone, holding a sidebar Favorites row still and dragging it reorders the favorites and writes the new order to config.edn; a finger that moves before the hold scrolls without reordering; a tap still opens the favorite.", "blocking": true, "authority": "D-20261019-FT1" },
+        { "class": "stateful-ux", "userOutcome": "On a phone, a still hold on a sidebar Favorites row opens that favorite's page menu (the one a right-click opens), which stays open after the finger lifts and offers Open in new tab; dragging the held row closes the menu instead, and a finger that moves before the hold opens no menu.", "blocking": true, "authority": "GH #921" }
       ],
       "acceptableVariations": ["Thresholds, snap-back animation, finger-tracking feel and swipe distances may evolve; blocking is that a deliberate swipe does the action and a clearly short or vertical one does not.", "The action-bar analogue may be a different menu or toolbar as long as it selects the block and offers its actions."],
-      "nonRequirements": ["Exact pixel thresholds, animation timing or haptics.", "The OS delivering real touches: this journey injects synthetic touch events into the WebKitGTK webview.", "Android hardware Back, which is an OS gesture covered by unit tests and a device check."],
+      "nonRequirements": ["Exact pixel thresholds, animation timing or haptics.", "The hold menu's position, its items beyond Open in new tab, and how far the held finger may wander before the drag takes over.", "The OS delivering real touches: this journey injects synthetic touch events into the WebKitGTK webview.", "Android hardware Back, which is an OS gesture covered by unit tests and a device check."],
       "stability":"burn-in"
     },
     "scripts/e2e-custom-css.mjs": {

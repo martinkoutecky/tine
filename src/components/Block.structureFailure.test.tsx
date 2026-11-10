@@ -1,8 +1,9 @@
 // The textarea editor's counterpart of Cm6BlockEditor.structureFailure.test.tsx (og-wasm-enter-trap
 // round 2): Enter over a selection whose structural step fails (a parser trap in outline_apply_json)
-// is refused whole. The textarea never took the selected text out before asking the kernel (its
-// Enter splits at the selection's start), so this pins that a failed split leaves the text, the
-// selection, the block, undo, the dirty bit and the store as they were, and that a retry works.
+// is refused whole. The textarea's Enter deletes the selection and splits at its start, as OG and the
+// CodeMirror editor do (og-enter-family-1109); the deletion is staged and written only once the kernel
+// has answered, so this pins that a failed split leaves the text, the selection, the block, undo, the
+// dirty bit and the store as they were, and that a retry works.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 

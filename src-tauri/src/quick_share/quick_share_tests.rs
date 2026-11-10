@@ -817,13 +817,12 @@ fn create_uploads_the_prepared_bytes_once_and_the_row_goes_pending_then_live() {
 
 #[test]
 fn create_failures_known_before_sending_remove_the_row() {
-    // A closed port: connection refused, nothing reached GitHub.
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let base = format!("http://127.0.0.1:{port}");
+    // Port 0: no socket can listen there, so the connect fails before
+    // anything is sent (refused on Linux, address not available on macOS and
+    // Windows). A port bound and then released would do the same only until
+    // a parallel test's mock is handed that port: then the request reaches
+    // that mock and the outcome is unknown (flakes-1110).
+    let base = "http://127.0.0.1:0".to_owned();
     let f = fixture(Endpoints {
         oauth: base.clone(),
         api: base.clone(),

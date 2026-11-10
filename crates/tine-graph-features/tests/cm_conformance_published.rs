@@ -126,6 +126,14 @@ fn published_conformance_snapshots_match_the_writer() {
         let root = tempfile::tempdir().unwrap();
         let graph = root.path().join("graph");
         spec.write(&graph);
+        if !spec.listed_apart(&graph) {
+            // This volume folds two of its file names into one: the committed
+            // snapshot answers a graph that cannot exist here.
+            eprintln!(
+                "SKIP on this volume: fixture {name}: two of its file names name one file here"
+            );
+            continue;
+        }
         let output = root.path().join("output");
         fs::create_dir_all(&output).unwrap();
         let store = Store::open(&graph, Default::default()).unwrap().0;

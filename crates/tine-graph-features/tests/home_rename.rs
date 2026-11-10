@@ -159,6 +159,89 @@ fn a_malformed_config_neither_blocks_the_rename_nor_is_rewritten() {
     assert!(dir.join("pages/Begin.md").exists());
 }
 
+/// Verification of card HFmqtY (b), scenario: sync delivery of a config.edn
+/// that is not UTF-8. The rename does NOT proceed: the Store refuses every
+/// write while the config cannot be read (`PagePlan::config_write_failure`),
+/// because the graph's `:file/name-format` is then unknown and a page file
+/// would be written under the default name. The refusal comes before the
+/// config step and before any file moves, so nothing changes: no page file, no
+/// referrer, not config.edn's bytes. Pinned so a change to that guard is a
+/// decision (see RECEIPT-small-1109c.md), not an accident.
+#[test]
+fn a_non_utf8_config_refuses_the_rename_before_anything_changes() {
+    let _integration_guard = crate::integration_lock();
+    let dir = scratch("non-utf8", "");
+    let bytes = b"{:default-home {:page \"Start\"}} ;; \xff\xfe\n".to_vec();
+    fs::write(dir.join("logseq/config.edn"), &bytes).unwrap();
+    fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
+    fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
+    let store = open(&dir);
+    let error = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    })
+    .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+    assert!(
+        pages::RenameReport::applied_before_error(&error).is_none(),
+        "refused before any page file was published"
+    );
+    assert!(dir.join("pages/Start.md").exists());
+    assert!(!dir.join("pages/Begin.md").exists());
+    assert_eq!(
+        fs::read_to_string(dir.join("pages/Ref.md")).unwrap(),
+        "- see [[Start]]\n"
+    );
+    assert_eq!(fs::read(dir.join("logseq/config.edn")).unwrap(), bytes);
+}
+
+/// Scenario (disk error): the page files are renamed and published, then the
+/// config.edn write fails. The CLI keeps the error (`applied_before_error`:
+/// uncertain, admitted); the app's rename turns it into the applied report with
+/// the cause in `config_skipped`, so the window refreshes and says that home and
+/// favorites did not follow instead of "Rename failed". Nothing is rolled back
+/// and config.edn keeps its old bytes.
+#[cfg(unix)]
+#[test]
+fn a_failed_config_write_after_the_page_files_moved_reports_the_rename() {
+    use std::os::unix::fs::PermissionsExt;
+    let _integration_guard = crate::integration_lock();
+    let dir = scratch("config-write-fails", HOME);
+    fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
+    fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
+    // The page operation's trash chain exists and stays writable; only
+    // `logseq/` itself refuses the config transaction's new file.
+    fs::create_dir_all(dir.join("logseq/.tine-trash/pages")).unwrap();
+    let store = open(&dir);
+    let logseq = dir.join("logseq");
+    fs::set_permissions(&logseq, fs::Permissions::from_mode(0o555)).unwrap();
+    let writable = fs::write(logseq.join("probe"), "x").is_ok();
+    let result = hosted(&store, |host| {
+        pages::rename_or_merge_page(&store, host, "Start", "Begin", None, None, &[])
+    });
+    fs::set_permissions(&logseq, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!writable, "the injected failure needs a non-root user");
+    let error = result.unwrap_err();
+    let applied =
+        pages::RenameReport::applied_before_error(&error).expect("the pages were published");
+    assert_eq!(applied.home_page, None);
+    assert!(applied.touched.iter().any(|page| page.moved));
+    let app = pages::RenameReport::with_config_failure(&error).expect("the app's report");
+    assert_eq!(app.touched, applied.touched);
+    assert_eq!(app.outcome, applied.outcome);
+    assert!(
+        app.config_skipped
+            .as_deref()
+            .is_some_and(|cause| !cause.is_empty()),
+        "{app:?}"
+    );
+    assert!(dir.join("pages/Begin.md").exists());
+    assert_eq!(
+        fs::read_to_string(dir.join("pages/Ref.md")).unwrap(),
+        "- see [[Begin]]\n"
+    );
+    assert_eq!(config(&dir), HOME);
+}
+
 /// The renamed page is the home page and a favorite: one config.edn edit
 /// moves both, keeping every other byte (comments, unknown keys, the other
 /// favorite), and the report carries both answers.
@@ -270,7 +353,7 @@ fn a_home_rename_killed_at_each_step_reopens_whole() {
         let app_data = tempfile::tempdir().unwrap();
         fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
         fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(tine_store::test_binary::own_test_binary())
             .args([
                 "--exact",
                 "home_rename::crash_home_rename_worker",

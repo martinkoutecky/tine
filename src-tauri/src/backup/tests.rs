@@ -653,7 +653,7 @@ fn two_processes_exclude_each_other_and_a_dead_writer_is_recovered() {
         }
         let before = g.zip_names();
         write(&g.graph.join("pages/A.md"), "- 3\n");
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        let mut command = std::process::Command::new(tine_store::test_binary::own_test_binary());
         command
             .args([
                 "backup::tests::backup_writer_child",
@@ -1905,7 +1905,7 @@ mod launch_schedule_tests {
 
 mod idle_signal_tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn warm_completion_quiet_deadline_and_revocation_own_the_backup_wait() {
@@ -1923,17 +1923,29 @@ mod idle_signal_tests {
         );
         let (sent, received) = std::sync::mpsc::channel();
         let waiting = slot.clone();
+        let quiet = Duration::from_millis(80);
         let worker = std::thread::spawn(move || {
-            sent.send(waiting.wait_startup_idle(Duration::from_millis(80), Duration::from_secs(5)))
-                .unwrap();
+            // Only the completion can release this wait: the deadline is the
+            // app's (the missed-signal case below covers it), so a stalled
+            // runner cannot end the wait before the test completes the warm.
+            let released = waiting.wait_startup_idle(quiet, LAUNCH_BACKUP_DEADLINE);
+            sent.send((released, Instant::now())).unwrap();
         });
         assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
+        let finished = Instant::now();
         slot.finish_startup_warm(current);
+        // A hang guard, not a budget.
+        let (released, at) = received.recv_timeout(Duration::from_secs(60)).unwrap();
+        assert!(released);
+        // An order on the clock, not a sampling window: the release comes a
+        // whole quiet turn after the completion, however late the runner
+        // lets either thread run (flakes-1110: a 20 ms window failed on
+        // hosted macOS).
         assert!(
-            received.recv_timeout(Duration::from_millis(20)).is_err(),
-            "completion must retain a quiet turn"
+            at.duration_since(finished) >= quiet,
+            "completion must retain a quiet turn: released {:?} after it",
+            at.duration_since(finished)
         );
-        assert!(received.recv_timeout(Duration::from_secs(2)).unwrap());
         worker.join().unwrap();
         // A missed warm signal still preserves the safety net at the deadline.
         slot.begin_startup_warm();

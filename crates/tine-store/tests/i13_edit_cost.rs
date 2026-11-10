@@ -224,13 +224,27 @@ fn single_page_print_builds_one_corpus() {
 }
 
 #[test]
-fn full_publish_builds_one_corpus() {
+fn full_publish_builds_a_constant_number_of_corpora() {
     let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
-    let (_dir, store, _) = graph(20, 1);
-    cost_counters::reset();
-    let _ = tine_graph_features::publish::publish_html(&store).unwrap();
-    let counts = cost_counters::snapshot();
-    assert_eq!(counts.corpus, 1, "I-15: full publish enumerates from the view and builds one corpus; exemplar publish.rs:9 publish_html");
-    store.close();
+    // The site `tine publish` writes: one corpus of the graph view to select
+    // from, and one of the private build graph it renders from
+    // (`build_graph.rs`), whatever the number of pages.
+    let corpora = |pages: usize| {
+        let (_dir, store, _) = graph(pages, 1);
+        let out = tempfile::tempdir().unwrap();
+        cost_counters::reset();
+        let _ =
+            tine_graph_features::publish_query::publish_static(&store, out.path(), "site", true)
+                .unwrap();
+        let counts = cost_counters::snapshot();
+        store.close();
+        counts.corpus
+    };
+    let (small, large) = (corpora(20), corpora(40));
+    assert_eq!(small, 2, "I-15: full publish builds the view's corpus and the build graph's, no more; exemplar publish_query.rs publish_static");
+    assert_eq!(
+        large, small,
+        "I-15: the number of corpora does not grow with the pages"
+    );
 }
