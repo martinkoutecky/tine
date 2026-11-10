@@ -127,6 +127,9 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
+/** Native read provenance, including a source that supplied no page bytes. */
+export type PageReadSource = "disk" | "held-bytes" | "held-absent" | "held-unindexed";
+
 /** What the backend rename did; `unchanged`: nothing written — a case-only
  *  rename, an empty old name, or a name no file and no reference uses (e.g. a
  *  never-saved page nobody links to). `touched` lists every page file it moved,

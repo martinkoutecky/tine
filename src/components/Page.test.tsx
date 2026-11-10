@@ -1835,7 +1835,7 @@ describe("page route loading", () => {
     const { root, dispose } = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "contents", path: "pages/contents.md" }));
-      expect(read).toHaveBeenCalledWith("pages/Contents.md");
+      expect(read).toHaveBeenCalledWith("pages/Contents.md", expect.any(Function));
       expect(root.textContent).toContain("Table of contents");
       expect(recentPages().filter((r) => r.path === "pages/Contents.md")).toEqual([]);
     } finally {

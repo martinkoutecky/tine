@@ -112,7 +112,7 @@ pub use page_host::faults as host_faults;
 pub use page_host::{
     ApplyRefusal, DiskToken, DraftStatus, Effect as HostEffect, Expected as HostExpected,
     HostInputs, HostOp, HostRead, HostReadError, Input, Opened, PageHost, PageMail, PageOperation,
-    PageRefusal, Reloaded, StopMode, StopState, Stopped,
+    PageRefusal, Reloaded, Saved as HostSaved, StopMode, StopState, Stopped,
 };
 pub use root_binding::BoundDirectory;
 #[cfg(test)]
@@ -154,8 +154,8 @@ pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
     FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
     InventoryScope, IrAnswer, IrRequest, LinkTarget, Listing, LoadError, OpenError, OpenOptions,
-    Origin, PageId, PageRead, QueryError, Resolved, SaveBase, SearchRequest, Store, StoreError,
-    Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
+    Origin, PageId, PageRead, PageReadSource, QueryError, Resolved, SaveBase, SearchRequest, Store,
+    StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::{QueryDialect, QueryResult};

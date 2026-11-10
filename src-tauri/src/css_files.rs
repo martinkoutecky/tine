@@ -159,7 +159,7 @@ fn graph_read(store: &Store) -> Result<CssFile, String> {
             text: String::from_utf8(bytes).map_err(|e| e.to_string())?,
             revision: Some(rev.into()),
         }),
-        Err(StoreError::NotFound) => Ok(CssFile {
+        Err(StoreError::NotFound(_)) => Ok(CssFile {
             text: String::new(),
             revision: None,
         }),
