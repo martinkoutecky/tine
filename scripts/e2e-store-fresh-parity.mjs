@@ -18,7 +18,7 @@ const files = {
   "pages/a.md": "- target [[Delta]]\n",
   "pages/Delta.md": "icon:: 🚀\n\n- canonical icon page\n",
   "pages/twin.md": "icon:: 📚\ntitle:: Delta\n\n- competing title page\n",
-  "journals/2026_10_02.md": "- canonical journal reference [[a]]\n",
+  "journals/2026-10-02.md": "- canonical journal reference [[a]]\n",
   "logseq/config.edn": "{}\n",
 };
 for (const [rel, bytes] of Object.entries(files)) fs.writeFileSync(path.join(graph, rel), bytes);
@@ -66,7 +66,8 @@ try {
     .some(node => node.textContent.includes("canonical journal reference"))), { timeout: 20_000 });
 
   stage = "a live duplicate journal stays detectable and leaves linked references unchanged";
-  fs.writeFileSync(path.join(graph, "journals/2026-10-02.md"), "- losing journal reference [[a]]\n");
+  // Within a kind the least path owns the name (conceptual model §2.2).
+  fs.writeFileSync(path.join(graph, "journals/2026_10_02.md"), "- losing journal reference [[a]]\n");
   await browser.waitUntil(async () => (await inventory()).entries.some(entry => entry.is_journal && entry.target.others?.length === 1),
     { timeout: 20_000, timeoutMsg: "the watcher did not publish the duplicate claimant" });
   await openPageByName(browser, "Delta");
@@ -75,26 +76,27 @@ try {
     .some(node => node.textContent.includes("canonical journal reference"))), { timeout: 20_000 });
   const references = await browser.execute(() => [...document.querySelectorAll(".reference-group")].map(node => node.textContent).join("\n"));
   assert(!references.includes("losing journal reference"), `a duplicate journal leaked into linked references: ${references}`);
-  assert(fs.readFileSync(path.join(graph, "journals/2026-10-02.md"), "utf8") === "- losing journal reference [[a]]\n", "the stray was changed");
+  assert(fs.readFileSync(path.join(graph, "journals/2026_10_02.md"), "utf8") === "- losing journal reference [[a]]\n", "the stray was changed");
   passed.push(stage);
 
   stage = "a held canonical page keeps its icon across a real config reload";
   await openPageByName(browser, "Delta");
   assert((await icons()).Delta === "🚀", "the initial icon did not belong to the canonical file");
-  fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:journal/file-name-format \"yyyy-MM-dd\"}\n");
-  // The configured filename now prefers the hyphenated journal. A revision
-  // alone could belong to an unrelated pending watcher publication.
+  fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:journal/page-title-format \"yyyy-MM-dd\"}\n");
+  // Wait for the changed journal title, not an unrelated pending publication.
+  // Filename configuration does not change the physical claimant order.
   await browser.waitUntil(async () => (await inventory()).entries.some(entry => entry.is_journal
+    && entry.name === "2026-10-02"
     && entry.target.id === "journals/2026-10-02.md"
     && entry.target.others?.includes("journals/2026_10_02.md")),
-  { timeout: 20_000, timeoutMsg: "the configured journal claimant order did not change" });
+  { timeout: 20_000, timeoutMsg: "the configured journal title did not change" });
   assert((await icons()).Delta === "🚀", "the native icon consumer switched to the losing title claimant");
   assert(await browser.execute(() => {
     const icon = document.querySelector("h1.page-title .page-icon");
     return icon?.textContent.includes("🚀") || [...(icon?.querySelectorAll("[alt], [aria-label]") ?? [])]
       .some(node => (node.getAttribute("alt") || node.getAttribute("aria-label")) === "🚀");
   }), "the visible held page lost its icon");
-  for (const rel of ["pages/a.md", "pages/Delta.md", "pages/twin.md", "journals/2026_10_02.md"]) {
+  for (const rel of ["pages/a.md", "pages/Delta.md", "pages/twin.md", "journals/2026-10-02.md"]) {
     assert(fs.readFileSync(path.join(graph, rel), "utf8") === files[rel], `an unrelated graph file changed: ${rel}`);
   }
   passed.push(stage);
