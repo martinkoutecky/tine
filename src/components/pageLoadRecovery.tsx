@@ -5,6 +5,19 @@ import { changed, pageChangeKey } from "../changeKeys";
 import { graphOwner, readOwned, type Owner } from "../owned";
 import { backend } from "../backend";
 import type { Route } from "../router";
+import type { PageRead, PageReadSource } from "../types";
+import { recordDiagnostic } from "../debug";
+
+/** Compare the exact selection once. A refusal records which comparisons failed and
+ *  the read's source, never its identity operands; a matching answer records nothing. */
+export function refusedPageOpen(stage: "route" | "probe", r: Extract<Route, { kind: "page" }>, dto: PageRead | null, readSource: PageReadSource | null): boolean {
+  const pathMismatch = dto?.id !== r.path;
+  const nameMismatch = dto?.name !== r.name;
+  const kindMismatch = dto?.kind !== r.pageKind;
+  if (!pathMismatch && !nameMismatch && !kindMismatch) return false;
+  void recordDiagnostic("page_open_refused", { pageOpen: { stage, readSource, pathMismatch, nameMismatch, kindMismatch } });
+  return true;
+}
 
 /** The refusal a routed page shows in place of its content when it could not be opened. */
 export function PageLoadError(props: { error: string }): JSX.Element {
@@ -64,11 +77,12 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
       };
       const probe = async () => {
         if (!owner()) return;
+        let source: PageReadSource | null = null;
         try {
-          const result = await readOwned(owner, backend().getPageByPath(path));
+          const result = await readOwned(owner, backend().getPageByPath(path, value => { source = value; }));
           if (result.kind === "stale") return;
           const dto = result.value;
-          if (dto?.id === path && dto.name === r.name && dto.kind === r.pageKind) {
+          if (!refusedPageOpen("probe", r, dto, source)) {
             retry();
             return;
           }
