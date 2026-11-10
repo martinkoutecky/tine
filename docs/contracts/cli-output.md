@@ -521,7 +521,7 @@ unchanged without failing the rename: `report.config_skipped` says why.
 | `report` | `tine_graph_features::pages::RenameReport` | always | no | app operation report |
 | `report.outcome` | string | always | no | `renamed` or `unchanged` |
 | `report.touched` | array | always | no | old paths and whether they moved |
-| `report.renamed` | array | always | no | every page identity the rename moved: the renamed page (one with no file too), each file-backed namespace descendant, and each namespace member that exists only through references (its references were renamed with the page; `path` is `null`), once per page, in no promised order. The app's window moves its tabs (closed ones too), Recent and sidebar by exactly this list. Empty for `unchanged` |
+| `report.renamed` | array | always | no | every page identity the rename moved: the renamed page (one with no file too), each file-backed namespace descendant, and each reference-only namespace member named by an applied rewrite (links, tags, macro/query arguments and Org file links, including namespace parents; `path` is `null`). Skipped conflicted files contribute no reference-only members. Once per page, in no promised order. The app's window moves its tabs (closed ones too), Recent and sidebar by exactly this list. Empty for `unchanged` |
 | `report.renamed[].from` | string | always | no | the page's name before the rename |
 | `report.renamed[].to` | string | always | no | the name the rename gave it (its file name or title, and the references that followed) |
 | `report.renamed[].path` | string | nullable | no | graph-relative path of its file before the rename; `null` for a renamed page with no file and for a reference-only member |

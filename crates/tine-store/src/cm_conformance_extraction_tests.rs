@@ -498,14 +498,16 @@ fn target_read(text: &str, is_org: bool, key: &str) -> bool {
     let renames = std::collections::HashMap::from([(key.to_owned(), "QQZQQ".to_owned())]);
     let may_hold = |raw: &str| raw.contains("{{") || (is_org && raw.contains("[[file:"));
     if let Some(pre) = parsed.pre_block.as_deref() {
-        if may_hold(pre) && rename_pre_block(pre, is_org, &renames, None, NAME_FORMAT) != pre {
+        if may_hold(pre) && rename_pre_block(pre, is_org, &renames, None, NAME_FORMAT, None) != pre
+        {
             return true;
         }
     }
     let mut stack: Vec<&DocBlock> = parsed.roots.iter().collect();
     while let Some(block) = stack.pop() {
         let raw = block.raw();
-        if may_hold(raw) && rename_block_raw(raw, is_org, &renames, None, NAME_FORMAT) != raw {
+        if may_hold(raw) && rename_block_raw(raw, is_org, &renames, None, NAME_FORMAT, None) != raw
+        {
             return true;
         }
         stack.extend(block.children.iter());

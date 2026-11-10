@@ -692,17 +692,17 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
   if (nextSidebar.length !== rightSidebar().length) setRightSidebar(nextSidebar);
 }
 
-/** After backend rename, re-key recent and sidebar entries in order,
- * deduplicating destinations even if source is absent. Favorites are not
- * re-keyed here: config.edn's favorites have one answerer, the backend's
- * rename config step, whose answer `adoptRenamedFavorites` takes in. Only
- * changed stores schedule persistence. Does not rename or open a page.
- * O(recents² + sidebar items). */
+/** Re-key one resolved page identity in Recent and the sidebar, deduplicating
+ * destinations even if the source is absent. O(recents² + sidebar items). */
 export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
 export function renamePageInNavigation(from: string, to: string): void;
 export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
-  const from: PageTarget = typeof fromOrName === "string" ? { name: fromOrName, pageKind: "page" } : fromOrName;
-  const to: PageTarget = typeof toOrName === "string" ? { name: toOrName, pageKind: from.pageKind } : toOrName;
+  const from: PageTarget = typeof fromOrName === "string"
+    ? { name: fromOrName, pageKind: "page" }
+    : fromOrName;
+  const to: PageTarget = typeof toOrName === "string"
+    ? { name: toOrName, pageKind: from.pageKind }
+    : toOrName;
   followPagesInNavigation((page) => page.pageKind === from.pageKind && page.name === from.name
     && (from.path === undefined || page.path === from.path) ? to : null);
 }

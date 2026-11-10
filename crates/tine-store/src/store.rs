@@ -2733,7 +2733,6 @@ pub struct WholeGraph {
 }
 
 mod journal_rename;
-mod rename_names;
 mod template_names;
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
     if result.exceeded {

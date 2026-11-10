@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import "./graph";
 import { backend } from "./backend";
 import { paneRouter, resetPaneLayoutToSingle } from "./panes";
@@ -184,4 +186,36 @@ it("moves reference-only children the rename renamed, loaded or not, in Recent, 
   main.reopenClosedTab();
   expect(main.tabs().at(-1)!.history.map((r) => r.kind === "page" ? r.name : null)).toEqual(["Previous", "New/ghost"]);
   expect(main.route()).toMatchObject({ name: "New/ghost" });
+});
+
+it.each(["CLI", "dialog"].flatMap((entry) => ["conflict", "targets"].map((scenario) => ({ entry, scenario }))))("follows applied targets and keeps skipped-only children ($entry, $scenario)", async ({ entry, scenario }) => {
+  const names = scenario === "conflict" ? ["Old/ghost", "Old/untouched"]
+    : ["Old/macro", "Old/query", "Old/org", "Old/file", "Old/link", "Old/tag"];
+  const expected = names.map((name) => scenario === "conflict" ? name : name.replace("Old/", "New/"));
+  resetPaneLayoutToSingle({ tabs: names.map((name) => ({ history: [page(name)], pos: 0, pinned: false })), activeIndex: 1 });
+  const main = paneRouter("main");
+  await main.closeTab(main.tabs()[0].id);
+  paneRouter("side").restoreSnapshot({ tabs: [{ history: [page(names[0])], pos: 0, pinned: false }], activeIndex: 0 });
+  setRightSidebar(names.map((name) => ({ kind: "page", name, pageKind: "page", collapsed: false })));
+  setRecentPages(names.map((name) => ({ name, kind: "page" })));
+  // Rust pins these members against the bytes actually written. The optional
+  // capture runs these same navigation assertions on its real serialized report.
+  const capture = process.env.TINE_RENAME_REPORT_CAPTURE;
+  const report: RenameDone = capture ? JSON.parse(readFileSync(join(capture, `${scenario}.json`), "utf8")) : {
+    ...oldToNew,
+    skipped_conflicted_referrers: ["pages/Conflict.md"],
+    renamed: [...oldToNew.renamed, ...(scenario === "conflict" ? [] : names.map((name, i) => renamed(name, expected[i], null)))],
+  };
+  if (entry === "CLI") await cliRename("Old", "New", "pages/Old.md", report);
+  else {
+    vi.spyOn(backend(), "renamePage").mockResolvedValueOnce(report);
+    expect(await renamePageOnDisk("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("renamed");
+  }
+  expect(main.tabs().map((tab) => tab.history[0]).map((route) => route.kind === "page" ? route.name : null)).toEqual(expected.slice(1));
+  expect(paneRouter("side").route()).toMatchObject({ name: expected[0] });
+  expect(rightSidebar().map((item) => item.kind === "page" ? item.name : item.page)).toEqual(expected);
+  expect(recentPages().map((item) => item.name)).toEqual(expect.arrayContaining(expected));
+  if (scenario === "targets") expect(recentPages().map((item) => item.name).filter((name) => name.startsWith("Old/"))).toEqual([]);
+  main.reopenClosedTab();
+  expect(main.route()).toMatchObject({ name: expected[0] });
 });

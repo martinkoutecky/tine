@@ -411,18 +411,11 @@ struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
 
-## WholeGraph: References (ceiling: 6)
+## WholeGraph: References (ceiling: 5)
 # CM3-1: explicit_referrers returns files, not per-occurrence lost closure
 # keys or direct journal ownership. This read-only rename guard needs both;
 # corpus exposes physical documents but not the shared claimant/owner rule.
 fn store::WholeGraph::journal_rewrite_risks
-# small-1109c r2 (rename report): the rename rewrites references to unclaimed
-# namespace members by prefix, so their identities move and the report names
-# them. explicit_referrers answers files, not the names their references spell;
-# journal_rewrite_risks answers only journal keys a rewrite loses;
-# inventory(FilesAtOrUnder) lists file-claimed names only, and inventory(All)
-# is the full-graph walk GH #623 took out of rename. Same walk, no file I/O.
-fn store::WholeGraph::renamed_reference_names
 fn store::WholeGraph::backlink_filter_context
 fn store::WholeGraph::backlinks
 fn store::WholeGraph::explicit_referrers

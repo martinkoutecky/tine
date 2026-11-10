@@ -54,10 +54,8 @@ pub(super) struct RenamePlan {
     /// `map.1` keyed so: query arguments naming a merged page (ruling (a)).
     pub(super) query_lookup: HashMap<String, String>,
     pub(super) moves: HashMap<PageId, FileId>,
-    /// Every page identity the rename moves: first the map's pairs, in
-    /// `map.0`'s order (it is built from them), then the reference-only
-    /// namespace members its rewrite renames. The report's one old → new
-    /// answer (`RenameReport::renamed`).
+    /// Planned identities (including a fileless primary), in `map.0` order.
+    /// The transaction adds reference-only identities from its applied edits.
     pub(super) renamed: Vec<RenamedPage>,
     pub(super) moved_titles_to_rebind: HashSet<PageId>,
     pub(super) merge: Option<(PageId, PageId)>,
@@ -70,7 +68,7 @@ pub(super) struct RenamePlan {
     pub(super) skipped: Vec<PageId>,
     /// The new text of each referrer `pages` found changed, computed from
     /// its `reads` bytes; the host reuses it on equal bytes (GH #623).
-    pub(super) rewritten: HashMap<PageId, String>,
+    pub(super) rewritten: HashMap<PageId, (String, HashSet<(String, String)>)>,
 }
 
 impl RenamePlan {
@@ -102,6 +100,7 @@ impl RenamePlan {
                     &self.map.0,
                     &self.map.1,
                     self.config.file_name_format,
+                    None,
                 )
             })
             .map_err(|_| unwritable(store, id))?
@@ -155,15 +154,22 @@ impl RenamePlan {
             // changes it and it carries no VCS conflict markers.
             let syntax = Format::from_path(id.as_str().as_ref());
             let org = syntax == Format::Org;
-            let rewritten =
-                refs::rename_rewrite_with_queries(&content, org, &self.map.0, &self.map.1, format);
+            let mut names = HashSet::new();
+            let rewritten = refs::rename_rewrite_with_queries(
+                &content,
+                org,
+                &self.map.0,
+                &self.map.1,
+                format,
+                Some(&mut names),
+            );
             let changed = rewritten != content;
             let marked =
                 !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
             match (changed, marked) {
                 (true, false) => {
                     pages.push(id.clone());
-                    self.rewritten.insert(id.clone(), rewritten);
+                    self.rewritten.insert(id.clone(), (rewritten, names));
                 }
                 (true, true) => self.skipped.push(id.clone()),
                 _ => {}
@@ -236,7 +242,7 @@ fn may_hold_reference(
         return text_mentions_a_name(&text, map);
     }
     std::panic::catch_unwind(|| {
-        refs::rename_rewrite_with_queries(&text, org, &map.0, &map.1, format) != text
+        refs::rename_rewrite_with_queries(&text, org, &map.0, &map.1, format, None) != text
     })
     .unwrap_or_else(|_| text_mentions_a_name(&text, map))
 }
@@ -449,6 +455,43 @@ pub struct RenamedPage {
     /// Graph-relative path of the page's file before the rename; `None` for a
     /// renamed page with no file and for a reference-only namespace member.
     pub path: Option<String>,
+}
+
+/// Extend file identities with names carried by applied edits, not a second
+/// reference walk. Namespace parents follow the same lookup; the full target
+/// uses the rewriter's answer (including a query's override).
+pub(super) fn report_rewritten_names(
+    renamed: &mut Vec<RenamedPage>,
+    names: HashSet<(String, String)>,
+    old: &str,
+    lookup: &HashMap<String, String>,
+) {
+    let under = format!("{}/", refs::normalize(old));
+    let mut listed: HashSet<_> = renamed
+        .iter()
+        .map(|page| refs::normalize(&page.from))
+        .collect();
+    for (from, to) in names {
+        for prefix in refs::namespace_refs(&from) {
+            let key = refs::normalize(prefix);
+            if !key.starts_with(&under) || !listed.insert(key) {
+                continue;
+            }
+            let destination = if prefix == from {
+                to.clone()
+            } else {
+                let Some(destination) = refs::renamed_page_name(prefix, lookup) else {
+                    continue;
+                };
+                destination.into_owned()
+            };
+            renamed.push(RenamedPage {
+                from: prefix.to_owned(),
+                to: destination,
+                path: None,
+            });
+        }
+    }
 }
 
 pub(super) fn plan_rename(
@@ -755,24 +798,6 @@ pub(super) fn plan_rename(
             .collect()
     };
     let lookup = keyed(&map.0);
-    // A reference-only namespace member has no file to move, but the rewrite
-    // renames every reference to it by the prefix rule, so its identity moves
-    // too. Reported only: the map above already writes it.
-    let listed: HashSet<String> = renamed
-        .iter()
-        .map(|page| refs::normalize(&page.from))
-        .collect();
-    renamed.extend(
-        graph
-            .renamed_reference_names(old, &lookup)
-            .into_iter()
-            .filter(|(from, _)| !listed.contains(&refs::normalize(from)))
-            .map(|(from, to)| RenamedPage {
-                from,
-                to,
-                path: None,
-            }),
-    );
     let query_lookup = keyed(&map.1);
     // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: the
     // pages that explicitly reference a renamed name, plus every moved page.

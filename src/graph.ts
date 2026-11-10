@@ -456,8 +456,8 @@ async function reportLegacyDrafts(): Promise<void> {
  *  rewrites `[[refs]]` across many files through the self-write guard. The
  *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
  *  app's navigation and graph-derived views. `follow` is the rename's one map
- *  (`followRename`, the backend's report of every page it moved, the renamed
- *  page and its file-backed namespace descendants): every pane (main, split,
+ *  (`followRename`: the renamed page, file-backed descendants and rewritten
+ *  reference-only members): every pane (main, split,
  *  sidebar) history, closed tabs included, Recent and sidebar entry showing a
  *  moved page follows it, once, whoever started the rename (OG
  *  `rename-page-aux` re-keys Recent for each moved child; its sidebar holds the
