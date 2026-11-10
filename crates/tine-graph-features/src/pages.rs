@@ -11,7 +11,7 @@ use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
 #[path = "pages_rename_plan.rs"]
 mod rename_plan;
-pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
+pub use rename_plan::{rename_destination_holders, RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};

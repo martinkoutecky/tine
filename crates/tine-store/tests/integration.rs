@@ -7,7 +7,8 @@ mod search_properties;
 // thread, file-descriptor and allocation totals. A case that reads them takes
 // `exclusive_integration_lock`, so no other case's graph activity runs beside
 // its measurement. Every other case takes the shared `integration_lock` and
-// runs in parallel with the rest. Fault plants are per thread
+// runs in parallel with the rest (scripts/test-rust-integration-layout.mjs
+// checks that every case takes one). Fault plants are per thread
 // (`host_faults`), so they need no lock.
 // Child workers start a fresh executable and therefore have their own lock.
 static INTEGRATION_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());

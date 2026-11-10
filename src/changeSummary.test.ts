@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from "vitest";
-import { applyChangeSummary, changeSummary } from "./changeSummary";
+import { applyChangeSummary, changeSummary, setChangeSummaryBaseline } from "./changeSummary";
 import { applyGraphAnswers } from "./graphAnswers";
 import { bumpGraphEpoch } from "./graphSession";
 import { dataRev } from "./dataRevision";
@@ -23,6 +23,60 @@ it("late binding and a missed revision are full; consecutive summaries stay prec
   expect(changeSummary()).toEqual(summary("17", true));
   applyChangeSummary(summary("18", true));
   expect(changeSummary()).toEqual(summary("18", true));
+});
+
+// UI-FEED-FIRST-CHANGE-RESTART: graph open seeds the baseline from the open
+// answer, so the session's first summary is the delta it is (a full one bumps
+// `days` and restarts a scrolled Journals feed). A real gap still flushes.
+it("a baseline from graph open makes the first summary a delta; a skipped revision is still full", () => {
+  setChangeSummaryBaseline("14");
+  expect(changeSummary()).toBeUndefined();
+  applyChangeSummary(summary("15"));
+  expect(changeSummary()).toEqual(summary("15"));
+  applyChangeSummary(summary("17"));
+  expect(changeSummary()).toEqual(summary("17", true));
+  applyChangeSummary(summary("18"));
+  expect(changeSummary()).toEqual(summary("18"));
+});
+
+it("a first summary past the open baseline is a gap and flushes in full", () => {
+  setChangeSummaryBaseline("14");
+  applyChangeSummary(summary("16"));
+  expect(changeSummary()).toEqual(summary("16", true));
+});
+
+it("a summary the open answer already covered is a duplicate", () => {
+  setChangeSummaryBaseline("14");
+  applyChangeSummary(summary("14"));
+  applyChangeSummary(summary("13"));
+  expect(changeSummary()).toBeUndefined();
+  applyChangeSummary(summary("15"));
+  expect(changeSummary()).toEqual(summary("15"));
+});
+
+it("an absent baseline, a later epoch or a store reset leave the first summary full", () => {
+  setChangeSummaryBaseline(null);
+  applyChangeSummary(summary("15"));
+  expect(changeSummary()).toEqual(summary("15", true));
+  bumpGraphEpoch();
+  setChangeSummaryBaseline("20");
+  bumpGraphEpoch();
+  applyChangeSummary(summary("21"));
+  expect(changeSummary()).toEqual(summary("21", true));
+  setChangeSummaryBaseline("30");
+  invalidateBinding();
+  applyChangeSummary(summary("31"));
+  expect(changeSummary()).toEqual(summary("31", true));
+});
+
+it("a summary already received in this epoch outranks a later baseline", () => {
+  applyChangeSummary(summary("15"));
+  setChangeSummaryBaseline("10");
+  applyChangeSummary(summary("16"));
+  expect(changeSummary()).toEqual(summary("16"));
+  setChangeSummaryBaseline("20");
+  applyChangeSummary(summary("17"));
+  expect(changeSummary()).toEqual(summary("17"));
 });
 
 it("duplicates and reordered messages do not replace the latest publication", () => {

@@ -1093,7 +1093,24 @@ the close, working-set eviction (`unsettledPages`), the recovery panel and
 close prompt (`unsavedDrafts`, state "Saving") and reload blocking
 (`hostBlocksReload`). Natively, `page_wait` answers false once the driver has
 ended, the host is down or its state is poisoned. A down host dropped its
-pages, which would otherwise read as owing nothing. Proofs
+pages, which would otherwise read as owing nothing. A driver that ends on a panic (a host bug) releases the store writer before
+unwinding and the host's drop hands its pages back to the watcher, so the
+Store's other writers and `Store::close` go on (s3b O6; proof
+`binding_tests.rs` `a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable`).
+Retiring such a host is terminal on every stop path (window close, graph
+switch, overlap release, app exit, `tine serve`): its stop answers `Ended`,
+`PageHost::stop_finish` joins it and hands its pages back to the watcher, its
+drafts stay on disk for the next host's recovery, and the Store closes, the
+slot leaves the retirement and the owner lease is released. `Store::close`
+never panics: it takes over a lock a panicked writer poisoned, and so does
+every later close (the slot's and the Store's drops); proofs
+`host_retirement.rs` `a_retirement_after_a_writer_panicked_closes_and_releases_the_root`
+and `panic_isolation_tests.rs` `close_after_a_writer_panicked_completes_and_drops`. A reopen never adopts it: it ends that retirement itself and
+starts a fresh host. A restore's stop over it aborts. Proofs
+`host_retirement.rs` `r1_a_window_closed_after_a_driver_panic_retires_its_host_for_good`,
+`r1_a_reopen_never_adopts_a_host_whose_driver_ended`,
+`r1_a_graph_switch_after_a_driver_panic_retires_the_old_host_for_good` and
+`binding_tests.rs` `an_ended_host_retires_for_good_and_hands_its_pages_back`. Proofs
 `src/document/host/client.test.ts` "keeps a page open while a version the host
 took from it is unpublished (J6)", "lets go when the session ends (J6)", the
 B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`
@@ -1899,9 +1916,18 @@ index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own
 publication has no external page-reload entries: its answers arrive in an
 empty `graph-changed-bulk` envelope. External publications attach the answers
-once, on their first `graph-changed` entry or their bulk envelope. The frontend
-receiver also treats its first summary after binding and revision gaps as
-`full`, and ignores duplicate/older revisions. S3's shared key layer releases
+once, on their first `graph-changed` entry or their bulk envelope. The
+`load_graph` answer (`loaded` and `already_current`) carries `published_rev`:
+the last publication whose window events the binding's dispatch thread had
+emitted when the answer was made (`RescanCursor::emitted`, seeded with the
+subscription's `start_rev`; O(1), no extra IPC). Every later publication's
+summary follows on the event channel, and the window's readers fetch after the
+answer, so the frontend receiver takes it as its baseline at graph open (in
+the binding's new epoch) and reads the next consecutive summary as the delta
+it is (UI-FEED-FIRST-CHANGE-RESTART). Without a baseline (an older host, an
+epoch bump, a store reset) it treats its first summary as `full`; a revision
+gap (a summary missed) is always `full`, and duplicate/older revisions,
+including those at or below the baseline, are ignored. S3's shared key layer releases
 these invalidations at the existing publication/refresh-hold boundary; result
 retention is unchanged. Legacy summaries lacking S2 fields conservatively
 refresh their reader families. No new state is persisted or save path changed.

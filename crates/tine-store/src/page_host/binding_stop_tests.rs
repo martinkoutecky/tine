@@ -345,6 +345,7 @@ fn review_p1_m2_an_orphan_stop_finishes_once_draft_io_is_repaired() {
         match live.host.orphan_stop() {
             StopState::Aborted(pages) => break pages,
             StopState::Ready => panic!("R2: the orphan stop finished over a known copy"),
+            StopState::Ended => panic!("the driver ended"),
             StopState::Waiting => {
                 assert!(Instant::now() < deadline, "the stop never settled");
                 std::thread::sleep(Duration::from_millis(20));
@@ -362,6 +363,7 @@ fn review_p1_m2_an_orphan_stop_finishes_once_draft_io_is_repaired() {
                 assert!(Instant::now() < deadline, "still aborted: {pages:?}");
             }
             StopState::Waiting => assert!(Instant::now() < deadline, "never ready"),
+            StopState::Ended => panic!("the driver ended"),
         }
         std::thread::sleep(Duration::from_millis(20));
     }

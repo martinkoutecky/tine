@@ -52,6 +52,7 @@ fn graph(root: &Path, files: &[(&str, &str)]) -> Store {
 
 #[test]
 fn date_alias_group_wire_keeps_an_unclaimed_day_spelling() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let store = graph(
         dir.path(),

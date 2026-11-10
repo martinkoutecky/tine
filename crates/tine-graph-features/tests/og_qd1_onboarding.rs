@@ -9,6 +9,7 @@ fn guide_explains_direct_capitalization_rename_and_twin_refusal() {
 
 #[test]
 fn guide_explains_alias_rename_and_reload() {
+    let _integration_guard = crate::integration_lock();
     let guide = include_str!("../../tine-guide/src/templates/pages-links-references-search.md");
     assert!(guide.contains("aliases still work after a reload"));
     assert!(guide.contains("every declaring `alias:: ML` to `alias:: AI`"));

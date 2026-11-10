@@ -52,6 +52,7 @@ fn names(aliases: &[&str], pages: &[&str]) -> (Vec<String>, Vec<String>) {
 
 #[test]
 fn date_alias_group_never_acquires_the_ordinary_canonical_claimant() {
+    let _guard = crate::integration_lock();
     let (dir, store) = graph(&[
         (
             "logseq/config.edn",
@@ -102,6 +103,7 @@ fn date_alias_group_never_acquires_the_ordinary_canonical_claimant() {
 
 #[test]
 fn date_alias_endpoints_share_opening_and_reference_class_without_a_journal_file() {
+    let _guard = crate::integration_lock();
     let (dir, store) = graph(&[
         ("pages/Owner.md", "alias:: [[Oct 23rd, 2026]]\n\n- owner\n"),
         (
@@ -142,6 +144,7 @@ fn date_alias_endpoints_share_opening_and_reference_class_without_a_journal_file
 
 #[test]
 fn configured_date_aliases_survive_a_warm_checkpoint() {
+    let _guard = crate::integration_lock();
     let (dir, store) = graph(&[
         ("logseq/config.edn", "{:journal/file-name-format \"dd.MM.yyyy\" :journal/page-title-format \"yyyy_dd_MM\"}\n"),
         ("pages/Owner.md", "alias:: 2026_23_10\n\n- owner\n"),
@@ -207,6 +210,7 @@ fn configured_date_aliases_survive_a_warm_checkpoint() {
 
 #[test]
 fn configured_date_aliases_keep_case_sensitive_literals_and_loose_digits() {
+    let _guard = crate::integration_lock();
     let format = tine_core::date::JournalFormat::new(Some("dd.MM.yyyy"), Some("X-yyyy_d_MM"));
     assert!(
         format.parse("X-2026_03_10").is_some(),
@@ -301,6 +305,7 @@ fn configured_date_aliases_keep_case_sensitive_literals_and_loose_digits() {
 /// group.
 #[test]
 fn a_group_separates_fileless_names_from_real_pages() {
+    let _guard = crate::integration_lock();
     let (_dir, store) = graph(&[
         ("pages/Alpha.md", "alias:: Al, Beta\n\n- alpha notes\n"),
         ("pages/Beta.md", "alias:: be, Gamma\n\n- beta notes\n"),
@@ -331,6 +336,7 @@ fn a_group_separates_fileless_names_from_real_pages() {
 /// in two spellings shows the least one.
 #[test]
 fn self_aliases_and_repeated_declarations_add_no_member() {
+    let _guard = crate::integration_lock();
     let (_dir, store) = graph(&[
         ("pages/Solo.md", "alias:: Solo, so\n\n- x\n"),
         ("pages/Other.md", "alias:: SO\n\n- y\n"),
@@ -347,6 +353,7 @@ fn self_aliases_and_repeated_declarations_add_no_member() {
 /// folder whose name sorts between the other's characters.
 #[test]
 fn every_resolver_picks_the_same_first_owner() {
+    let _guard = crate::integration_lock();
     let (_dir, store) = graph(&[
         (
             "pages/a/x.md",

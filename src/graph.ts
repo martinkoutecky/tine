@@ -20,6 +20,7 @@ import { journalTitle, localDayKey, setJournalFormats, appNow } from "./journal"
 import { setFileNameFormat } from "./render/pageRefs";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
+import { setChangeSummaryBaseline } from "./changeSummary";
 import { applyCustomCss, customCssVersion } from "./customCss";
 import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
@@ -343,6 +344,8 @@ export async function loadGraphPath(
   // The shared config door publishes the title format before meta/epoch,
   // then starts derived reads in that epoch (including force refresh).
   applyConfigDerivedState(meta, null);
+  // In the epoch just set, before any reader of this binding fetches.
+  setChangeSummaryBaseline(result.published_rev);
   void refreshRootRecovery();
   const configProblem = "config_problem" in result ? result.config_problem : null;
   setGraphConfigProblem(configProblem);
