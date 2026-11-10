@@ -323,6 +323,10 @@ impl ChangeSummary {
     }
 }
 
+/// A publication changing more paths than this publishes `full`; a page
+/// lifecycle decides that before any per-path preparation (`snapshot.rs`).
+pub(super) const PRECISE_PATHS: usize = 32;
+
 /// One page's active entry and document on one side of a publication.
 type PageSide = (PageEntry, Arc<Document>);
 
@@ -377,6 +381,84 @@ impl Lifecycle {
         }
         lifecycle
     }
+
+    /// An ordinary edit list, owned so fileless rows can join it.
+    fn of_edits(edits: &[(PageEntry, Arc<Document>, Arc<Document>)]) -> Self {
+        Lifecycle {
+            moved: vec![false; edits.len()],
+            edits: edits.to_vec(),
+            names: Vec::new(),
+        }
+    }
+}
+
+/// The pages without a file a publication brought or removed, as `(came,
+/// row)`: a namespace child brings its parent and its last one removes it, a
+/// page's references bring reference-only pages, and a file taking or leaving
+/// a name removes or brings that name's fileless row (review F1). Candidates:
+/// a moved page's name and references, an edited page's references that came
+/// or went (none while typing plain text), and the namespace prefixes of
+/// both, each looked up on both sides. `None` when there are candidates but a
+/// side's fileless inputs are not resident (never built here): the caller then
+/// treats every reader that can list one as touched.
+fn fileless_changes(
+    old: &ReadSnapshot,
+    new: &ReadSnapshot,
+    edits: &[(PageEntry, Arc<Document>, Arc<Document>)],
+    moved: impl Fn(usize) -> bool,
+) -> Option<Vec<(bool, crate::model::fileless_names::FilelessName)>> {
+    let mut spellings = BTreeSet::new();
+    for (i, (entry, before, after)) in edits.iter().enumerate() {
+        let moved = moved(i);
+        if before == after && !moved {
+            continue;
+        }
+        let refs = |graph: &ReadSnapshot, doc: &Document| -> BTreeSet<String> {
+            crate::model::collect_document_referenced_names(doc, graph.config())
+                .into_iter()
+                .collect()
+        };
+        let (was, now) = (refs(old, before), refs(new, after));
+        let mut names: Vec<String> = if moved {
+            was.union(&now).cloned().collect()
+        } else {
+            was.symmetric_difference(&now).cloned().collect()
+        };
+        if moved {
+            names.push(entry.name.clone());
+        }
+        for name in names {
+            spellings.extend(
+                crate::model::namespace_parents::parent_prefixes(&name)
+                    .map(|(prefix, _)| prefix.to_owned()),
+            );
+            spellings.insert(name);
+        }
+    }
+    if spellings.is_empty() {
+        return Some(Vec::new());
+    }
+    let rows = |graph: &ReadSnapshot| {
+        let mut rows = BTreeMap::new();
+        for name in &spellings {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::lifecycle_probe();
+            if let Some(row) = graph.resident_reference_only_page(name)? {
+                rows.insert(page_key(&row.name), row);
+            }
+        }
+        Some(rows)
+    };
+    let (was, now) = (rows(old)?, rows(new)?);
+    let mut changes = Vec::new();
+    for key in was.keys().chain(now.keys()).collect::<BTreeSet<_>>() {
+        let (was, now) = (was.get(key), now.get(key));
+        if was != now {
+            changes.extend(was.map(|row| (false, row.clone())));
+            changes.extend(now.map(|row| (true, row.clone())));
+        }
+    }
+    Some(changes)
 }
 
 impl Snapshot {
@@ -404,7 +486,7 @@ impl Snapshot {
         let mut summary = ChangeSummary {
             rev: self.rev.0.to_string(),
             inventory_changed,
-            full: names_changed && page_changes.is_none() || paths.len() > 32,
+            full: names_changed && page_changes.is_none() || paths.len() > PRECISE_PATHS,
             day: Some(tine_core::date::JournalDate::today().ordinal_key()),
             ..Default::default()
         };
@@ -417,14 +499,44 @@ impl Snapshot {
             return summary;
         };
         summary.full |= old.answers.2.day != summary.day || self.unreadable != old.unreadable;
-        let lifecycle = page_changes.map(Lifecycle::of);
-        let edits = lifecycle.as_ref().map_or(edits, |l| Some(&l.edits[..]));
-        let moved = |i: usize| lifecycle.as_ref().is_some_and(|l| l.moved[i]);
-        let Some(edits) = edits else {
+        let mut lifecycle = page_changes.map(Lifecycle::of);
+        let Some(current) = lifecycle.as_ref().map_or(edits, |l| Some(&l.edits[..])) else {
             summary.full = true; // create, delete, rename, or unavailable old bytes
             dirty_query_plans(query_targets);
             return summary;
         };
+        // Each fileless row that came or left is a moved edit of the empty
+        // document under its fileless entry (the row query execution
+        // evaluates, `exec_candidates.rs`), so the same classifier names its
+        // readers, and its name is a name that came or left. Not compared
+        // when already `full` (every reader fires).
+        let fileless = if summary.full {
+            Some(Vec::new())
+        } else {
+            fileless_changes(&old.graph, &self.graph, current, |i| {
+                lifecycle.as_ref().is_some_and(|l| l.moved[i])
+            })
+        };
+        let fileless_unknown = fileless.is_none();
+        if let Some(rows) = fileless.filter(|rows| !rows.is_empty()) {
+            if lifecycle.is_none() {
+                lifecycle = edits.map(Lifecycle::of_edits);
+            }
+            let lifecycle = lifecycle.as_mut().expect("an edit list");
+            let empty = Arc::new(Document::default());
+            for (came, row) in rows {
+                let entry = row.page_entry();
+                lifecycle
+                    .edits
+                    .push((entry.clone(), Arc::clone(&empty), Arc::clone(&empty)));
+                lifecycle.moved.push(true);
+                lifecycle.names.push((came, entry));
+            }
+        }
+        let edits = lifecycle
+            .as_ref()
+            .map_or_else(|| edits.unwrap_or_default(), |l| &l.edits[..]);
+        let moved = |i: usize| lifecycle.as_ref().is_some_and(|l| l.moved[i]);
         // An alias edit regroups pages: a reference query matches a page's
         // whole alias group (D-20261019-Q8), so it can change an answer on a
         // page the edit never touched. Decided before the query readers are
@@ -445,8 +557,10 @@ impl Snapshot {
             summary.full |= [&old.graph, &self.graph]
                 .iter()
                 .any(|graph| graph.alias_edges().neighbors(&key).next().is_some());
-            let journal = entry.kind == PageKind::Journal;
-            let day = journal || self.journal_format.parse(&entry.name).is_some();
+            // A fileless day is a virtual journal: a day, not a journal file.
+            let day =
+                entry.kind == PageKind::Journal || self.journal_format.parse(&entry.name).is_some();
+            let journal = entry.kind == PageKind::Journal && entry.rel_path.is_some();
             if day {
                 day_keys.push(key.clone());
             }
@@ -495,7 +609,16 @@ impl Snapshot {
                 });
             // Time can change a displayed answer even when this publication
             // has no changed document to pass to the shared edit predicate.
+            // Fileless rows that could not be compared (their inputs not
+            // resident): every query that can list one is touched. (Search
+            // already offers an edited page's referenced names itself.)
             let touched = target.plan.as_ref().is_some_and(Plan::reads_clock)
+                || fileless_unknown
+                    && matches!(
+                        target.request,
+                        QuerySubscription::Query { .. } | QuerySubscription::Source { .. }
+                    )
+                    && target.plan.as_ref().is_none_or(Plan::lists_fileless_pages)
                 || edits.iter().zip(&facts).enumerate().any(
                     |(i, ((entry, before, after), (was, now)))| {
                         if before == after && !moved(i) {
@@ -540,8 +663,9 @@ impl Snapshot {
             }
             let key = page_key(&entry.name);
             summary.pages.insert(key.clone());
-            summary.journals |= entry.kind == PageKind::Journal;
-            summary.days |= summary.journals;
+            let day = entry.kind == PageKind::Journal;
+            summary.journals |= day && entry.rel_path.is_some();
+            summary.days |= day;
             // Inspect parsed facts of this edited page only, on both sides so
             // removing planning/template metadata invalidates its old answer.
             for doc in [before, after] {

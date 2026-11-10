@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- An open query that lists pages without a file of their own (a namespace parent such as `Brand` for `Brand/Child`, or a page that is only referenced) now updates when an edit adds or removes the reference or child that makes the page exist. Before, it kept showing its previous answer (D-20261102-PERF row 3, REG-PERF-PAGE-LIFECYCLE-PRECISE-SUMMARY).
 - Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).
 - Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).
 - Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes with either editor (GH #453).

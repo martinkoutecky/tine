@@ -28,8 +28,13 @@ const owner = installAccountHome(run, run);
 const pageFile = name => path.join(graph, "pages", `${name}.md`);
 const dependent = "(and (task TODO) [[Target]])";
 const unrelated = "(and (task NOW) [[Unrelated]])";
+// The completion probe (`settle`): a page the journey rewrites from outside,
+// shown by a third query, so its rendering proves every earlier publication
+// was delivered and flushed to the mounted readers.
+const sentinel = "(and (task LATER) [[Sentinel]])";
+const targetText = `- target seed\n- {{query ${dependent}}}\n- {{query ${unrelated}}}\n- {{query ${sentinel}}}\n`;
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:ref/linked-references-collapsed-threshold 100 :tine/guide-announced? true}\n");
-fs.writeFileSync(pageFile("Target"), `- target seed\n- {{query ${dependent}}}\n- {{query ${unrelated}}}\n`);
+fs.writeFileSync(pageFile("Target"), targetText);
 fs.writeFileSync(pageFile("Linker"), "- TODO linker body [[Target]]\n");
 fs.writeFileSync(pageFile("Unrelated"), "- NOW unrelated body [[Unrelated]]\n");
 const app = path.resolve(process.env.TINE_APP || "target/release/tine");
@@ -64,6 +69,24 @@ async function screenshot(name) {
   if (process.platform === "linux") execFileSync("import", ["-window", "root", file], { timeout: 10_000 });
   else await browser.saveScreenshot(file);
 }
+/** Every recorded IPC call has answered. */
+const ipcIdle = () => browser.waitUntil(() => browser.execute(() => (window.__queryIpc ?? []).every(c => c.finishedAt)),
+  { timeout: 30000, interval: 100, timeoutMsg: "a recorded IPC call never answered" });
+let sentinels = 0;
+/** Completion condition instead of a fixed sleep (review F3). Once the
+ * action's own calls (the rename or delete command, the reruns it started)
+ * have answered, an outside write rewrites the sentinel. The store publishes
+ * in revision order and the window applies and flushes summaries in order, so
+ * when the sentinel query shows the new text, every publication of the action
+ * has been delivered and flushed to its readers, and every rerun those caused
+ * has been issued. The reruns then drain. A late rerun cannot escape the count. */
+async function settle(label) {
+  await ipcIdle();
+  const mark = `sentinel-${++sentinels}-end`;
+  fs.writeFileSync(pageFile("Sentinel"), `- LATER ${mark} [[Sentinel]]\n`);
+  await until(s => s.queries.some(q => q.includes(mark)), `${label}: the sentinel publication never reached its query`);
+  await ipcIdle();
+}
 const queryRuns = async () => browser.execute(() => window.__queryIpc.filter(c => c.command === "query_run"));
 const runsOf = (calls, form) => calls.filter(c => JSON.stringify(c.args).includes(form.replace(/"/g, '\\"'))).length;
 
@@ -88,7 +111,6 @@ try {
   stage = "sidebar shows Linker in Target's linked references and the dependent query";
   await until(s => s.linked?.includes("Linker") && s.queries.some(q => q.includes("linker body"))
     && s.queries.some(q => q.includes("unrelated body")), "Target's readers never showed Linker");
-  await delay(2000);
   await screenshot("1-before");
   report.passed.push(stage);
   await browser.execute(() => {
@@ -118,12 +140,10 @@ try {
     Promise.all(["graph-changed", "graph-changed-bulk"].map(listen)).then(() => done(true), error => done(String(error)));
   });
   // A window's first publication is full by design (`changeSummary.ts`: no
-  // baseline yet). Give it one, from an unrelated outside write, so the
-  // operations below are measured against a baseline, then start counting.
-  fs.writeFileSync(pageFile("Warmup"), "- warmup\n");
-  await browser.waitUntil(() => browser.execute(() => window.__summaries.length > 0),
-    { timeout: 30000, timeoutMsg: "the warm-up write never published" });
-  await delay(2500);
+  // baseline yet). Give it one, from an unrelated outside write (the first
+  // sentinel), so the operations below are measured against a baseline, then
+  // start counting once its full refresh has drained.
+  await settle("warm-up");
   await browser.execute(() => { window.__queryIpc = []; window.__summaries = []; });
 
   stage = "rename from the title updates Target's linked references and query";
@@ -140,7 +160,7 @@ try {
     { timeout: 30000, timeoutMsg: "rename did not move the file" });
   await until(s => s.linked?.includes("Linker Renamed") && s.queries.some(q => q.includes("linker body")),
     "Target's linked references did not follow the rename");
-  await delay(2500);
+  await settle("rename");
   await screenshot("2-after-rename");
   let calls = await queryRuns();
   report.reruns.rename = { dependent: runsOf(calls, dependent), unrelated: runsOf(calls, unrelated), all: calls.length };
@@ -160,7 +180,7 @@ try {
   await browser.waitUntil(() => !fs.existsSync(pageFile("Linker Renamed")), { timeout: 30000, timeoutMsg: "delete did not remove the file" });
   await until(s => !(s.linked ?? "").includes("Linker") && !s.queries.some(q => q.includes("linker body"))
     && s.queries.some(q => q.includes("unrelated body")), "Target's readers still show the deleted page");
-  await delay(2500);
+  await settle("delete");
   await screenshot("3-after-delete");
   calls = await queryRuns();
   report.reruns.delete = { dependent: runsOf(calls, dependent), unrelated: runsOf(calls, unrelated), all: calls.length };
@@ -168,7 +188,7 @@ try {
   fs.writeFileSync(path.join(run, "delete-summaries.json"), JSON.stringify(await browser.execute(() => window.__summaries.splice(0)), null, 2));
   assert.equal(report.reruns.delete.unrelated, 0, "the delete reran the unrelated mounted query");
   assert.notEqual(await currentPageTitle(browser), "Linker Renamed", "the deleted page stayed routed");
-  assert.equal(fs.readFileSync(pageFile("Target"), "utf8"), `- target seed\n- {{query ${dependent}}}\n- {{query ${unrelated}}}\n`);
+  assert.equal(fs.readFileSync(pageFile("Target"), "utf8"), targetText);
   report.passed.push(stage);
 } catch (error) {
   report.failure = { journey: stage, observed: String(error.stack || error) };

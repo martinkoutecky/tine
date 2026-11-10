@@ -456,18 +456,27 @@ impl Snapshot {
                 paths.extend(evaluator.semantic_changed_paths.iter().cloned());
                 paths.sort();
                 paths.dedup();
-                let changes = evaluator.page_changes(&old.graph, &paths);
-                // A named file that is the active page on neither side (a
-                // losing twin) has no document to name its readers by: `full`.
-                let active = |path: &PathBuf| {
-                    changes.iter().any(|(before, after)| {
-                        [before, after]
-                            .into_iter()
-                            .flatten()
-                            .any(|(entry, _)| entry.path == *path)
-                    })
-                };
-                page_changes = named_paths.iter().all(active).then_some(changes);
+                // A batch over the bound publishes `full` (the summary's same
+                // rule): decided first, so it reads no page (review F2).
+                if paths.len() <= super::change_summary::PRECISE_PATHS {
+                    let changes = evaluator.page_changes(&old.graph, &paths);
+                    // A named file that is the active page on neither side (a
+                    // losing twin) has no document to name its readers by:
+                    // `full`. One set, so the check is linear in the batch.
+                    let active: HashSet<&std::path::Path> = changes
+                        .iter()
+                        .flat_map(|(before, after)| [before, after].into_iter().flatten())
+                        .map(|(entry, _)| entry.path.as_path())
+                        .collect();
+                    page_changes = named_paths
+                        .iter()
+                        .all(|path| {
+                            #[cfg(feature = "test-faults")]
+                            crate::cost_counters::lifecycle_probe();
+                            active.contains(path.as_path())
+                        })
+                        .then_some(changes);
+                }
             }
             Arc::new(evaluator)
         };

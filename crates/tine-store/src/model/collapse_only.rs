@@ -103,8 +103,15 @@ impl ReadSnapshot {
     /// derives precise invalidation from these (one producer with
     /// [`Self::edited_pages`]); reads only the changed paths.
     pub(crate) fn page_changes(&self, old: &Self, changed_paths: &[String]) -> Vec<PageChange> {
-        let side = |graph: &Self, path: &str| {
-            let positions = Arc::clone(&graph.reference_candidate_index.read().unwrap().positions);
+        // One read of each side's position map, not one per path.
+        let sides = [old, self].map(|graph| {
+            (
+                graph,
+                Arc::clone(&graph.reference_candidate_index.read().unwrap().positions),
+            )
+        });
+        let side = |i: usize, path: &str| {
+            let (graph, positions) = &sides[i];
             positions
                 .get(path)
                 .and_then(|&i| graph.pages.get(i))
@@ -115,8 +122,8 @@ impl ReadSnapshot {
             .iter()
             .filter_map(|path| {
                 #[cfg(feature = "test-faults")]
-                crate::cost_counters::memo_page_probes(2);
-                let change = (side(old, path), side(self, path));
+                crate::cost_counters::lifecycle_probe();
+                let change = (side(0, path), side(1, path));
                 (change.0.is_some() || change.1.is_some()).then_some(change)
             })
             .collect()

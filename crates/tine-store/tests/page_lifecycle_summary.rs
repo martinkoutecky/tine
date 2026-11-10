@@ -51,6 +51,18 @@ fn parse(source: &str) -> Query {
     .query
 }
 
+/// A TQL query (`{{tine-query …}}`), the dialect with page rows by name.
+fn tql(source: &str) -> Query {
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    parse_query_pair(
+        source,
+        QueryTextDialect::MacroTql,
+        &[],
+        tine_core::query::registry::Registry::none(),
+    )
+    .query
+}
+
 /// Mounted readers that depend on the pages the scenarios create, rename and
 /// delete: by reference, page name, namespace, journal day and task.
 fn dependent_queries() -> Vec<(&'static str, Query)> {
@@ -652,4 +664,213 @@ fn moving_a_task_page_reruns_only_the_query_it_can_match() {
         assert_eq!(unrelated, 0, "{label}: {summary}");
     }
     oracle.store.close();
+}
+
+/// Review F1: a lifecycle publication also brings or removes pages without a
+/// file. A namespace child brings its parent (`Brand/Child` lists `Brand`), a
+/// created page's references bring reference-only pages, and the last child
+/// or referrer leaving removes them. A page query whose answer holds such a
+/// row must be named (create, rename and delete), and stays precise.
+#[test]
+fn page_lifecycle_names_queries_over_fileless_pages_it_brings_or_removes() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let queries = vec![
+        ("brand-parent", tql("@page and name = 'Brand'")),
+        ("kin-parent", tql("@page and name = 'Kin'")),
+        ("newref-page", tql("@page and name = 'Newref'")),
+    ];
+    for (id, query) in &queries {
+        mount(&store, id, query);
+    }
+    let unrelated = unrelated_queries(4);
+    for (id, query) in &unrelated {
+        mount(&store, id, query);
+    }
+    let oracle = Oracle {
+        dir,
+        store,
+        queries,
+        unrelated,
+    };
+    let precise = |label: &str, (summary, unrelated): (Value, usize), id: &str| {
+        assert_eq!(summary["full"], false, "{label}: {summary}");
+        assert_eq!(unrelated, 0, "{label}: unrelated queries reran: {summary}");
+        assert!(
+            strings(&summary["queryTo"]).contains(id),
+            "{label}: {summary}"
+        );
+    };
+    // Create: a namespace child brings its parent; a reference brings a page.
+    precise(
+        "create namespace child",
+        oracle.step("create namespace child", |o| {
+            create(
+                &o.store,
+                "pages/brand-child.md",
+                Some("title:: Brand/Child"),
+                "child body",
+            )
+        }),
+        "brand-parent",
+    );
+    precise(
+        "create referrer",
+        oracle.step("create referrer", |o| {
+            create(&o.store, "pages/Referrer.md", None, "mentions [[Newref]]")
+        }),
+        "newref-page",
+    );
+    // Rename: the namespace child leaves `Brand` for `Kin`.
+    let label = "rename namespace child";
+    let (summary, unrelated) = oracle.step(label, |o| {
+        edit(&o.store, "pages/brand-child.md", |doc| {
+            doc.pre_block = Some("title:: Kin/Child".into())
+        })
+    });
+    precise(label, (summary.clone(), unrelated), "brand-parent");
+    assert!(
+        strings(&summary["queryTo"]).contains("kin-parent"),
+        "{summary}"
+    );
+    // Delete: the last child and the only referrer leave.
+    precise(
+        "delete namespace child",
+        oracle.step("delete namespace child", |o| {
+            trash(&o.store, "pages/brand-child.md")
+        }),
+        "kin-parent",
+    );
+    precise(
+        "delete referrer",
+        oracle.step("delete referrer", |o| trash(&o.store, "pages/Referrer.md")),
+        "newref-page",
+    );
+    oracle.store.close();
+}
+
+/// The same rule for an ordinary edit (found with F1; the gap predates this
+/// lane): a reference that comes or goes can bring or remove a fileless page
+/// and its namespace parent. Typing plain text adds no lookup.
+#[test]
+fn an_edit_that_adds_or_drops_a_reference_names_queries_over_its_fileless_pages() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let queries = vec![
+        ("newref-page", tql("@page and name = 'Newref'")),
+        ("brand-parent", tql("@page and name = 'Brand'")),
+    ];
+    for (id, query) in &queries {
+        mount(&store, id, query);
+    }
+    let unrelated = unrelated_queries(4);
+    for (id, query) in &unrelated {
+        mount(&store, id, query);
+    }
+    let oracle = Oracle {
+        dir,
+        store,
+        queries,
+        unrelated,
+    };
+    for (label, raw) in [
+        ("edit adds references", "see [[Newref]] and [[Brand/X]]"),
+        ("edit drops references", "see nothing"),
+    ] {
+        let (summary, unrelated) = oracle.step(label, |o| {
+            edit(&o.store, "pages/A.md", |doc| doc.blocks[0].raw = raw.into())
+        });
+        assert_eq!(summary["full"], false, "{label}: {summary}");
+        assert_eq!(unrelated, 0, "{label}: {summary}");
+        for id in ["newref-page", "brand-parent"] {
+            assert!(
+                strings(&summary["queryTo"]).contains(id),
+                "{label}: {id}: {summary}"
+            );
+        }
+    }
+    let before = crate::cost_counters::lifecycle_work();
+    let (summary, _) = oracle.step("typing", |o| {
+        edit(&o.store, "pages/A.md", |doc| {
+            doc.blocks[0].raw = "see nothing yet".into()
+        })
+    });
+    assert_eq!(crate::cost_counters::lifecycle_work(), before, "{summary}");
+    assert!(
+        !strings(&summary["queryTo"]).contains("brand-parent"),
+        "{summary}"
+    );
+    oracle.store.close();
+}
+
+/// Review F2: a batch of page creations in one publication (an outside sync
+/// or checkout, published by the watcher path) costs the precise summary
+/// linear work, and a batch over the bound, which publishes `full`, none:
+/// `full` is decided before any page is read. Before, each named path
+/// rescanned every changed page (O(K^2)), the full batches included.
+#[test]
+fn page_lifecycle_batch_work_is_linear_and_nothing_over_the_bound() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    for (id, query) in dependent_queries() {
+        mount(&store, id, &query);
+    }
+    mount(&store, "page-anchored", &tql("@page and name = 'Brand'"));
+    let oracle = Oracle {
+        dir,
+        store,
+        queries: Vec::new(),
+        unrelated: Vec::new(),
+    };
+    let (dir, store) = (oracle.dir.path(), &oracle.store);
+    let mut rows = Vec::new();
+    for (round, k) in [8usize, 16, 40, 400].into_iter().enumerate() {
+        // The mounted readers have run (as shown readers have), so their
+        // fileless inputs are resident and the summary compares those rows.
+        oracle.answers();
+        let sub = store.subscribe();
+        for i in 0..k {
+            fs::write(
+                dir.join(format!("pages/Batch {round}-{i}.md")),
+                format!("- batch body {i}\n"),
+            )
+            .unwrap();
+        }
+        let before = crate::cost_counters::lifecycle_work();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let spent = crate::cost_counters::lifecycle_work() - before;
+        crate::test_host_writer::HostWriter::for_store(store).settle();
+        let mut summaries = Vec::new();
+        while let Some(change) = sub.try_recv().unwrap() {
+            summaries.push(serde_json::to_value(change).unwrap()["summary"].clone());
+        }
+        assert_eq!(
+            summaries.len(),
+            1,
+            "{k} files, one publication: {summaries:?}"
+        );
+        rows.push((k, summaries[0]["full"] == true, spent));
+    }
+    eprintln!("page lifecycle batch work (files, full, probes): {rows:?}");
+    let work = |k: usize| rows.iter().find(|row| row.0 == k).unwrap();
+    for k in [8, 16] {
+        assert!(!work(k).1, "{k} creations publish precise: {rows:?}");
+        assert!(work(k).2 > 0, "{k} creations are counted: {rows:?}");
+    }
+    // Linear: a bounded number of probes per file (each file's page on both
+    // sides, its name checked once, its name looked up as a fileless row on
+    // both sides), so twice the files cost twice the probes.
+    for k in [8, 16] {
+        assert!(work(k).2 <= 4 * k as u64 + 2, "{k} creations: {rows:?}");
+    }
+    assert!(work(16).2 <= 2 * work(8).2 + 2, "{rows:?}");
+    for k in [40, 400] {
+        assert!(work(k).1, "{k} creations publish full: {rows:?}");
+        assert_eq!(
+            work(k).2,
+            0,
+            "{k} creations read no page for the summary: {rows:?}"
+        );
+    }
+    store.close();
 }

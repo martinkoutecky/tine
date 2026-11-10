@@ -294,7 +294,7 @@ pub(super) struct Answers {
     days: Value,
     journals: Value,
     templates: Value,
-    queries: BTreeMap<String, Value>,
+    pub(super) queries: BTreeMap<String, Value>,
     linked: BTreeMap<String, Value>,
     unlinked: BTreeMap<String, Value>,
     tagged: BTreeMap<String, Value>,
