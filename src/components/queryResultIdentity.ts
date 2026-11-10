@@ -23,6 +23,18 @@ function dtoIndex(page: PageDto): Map<string, BlockDto[]> {
   visit(page.blocks); dtoIndexes.set(page, index); return index;
 }
 
+const mountedSynthetic = new WeakMap<BlockDto, number | null>();
+/** Whether a synthetic result row (a page's properties or the prose before its
+ * first block, which have no live node of their own) is live. The rule is
+ * resolveResultRow's "mount" rule: live when its ticket is actionable, then kept
+ * while the source page instance is unchanged, so a structural edit's epoch
+ * move does not drop it; a page replacement does. */
+export function syntheticResultRowLive(dto: BlockDto, page: string): boolean {
+  const instance = pageInstanceGeneration(page);
+  if (resultsTicketActionable(resultTicket(dto))) { mountedSynthetic.set(dto, instance); return true; }
+  return mountedSynthetic.has(dto) && mountedSynthetic.get(dto) === instance;
+}
+
 /** I-12: the only result -> live-node boundary. An already promoted node is
  * a live object, retained while its editor has ordinary unpublished input.
  * New promotions and actions require settled provenance; structural changes
