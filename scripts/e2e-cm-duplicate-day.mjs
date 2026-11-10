@@ -1,10 +1,11 @@
 // CM step 2 batch 2 (OW-2, UI-CM-DUPLICATE-DAY-KEEPER): one journal day with
 // two files, `2026_10_26.md` (the stem the default format writes) and
-// `2026-10-26.md` (an ISO stem, also a date name). The day opens
-// `2026_10_26.md`. Settings > Backups & recovery > Duplicate journal days must
+// `2026-10-26.md` (an ISO stem, also a date name). The day opens the least
+// graph-relative path, `2026-10-26.md` (conceptual model §2.2).
+// Settings > Backups & recovery > Duplicate journal days must
 // mark that file alone as canonical and offer Merge for the other; before the
 // fix both were marked canonical and neither offered Merge. A literal native
-// click on Merge then folds the ISO file into the opened one, and opening the
+// click on Merge then folds the other file into the opened one, and opening the
 // day shows both files' blocks.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -13,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-comment-structure.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -25,11 +27,11 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH,
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, dir));
 fs.mkdirSync(ARTIFACT, { recursive: true });
 fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{:tine/guide-announced? true}\n");
-const OPENED = "journals/2026_10_26.md";
-const OTHER = "journals/2026-10-26.md";
+const OPENED = "journals/2026-10-26.md";
+const OTHER = "journals/2026_10_26.md";
 const TITLE = "Oct 26th, 2026";
-fs.writeFileSync(path.join(GRAPH, OPENED), "- shared line\n- only in underscore\n");
-fs.writeFileSync(path.join(GRAPH, OTHER), "- shared line\n- only in iso\n");
+fs.writeFileSync(path.join(GRAPH, OPENED), "- shared line\n- only in iso\n");
+fs.writeFileSync(path.join(GRAPH, OTHER), "- shared line\n- only in underscore\n");
 fs.writeFileSync(path.join(GRAPH, "pages/Notes.md"), "- a page\n");
 const env = {
   ...process.env, TINE_GRAPH: GRAPH,
@@ -108,11 +110,12 @@ try {
     });
   }, { timeout: 15_000, interval: 150, timeoutMsg: `the day ${TITLE} does not show both files' blocks after Merge` });
   proof.steps.push(`opening ${TITLE} shows both files' blocks`);
+  await saveJourneyScreenshot(browser, path.join(ARTIFACT, "merged-day.png"));
   console.log(JSON.stringify(proof));
 } catch (error) {
   proof.error = String(error);
   if (browser) {
-    await browser.saveScreenshot(path.join(ARTIFACT, "failure.png")).catch(() => {});
+    await saveJourneyScreenshot(browser, path.join(ARTIFACT, "failure.png")).catch(() => {});
     fs.writeFileSync(path.join(ARTIFACT, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
   }
   throw error;

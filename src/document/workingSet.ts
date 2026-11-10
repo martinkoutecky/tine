@@ -287,11 +287,10 @@ export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string):
 export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusal | null {
   const existing = doc.pages.find((p) => p.name === dto.name);
   if (existing && (existing.id ?? "") === (dto.id ?? "")) {
-    // Same-content hydration still carries new disk authority (master
-    // ba80a151e9a2): after a Concord resolution the winner can be open with an
-    // older baseline, and the next ordinary edit would look like a new
-    // conflict. Only a clean page whose content equals the DTO adopts its rev.
-    if (dto.rev !== undefined && reloadDisposition(dto.name) === "reload" && pageContentMatches(dto, existing)) setBaseRev(dto.name, dto.rev);
+    // Same file does not mean same content: a merge can publish while this
+    // window holds only a loaded copy. Reuse the feed's guarded replacement
+    // and deferred replay; unchanged revisions need no body comparison.
+    if (dto.rev !== undefined && dto.rev !== baseRevFor(dto.name)) return upsertUnlessDirty(dto);
     return null;
   }
   // A path-pinned route may intentionally load a duplicate-day stray with the

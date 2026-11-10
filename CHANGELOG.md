@@ -24,6 +24,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Opening a journal day after merging duplicate files in Settings shows the blocks from both files (internal: UI-DUPLICATE-DAY-MERGE-REFRESH).
+
 - Pressing Enter over selected text in the default editor now deletes the selection and splits the block where it began, as Logseq and the CodeMirror editor do; it used to keep the selected text in the new block. In both editors one Undo now restores the block with its selected text (internal: UI-EDITOR-ENTER-SELECTION-DELETES).
 - Choosing a template from the slash menu, or pasting several lines, no longer changes the block when the insert then fails: the `/template` text stays where it was, the block keeps its open editor and nothing is left to save, with one error message instead of two. A template that is inserted now undoes in one step. In the CodeMirror editor, pasting one block with children into an empty block now leaves the caret at the end of its text, as in the default editor (internal: UI-EDITOR-TEMPLATE-TRIGGER-REFUSED, UI-EDITOR-PASTE-OUTLINE-REFUSED).
 - `tine page rename OLD DATE` when that day already has a journal now refuses with `page-exists` and says nothing changed, as for any taken name. It used to answer `uncertain` ("inspect disk before retrying") although it had written nothing (internal: REG-CLI-RENAME-DATE-JOURNAL-REFUSAL).
