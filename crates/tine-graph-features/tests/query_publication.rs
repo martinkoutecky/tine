@@ -334,9 +334,21 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
         "I-4/E1: query exports disclose only selected results; exemplar render_query_with_title"
     );
     assert!(!html.contains("DOING hidden"));
-    tine_graph_features::publish::publish_html(&store).unwrap();
-    let graph_html = fs::read_to_string(graph.join("publish/public.html")).unwrap();
-    assert!(graph_html.contains("1 result on non-public pages omitted."));
+    // The graph's own static site (`tine publish`) renders from the same
+    // build graph, so a page's queries answer from the published pages only:
+    // it reads the same with or without the page it leaves out, and names no
+    // result on it (REG-Q13-PUBLISHED-HTML-PRIVATE-COUNT). Before, its count of
+    // omitted results changed with the private pages.
+    let (site, _) = crate::published_site(&store).unwrap();
+    let with_private = fs::read_to_string(PathBuf::from(site).join("public.html")).unwrap();
+    assert!(!with_private.contains("DOING hidden"), "{with_private}");
+    fs::remove_file(graph.join("pages/Secret.md")).unwrap();
+    let (site, _) = crate::published_site(&store).unwrap();
+    let without_private = fs::read_to_string(PathBuf::from(site).join("public.html")).unwrap();
+    assert_eq!(
+        with_private, without_private,
+        "the published page depends on a page it leaves out"
+    );
     store.close();
 }
 

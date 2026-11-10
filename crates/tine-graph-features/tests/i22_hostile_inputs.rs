@@ -353,7 +353,7 @@ fn hostile_child() {
         );
     }
     let _ = tine_graph_features::print::page_print_html(&store, "Hostile", Default::default());
-    let _ = tine_graph_features::publish::publish_html(&store);
+    let _ = crate::published_site(&store);
     let _ = tine_graph_features::conflicts::sync_conflict_diff(
         &store,
         "pages/Hostile.md",
@@ -486,7 +486,7 @@ fn benign_page_at_depth_cap() {
         .unwrap()
         .unwrap();
     assert!(html.contains("LEAF edited"));
-    tine_graph_features::publish::publish_html(&store).unwrap();
+    crate::published_site(&store).unwrap();
     let whole = store.whole_graph().unwrap();
     whole
         .query("(and [[Tag]] \"level\")", tine_store::QueryDialect::Simple)

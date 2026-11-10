@@ -1155,7 +1155,9 @@ mod tests {
 
     #[test]
     fn a_panicking_promoted_journal_leaves_other_pages_usable() {
-        let dir = tempfile::tempdir().unwrap();
+        // The watcher hints below must name the store's canonical paths, as its
+        // own events do: see `open`.
+        let dir = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/P1.md"), "- original\n").unwrap();
         fs::create_dir(dir.path().join("journals")).unwrap();

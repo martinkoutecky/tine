@@ -358,7 +358,11 @@ fn publishes_only_public_pages() {
     std::fs::write(root.join("pages").join("Secret.md"), "- private notes\n").unwrap();
 
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let (dir, n) = tine_graph_features::publish::publish_html(&store).unwrap();
+    let out = root.with_extension("site");
+    std::fs::create_dir_all(&out).unwrap();
+    let receipt =
+        tine_graph_features::publish_query::publish_static(&store, &out, "site", false).unwrap();
+    let (dir, n) = (receipt.path, receipt.pages);
     assert_eq!(n, 1, "only the public page is published");
     let p = std::fs::read_to_string(std::path::Path::new(&dir).join("shared.html"))
         .unwrap_or_else(|error| panic!("published page under {dir:?}: {error}"));
@@ -375,6 +379,7 @@ fn publishes_only_public_pages() {
     assert!(!std::path::Path::new(&dir).join("secret.html").exists());
 
     std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&out).ok();
 }
 
 #[test]

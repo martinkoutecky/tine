@@ -30,6 +30,21 @@ fn fixture(label: &str) -> std::path::PathBuf {
     root
 }
 
+/// The flag refusal is a Unix-target fallback (`move_at`): there the move must
+/// have met it. Windows' `MoveFileExW` has no flag to refuse, so the leaf hook
+/// never fires there and the move is the plain no-replace call.
+fn met_the_refusal(before: usize, after: usize, step: &str) {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    assert!(after > before, "the {step} met the refusal");
+    #[cfg(target_os = "windows")]
+    assert_eq!(after, before, "the {step} has no flag refusal on Windows");
+}
+
 #[test]
 fn gh538_host_creates_and_renames_pages_where_the_flag_is_refused() {
     use crate::no_replace::{REFUSED_BY_NAME, REFUSE_NOREPLACE_LEAF};
@@ -54,7 +69,7 @@ fn gh538_host_creates_and_renames_pages_where_the_flag_is_refused() {
     );
     assert!(!root.join("pages/A.md").exists());
     let after_rename = REFUSED_BY_NAME.load(SeqCst);
-    assert!(after_rename > refused_before, "the rename met the refusal");
+    met_the_refusal(refused_before, after_rename, "rename");
 
     let new_name = format!("{REFUSE_NOREPLACE_LEAF}-new");
     let created = store
@@ -87,10 +102,7 @@ fn gh538_host_creates_and_renames_pages_where_the_flag_is_refused() {
             .unwrap()
             .contains("created")
     );
-    assert!(
-        REFUSED_BY_NAME.load(SeqCst) > after_rename,
-        "the create met the refusal"
-    );
+    met_the_refusal(after_rename, REFUSED_BY_NAME.load(SeqCst), "create");
     drop(host_writer);
     drop(store);
     fs::remove_dir_all(root).unwrap();

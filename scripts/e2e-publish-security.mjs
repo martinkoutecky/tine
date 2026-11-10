@@ -20,15 +20,30 @@ fs.writeFileSync(path.join(TMP, "pages", "Visible.md"), [
 fs.writeFileSync(path.join(TMP, "pages", "Twin.md"), "public:: true\n- public twin\n");
 fs.writeFileSync(path.join(TMP, "journals", "Twin.md"), "- PRIVATE TWIN SENTINEL\n");
 
-const built = spawnSync("cargo", ["run", "-q", "-p", "tine-store", "--example", "publish_security_fixture", "--", TMP], {
+// The site lands outside the graph, as `tine publish` writes it.
+const OUT = fs.mkdtempSync(path.join(os.tmpdir(), "tine-publish-security-out-"));
+const built = spawnSync("cargo", ["run", "-q", "-p", "tine-store", "--example", "publish_security_fixture", "--", TMP, OUT], {
   cwd: ROOT,
   encoding: "utf8",
   env: process.env,
 });
 if (built.status !== 0) throw new Error(`fixture export failed:\n${built.stderr}`);
 const lines = built.stdout.trim().split(/\r?\n/);
-if (lines[0] !== "1") throw new Error(`ambiguous public/private twin crossed capability boundary: ${built.stdout}`);
+// The live site renders from a private build graph that holds only the exported
+// documents, so the private journal file that shares the public page's name is
+// not in it: the site publishes the public page (two pages) and nothing of the
+// private file (checked below in every generated file).
+if (lines[0] !== "2") throw new Error(`unexpected published page count: ${built.stdout}`);
 const output = lines.at(-1);
+for (const file of fs.readdirSync(output)) {
+  const full = path.join(output, file);
+  if (fs.statSync(full).isFile() && fs.readFileSync(full, "utf8").includes("PRIVATE TWIN SENTINEL")) {
+    throw new Error(`private twin content crossed the capability boundary in ${file}`);
+  }
+}
+if (!fs.readFileSync(path.join(output, "twin.html"), "utf8").includes("public twin")) {
+  throw new Error("the public page that owns the name was not published");
+}
 const htmlPath = path.join(output, "visible.html");
 const html = fs.readFileSync(htmlPath, "utf8");
 const search = fs.readFileSync(path.join(output, "search-index.js"), "utf8");
@@ -63,4 +78,5 @@ try {
 } finally {
   await browser.close();
   fs.rmSync(TMP, { recursive: true, force: true });
+  fs.rmSync(OUT, { recursive: true, force: true });
 }
