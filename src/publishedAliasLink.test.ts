@@ -18,16 +18,20 @@ const snapshot: PublishedSnapshot = {
     { name: "Public", kind: "page", date_key: null, path: "pages/Public.md" },
     { name: "Oct 26th, 2026", kind: "journal", date_key: 20261026, path: "journals/2026_10_26.md" },
   ],
-  backlinks: {}, block_ref_counts: {}, aliases: [["Alias", "Public"], ["launch day", "Oct 26th, 2026"]], icons: {},
+  backlinks: { "Oct 26th, 2026": [{ page: "Public", kind: "page", blocks: [{ id: "three", raw: "see [[launch day]]", collapsed: false, children: [] }] }] },
+  block_ref_counts: {}, aliases: [["Alias", "Public"], ["launch day", "Oct 26th, 2026"]], icons: {},
   queries: [],
 };
 
 const holder = vi.hoisted(() => ({ api: null as unknown }));
 vi.mock("./backend", () => ({ backend: () => holder.api }));
 
-async function load() {
+async function load(published = false) {
   await (await import("./render/parse")).initParser();
-  const { publishedBackend } = await import("./publishedBackend");
+  const module = await import("./publishedBackend");
+  // A real published site has its snapshot URL set; the index then reads rows as a viewer does.
+  if (published) vi.spyOn(module, "isPublishedExport").mockReturnValue(true);
+  const { publishedBackend } = module;
   holder.api = publishedBackend(async () => snapshot);
   const index = await import("./pageIndex");
   return { api: holder.api as ReturnType<typeof publishedBackend>, ...index };
@@ -50,5 +54,23 @@ describe("published site: alias links without the inventory link field", () => {
     const page = await api.getPage(route.name, route.kind);
     expect(page?.id).toBe("pages/Public.md");
     expect(page?.blocks[0]?.raw).toBe("Owner body");
+  });
+
+  // HFh-eo: a snapshot written before `answers` existed (an old quick share, an
+  // old published site) carries only the one-owner `aliases` pairs. A link to a
+  // journal's alias must open that journal, as the app and a new publication do
+  // (publishedAnswers D4), not a blank page.
+  it("opens the journal of a journal's alias on a published site", async () => {
+    const { api, installPageIndex, allPageNames, linkTarget, navigationTarget } = await load(true);
+    installPageIndex();
+    await vi.waitFor(() => expect(allPageNames()).toContain("Public"));
+    const link = linkTarget("launch day");
+    expect(link).toEqual({ name: "Oct 26th, 2026", kind: "journal" });
+    const route = link.kind === "page" ? navigationTarget(link.name) : link;
+    const page = await api.getPage(route.name, route.kind);
+    expect(page?.id).toBe("journals/2026_10_26.md");
+    expect(page?.blocks[0]?.raw).toBe("Launch journal body");
+    // The route names the owner, so its linked references are the journal's own.
+    expect((await api.getBacklinks(route.name)).map((group) => group.page)).toEqual(["Public"]);
   });
 });
