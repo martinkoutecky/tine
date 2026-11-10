@@ -33,7 +33,8 @@ describe("read-only published snapshot", () => {
     expect(api.graphBindingGeneration()).toBe(1);
     const inventory = await api.pageInventory();
     expect(BigInt(inventory.rev)).toBe(0n);
-    expect(inventory.entries.map((entry) => entry.name)).toEqual(["Public"]);
+    // The exported entries, then the snapshot's alias pairs as alias rows (HFh-eo).
+    expect(inventory.entries.map((entry) => entry.name)).toEqual(["Public", "Alias"]);
     expect((await api.getPage("Alias", "page"))?.id).toBe("pages/Public.md");
     expect(await api.parseQuery("(task TODO)", "macro_query")).toEqual(parsed);
     expect(await api.queryRun(parsed.query, {}, { current_page: "Public" })).toEqual(result);

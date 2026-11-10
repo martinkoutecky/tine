@@ -6,9 +6,10 @@ import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "../editor/exportText";
 import { exportHtml } from "../editor/exportHtml";
 import { exportOpml } from "../editor/exportOpml";
 import { initParser } from "../render/parse";
+import { pasteOutlineInto } from "../tests/pasteOutline";
 import { doc } from "./model";
 import { pageToDto } from "./convert";
-import { loadFeed, pageByName, mergeWithPrev, mergeWithNext, insertOutlineAfter, insertOutlineChildren, insertEmptyChildBlock, replaceEmptyBlockWithOutline, replaceChildOrders, splitBlock, captureToPage, blockSubtreeMarkdown, buildClipboardPayload, exportNodesFor, indentBlock, moveBlock, resetStore } from ".";
+import { loadFeed, pageByName, mergeWithPrev, mergeWithNext, insertOutlineAfter, insertOutlineChildren, insertEmptyChildBlock, replaceChildOrders, splitBlock, captureToPage, blockSubtreeMarkdown, buildClipboardPayload, exportNodesFor, indentBlock, moveBlock, resetStore } from ".";
 
 // og 15b (I-22 / I-4): the frontend's one outline ceiling is the backend's
 // admission cap. A benign page AT the cap loads, serializes, exports and
@@ -81,11 +82,11 @@ describe("outline depth cap", () => {
     // Children of a root land at depth 2.
     expect(insertOutlineChildren(host, deepOutline(outlineMaxDepth()))).toBeNull();
     expect(insertOutlineAfter(host, deepOutline(outlineMaxDepth() + 1))).toBeNull();
-    expect(replaceEmptyBlockWithOutline(empty, deepOutline(outlineMaxDepth() + 1))).toBeNull();
+    expect(pasteOutlineInto(empty, deepOutline(outlineMaxDepth() + 1))).toBeNull();
     expect(subtreeSize()).toBe(before);
 
     expect(insertOutlineChildren(host, deepOutline(outlineMaxDepth() - 1))).not.toBeNull();
-    replaceEmptyBlockWithOutline(empty, deepOutline(outlineMaxDepth()));
+    pasteOutlineInto(empty, deepOutline(outlineMaxDepth()));
     expect(doc.byId[empty].raw).toBe("node 1");
     expect(doc.byId[empty].children).toHaveLength(1);
   });

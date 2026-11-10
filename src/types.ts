@@ -134,6 +134,12 @@ export interface PageRead extends PageDto {
 export interface RenameDone {
   outcome: "renamed" | "merged" | "unchanged";
   touched: RenameTouchedPage[];
+  /** Every page identity the rename moved, old name → the name it wrote: the
+   *  renamed page, each file-backed namespace descendant, and each
+   *  reference-only namespace member whose references the rewrite renamed
+   *  (`path: null`; `RenameReport::renamed`). Navigation follows exactly this
+   *  map (`followRename`). Empty when `unchanged`. */
+  renamed: RenamedPage[];
   /** Referrers left byte-identical because they carry VCS conflict markers
    *  (og 21a, master a8fd4230d): their references still name the old page. */
   skipped_conflicted_referrers?: string[];
@@ -174,6 +180,15 @@ export interface OwnerPageRename {
   kind: PageKind;
   report: RenameDone;
   binding_generation: number;
+}
+
+/** One page identity a rename or merge moved. */
+export interface RenamedPage {
+  from: string;
+  to: string;
+  /** Graph-relative path of its file before the rename; null for a renamed
+   *  page with no file (reference-only). */
+  path: string | null;
 }
 
 /** One page file a rename or merge wrote. */

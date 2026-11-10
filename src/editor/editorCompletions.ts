@@ -4,7 +4,7 @@ import { propertyCompletionSession } from "./propertyCompletionSession";
 import { acceptBlockRefPick, blockPickItems } from "./blockRefPick";
 import { applyCompletion, refCompletionEnd, withRefCompletionSpace, detectTrigger, pageInsert, tagInsert, orderAcItems, COMMANDS, advancedBlockInsertion, filterAdvancedBlockCommands, commandScore, codeLanguageItems, fuzzyScore, aliasOfLabel, propertyKeyFold, type Trigger } from "./autocomplete";
 import { getTemplates, templateToOutline, type AcItem } from "./completionItems";
-import { node, insertOutlineAfter, deleteBlock, setHeading, withUndoUnit } from "../document";
+import { node, insertEditorOutline, setHeading, withUndoUnit, type PendingEdit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
 import { pinyinMatchingEnabled } from "../launcherRanking";
 import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
@@ -47,6 +47,10 @@ export interface CompletionAdapter {
   caret(): number;
   rawBeforeCommit(): string;
   visible(): string;
+  /** Taking `from..to` out of the editor and the block, decided but not made: a gesture that removes its
+   *  trigger text and changes the outline asks the kernel about the text this leaves and writes it only
+   *  on an answer (og-enter-family-1109). */
+  stageDelete(from: number, to: number): PendingEdit;
   apply(raw: string, start: number, end?: number, focus?: boolean, restoreGuard?: () => boolean): void;
   replace(raw: string, caret: number, close: () => void): void;
   afterEdit(callback: () => void): void;
@@ -360,14 +364,15 @@ export function editorCompletions(props: CompletionAdapter) {
       return;
     }
     if (item.templateNodes) {
-      const result = applyCompletion(text(), t.start, t.end, "");
-      closeAc(); apply(result.raw, result.caret, result.caret, false);
+      // One gesture: the trigger's removal and the template's outline are written together, once the
+      // kernel has answered; a refusal or a parser failure leaves the trigger in the editor and the
+      // block (og-enter-family-1109, HONP4). A block the removal leaves empty is replaced by the template.
       const nodes = item.templateNodes.map(n => templateToOutline(n, node(props.id).page));
-      const wasEmpty = node(props.id).raw.trim() === "" && node(props.id).children.length === 0;
-      const last = insertOutlineAfter(props.id, nodes);
-      if (!last) { pushToast(msg("editor-block-outline-is-too-deep-to-insert"), "error"); return; }
-      if (wasEmpty) deleteBlock(props.id);
-      startEditing(last, node(last).raw.length); return;
+      closeAc();
+      const tooDeep = msg("editor-block-outline-is-too-deep-to-insert");
+      const last = insertEditorOutline(props.id, nodes, props.stageDelete(t.start, t.end), `template:${props.id}`, { tooDeep, refused: tooDeep });
+      if (last && node(last)) startEditing(last, node(last).raw.length);
+      return;
     }
     switch (item.action) {
       case "task-marker": {

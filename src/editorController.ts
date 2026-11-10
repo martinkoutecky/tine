@@ -240,6 +240,10 @@ export function takeHistoryEditorSelectionFor(
 
 export { activeSurface, editingId, editingOwner, editingSurface };
 
+/** The caret `startEditing` last asked for, until an editor takes it (`takeCaretFor`). A new request is a
+ *  new object, also for the block an editor already edits. */
+export const caretRequest = caretTarget;
+
 export function takeCaretFor(id: string): CaretPos | null {
   const t = caretTarget();
   if (t && t.id === id) {
