@@ -786,6 +786,194 @@ fn deltas_track_namespace_parents() {
     store.close();
 }
 
+/// Card hehIo: a namespaced edit compares a parent's entry per side by one
+/// read of the resident parents support, not by visiting every name under the
+/// parent. One namespace holds `n` children (referenced names plus files,
+/// cases mixed, one blank file); a namespaced link added and removed, and the
+/// blank child gaining and losing its first text (each publication compares
+/// the parent's key `hehio`), visit the same few names at n = 10 and n = 1,000.
+#[test]
+fn a_namespaced_edit_reads_the_parent_entry_without_walking_its_children() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let visits = |n: usize| -> Vec<usize> {
+        let hub: String = (0..n)
+            .map(|i| {
+                format!(
+                    "- [[{}/Ref{i}]]\n",
+                    if i % 2 == 0 { "Hehio" } else { "HEHIO" }
+                )
+            })
+            .collect();
+        let mut files: Vec<(String, String)> = vec![
+            ("pages/A.md".into(), "- start\n".into()),
+            ("pages/Hub.md".into(), hub),
+            ("pages/Hehio%2FBlank.md".into(), String::new()),
+        ];
+        files.extend((0..n / 10).map(|i| (format!("pages/hehio%2FFile{i}.md"), "- body\n".into())));
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, b)| (p.as_str(), b.as_str()))
+            .collect();
+        let (_dir, store) = fixture(&files);
+        let block = store.page(&PageId::from("pages/A.md")).unwrap().doc.blocks[0].clone();
+        let measured = |edit: &dyn Fn(&Arc<Store>)| {
+            crate::model::namespace_parents::take_seed_visits("hehio");
+            edit(&store);
+            crate::model::namespace_parents::take_seed_visits("hehio")
+        };
+        let counts = vec![
+            measured(&|store| {
+                assert_patch(store, "pages/A.md", "[[Hehio/New]]");
+            }),
+            measured(&|store| {
+                assert_patch(store, "pages/A.md", "plain");
+            }),
+            measured(&|store| {
+                let block = block.clone();
+                let (changed, deltas) = save(store, "pages/Hehio%2FBlank.md", move |doc| {
+                    doc.pre_block = None;
+                    doc.blocks = vec![block];
+                    doc.blocks[0].raw = "first text".into();
+                    doc.blocks[0].children.clear();
+                });
+                assert!(deltas.is_some(), "a precise delta, not a refetch");
+                assert!(!changed, "Hehio already exists through its other children");
+            }),
+        ];
+        assert_eq!(
+            fileless(&store)
+                .into_iter()
+                .filter(|(_, parent)| *parent)
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            ["HEHIO"],
+            "the least spelling of the parent"
+        );
+        store.close();
+        counts
+    };
+    let few = visits(10);
+    let many = visits(1_000);
+    println!("namespace seed visits per publication: n=10 {few:?}, n=1000 {many:?}");
+    assert_eq!(few, many, "visits must not grow with the namespace");
+    // One read of the parent's key per side of each publication.
+    assert!(many.iter().all(|&count| count <= 2), "{many:?}");
+}
+
+/// Card hehIo: the resident parents support answers every key exactly as the
+/// walk over names under it (`namespace_seed`) does, at open and in every
+/// carried generation after: random small graphs of namespaced references and
+/// files in mixed case, blank files, title-named files, files only and
+/// references only, each then edited by external writes.
+#[test]
+fn the_resident_parent_answer_equals_the_walk_over_random_graphs() {
+    let _integration_guard = crate::test_transactions::integration_lock();
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = |below: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % below as u64) as usize
+    };
+    const PARENTS: [&str; 6] = ["Ns", "NS", "ns", "Ns/Sub", "nS/SUB", "Other/x"];
+    const LEAVES: [&str; 3] = ["a", "B", "c"];
+    for round in 0..12 {
+        // 0: both kinds, 1: references only, 2: files only.
+        let mode = round % 3;
+        let mut name = |next: &mut dyn FnMut(usize) -> usize| {
+            format!(
+                "{}/{}",
+                PARENTS[next(PARENTS.len())],
+                LEAVES[next(LEAVES.len())]
+            )
+        };
+        let mut refs = |next: &mut dyn FnMut(usize) -> usize| -> String {
+            let n = next(4);
+            let links: Vec<String> = (0..n).map(|_| format!("[[{}]]", name(next))).collect();
+            format!("- {}\n", links.join(" "))
+        };
+        let body =
+            |next: &mut dyn FnMut(usize) -> usize,
+             refs: &mut dyn FnMut(&mut dyn FnMut(usize) -> usize) -> String| {
+                match next(3) {
+                    0 => String::new(),
+                    1 => "- body\n".to_owned(),
+                    _ if mode == 2 => "- body\n".to_owned(),
+                    _ => refs(next),
+                }
+            };
+        let mut files: Vec<(String, String)> = Vec::new();
+        if mode != 2 {
+            for i in 0..3 {
+                files.push((format!("pages/Hub{i}.md"), refs(&mut next)));
+            }
+        }
+        if mode != 1 {
+            for i in 0..4 {
+                let content = body(&mut next, &mut refs);
+                if next(4) == 0 {
+                    let title = name(&mut next);
+                    files.push((
+                        format!("pages/t{i}.md"),
+                        format!("title:: {title}\n{content}"),
+                    ));
+                } else {
+                    let stem = format!("{}{i}", name(&mut next)).replace('/', "%2F");
+                    files.push((format!("pages/{stem}.md"), content));
+                }
+            }
+        }
+        files.push(("pages/A.md".into(), "- start\n".into()));
+        let borrowed: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, b)| (p.as_str(), b.as_str()))
+            .collect();
+        let (dir, store) = fixture(&borrowed);
+        for step in 0..6 {
+            let view = store.whole_graph().unwrap();
+            let graph = &view.graph;
+            let table = graph.referenced_name_table();
+            let mut keys: std::collections::BTreeSet<String> =
+                graph.namespace_seeds(table).into_keys().collect();
+            for parent in PARENTS {
+                for (_, key) in
+                    crate::model::namespace_parents::parent_prefixes(&format!("{parent}/a"))
+                {
+                    keys.insert(key);
+                }
+            }
+            keys.insert("missing".into());
+            for key in &keys {
+                assert_eq!(
+                    graph.resident_namespace_seed(key),
+                    Some(graph.namespace_seed(table, key)),
+                    "round {round} step {step} key {key:?}: {files:?}"
+                );
+            }
+            drop(view);
+            // An external edit to a random file: blank, text, or new references.
+            let pick = next(files.len());
+            let content = body(&mut next, &mut refs);
+            let content = match files[pick].1.strip_prefix("title:: ") {
+                Some(rest) => format!("title:: {}\n{content}", rest.lines().next().unwrap()),
+                None if files[pick].0.contains("Hub") || files[pick].0.ends_with("A.md") => {
+                    if mode == 2 {
+                        "- plain\n".to_owned()
+                    } else {
+                        refs(&mut next)
+                    }
+                }
+                None => content,
+            };
+            files[pick].1 = content;
+            fs::write(dir.path().join(&files[pick].0), &files[pick].1).unwrap();
+            store.refresh(crate::Depth::Stamps).unwrap();
+            crate::test_host_writer::HostWriter::for_store(&store).settle();
+        }
+        store.close();
+    }
+}
+
 /// The `link` answer (what `[[name]]` opens, `WholeGraph::link_target`)
 /// travels in the delta and equals a fresh read after every alias edit: a
 /// journal's alias opens the journal (D-F2), and an alias spelled as a day with

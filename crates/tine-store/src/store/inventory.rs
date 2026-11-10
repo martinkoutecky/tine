@@ -769,8 +769,11 @@ impl Snapshot {
     /// it: an alias entry unless a page file claims the key, else a
     /// reference-only entry unless any file (page or journal) claims it,
     /// else a namespace parent when a listed name lies under it.
-    /// Ordinary keys: O(log V + owners), plus the names starting with `key`
-    /// when no reference names it. A canonical fileless day checks the resident
+    /// Ordinary keys: O(log V + owners), plus, when no reference names it,
+    /// one read of the resident namespace-parent support (O(log P)); only a
+    /// generation without that support (completion built the name table, no
+    /// inventory read has built the support yet) walks the names starting
+    /// with `key`. A canonical fileless day checks the resident
     /// reference/namespace support for that day (O(log days + its spellings)).
     pub(super) fn name_entry(
         &self,
@@ -852,7 +855,12 @@ impl Snapshot {
         // A key no reference names may still be a namespace parent.
         let (name, namespace_parent) = match spelling {
             Some(spelling) => (spelling, false),
-            None => (self.graph.namespace_seed(table, key)?, true),
+            None => (
+                self.graph
+                    .resident_namespace_seed(key)
+                    .unwrap_or_else(|| self.graph.namespace_seed(table, key))?,
+                true,
+            ),
         };
         let mut answer = self.graph.fileless_name(&self.journal_format, name)?;
         if answer.day.is_some() {

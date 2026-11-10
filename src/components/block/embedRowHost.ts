@@ -16,3 +16,15 @@ export function bindRowHost(row: Element, host: () => RowHost | null): void {
 export function rowHostOf(row: Element | null | undefined): RowHost | null {
   return (row && rows.get(row)?.()) ?? null;
 }
+
+// Every rendered row's own position: its host for a whole-block embed's root row,
+// else the block in the outline scope it is rendered in (a page or block embed's
+// rows sit in the embed's scope, not the page's).
+const positions = new WeakMap<Element, () => RowHost>();
+export function bindRowPosition(row: Element, position: () => RowHost): void {
+  positions.set(row, position);
+}
+/** Where a rendered `.ls-block` row sits, or null for an element that is no bound row. */
+export function rowPositionOf(row: Element | null | undefined): RowHost | null {
+  return (row && positions.get(row)?.()) ?? null;
+}
