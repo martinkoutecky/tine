@@ -792,7 +792,7 @@ fn store_failed(error: StoreError) -> ErrorBody {
             format!("the page is {len} bytes, over the {limit}-byte parse limit"),
             true,
         ),
-        StoreError::NotFound => not_found("the page does not exist"),
+        StoreError::NotFound(_) => not_found("the page does not exist"),
         StoreError::Closed => busy(),
         other => internal(Diag::StoreFailed, format!("{other:?}")),
     }

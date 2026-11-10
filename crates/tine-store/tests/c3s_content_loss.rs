@@ -135,7 +135,7 @@ fn f2_crash_in_multi_file_undo_keeps_each_files_old_bytes() {
     fs::create_dir_all(root.join("assets")).unwrap();
     fs::write(root.join("assets/A.txt"), "- old A\n").unwrap();
     fs::write(root.join("assets/B.txt"), "- old B\n").unwrap();
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
         .args([
             "--exact",
             "test_transactions::c3s_content_loss::f2_undo_crash_worker",

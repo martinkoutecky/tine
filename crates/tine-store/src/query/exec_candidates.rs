@@ -80,6 +80,62 @@ fn required(filter: &Filter, anchor: Anchor) -> Option<Req> {
     }
 }
 
+/// The page keys a name need probes. A date spelling names its journal
+/// (S12, `eval_page_name`): the journal is named by the configured title,
+/// so its key joins the probe. The one date answerer reads the spelling.
+fn name_keys(name: &str, format: &tine_core::date::JournalFormat) -> impl Iterator<Item = String> {
+    let journal = eval::reference_day(name, format)
+        .and(format.parse(name))
+        .map(|day| refs::page_key(&format.title(day)));
+    std::iter::once(refs::page_key(name)).chain(journal)
+}
+
+/// The page keys a fileless row meeting `req` must carry: such a row has
+/// no properties, so it meets only a name need, whether or not a key is
+/// indexed. An `and` intersects its conjuncts' keys.
+fn fileless_names(
+    req: &Req,
+    format: &tine_core::date::JournalFormat,
+) -> std::collections::BTreeSet<String> {
+    match req {
+        Req::Need(Need::Key(_)) => Default::default(),
+        Req::Need(Need::Name(name)) => name_keys(name, format).collect(),
+        Req::Any(items) => items
+            .iter()
+            .flat_map(|req| fileless_names(req, format))
+            .collect(),
+        Req::All(items) => items
+            .iter()
+            .map(|req| fileless_names(req, format))
+            .reduce(|kept, next| kept.intersection(&next).cloned().collect())
+            .unwrap_or_default(),
+    }
+}
+
+impl Plan {
+    /// Whether a fileless row (a reference-only page or a namespace parent)
+    /// keyed by one of `keys` can be one of this plan's rows: the plan is
+    /// page-anchored and the row carries a name its required condition
+    /// needs, the names execution narrows its fileless rows by. A necessary
+    /// condition, never evaluation: a page that starts or stops existing
+    /// without a file changes the answer only of a plan this admits. O(keys
+    /// x log of the filter's names); no page is read.
+    pub(crate) fn may_list_fileless(
+        &self,
+        keys: &[String],
+        format: &tine_core::date::JournalFormat,
+    ) -> bool {
+        if self.anchor != Anchor::Page || keys.is_empty() {
+            return false;
+        }
+        let Some(req) = required(&self.filter, self.anchor) else {
+            return true;
+        };
+        let names = fileless_names(&req, format);
+        keys.iter().any(|key| names.contains(key))
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// Test oracle switch: `false` scans every page despite a key need, the
@@ -134,16 +190,6 @@ impl<'a> Selector<'a> {
         }
     }
 
-    /// The page keys a name need probes. A date spelling names its journal
-    /// (S12, `eval_page_name`): the journal is named by the configured title,
-    /// so its key joins the probe. The one date answerer reads the spelling.
-    fn keys(&self, name: &str) -> impl Iterator<Item = String> {
-        let journal = eval::reference_day(name, &self.format)
-            .and(self.format.parse(name))
-            .map(|day| refs::page_key(&self.format.title(day)));
-        std::iter::once(refs::page_key(name)).chain(journal)
-    }
-
     /// An upper bound on the pages `req` selects, read without walking a
     /// key's holders; `None` when `req` cannot narrow (a key that is not
     /// indexed). O(nodes x depth + named claimants).
@@ -151,7 +197,7 @@ impl<'a> Selector<'a> {
         match req {
             Req::Need(Need::Key(key)) => self.index?.key_holders(key),
             Req::Need(Need::Name(name)) => Some(
-                self.keys(name)
+                name_keys(name, &self.format)
                     .map(|key| self.named.paths(&key).count())
                     .sum(),
             ),
@@ -182,7 +228,7 @@ impl<'a> Selector<'a> {
             }
             Req::Need(Need::Name(name)) => {
                 let Some(root) = self.root else { return };
-                for key in self.keys(name) {
+                for key in name_keys(name, &self.format) {
                     for path in self.named.paths(&key) {
                         if let Ok(rel) = path.strip_prefix(root) {
                             let rel = rel.to_string_lossy().replace('\\', "/");
@@ -200,22 +246,6 @@ impl<'a> Selector<'a> {
         }
     }
 
-    /// The page keys a fileless row meeting `req` must carry: such a row has
-    /// no properties, so it meets only a name need, whether or not a key is
-    /// indexed. An `and` intersects its conjuncts' keys.
-    fn names(&self, req: &Req) -> std::collections::BTreeSet<String> {
-        match req {
-            Req::Need(Need::Key(_)) => Default::default(),
-            Req::Need(Need::Name(name)) => self.keys(name).collect(),
-            Req::Any(items) => items.iter().flat_map(|req| self.names(req)).collect(),
-            Req::All(items) => items
-                .iter()
-                .map(|req| self.names(req))
-                .reduce(|kept, next| kept.intersection(&next).cloned().collect())
-                .unwrap_or_default(),
-        }
-    }
-
     /// The slots of the pages meeting `req` and the page keys a fileless row
     /// must carry; `None` when `req` cannot narrow, so every page stays a
     /// candidate.
@@ -225,7 +255,7 @@ impl<'a> Selector<'a> {
         self.slots(req, &mut slots);
         Some((
             slots.into_iter().collect(),
-            self.names(req).into_iter().collect(),
+            fileless_names(req, &self.format).into_iter().collect(),
         ))
     }
 }

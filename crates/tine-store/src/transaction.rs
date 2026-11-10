@@ -392,6 +392,10 @@ struct Prepared {
     old: Option<Vec<u8>>,
     new: Option<Vec<u8>>,
     opaque_rev: Option<FileRev>,
+    /// A page save's new bytes as the serializer parsed them (its round-trip
+    /// parse), with the path serialization validated, which `PagePlan::plan`
+    /// hands its caller (`HostOp::saved`) without resolving the path again.
+    parsed: Option<(PathBuf, tine_core::doc::Document)>,
 }
 
 enum Expected {
@@ -804,6 +808,7 @@ impl<'a> PagePlan<'a> {
                     &renames.0,
                     &renames.1,
                     name_format,
+                    None,
                 );
                 if new == text {
                     RewriteEffect::Unchanged

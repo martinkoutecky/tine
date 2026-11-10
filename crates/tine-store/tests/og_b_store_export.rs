@@ -31,8 +31,15 @@ fn export_targets_use_real_ids_in_markdown_and_org() {
             Some(expected)
         );
     }
-    tine_graph_features::publish::publish_html(&store).unwrap();
-    let html: String = fs::read_dir(dir.path().join("publish"))
+    let out = tempfile::tempdir().unwrap();
+    let site = tine_graph_features::publish_query::publish_static(
+        &store,
+        out.path(),
+        "site",
+        store.config().all_pages_public,
+    )
+    .unwrap();
+    let html: String = fs::read_dir(&site.path)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "html"))

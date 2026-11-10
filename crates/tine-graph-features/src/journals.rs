@@ -142,7 +142,7 @@ fn load_feed_read(
 ) -> io::Result<Loaded<FeedRead>> {
     Ok(match store.page(id) {
         Ok(read) => Loaded::Page(feed_read(read)),
-        Err(StoreError::NotFound) => {
+        Err(StoreError::NotFound(_)) => {
             referenced().map_or(Loaded::Gone, |day| Loaded::Page(virtual_day(store, day)))
         }
         Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
@@ -1047,7 +1047,7 @@ pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Res
     let plan = || {
         let rev = match store.read(&id, max) {
             Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
+            Err(StoreError::NotFound(_)) => {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     "no such journal file",

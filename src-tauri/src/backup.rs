@@ -688,7 +688,7 @@ fn read_store_area(
 fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
     match error {
         tine_store::StoreError::Io(error) => error.kind(),
-        tine_store::StoreError::NotFound => ErrorKind::NotFound,
+        tine_store::StoreError::NotFound(_) => ErrorKind::NotFound,
         tine_store::StoreError::Undecodable | tine_store::StoreError::Unparseable(_) => {
             ErrorKind::InvalidData
         }

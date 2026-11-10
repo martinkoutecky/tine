@@ -12,7 +12,7 @@ const out = path.join(root, "artifacts/sweep-bugs", `native-${Date.now()}`);
 const graph = path.join(out, "graph");
 for (const dir of ["pages", "journals", "logseq", "xdg/data", "xdg/config", "xdg/cache"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 fs.writeFileSync(path.join(graph, "pages/Duplicate.md"), "- Original\n  - Child\n- Neighbor\n");
-fs.writeFileSync(path.join(graph, "pages/Icon.md"), "icon:: 🚩\n\n- Icon body\n");
+fs.writeFileSync(path.join(graph, "pages/Icon.md"), "tine.icon:: 🚩\n\n- Icon body\n");
 fs.writeFileSync(path.join(graph, "pages/Frame.md"), '- <iframe src="https://example.com" width="100%" height="833"></iframe>\n');
 fs.writeFileSync(path.join(graph, "pages/Refusal.md"), "- Preserve this page\n");
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:shortcuts {:editor/duplicate-block-above "alt+shift+u"}}\n');
@@ -67,7 +67,7 @@ try {
   await openPageByName(browser, "Icon");
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-properties")?.textContent.includes("icon")), { timeout: 10000 });
   await browser.$(".page-properties .prop-row").click();
-  await browser.waitUntil(() => browser.execute(() => document.querySelector("textarea.block-editor")?.value.includes("icon:: 🚩")), { timeout: 5000 });
+  await browser.waitUntil(() => browser.execute(() => document.querySelector("textarea.block-editor")?.value.includes("tine.icon:: 🚩")), { timeout: 5000 });
   await browser.keys("Escape");
   proof.steps.push(journey);
 

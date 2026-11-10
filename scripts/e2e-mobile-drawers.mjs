@@ -196,7 +196,8 @@ function nativeScreenshot(file) {
 async function waitDrawer(browser, side) {
   await browser.waitUntil(() => browser.execute((wanted) =>
     document.querySelector(".app-container")?.getAttribute("data-active-drawer") === wanted
-    && document.querySelectorAll(".mobile-drawer-scrim").length === 1,
+    && document.querySelectorAll(".mobile-drawer-scrim").length === 1
+    && document.querySelectorAll("[data-mobile-drawer-panel]").length === 1,
   side), { timeout: 8_000, timeoutMsg: `${side} drawer did not become active` });
 }
 

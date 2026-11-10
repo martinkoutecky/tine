@@ -264,8 +264,9 @@ impl Graph {
     /// file) become the page's index, and its row is derived from them, in
     /// one critical section. `doc` is the Document the bytes were
     /// serialized from, when the owner has it (R8, E104). Returns the entry
-    /// named from the bytes, None when the page has no row. `Err` when no
-    /// host holds `key`: the caller publishes as for disk.
+    /// named from the bytes (the derived row's, when one was derived), None
+    /// when the page has no row. `Err` when no host holds `key`: the caller
+    /// publishes as for disk.
     #[allow(clippy::result_unit_err)]
     pub(crate) fn publish_owned(
         &self,
@@ -281,6 +282,7 @@ impl Graph {
         // Bytes the installed row was already derived from change nothing
         // but the index (an owner's observation of its own save).
         let mut row = None;
+        let mut named = None;
         let mut claim = self.held.claims.lock().unwrap().remove(key);
         if self.cache_built() && self.cached_rev(&path) != rev {
             row = bytes
@@ -313,6 +315,7 @@ impl Graph {
                 }
                 match row.take() {
                     Some(row) => {
+                        named = Some(row.0.clone());
                         let pages = Arc::make_mut(cache);
                         let slot = self.cached_page_index_for_path(pages, &path);
                         renamed = !slot
@@ -337,6 +340,8 @@ impl Graph {
         }
         drop(guard);
         self.recent_writes.lock().unwrap().remove(&path);
-        Ok(bytes.and_then(|bytes| self.owned_entry(key, &bytes)))
+        // A derived row's entry is these bytes' naming: not named again.
+        let named = named.or_else(|| row.map(|(entry, _, _)| entry));
+        Ok(bytes.and_then(|bytes| named.or_else(|| self.owned_entry(key, &bytes))))
     }
 }

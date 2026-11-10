@@ -989,7 +989,7 @@ pub fn trash_sync_conflict(
         let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
         let rev = match store.read(&conf, max) {
             Ok((_, rev)) => rev,
-            Err(tine_store::StoreError::NotFound) => return Err(copy_gone()),
+            Err(tine_store::StoreError::NotFound(_)) => return Err(copy_gone()),
             Err(error) => return Err(crate::store_error(error)),
         };
         trash_copy(store, &conf, rev)
@@ -1021,7 +1021,7 @@ pub fn trash_identical_sync_copies(
         }
         let read = |file: &FileId| match store.read(file, max) {
             Ok(read) => Ok(Some(read)),
-            Err(tine_store::StoreError::NotFound) => Ok(None),
+            Err(tine_store::StoreError::NotFound(_)) => Ok(None),
             Err(error) => Err(crate::store_error(error)),
         };
         let (Some((theirs, rev)), Some((mine, _))) = (read(&conf)?, read(&win)?) else {

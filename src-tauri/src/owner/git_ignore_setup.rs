@@ -107,7 +107,7 @@ fn append_git_ignore(store: &tine_store::Store, lines: &[&str]) -> Result<(), St
     let id = FileId::from(".gitignore".to_owned());
     let (mut bytes, base) = match store.read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
         Ok((bytes, rev)) => (bytes, Some(rev)),
-        Err(StoreError::NotFound) => (Vec::new(), None),
+        Err(StoreError::NotFound(_)) => (Vec::new(), None),
         Err(error) => return Err(format!("{error:?}")),
     };
     // Use the first existing newline's style, preserving every original byte.

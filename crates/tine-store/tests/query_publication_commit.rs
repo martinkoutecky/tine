@@ -97,7 +97,7 @@ fn publication_child() {
     store.close();
 }
 fn child(root: &Path, point: &str, replace: bool) -> Child {
-    Command::new(std::env::current_exe().unwrap())
+    Command::new(tine_store::test_binary::own_test_binary())
         .args([
             "--exact",
             "query_publication_commit::publication_child",

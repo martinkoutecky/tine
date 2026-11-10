@@ -11,7 +11,7 @@ use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
 #[path = "pages_rename_plan.rs"]
 mod rename_plan;
-pub use rename_plan::{rename_destination_holders, RenameBlocked, RenameChoice};
+pub use rename_plan::{rename_destination_holders, RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
@@ -29,7 +29,7 @@ impl RenamePlan {
 }
 use tine_store::{
     Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
-    Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
+    Resolved, SaveBase, Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -232,14 +232,18 @@ fn rewrite_target_pages(
                 (raw.contains("{{") && spells_a_key(raw)) || (org && raw.contains("[[file:"))
             };
             if let Some(pre) = page.document.pre_block.as_deref() {
-                if may_hold(pre) && refs::rename_pre_block(pre, org, renames, None, format) != pre {
+                if may_hold(pre)
+                    && refs::rename_pre_block(pre, org, renames, None, format, None) != pre
+                {
                     return true;
                 }
             }
             let mut stack: Vec<_> = page.document.roots.iter().collect();
             while let Some(block) = stack.pop() {
                 let raw = block.raw();
-                if may_hold(raw) && refs::rename_block_raw(raw, org, renames, None, format) != raw {
+                if may_hold(raw)
+                    && refs::rename_block_raw(raw, org, renames, None, format, None) != raw
+                {
                     return true;
                 }
                 stack.extend(block.children.iter());
@@ -291,9 +295,9 @@ pub fn rename_would_change(
         .iter()
         .map(|text| {
             let after = if text.pre_block {
-                refs::rename_pre_block(&text.raw, text.org, &renames, None, format)
+                refs::rename_pre_block(&text.raw, text.org, &renames, None, format, None)
             } else {
-                refs::rename_block_raw(&text.raw, text.org, &renames, None, format)
+                refs::rename_block_raw(&text.raw, text.org, &renames, None, format, None)
             };
             after != text.raw
         })
@@ -378,7 +382,7 @@ pub fn delete_page_expected(
         if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
             let file = text_file(store, path)?;
             match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-                Err(StoreError::NotFound) => {}
+                Err(StoreError::NotFound(_)) => {}
                 Err(error) => return Err(store_error(error)),
                 Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
             }
@@ -792,6 +796,7 @@ fn rename_transaction<'s>(
         lookup,
         query_lookup,
         moves,
+        mut renamed,
         moved_titles_to_rebind,
         merge,
         ref_merge,
@@ -807,6 +812,7 @@ fn rename_transaction<'s>(
     // descendant moves, then the source trash, then config.edn LAST. The
     // survivor is queued first because referrer rewrites are queued as the
     // candidates are read below.
+    let rewritten_names = std::cell::RefCell::new(HashSet::new());
     let merged = match &merge {
         Some((src, dst)) => Some(merged_survivor(
             store,
@@ -815,6 +821,7 @@ fn rename_transaction<'s>(
             Some(MergeNames {
                 links: &lookup,
                 queries: &query_lookup,
+                rewritten: &rewritten_names,
             }),
         )?),
         None => None,
@@ -872,18 +879,31 @@ fn rename_transaction<'s>(
         // rewriter directly. Every other referrer is queued by the
         // transaction's own rewrite, computed once from this read and
         // reused by preflight (GH #623).
+        let mut names = HashSet::new();
+        let rewrite = |names: &mut HashSet<_>| {
+            refs::rename_rewrite_with_queries(
+                &content,
+                org,
+                &map.0,
+                &map.1,
+                name_format,
+                Some(names),
+            )
+        };
         let changed = if moved || marked {
-            tine_core::refs::rename_rewrite_with_queries(&content, org, &map.0, &map.1, name_format)
-                != content
-                || (!org && marked && own_title)
+            rewrite(&mut names) != content || (!org && marked && own_title)
+        } else if rebind {
+            let new = rewrite(&mut names);
+            tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
+            new != content
         } else {
-            let title = if rebind {
-                TitleRebind::Own
-            } else {
-                TitleRebind::Keep
-            };
-            if title == TitleRebind::Keep {
-                if let Some(new) = rewritten.remove(&id) {
+            let prepared = rewritten
+                .remove(&id)
+                .or_else(|| (!planned).then(|| (rewrite(&mut names), std::mem::take(&mut names))));
+            if let Some((new, recorded)) = prepared {
+                names = recorded;
+                let changed = new != content;
+                if changed {
                     tx.rewrite_refs_prepared(
                         &id,
                         rev.clone(),
@@ -891,16 +911,10 @@ fn rename_transaction<'s>(
                         &map,
                         name_format,
                     );
-                    true
-                } else if planned {
-                    false
-                } else {
-                    tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title)
-                        == RewriteEffect::Changes
                 }
+                changed
             } else {
-                tx.rewrite_refs(&id, rev.clone(), Some(&content), &map, title)
-                    == RewriteEffect::Changes
+                false
             }
         };
         let org_refuses = org && (changed || own_title) && !tine_core::org::org_editable(&content);
@@ -914,16 +928,10 @@ fn rename_transaction<'s>(
             continue;
         }
         if org_refuses {
-            let display = store
+            let path = store
                 .path_for_os_handoff(&file, false)
                 .map_err(store_error)?;
-            return Err(error(
-                io::ErrorKind::PermissionDenied,
-                &format!(
-                    "cannot rename: {} is a read-only .org file (does not round-trip)",
-                    display.display()
-                ),
-            ));
+            return Err(read_only_org(&path));
         }
         if marked && rebind {
             // References unchanged, but the interrupted rename's title
@@ -931,6 +939,7 @@ fn rename_transaction<'s>(
             tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
         }
         if moved || rebind || changed {
+            rewritten_names.borrow_mut().extend(names);
             edits.push((id, rev, true));
         }
     }
@@ -982,11 +991,13 @@ fn rename_transaction<'s>(
     if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
         tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
     }
+    rename_plan::report_rewritten_names(&mut renamed, rewritten_names.into_inner(), old, &lookup);
     Ok(RenameTransaction::Writes {
         tx,
         report: RenameReport {
             outcome,
             touched,
+            renamed,
             skipped_conflicted_referrers: skipped,
             home_page: None,
             favorites: None,
@@ -1080,19 +1091,24 @@ fn unsaved_error(graph: &tine_store::WholeGraph, path: &str) -> io::Error {
     )
 }
 
+/// The refusal of a rename that would rewrite a read-only Org file. It names
+/// the file as the user knows it: the canonical OS path is `\\?\C:\...` on
+/// Windows, so it goes through the shared display boundary first.
+fn read_only_org(path: &std::path::Path) -> io::Error {
+    let shown = tine_core::graph_paths::normalize_graph_path(&path.display().to_string());
+    error(
+        io::ErrorKind::PermissionDenied,
+        &format!("cannot rename: {shown} is a read-only .org file (does not round-trip)"),
+    )
+}
+
 /// The refusal of a rename that would change a page it cannot rewrite: a
 /// read-only Org file, or one that is not UTF-8.
 fn unwritable(store: &Store, page: &PageId) -> io::Error {
     let file = page.file();
     if Format::from_path(page.as_str().as_ref()) == Format::Org {
-        if let Ok(display) = store.path_for_os_handoff(&file, false) {
-            return error(
-                io::ErrorKind::PermissionDenied,
-                &format!(
-                    "cannot rename: {} is a read-only .org file (does not round-trip)",
-                    display.display()
-                ),
-            );
+        if let Ok(path) = store.path_for_os_handoff(&file, false) {
+            return read_only_org(&path);
         }
     }
     error(
@@ -1123,6 +1139,13 @@ pub struct RenameReport {
     pub outcome: RenameOutcome,
     /// Every page file moved, trashed or rewritten; empty when `Unchanged`.
     pub touched: Vec<TouchedPage>,
+    /// Every page identity the rename moved, from its old name to the name it
+    /// wrote: the renamed page (a reference-only one too), each file-backed
+    /// namespace descendant, and each reference-only namespace member whose
+    /// references it renamed (`path: None`). Empty when `Unchanged`. The
+    /// window's navigation follows exactly this map; it never re-derives a
+    /// moved name.
+    pub renamed: Vec<RenamedPage>,
     /// Paths of referrers carrying VCS conflict markers whose references the
     /// rename left untouched (R-VCS-MARKERS); the UI says so. Reported once
     /// per file.
@@ -1154,10 +1177,23 @@ impl RenameReport {
             .map(|error| &error.report)
     }
 
+    /// [`Self::applied_before_error`] for a caller that has a window to refresh
+    /// and no command line to inspect (the app's rename): the same report with
+    /// the failed config write's cause in `config_skipped`. The rename happened;
+    /// home and favorites did not follow, and the window says so.
+    pub fn with_config_failure(error: &io::Error) -> Option<Self> {
+        let incomplete = error.get_ref()?.downcast_ref::<IncompleteRename>()?;
+        Some(Self {
+            config_skipped: Some(incomplete.source.to_string()),
+            ..incomplete.report.clone()
+        })
+    }
+
     fn unchanged() -> Self {
         Self {
             outcome: RenameOutcome::Unchanged,
             touched: Vec::new(),
+            renamed: Vec::new(),
             skipped_conflicted_referrers: Vec::new(),
             home_page: None,
             favorites: None,
@@ -1407,7 +1443,7 @@ fn merged_survivor(
     let mut doc = page(dst, &dst_text)?.doc;
     let format = store.config().file_name_format;
     if let Some(renames) = renames {
-        rename_doc(&mut doc, renames, org, format);
+        merge_payload::rename_doc(&mut doc, renames, org, format);
     }
     let (header, blocks) = merge_payload::payload(&doc, &source, renames, org, format);
     if let Some(header) = header {
@@ -1435,33 +1471,7 @@ fn merged_survivor(
 struct MergeNames<'a> {
     links: &'a HashMap<String, String>,
     queries: &'a HashMap<String, String>,
-}
-
-/// The merge survivor's own references to the merged page follow it: the
-/// same rewrite a rename applies to a page (`refs::rename_rewrite`), block by
-/// block.
-fn rename_doc(
-    doc: &mut PageDto,
-    names: MergeNames<'_>,
-    org: bool,
-    format: tine_core::config::FileNameFormat,
-) {
-    fn walk(
-        blocks: &mut [tine_core::model::BlockDto],
-        names: MergeNames<'_>,
-        org: bool,
-        format: tine_core::config::FileNameFormat,
-    ) {
-        for block in blocks {
-            block.raw =
-                refs::rename_block_raw(&block.raw, org, names.links, Some(names.queries), format);
-            walk(&mut block.children, names, org, format);
-        }
-    }
-    if let Some(pre) = doc.pre_block.as_mut() {
-        *pre = refs::rename_pre_block(pre, org, names.links, Some(names.queries), format);
-    }
-    walk(&mut doc.blocks, names, org, format);
+    rewritten: &'a std::cell::RefCell<HashSet<(String, String)>>,
 }
 
 mod merge_payload;

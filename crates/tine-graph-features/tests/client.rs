@@ -1621,7 +1621,14 @@ fn operation_result(result: &std::io::Result<()>, root: &std::path::Path) -> Str
             // the separators portably.
             let mut text = format!("{:?}: {}", error.kind(), error);
             if let Ok(canonical) = fs::canonicalize(root) {
-                text = text.replace(&canonical.to_string_lossy().to_string(), "<root>");
+                let canonical = canonical.to_string_lossy().to_string();
+                text = text.replace(&canonical, "<root>");
+                // A message that names a file for the user drops the `\\?\`
+                // prefix (graph_paths::normalize_graph_path); name that root too.
+                text = text.replace(
+                    &tine_core::graph_paths::normalize_graph_path(&canonical),
+                    "<root>",
+                );
             }
             let text = text.replace(&root.to_string_lossy().to_string(), "<root>");
             if cfg!(windows) {
