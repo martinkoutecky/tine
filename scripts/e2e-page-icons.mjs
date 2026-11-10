@@ -5,6 +5,7 @@ import path from "node:path";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const out = path.join(root, "artifacts/gh346", `native-${Date.now()}`);
@@ -105,11 +106,11 @@ try {
   await browser.$('[data-page-action-id="remove-page-icon"]').click();
   await browser.waitUntil(() => !fs.readFileSync(file, "utf8").includes("icon::"), { timeout: 10000 });
   proof.steps.push(journey);
-  await browser.saveScreenshot(path.join(out, "page-icons.png"));
+  await saveJourneyScreenshot(browser, path.join(out, "page-icons.png"));
 } catch (error) {
   proof.failure = { journey, expected: "sidebar icons follow the page property and guarded disk save", observed: String(error), classification: "ambiguous" };
   try { proof.failure.labels = await labels(".nav-page-label, .rs-item-title"); proof.failure.body = await browser?.execute(() => document.body.innerText.slice(0, 2400)); } catch {}
-  try { await browser?.saveScreenshot(path.join(out, "failure.png")); } catch {}
+  try { if (browser) await saveJourneyScreenshot(browser, path.join(out, "failure.png")); } catch {}
   throw error;
 } finally {
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));

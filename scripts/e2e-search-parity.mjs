@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 import {
   startWebdriverApplication,
   stopWebdriverApplication,
@@ -449,7 +450,7 @@ try {
   console.log("PASS: literal search gestures preserve exact storage owners, routes, scoped blocks, canonical Unicode, and default accent folding");
 } catch (error) {
   if (browser) {
-    await browser.saveScreenshot(path.join(ARTIFACTS, "failure.png")).catch(() => {});
+    await saveJourneyScreenshot(browser, path.join(ARTIFACTS, "failure.png")).catch(() => {});
     const state = await browser.execute(() => ({
       text: document.body.innerText,
       sidebars: [...document.querySelectorAll("[data-sidebar-surface]")].map((node) => ({

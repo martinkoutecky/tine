@@ -12,6 +12,10 @@ for the Guide page "Customize Tine's look" (`crates/tine-guide/src/templates/cus
   theme or snippet that sets `--ls-primary-background-color` and friends keeps
   working, and the built-in gallery palettes are written in them. Nothing in
   this contract changes their meaning.
+- Page and block property panels (including page hover headers) use
+  `--ls-block-properties-background-color` when set, otherwise the theme's
+  tertiary background (distinct from embeds and reference groups, which use the
+  secondary one). Property values in query table columns remain cells.
 - **Tine's own knobs: the `--tine-*` tokens in section 2.** Each one names a
   thing users have asked to change (or plausibly will) that has no `--ls-*`
   variable. A token is **unset** by default (`initial`), and every use is
