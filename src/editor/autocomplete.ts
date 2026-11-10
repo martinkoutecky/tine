@@ -174,12 +174,25 @@ export interface Trigger {
 /** Existing canonical property identity, re-exported for editor authoring. */
 export const propertyKeyFold = propertyKeyNorm;
 
-/** Detect an active completion trigger immediately before `caret`. */
+/** Detect an active completion trigger immediately before `caret`. None opens
+ *  inside a fenced code block (its body lines and closer line): code is literal.
+ *  CM6-D9 made this the rule for both editors (Martin 2026-11-09), a deliberate
+ *  difference from Logseq, whose `[[` and `/` handlers open their menus in code
+ *  too (og/src/main/frontend/handler/editor.cljs:1606 and :1894, 6e7afa8eb).
+ *  Inline code is not a fence and keeps its menus, as in CM6 before. The fence
+ *  parse runs only when a trigger is pending, never for ordinary typing. An
+ *  editor showing a projected code body says so through its adapter's
+ *  `suppressTriggers` (editorCompletions.ts), since that buffer holds no fence. */
 export function detectTrigger(
   raw: string,
   caret: number,
   format: Format = "md",
 ): Trigger | null {
+  const trigger = triggerBeforeCaret(raw, caret, format);
+  return trigger && lineStartsInFence(raw, raw.lastIndexOf("\n", caret - 1) + 1, format) ? null : trigger;
+}
+
+function triggerBeforeCaret(raw: string, caret: number, format: Format): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
   // are anchored at line start or after whitespace, and `<command` starts its
   // own logical line. So only the CURRENT line's
@@ -241,9 +254,7 @@ export function detectTrigger(
     }
     return null;
   })();
-  // Code is literal: no property completion inside a fence. The parse behind that answer runs only
-  // when a property trigger is actually pending, never for ordinary typing.
-  if (propertyTrigger && !lineStartsInFence(raw, lineStart, format)) return propertyTrigger;
+  if (propertyTrigger) return propertyTrigger;
 
   // Opening Markdown fence language. Do not pop a menu for a bare fence typed
   // by hand (Enter keeps its established behavior); one language character is
@@ -264,7 +275,7 @@ export function detectTrigger(
   if (openPage !== -1 && openPage > openBlock) {
     const inner = before.slice(openPage + 2);
     if (!inner.includes("]") && !inner.includes("[")) {
-      return { kind: "page", query: inner, start: lineStart + openPage, end: caret };
+      return { kind: "page", query: inner + linkTextAfterCaret(raw, caret), start: lineStart + openPage, end: caret };
     }
   }
   if (openBlock !== -1 && openBlock > openPage) {
@@ -436,6 +447,19 @@ export function refCompletionEnd(value: string, end: number, insertedText: strin
     return closer !== -1 && (lineEnd === -1 || closer < lineEnd) ? closer + pair.length : end;
   }
   return end;
+}
+
+/** GH #888 (D-20261109-LK): with the caret inside a complete `[[link]]`, the
+ *  page query is the whole link text, so the link's own page ranks first. This
+ *  is the text a pick replaces (`refCompletionEnd` swallows through the `]]`).
+ *  A deliberate difference from Logseq, whose page search reads only `[[` to
+ *  the caret (og/src/main/frontend/components/editor.cljs:105-121 page-search,
+ *  6e7afa8eb). A link being typed (no `]]` yet, or `]]` right after the caret)
+ *  adds nothing. Text holding another bracket is not this link's text. */
+function linkTextAfterCaret(raw: string, caret: number): string {
+  const close = refCompletionEnd(raw, caret, "]]");
+  const after = close === caret ? "" : raw.slice(caret, close - 2);
+  return after.includes("[") || after.includes("]") ? "" : after;
 }
 
 /** Build the inserted text for a page reference (`[[Name]]`). */

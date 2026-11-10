@@ -91,7 +91,7 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
-import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed } from "./blockRefActions";
+import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, mergeSelectedBlocks, searchSelectedText, runSetDepth, setTargetChildrenCollapsed, removeAuthor, removeAuthorTarget } from "./blockRefActions";
 import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
 import { installPlainPasteMenu } from "./editor/plainPasteMenu";
 import { goHome } from "./homePage";
@@ -499,6 +499,8 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
   // GH #764 (D-20261101-L5): palette and keymap only, no default key. Acts on a block selection.
   { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
+  // GH #918: the block context menu's Remove author, offered only where that menu offers it.
+  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", available: () => removeAuthorTarget() !== null, run: () => { const id = removeAuthorTarget(); if (id !== null) removeAuthor(id); }, global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },

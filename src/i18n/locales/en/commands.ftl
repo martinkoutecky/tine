@@ -115,6 +115,7 @@ command-editor-insert-child-block = Insert child block
 command-editor-merge-selected-blocks = Merge selected blocks
 command-editor-new-sibling-after-subtree = New block after this block’s children
 command-editor-select-embedding-block = Select embedding block
+command-editor-remove-author = Remove author
 command-editor-collapse-children = Collapse (one level)
 command-editor-expand-children = Expand (one level)
 # $depth (number): how many levels stay open, 0 to 9.
