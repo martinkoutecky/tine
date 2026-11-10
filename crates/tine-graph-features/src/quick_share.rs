@@ -369,7 +369,7 @@ pub fn prepare(
             std::fs::create_dir_all(dir.path().join("logseq"))?;
             std::fs::write(dir.path().join("logseq/config.edn"), bytes)?;
         }
-        Err(StoreError::NotFound) => {}
+        Err(StoreError::NotFound(_)) => {}
         Err(error) => return Err(store_error(error)),
     }
     for page in &selected.pages {

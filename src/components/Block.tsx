@@ -138,7 +138,7 @@ import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
 import { selectionToolbarPlacement } from "./block/selectionToolbarPlacement";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, isEditorEmpty, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
-import { editorNodeBinding } from "../editor/nodeBinding";
+import { blockNodeBinding } from "../editor/nodeBinding";
 import { editorCommitRecovery } from "../editor/commitRecovery";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
@@ -253,7 +253,7 @@ export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(n
  * with its visible descendants; a failed structured paste shows fixed text. */
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
   // Share one node read across this block's derivations.
-  const node = createMemo(() => docNode(props.id));
+  const node = createMemo(blockNodeBinding(() => props.id).node);
   const propertySession = propertyEditorSession();
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
@@ -642,7 +642,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
-  const { node, shownNode, live: liveNode, current: editorNodeCurrent, writable: editorNodeWritable } = editorNodeBinding(() => props.id, () => editorMounted);
+  const { node, shownNode, live: liveNode, current: editorNodeCurrent, writable: editorNodeWritable } = blockNodeBinding(() => props.id, () => editorMounted);
   const replacedUnderEditor = () => !editorNodeWritable();
   const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).

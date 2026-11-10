@@ -372,6 +372,7 @@ mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
+pub use page_read::{PageRead, PageReadSource};
 mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
@@ -1989,12 +1990,12 @@ impl Store {
                 return Err(StoreError::Closed);
             }
             let (id, path) = self.page_spot(id)?;
-            if let Some(doc) = self.held_page(&path)? {
-                return self.page_read(id, doc);
+            if let Some((doc, source)) = self.held_page(&path)? {
+                return self.page_read(id, doc, source);
             }
             let entry = self.page_entry(&id, &path)?;
             let doc = self.parse_page(&path, &entry, false)?;
-            return self.page_read(id, doc);
+            return self.page_read(id, doc, PageReadSource::Disk);
         }
         let waiting = Instant::now();
         let _writer = self.writer.lock().unwrap();
@@ -2005,12 +2006,16 @@ impl Store {
         }
         let (id, path) = self.page_spot(id)?;
         // A held page is answered before its file is read (A-H1).
-        if let Some(doc) = self.held_page(&path)? {
-            return self.page_read(id, doc);
+        if let Some((doc, source)) = self.held_page(&path)? {
+            return self.page_read(id, doc, source);
         }
         let entry = self.page_entry(&id, &path)?;
         let canonical = self.canonical_claim(&entry);
-        let read = self.page_read(id, self.parse_page(&path, &entry, canonical)?)?;
+        let read = self.page_read(
+            id,
+            self.parse_page(&path, &entry, canonical)?,
+            PageReadSource::Disk,
+        )?;
         if self.graph.cache_generation() != before_generation
             && !matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_))
         {
@@ -2057,7 +2062,7 @@ impl Store {
         };
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
-            Err(StoreError::NotFound) => Ok(None),
+            Err(StoreError::NotFound(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }
@@ -2204,7 +2209,7 @@ pub struct Day(pub i64);
 #[derive(Debug)]
 pub enum StoreError {
     /// File is absent.
-    NotFound,
+    NotFound(PageReadSource),
     /// File id or path is unsafe or outside its area.
     InvalidTarget(String),
     /// A selected page source is not a regular file or escapes its graph area.
@@ -2244,7 +2249,7 @@ impl StoreError {
             };
         }
         match error.kind() {
-            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::NotFound => Self::NotFound(PageReadSource::Disk),
             _ => Self::Io(error.into()),
         }
     }
@@ -2423,21 +2428,6 @@ impl SaveOutcome {
             crate::Why::Failed(error) => SaveOutcome::Io(error),
         }
     }
-}
-
-/// Parsed page and the raw-byte revision used for a guarded save.
-pub struct PageRead {
-    /// Exact disk path identity. A case-alias request on a case-insensitive
-    /// volume returns the file's disk spelling.
-    pub id: PageId,
-    /// Parsed document.
-    pub doc: PageDto,
-    /// Revision of the bytes that produced `doc`.
-    pub rev: FileRev,
-    /// Reason a file cannot round-trip safely, if any. Reflects the parsed
-    /// `doc.read_only` flag; a twin claim alone does not set it. Save checks
-    /// disk safety again rather than trusting either caller-supplied flag.
-    pub read_only: Option<String>,
 }
 
 /// Result of resolving a page name or journal day in one snapshot.
