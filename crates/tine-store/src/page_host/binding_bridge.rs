@@ -48,31 +48,32 @@ impl Sink for Bridge {
             },
         };
         if let Some(writer) = writer {
-            for (key, _, observed) in delivery.claimed {
-                store.watch.hold_observed(key, observed);
-            }
-            for publication in delivery.publications {
-                #[cfg(feature = "test-faults")]
-                crate::cost_counters::host_publication_probes(1);
-                let started = crate::bench_events::enabled().then(std::time::Instant::now);
-                let indexing = match owner(&publication.key) {
-                    #[cfg(test)]
-                    _ if self.fault() => Indexing::Failed,
-                    _ if index(store, &publication) => Indexing::Indexed,
-                    _ => Indexing::Failed,
-                };
-                if let Some(started) = started {
-                    crate::bench_events::mark("index_us", started.elapsed().as_micros() as u64);
+            crate::page_host::driver::under_writer(writer, || {
+                for (key, _, observed) in delivery.claimed {
+                    store.watch.hold_observed(key, observed);
                 }
-                results.push((publication, indexing));
-            }
-            for (key, _) in delivery.evicted {
-                if owner(&key) == Owner::Watcher {
-                    store.watch.release_hold(&key);
+                for publication in delivery.publications {
+                    #[cfg(feature = "test-faults")]
+                    crate::cost_counters::host_publication_probes(1);
+                    let started = crate::bench_events::enabled().then(std::time::Instant::now);
+                    let indexing = match owner(&publication.key) {
+                        #[cfg(test)]
+                        _ if self.fault() => Indexing::Failed,
+                        _ if index(store, &publication) => Indexing::Indexed,
+                        _ => Indexing::Failed,
+                    };
+                    if let Some(started) = started {
+                        crate::bench_events::mark("index_us", started.elapsed().as_micros() as u64);
+                    }
+                    results.push((publication, indexing));
                 }
-            }
-            store.publish_retired();
-            drop(writer);
+                for (key, _) in delivery.evicted {
+                    if owner(&key) == Owner::Watcher {
+                        store.watch.release_hold(&key);
+                    }
+                }
+                store.publish_retired();
+            });
         }
         for (key, mail, facts) in delivery.mail {
             let mail = page_mail(store, key, mail, facts);

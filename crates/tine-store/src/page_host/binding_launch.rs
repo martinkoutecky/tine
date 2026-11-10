@@ -45,6 +45,23 @@ impl PageHost {
         Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
     }
 
+    /// A host bug: the driver panics in its next step, holding the host
+    /// state, and ends. Returns once it has ended.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn crash_driver_for_tests(&self) {
+        self.driver
+            .shared
+            .notify(|_| panic!("test fault: a host bug ends the page host driver"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !self.driver.shared.ended() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the driver never ended"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     /// Pause work on selected pages while still accepting requests.
     /// This test scheduler guard never grants permission to write pages.
     /// Dropping it resumes progress; retirement also waits for the guard.

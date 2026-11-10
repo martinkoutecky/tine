@@ -165,6 +165,11 @@ pub enum StopState {
     /// cannot be listed). The caller aborts (`stop_abort`), unfreezes and
     /// shows them; nothing closes over missing custody.
     Aborted(BTreeSet<PageKey>),
+    /// The driver ended (a host bug panicked it): nothing is left that can
+    /// save or draft. Every draft it wrote stays on disk for the next host's
+    /// recovery. A retirement ends the host with `stop_finish`; a restore
+    /// does not close over it.
+    Ended,
 }
 
 /// The disk state a window was shown, named by revision: a Keep-mine
@@ -1194,11 +1199,19 @@ pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &
 
 impl Drop for PageHost {
     /// Stop and join the driver (its last step's results have been
-    /// delivered), then hand every held page's index back to the watcher.
+    /// delivered), then hand every held page's index back to the watcher,
+    /// which rereads them from disk. A driver that panicked (a host bug)
+    /// hands them back too, before its panic goes on (s3b O6). A writer lock
+    /// another writer's panic poisoned is taken over: handing pages back
+    /// writes nothing, and a panic here while unwinding would abort.
     fn drop(&mut self) {
-        self.driver.join();
-        let _writer = self.store.writer.lock().unwrap();
+        let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.join()));
+        let writer = self.store.writer.lock().unwrap_or_else(|e| e.into_inner());
         self.store.watch.release_holds();
+        drop(writer);
+        if let Err(panic) = joined {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
 
