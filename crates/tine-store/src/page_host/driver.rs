@@ -72,6 +72,11 @@ pub(super) struct State<F: HostIo, C: Clock> {
     wake_seq: u64,
     /// Keys whose disk state the driver owes the host an observation of.
     pub observe: BTreeMap<PageKey, Observation>,
+    /// Held pages' reads waiting for a key's owed observation (A-H1).
+    pub observed: BTreeMap<PageKey, Vec<crate::watch::Observed>>,
+    /// Those whose observation settled, told once the step that settled it
+    /// has been delivered: its publication is indexed by then.
+    settled: Vec<(crate::watch::Observed, Result<(), IoFailure>)>,
     /// Keys whose path lock another thread held at the driver's last try:
     /// consecutive misses and the retry instant (A4, REVIEW-3a). A path lock
     /// is a physical resource, so its retry runs on the monotonic clock, not
@@ -107,6 +112,16 @@ impl<F: HostIo, C: Clock> State<F, C> {
 
     fn wake(&mut self) {
         self.wake_seq = self.wake_seq.wrapping_add(1);
+    }
+
+    /// Tell held pages' reads their observations settled (A-H1), after the
+    /// delivery of the step that settled them.
+    fn tell_settled(&mut self) {
+        for (done, outcome) in self.settled.drain(..) {
+            let _ = done.send(outcome.map_err(|failure| {
+                crate::watch::observation_failed(failure.os_error, failure.operation)
+            }));
+        }
     }
 
     /// Tests' quiescence rounds (`PageHost::quiesce_for_tests`).
@@ -174,10 +189,19 @@ impl<F: HostIo, C: Clock> State<F, C> {
             .find(|(key, o)| o.due <= now && self.observable(key))
             .map(|(key, o)| (key.clone(), o.forwarded));
         if let Some((key, forwarded)) = owed {
-            let observe = || self.progress.with_host(|host| host.observe(&key));
-            let result = observation(forwarded, observe);
+            let observe = || self.progress.with_host(|host| host.observe_read(&key));
+            let read = observation(forwarded, observe);
             if self.progress.host.lock_request.is_some() {
                 return Disposition::Waiting;
+            }
+            let (result, outcome) = match read {
+                Ok(result) => (result, Ok(())),
+                Err(failure) => (Disposition::Refused, Err(failure)),
+            };
+            if !matches!(result, Disposition::Waiting) {
+                for done in self.observed.remove(&key).unwrap_or_default() {
+                    self.settled.push((done, outcome));
+                }
             }
             match result {
                 Disposition::Refused => {
@@ -640,6 +664,11 @@ impl<F: HostIo, C: Clock> Drop for Ended<'_, F, C> {
         }
         // Under the inbox mutex, so nothing is queued after: every caller
         // still waiting sees its request dropped unanswered.
+        // A held page's read waiting on an observation reads again now.
+        if let Ok(mut state) = self.0.state.lock() {
+            state.observed.clear();
+            state.settled.clear();
+        }
         let mut inbox = self.0.inbox.lock().unwrap_or_else(|e| e.into_inner());
         self.0.ended.store(true, Ordering::SeqCst);
         let dropped = std::mem::take(&mut *inbox);
@@ -666,6 +695,8 @@ where
                 progress: Progress::new(host, clock),
                 wake_seq: 0,
                 observe: BTreeMap::new(),
+                observed: BTreeMap::new(),
+                settled: Vec::new(),
                 contended: BTreeMap::new(),
                 stepped: Instant::now(),
                 book: Book::default(),
@@ -951,6 +982,8 @@ fn host_stats<F: HostIo>(host: &Host<F>) {
 const WRITER_RETRY: (Duration, Duration) = (Duration::from_millis(1), Duration::from_millis(20));
 
 fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
+    // `Store::page` never runs here: a held page's read can wait for us.
+    crate::watch::mark_observer_thread();
     let _ended = Ended(shared);
     // The next bench `host_stats` (None: events off).
     let mut stats = crate::bench_events::enabled().then(|| Instant::now() + HOST_STATS_EVERY);
@@ -1021,6 +1054,9 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
             drop(state);
             pending = deliver(shared, sink, delivery, false);
             state = shared.state.lock().unwrap();
+        }
+        if pending.is_none() {
+            state.tell_settled();
         }
         // A finished job or worker step may answer a waiting request; every
         // step chain ends here.

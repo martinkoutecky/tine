@@ -31,6 +31,19 @@ fn retain_unreadable_stamps<'a>(
     }
 }
 
+/// Storage spec §5.4 at Stamps depth, the one rule for "unchanged since its
+/// last observation": `new` has `old`'s time and size and, outside a semantic
+/// scan, its identity and change time, and `old` was not `racy` when observed
+/// (a same-size write in its time granule could hide behind it). A retry
+/// baseline (`retry_baseline`) never matches. The full diff decides by it, and
+/// so does a read of a held page (`Store::page`, A-H1).
+pub(crate) fn unchanged(old: &Stamp, new: &Stamp, racy: bool, scan_semantics: bool) -> bool {
+    !racy
+        && old.modified == new.modified
+        && old.len == new.len
+        && (scan_semantics || (old.identity == new.identity && old.changed == new.changed))
+}
+
 #[test]
 fn empty_errors_do_not_visit_prior_stamps() {
     for size in [100, 1000] {
@@ -348,15 +361,12 @@ impl Core {
                     let old = snapshot.get(path);
                     let same = !force
                         && old.is_some_and(|old| {
-                            old.modified == new.modified
-                                && old.len == new.len
-                                && (scan_semantics
-                                    || (old.identity == new.identity && old.changed == new.changed))
+                            unchanged(old, new, racy.contains(path), scan_semantics)
                         });
                     let refusal_moved = refusals
                         .get(path)
                         .is_some_and(|refusal| !refusal.stamp.same_metadata(new));
-                    if same && !racy.contains(path) && !refusal_moved {
+                    if same && !refusal_moved {
                         new.rev = old.unwrap().rev.clone();
                         None
                     } else {
@@ -435,11 +445,7 @@ impl Core {
             let mut hash_error = None;
             if paths.is_none() {
                 if let (Some(old), Some(new)) = (before, now.get_mut(&path)) {
-                    let same = !force
-                        && old.modified == new.modified
-                        && old.len == new.len
-                        && (scan_semantics
-                            || (old.identity == new.identity && old.changed == new.changed));
+                    let same = !force && unchanged(old, new, false, scan_semantics);
                     if same && !racy.contains(&path) && !refused {
                         new.rev = old.rev.clone();
                         continue;
@@ -649,7 +655,7 @@ impl Core {
         drop(snapshot);
         if !forwarded.is_empty() {
             if let Some(forward) = self.forward.lock().unwrap().as_ref() {
-                forward(forwarded);
+                forward(forwarded, None);
             }
         }
         walk.changed = files.len() as u64;

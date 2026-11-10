@@ -1495,6 +1495,9 @@ fn v4_a_read_or_rebuild_never_indexes_a_held_page() {
     live.until_indexed(&key, "- a\n");
     let lock = live.store.graph.page_lock(&live.root.join(&key));
     let held = lock.lock().unwrap();
+    // GH #863: the read asks the owner, which waits for this lock; past
+    // its (here shortened) bound the read answers the indexed page.
+    *live.store.held_read_wait.lock().unwrap() = Some(Duration::from_millis(100));
     fs::write(live.root.join(&key), "- b\n").unwrap();
     let read = live.store.page(&PageId::from(key.as_str())).unwrap();
     assert_eq!(

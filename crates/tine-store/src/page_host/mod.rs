@@ -1129,23 +1129,28 @@ impl<F: HostIo> Host<F> {
             .any(|source| self.order.releases_to(source, key))
     }
 
+    #[cfg(test)]
     fn observe(&mut self, key: &str) -> Disposition {
+        self.observe_read(key).unwrap_or(Disposition::Refused)
+    }
+
+    /// [`Self::observe`], a failed read as its failure: what a held page's
+    /// read that asked for this observation answers (A-H1).
+    fn observe_read(&mut self, key: &str) -> Result<Disposition, IoFailure> {
         if !self.alive || !self.pages.contains_key(key) {
-            return Disposition::Disabled;
+            return Ok(Disposition::Disabled);
         }
         let keys = BTreeSet::from([key.into()]);
         if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
-            return Disposition::Waiting;
+            return Ok(Disposition::Waiting);
         }
         self.with_locks(&keys, |host| {
-            let Ok(bytes) = host.fs.read_page(key) else {
-                return Disposition::Refused;
-            };
-            if host.adopt_read(key, bytes) {
+            let bytes = host.fs.read_page(key)?;
+            Ok(if host.adopt_read(key, bytes) {
                 Disposition::Applied
             } else {
                 Disposition::Disabled
-            }
+            })
         })
     }
 

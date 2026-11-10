@@ -34,12 +34,15 @@ pub fn is_graph_text(file: &FileId) -> bool {
     is_graph_text_path(Path::new(file.as_str()))
 }
 
+/// The graph-text extensions, as Tine writes them.
+pub(crate) const GRAPH_TEXT_EXTENSIONS: [&str; 3] = ["md", "markdown", "org"];
+
 /// Whether a path has a supported graph-text extension; does not inspect its area.
 pub(crate) fn is_graph_text_path(path: &Path) -> bool {
     path.extension()
         .and_then(|part| part.to_str())
         .is_some_and(|extension| {
-            ["md", "markdown", "org"]
+            GRAPH_TEXT_EXTENSIONS
                 .iter()
                 .any(|supported| extension.eq_ignore_ascii_case(supported))
         })
