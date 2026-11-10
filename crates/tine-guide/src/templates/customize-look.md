@@ -42,6 +42,7 @@ icon:: 🎨
     | `--tine-editable-font` | Font family of text while you edit it | Inter, then the emoji font, then your system fonts |
   - The code and formula editors always edit in the monospace face, so `--tine-editable-font` does not reach them; `--tine-mono-font` does.
   - Colors beyond these still use Logseq's `--ls-*` variables (for example `--ls-primary-background-color`), exactly as in Logseq, so a Logseq snippet you already have keeps working.
+  - Page and block properties sit on a tinted panel. Set `--ls-block-properties-background-color` in `custom.css` to change its background; otherwise it follows your theme's tertiary background.
   - The page widths you set in Settings → Appearance → Advanced (**Standard page width**, **Wide page width**) outrank `--tine-content-width` and `--tine-content-width-wide`. Reset those two fields if a token seems to have no effect.
 - ## 4. Ten copy-paste recipes
   - Paste any of these into `logseq/custom.css` and save. Combine as many as you like.
