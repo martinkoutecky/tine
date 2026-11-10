@@ -70,6 +70,14 @@ if (portableX11Deps) {
   baseProcessEnv.PATH = `${path.join(portableX11Deps, "usr/bin")}${path.delimiter}${baseProcessEnv.PATH || ""}`;
 }
 
+// A scenario marked BY_NAME (a fourth element) is left out of the suite's
+// workflow fan-out (`--fan-out`), so a workflow runs it only when dispatched by
+// its id. A local run of the whole suite still includes it.
+const BY_NAME = "by-name";
+
+// This table is the one owner of which scenarios exist and which of them a suite
+// fans out to. Workflows and tests ask it (`<suite> --fan-out`, `<suite> --scripts`)
+// instead of keeping a copy of the list.
 const suites = {
   "plugin-revocation": [
     ["plugin-revocation", "scripts/e2e-plugin-revocation.mjs", {}],
@@ -121,6 +129,8 @@ const suites = {
     ["custom-css", "scripts/e2e-custom-css.mjs", {}],
     ["find-replace", "scripts/e2e-find-replace.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
+    ["ime-blur-cm6", "scripts/e2e-ime-blur.mjs", { E2E_EDITOR: "cm6", E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
+    ["ime-blur-textarea", "scripts/e2e-ime-blur.mjs", { E2E_EDITOR: "textarea", E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
     ["native-titlebar", "scripts/e2e-native-titlebar.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["page-file-actions", "scripts/e2e-page-file-actions.mjs", {}],
     ["print-security", "scripts/e2e-print-security.mjs", {}],
@@ -146,7 +156,7 @@ const suites = {
     ["cm6-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "cm6" }],
     ["textarea-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "textarea" }],
     // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
-    ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }],
+    ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }, BY_NAME],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot
     // suites), where adaptive page completion is byte-exact with OG. It is dropped
     // from the advisory Windows suite only: on WebView2 the completion yields a
@@ -161,10 +171,10 @@ const suites = {
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["print-security", "scripts/e2e-print-security.mjs", {}],
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
-    // GH #719: not in the default fan-out lists yet (burn-in); dispatch it by name.
-    ["windows-portable", "scripts/e2e-windows-portable.mjs", {}],
+    // GH #719: not in the default fan-out yet (burn-in); dispatch it by name.
+    ["windows-portable", "scripts/e2e-windows-portable.mjs", {}, BY_NAME],
     // GH #809: new-window stage diagnostics on WebView2; dispatch by name.
-    ["beta-win-809", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809" }],
+    ["beta-win-809", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809" }, BY_NAME],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
   ],
@@ -173,6 +183,21 @@ const suites = {
 if (!suites[suiteName]) {
   console.error(`unknown suite ${suiteName}; choose ${Object.keys(suites).join(", ")}`);
   process.exit(2);
+}
+
+// Registry queries: print JSON and stop, before any build receipt or app is needed.
+const registryQuery = process.argv.find((arg) => arg === "--fan-out" || arg === "--scripts");
+if (registryQuery) {
+  const rows = suites[suiteName];
+  const answer = registryQuery === "--fan-out"
+    ? rows.filter((row) => row[3] !== BY_NAME).map(([id]) => id)
+    : [...new Set(rows.map(([, script]) => script))];
+  if (!answer.length) {
+    console.error(`suite ${suiteName} has nothing for ${registryQuery}`);
+    process.exit(1);
+  }
+  console.log(JSON.stringify(answer));
+  process.exit(0);
 }
 
 function loadSelectedContracts(scenarios) {

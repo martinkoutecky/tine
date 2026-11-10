@@ -133,7 +133,7 @@ fn assert_no_page_reparse(store: &Store, label: &str, config_reads: u64) {
 
 #[test]
 fn settings_only_writes_keep_parsed_pages() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (_dir, store, subscription) = cost_fixture();
     tine_store::cost_counters::reset();
     tine_graph_features::config::set_favorites(&store, &["Page0".into()], None).unwrap();
@@ -162,7 +162,7 @@ fn settings_only_writes_keep_parsed_pages() {
 
 #[test]
 fn outside_settings_keep_parsed_pages_but_build_config_reparses() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (dir, store, subscription) = cost_fixture();
     tine_store::cost_counters::reset();
     deliver(
@@ -204,7 +204,7 @@ fn outside_settings_keep_parsed_pages_but_build_config_reparses() {
 
 #[test]
 fn own_build_config_change_still_reparses_pages() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let (_dir, store, _subscription) = cost_fixture();
     tine_store::cost_counters::reset();
     tine_graph_features::config::set_journal_page_title_format(&store, "yyyy-MM-dd").unwrap();

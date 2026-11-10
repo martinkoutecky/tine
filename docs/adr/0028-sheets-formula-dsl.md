@@ -55,7 +55,12 @@ derived, NEVER stored.
 **Evaluation contract.** Pure evaluator over a per-row context that reads
 ONLY through the existing facet source; results memoized per (block,
 formula, data revision); `now()`/`today()` are per-render-pass constants
-(no live ticking). Formulas referencing formulas form a DAG; a cycle is
+(no ticking by the minute) that read the user's local calendar day and wall
+clock (the app clock's local fields, converted once where the clock enters
+`evaluate`); dates in cells are zone-less calendar dates. A row whose formula
+evaluation read either is computed again when the local date changes (the
+app's one day signal, `currentDayKey`), at the row granularity a row edit
+already uses, and no other row is. Formulas referencing formulas form a DAG; a cycle is
 detected at bind time and every member evaluates to a cycle error. Perf
 budget: O(rows × formulas) per pass, log-warn above ~10k evaluations
 (mirrors the v1 cell-count warn).

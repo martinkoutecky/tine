@@ -103,7 +103,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // answers; every physical file is retained. Older answers rebuild once.
 // 28 (R13 G11): configured date-alias classes change retained reference and
 // query answers. The body schema and graph files are unchanged.
-pub(crate) const FORMAT: u32 = 28;
+// 29 (D-20261102-PERF F1): the query index's key -> pages table also holds the
+// `tine.*` keys, which `(property k)` now narrows by; an older table lacks
+// them and would hide export definitions. The body schema is unchanged.
+pub(crate) const FORMAT: u32 = 29;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
@@ -813,7 +816,7 @@ impl Signal {
     }
 
     pub(crate) fn stop(&self) {
-        self.state.lock().unwrap().stop = true;
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
         self.wake.notify_all();
     }
 

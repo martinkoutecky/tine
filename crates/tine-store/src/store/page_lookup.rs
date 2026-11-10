@@ -71,7 +71,9 @@ mod tests {
     use super::*;
 
     /// The keyed answers equal a corpus scan's, with page twins, a journal,
-    /// a set-aside duplicate-day file and an `id::` held by two pages.
+    /// a set-aside duplicate-day file, an `id::` held by two pages, a page
+    /// whose `title::` names it apart from its file, and Org pages (one named
+    /// by `#+TITLE:`, one by its file).
     #[test]
     fn keyed_corpus_and_block_answer_as_a_corpus_scan() {
         let root = tempfile::tempdir().unwrap();
@@ -88,13 +90,35 @@ mod tests {
             ("pages/Other.md", "- other\n".to_owned()),
             ("journals/2026_10_02.md", "- day\n".to_owned()),
             ("journals/2026-10-02.md", "- stray day\n".to_owned()),
+            (
+                "pages/old file name.md",
+                "title:: Shown Title\n\n- titled\n".to_owned(),
+            ),
+            ("pages/Plain Org.org", "* org heading\n".to_owned()),
+            (
+                "pages/org file.org",
+                "#+TITLE: Org Titled\n\n* titled org\n".to_owned(),
+            ),
         ] {
             fs::write(root.path().join(file), text).unwrap();
         }
         let store = Store::open(root.path(), Default::default()).unwrap().0;
         let view = store.whole_graph_reconciled().unwrap();
         let corpus = view.corpus(None, false);
-        for name in ["Twin", "twin", "TWIN", "Other", "Oct 2nd, 2026", "Absent"] {
+        for name in [
+            "Twin",
+            "twin",
+            "TWIN",
+            "Other",
+            "Oct 2nd, 2026",
+            "Absent",
+            "Shown Title",
+            "shown title",
+            "old file name",
+            "Plain Org",
+            "Org Titled",
+            "org file",
+        ] {
             let key = tine_core::refs::page_key(name);
             let scanned: Vec<_> = (corpus.pages.iter())
                 .filter(|page| tine_core::refs::page_key(&page.name) == key)
@@ -105,10 +129,21 @@ mod tests {
                 .collect();
             assert_eq!(keyed, scanned, "{name}");
         }
+        // The fixture means what it says: each renamed page answers to its
+        // title only, and both Org pages are found.
+        let ids = |name: &str| -> Vec<String> {
+            (view.corpus(Some(name), false).pages.into_iter())
+                .map(|page| page.id.as_str().to_owned())
+                .collect()
+        };
+        assert_eq!(ids("Shown Title"), ["pages/old file name.md"]);
+        assert_eq!(ids("Plain Org"), ["pages/Plain Org.org"]);
+        assert_eq!(ids("Org Titled"), ["pages/org file.org"]);
+        assert!(ids("old file name").is_empty() && ids("org file").is_empty());
         let active = view.corpus(None, true);
         // The prefix inventory uses the same semantic owners as the active
         // corpus, including journals and duplicate physical claimants.
-        for prefix in ["", "t", "Oct", "Absent"] {
+        for prefix in ["", "t", "Oct", "Absent", "Shown", "old", "Org", "Plain"] {
             let key = tine_core::refs::page_key(prefix);
             let mut expected: Vec<_> = active
                 .pages
@@ -162,6 +197,33 @@ mod tests {
             .blocks(&["6553f1a0-0000-4000-8000-0000000000ff".to_owned()], true)
             .unwrap()[0]
             .is_none());
+        // A `title::` edit renames the page in place: the next view answers
+        // to the new title only, as a scan of that view does.
+        fs::write(
+            root.path().join("pages/old file name.md"),
+            "title:: Retitled\n\n- titled\n",
+        )
+        .unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let view = store.whole_graph_reconciled().unwrap();
+        let corpus = view.corpus(None, false);
+        for name in ["Retitled", "Shown Title", "old file name"] {
+            let key = tine_core::refs::page_key(name);
+            let scanned: Vec<_> = (corpus.pages.iter())
+                .filter(|page| tine_core::refs::page_key(&page.name) == key)
+                .map(|page| page.id.as_str().to_owned())
+                .collect();
+            let keyed: Vec<_> = (view.corpus(Some(name), false).pages.into_iter())
+                .map(|page| page.id.as_str().to_owned())
+                .collect();
+            assert_eq!(keyed, scanned, "after retitle: {name}");
+        }
+        assert_eq!(
+            (view.corpus(Some("Retitled"), false).pages.into_iter())
+                .map(|page| page.id.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            ["pages/old file name.md"]
+        );
         store.close();
     }
 }

@@ -244,7 +244,7 @@ fn wait_for_watch_release(descriptor: &Path) {
 #[cfg(target_os = "linux")]
 #[test]
 fn the_watch_is_released_when_the_store_closes() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = scratch("lifecycle");
     graph_at(&root);

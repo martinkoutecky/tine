@@ -1,12 +1,53 @@
-//! Exact page constraints narrow execution through the existing name/slot maps.
+//! Exact page constraints and property presence narrow execution through the
+//! existing name/slot maps and the query index's key -> pages table. A
+//! conjunction narrows by its tightest constraint, never by evaluation order.
 use super::*;
 use crate::model::persistent::Pages;
 
-/// The page-name operands (as written) one of which every row's page must
-/// carry. A conservative necessary condition, never a replacement for evaluation.
-/// Negation and partially constrained ORs must retain the whole candidate set.
-fn required_names(filter: &Filter, anchor: Anchor) -> Option<Vec<String>> {
+/// One condition on a row's page.
+enum Need {
+    /// Carry this page name (as written).
+    Name(String),
+    /// Hold a row of this property key ([`property_key_norm`]), on the page
+    /// or on one of its blocks.
+    Key(String),
+}
+
+/// What every row's page must satisfy: a conservative necessary condition,
+/// never a replacement for evaluation. Negation and partially
+/// constrained ORs must retain the whole candidate set. A `props` presence
+/// (`(property k)`, `(page-property k)`, `any(props, key = 'k' …)`) holds only
+/// where the row (a block, or the page itself) has a row of `k`.
+enum Req {
+    Need(Need),
+    /// One of these holds (an `or` whose every branch narrows).
+    Any(Vec<Req>),
+    /// Each of these holds (an `and` with several narrowing conjuncts). It
+    /// narrows to the tightest of them, whatever their evaluation order.
+    All(Vec<Req>),
+}
+
+impl Req {
+    fn has_key(&self) -> bool {
+        match self {
+            Req::Need(need) => matches!(need, Need::Key(_)),
+            Req::Any(items) | Req::All(items) => items.iter().any(Req::has_key),
+        }
+    }
+}
+
+fn required(filter: &Filter, anchor: Anchor) -> Option<Req> {
     match filter {
+        Filter::Leaf {
+            leaf:
+                Leaf::Rel {
+                    rel: Rel::Props,
+                    quant: Quant::Any | Quant::Every,
+                    pred,
+                },
+        } => pred
+            .props_key()
+            .map(|key| Req::Need(Need::Key(tine_core::doc::property_key_norm(&key)))),
         Filter::Leaf {
             leaf:
                 Leaf::Rel {
@@ -15,21 +56,39 @@ fn required_names(filter: &Filter, anchor: Anchor) -> Option<Vec<String>> {
                     pred,
                 },
         } if anchor == Anchor::Block => {
-            eval::single_ref_name(pred).map(|name| vec![name.to_owned()])
+            eval::single_ref_name(pred).map(|name| Req::Need(Need::Name(name.to_owned())))
         }
         Filter::Leaf { .. } if anchor == Anchor::Page => {
-            eval::single_ref_name(filter).map(|name| vec![name.to_owned()])
+            eval::single_ref_name(filter).map(|name| Req::Need(Need::Name(name.to_owned())))
         }
-        Filter::And { items } => items
-            .iter()
-            .find_map(|filter| required_names(filter, anchor)),
+        Filter::And { items } => {
+            let mut reqs: Vec<Req> = items
+                .iter()
+                .filter_map(|filter| required(filter, anchor))
+                .collect();
+            match reqs.len() {
+                0 | 1 => reqs.pop(),
+                _ => Some(Req::All(reqs)),
+            }
+        }
         Filter::Or { items } if !items.is_empty() => items
             .iter()
-            .map(|filter| required_names(filter, anchor))
+            .map(|filter| required(filter, anchor))
             .collect::<Option<Vec<_>>>()
-            .map(|names| names.concat()),
+            .map(Req::Any),
         _ => None,
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test oracle switch: `false` scans every page despite a key need, the
+    /// answer the narrowing must equal.
+    pub(super) static NARROW_BY_KEYS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// Candidate pages handed to the row loop since the last reset.
+    pub(super) static CANDIDATE_PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Fileless rows enumerated (`reference_only_pages`) since the last reset.
+    pub(super) static FILELESS_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) struct Candidates<'a> {
@@ -43,71 +102,168 @@ pub(super) struct Candidates<'a> {
     config: ParseConfig,
 }
 
-impl<'a> Candidates<'a> {
-    pub(super) fn new(graph: &ReadSnapshot, pages: &'a Pages, plan: &Plan) -> Self {
-        let names = required_names(&plan.filter, plan.anchor).map(|names| {
-            // A date spelling names its journal (S12, `eval_page_name`): the
-            // journal is named by the configured title, so its key joins the
-            // probe. The one date answerer reads the spelling.
-            let format = graph.config().journal_format();
-            let mut names: Vec<String> = names
-                .into_iter()
-                .flat_map(|name| {
-                    let journal = eval::reference_day(&name, &format)
-                        .and(format.parse(&name))
-                        .map(|day| refs::page_key(&format.title(day)));
-                    std::iter::once(refs::page_key(&name)).chain(journal)
-                })
-                .collect();
-            names.sort();
-            names.dedup();
-            names
+/// Resolves a [`Req`] against one generation through the name/slot maps and
+/// the index's key -> pages table.
+struct Selector<'a> {
+    pages: &'a Pages,
+    index: Option<&'a QueryIndex>,
+    named: Arc<crate::query::RealPageNames>,
+    /// The graph root: physical paths and relative slot keys belong to one
+    /// graph, derived from an existing entry without crossing the store door.
+    root: Option<&'a std::path::Path>,
+    format: tine_core::date::JournalFormat,
+}
+
+impl<'a> Selector<'a> {
+    fn new(graph: &ReadSnapshot, pages: &'a Pages, index: Option<&'a QueryIndex>) -> Self {
+        let root = pages.iter().next().and_then(|(entry, _)| {
+            entry.path.ancestors().nth(
+                std::path::Path::new(entry.rel_path_str())
+                    .components()
+                    .count(),
+            )
         });
-        let selected = names.as_ref().map(|names| {
-            let named = graph
+        Self {
+            pages,
+            index,
+            named: graph
                 .reference_real_page_names()
-                .expect("published query inputs have their real page names");
-            // Physical paths and relative slot keys belong to one graph. Derive
-            // its root from an existing entry without crossing the store door.
-            let root = pages.iter().next().and_then(|(entry, _)| {
-                entry.path.ancestors().nth(
-                    std::path::Path::new(entry.rel_path_str())
-                        .components()
-                        .count(),
-                )
-            });
-            let mut slots = std::collections::BTreeSet::new();
-            if let Some(root) = root {
-                for name in names {
-                    for path in named.paths(name) {
+                .expect("published query inputs have their real page names"),
+            root,
+            format: graph.config().journal_format(),
+        }
+    }
+
+    /// The page keys a name need probes. A date spelling names its journal
+    /// (S12, `eval_page_name`): the journal is named by the configured title,
+    /// so its key joins the probe. The one date answerer reads the spelling.
+    fn keys(&self, name: &str) -> impl Iterator<Item = String> {
+        let journal = eval::reference_day(name, &self.format)
+            .and(self.format.parse(name))
+            .map(|day| refs::page_key(&self.format.title(day)));
+        std::iter::once(refs::page_key(name)).chain(journal)
+    }
+
+    /// An upper bound on the pages `req` selects, read without walking a
+    /// key's holders; `None` when `req` cannot narrow (a key that is not
+    /// indexed). O(nodes x depth + named claimants).
+    fn bound(&self, req: &Req) -> Option<usize> {
+        match req {
+            Req::Need(Need::Key(key)) => self.index?.key_holders(key),
+            Req::Need(Need::Name(name)) => Some(
+                self.keys(name)
+                    .map(|key| self.named.paths(&key).count())
+                    .sum(),
+            ),
+            Req::Any(items) => items.iter().map(|req| self.bound(req)).sum(),
+            Req::All(items) => items.iter().filter_map(|req| self.bound(req)).min(),
+        }
+    }
+
+    /// The conjunct an `and` narrows by: the smallest bound, the first on a
+    /// tie; never an unindexed key.
+    fn tightest<'r>(&self, items: &'r [Req]) -> Option<&'r Req> {
+        items
+            .iter()
+            .filter_map(|req| self.bound(req).map(|bound| (bound, req)))
+            .min_by_key(|(bound, _)| *bound)
+            .map(|(_, req)| req)
+    }
+
+    /// Adds the slots of the pages meeting a bounded `req`. O(its bound x
+    /// log P).
+    fn slots(&self, req: &Req, out: &mut std::collections::BTreeSet<usize>) {
+        match req {
+            Req::Need(Need::Key(key)) => {
+                let holders = self.index.and_then(|index| index.pages_with_key(key));
+                for path in holders.into_iter().flatten() {
+                    out.extend(self.pages.positions.get(path).copied());
+                }
+            }
+            Req::Need(Need::Name(name)) => {
+                let Some(root) = self.root else { return };
+                for key in self.keys(name) {
+                    for path in self.named.paths(&key) {
                         if let Ok(rel) = path.strip_prefix(root) {
                             let rel = rel.to_string_lossy().replace('\\', "/");
-                            if let Some(&slot) = pages.positions.get(rel.as_str()) {
-                                slots.insert(slot);
-                            }
+                            out.extend(self.pages.positions.get(rel.as_str()).copied());
                         }
                     }
                 }
             }
-            slots.into_iter().collect::<Vec<_>>()
-        });
+            Req::Any(items) => items.iter().for_each(|req| self.slots(req, out)),
+            Req::All(items) => {
+                if let Some(req) = self.tightest(items) {
+                    self.slots(req, out);
+                }
+            }
+        }
+    }
+
+    /// The page keys a fileless row meeting `req` must carry: such a row has
+    /// no properties, so it meets only a name need, whether or not a key is
+    /// indexed. An `and` intersects its conjuncts' keys.
+    fn names(&self, req: &Req) -> std::collections::BTreeSet<String> {
+        match req {
+            Req::Need(Need::Key(_)) => Default::default(),
+            Req::Need(Need::Name(name)) => self.keys(name).collect(),
+            Req::Any(items) => items.iter().flat_map(|req| self.names(req)).collect(),
+            Req::All(items) => items
+                .iter()
+                .map(|req| self.names(req))
+                .reduce(|kept, next| kept.intersection(&next).cloned().collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The slots of the pages meeting `req` and the page keys a fileless row
+    /// must carry; `None` when `req` cannot narrow, so every page stays a
+    /// candidate.
+    fn select(&self, req: &Req) -> Option<(Vec<usize>, Vec<String>)> {
+        self.bound(req)?;
+        let mut slots = std::collections::BTreeSet::new();
+        self.slots(req, &mut slots);
+        Some((
+            slots.into_iter().collect(),
+            self.names(req).into_iter().collect(),
+        ))
+    }
+}
+
+impl<'a> Candidates<'a> {
+    pub(super) fn new(graph: &ReadSnapshot, pages: &'a Pages, plan: &Plan) -> Self {
+        let req = required(&plan.filter, plan.anchor);
+        #[cfg(test)]
+        let req = req.filter(|req| NARROW_BY_KEYS.with(std::cell::Cell::get) || !req.has_key());
         // Global property coercions and used-as-tag predicates still need their
         // graph-wide facts. Other named-page queries derive only selected facts.
         // Link conditions evaluate their element and seed conditions over
-        // every page, so they read every page's facts too.
-        let index = (selected.is_none()
+        // every page, so they read every page's facts too. Key needs read the
+        // index's key -> pages table.
+        let index = (req.as_ref().is_none_or(Req::has_key)
             || plan.registry.is_some()
             || plan.tag_targets.is_some()
             || plan.reads_links())
         .then(|| graph.query_index());
-        let reference_only = if plan.anchor == Anchor::Page {
+        let selected = req
+            .as_ref()
+            .and_then(|req| Selector::new(graph, pages, index.as_deref()).select(req));
+        let index = index.or_else(|| selected.is_none().then(|| graph.query_index()));
+        let (selected, names) = selected.unzip();
+        // A fileless row has no properties, so it meets only a name need. A
+        // narrowing no name key survives (property presence alone, or in a
+        // conjunction) leaves none of them a candidate: skip the walk of
+        // every referenced name.
+        let fileless_possible = names.as_ref().is_none_or(|names| !names.is_empty());
+        let reference_only = if plan.anchor == Anchor::Page && fileless_possible {
             let wanted: Option<std::collections::HashSet<&str>> = names
                 .as_ref()
                 .map(|names| names.iter().map(String::as_str).collect());
             let empty = Arc::new(Document::default());
-            graph
-                .reference_only_pages()
-                .into_iter()
+            let rows = graph.reference_only_pages();
+            #[cfg(test)]
+            FILELESS_ROWS.with(|count| count.set(count.get() + rows.len()));
+            rows.into_iter()
                 .filter(|answer| {
                     wanted
                         .as_ref()
@@ -131,6 +287,10 @@ impl<'a> Candidates<'a> {
     }
 
     pub(super) fn pages(&self) -> impl Iterator<Item = &'a (PageEntry, Arc<Document>)> + '_ {
+        #[cfg(test)]
+        let counted = |_: &_| CANDIDATE_PAGES.with(|count| count.set(count.get() + 1));
+        #[cfg(not(test))]
+        let counted = |_: &_| {};
         let all = self
             .selected
             .is_none()
@@ -141,7 +301,7 @@ impl<'a> Candidates<'a> {
             .selected
             .iter()
             .flat_map(|slots| slots.iter().filter_map(|&slot| self.pages.get(slot)));
-        all.chain(selected)
+        all.chain(selected).inspect(counted)
     }
 
     /// The page-anchored rows without a file (empty for a block anchor).

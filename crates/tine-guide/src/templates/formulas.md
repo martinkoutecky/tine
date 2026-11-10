@@ -34,6 +34,7 @@ icon:: 🧮
 	- The visual builder handles **one level**: a single IF/THEN/ELSE, simple comparisons, and a value that is at most one arithmetic step of two simple values (like `hours * 2`).
 	- Anything more nested — a formula inside a THEN branch, or arithmetic of arithmetic like `(hours + extra) * 2` — shows up as a small raw box instead of pretty faces. Use **`</> raw`** to type those directly; they still evaluate exactly the same, they just do not get a visual face.
 	- Formula values are **read-only** and are never saved onto your rows, so they always reflect the current data and round-trip cleanly back to Logseq.
+	- A formula that uses `now` or `today` is worked out again when the date changes, so a table or board left open overnight shows the new day without an edit. `now` follows the day, not the minute.
 - ### Create one yourself — formula
 	- 1. Start from a table with a numeric or enum field.
 	- 2. Right-click the column header and choose **Add/Edit formula**.

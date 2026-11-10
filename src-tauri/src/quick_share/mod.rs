@@ -89,6 +89,22 @@ fn viewer_attested(proof: Option<&str>) -> bool {
             include_bytes!("../../../tests/fixtures/quick-share/g1/one-page/writer.json"),
         ),
         (
+            "page-queries/document.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/page-queries/document.json"),
+        ),
+        (
+            "page-queries/link.txt",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/page-queries/link.txt"),
+        ),
+        (
+            "page-queries/tine-share.bin",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/page-queries/tine-share.bin"),
+        ),
+        (
+            "page-queries/writer.json",
+            include_bytes!("../../../tests/fixtures/quick-share/g1/page-queries/writer.json"),
+        ),
+        (
             "pages/document.json",
             include_bytes!("../../../tests/fixtures/quick-share/g1/pages/document.json"),
         ),

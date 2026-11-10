@@ -147,7 +147,7 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
 
 #[test]
 fn an_ordinary_edit_is_one_guarded_save_with_no_draft() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for blocks in [1, 60] {
         let (one, len) = edit(blocks, 1, ALONE);
@@ -173,7 +173,7 @@ fn an_ordinary_edit_is_one_guarded_save_with_no_draft() {
 
 #[test]
 fn a_burst_of_submits_is_bounded_by_its_submits() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Five submits answered back to back (the window sends at most one per
     // debounce, 400 ms with a 1 s max wait): the host saves at most once per
@@ -196,7 +196,7 @@ fn a_burst_of_submits_is_bounded_by_its_submits() {
 
 #[test]
 fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // REVIEW-3b-P2b R4(a): the path from submit to publication (save, index
     // publication, the waiter) reads and stamps the edited page only, on an
@@ -233,12 +233,51 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
              (aged={aged}); exemplar page_host/binding_bridge.rs index()"
         );
         assert_eq!(large.files_written, 1, "the edit's one save");
+        // PC-3 (s3b O6): the delivery's and dispatch's writer sections run
+        // under `driver::under_writer`, whose unwind containment adds no
+        // read, write, stat, sync or parse. The exact path, from submit to
+        // publication: the save reads the page and its base (2 full reads,
+        // 2 stamps), parses old and new text plus the index's parse (3),
+        // writes one temp file and syncs it and the directory (2).
+        let io = |c: &Counts| {
+            [
+                ("full_reads", c.full_reads),
+                ("preamble_reads", c.preamble_reads),
+                ("hash_reads", c.hash_reads),
+                ("stamps_by_path", c.stamps_by_path),
+                ("readdir", c.readdir),
+                ("parses", c.parses),
+                ("store_reads", c.store_reads),
+                ("watcher_reads", c.watcher_reads),
+                ("observation_reads", c.observation_reads),
+                ("fsyncs", c.fsyncs),
+                ("files_written", c.files_written),
+            ]
+        };
+        let pinned = [
+            ("full_reads", 2),
+            ("preamble_reads", 0),
+            ("hash_reads", 0),
+            ("stamps_by_path", 2),
+            ("readdir", 0),
+            ("parses", 3),
+            ("store_reads", 0),
+            ("watcher_reads", 0),
+            ("observation_reads", 0),
+            ("fsyncs", 2),
+            ("files_written", 1),
+        ];
+        assert_eq!(
+            io(&small),
+            pinned,
+            "PC-3: a save's delivery costs exactly this (aged={aged})"
+        );
     }
 }
 
 #[test]
 fn an_edit_among_many_held_pages_visits_what_changed() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // M4 (REVIEW-progress-plan R5): one edit while the window holds many
     // other pages open. Reconcile, draft-index and worker-key work follows

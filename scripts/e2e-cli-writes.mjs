@@ -148,6 +148,24 @@ try {
   for (const round of [1,2,3]) await parallelAdds("Parallel Closed",round);
   steps.push("parallel adds: all land with the page open in the window and with it closed");
 
+  // Which page a name means when the page does not exist yet, with the app as owner:
+  // two spellings written at once are one page; a date no page claims is that day's journal.
+  for (const round of [1,2,3]) {
+    const name = i => `${i % 2 ? "twin" : "Twin"} spell ${round}`;
+    const results = await Promise.all([0,1,2,3,4,5].map(i => cli(["add","--page",name(i),`- spell ${round}-${i}`],null)));
+    assert.deepEqual(results.filter(r => r.exit !== 0), [], `spell round ${round}: every parallel add to a new page lands`);
+    const files = fs.readdirSync(path.join(GRAPH,"pages")).filter(f => f.toLowerCase() === `twin spell ${round}.md`);
+    assert.equal(files.length, 1, `spell round ${round}: one file, not ${files}`);
+    const text = fs.readFileSync(path.join(GRAPH,"pages",files[0]),"utf8");
+    for (const i of [0,1,2,3,4,5]) assert.equal(text.split(`- spell ${round}-${i}\n`).length, 2, `spell ${round}-${i} once`);
+  }
+  await cli(["add","--journal=2026-11-02","- spell by day"]);
+  await cli(["add","--page","2026_11_02","- spell by page"]);
+  assert(!fs.existsSync(path.join(GRAPH,"pages/2026_11_02.md")), "a date is the day's journal, not a second file under pages/");
+  const dayText = fs.readFileSync(path.join(GRAPH,"journals/2026_11_02.md"),"utf8");
+  assert(dayText.includes("- spell by day\n") && dayText.includes("- spell by page\n"), dayText);
+  steps.push("new pages by name: two spellings written at once are one page, and a date name is that day's journal");
+
   // Independent page: a failed window notification must not hide typing proof.
   await openPageByName(browser,"Typing");
   const beforeTyping = await cli(["page","show","Typing"]);

@@ -664,8 +664,17 @@ impl Snapshot {
             let key = page_key(&entry.name);
             summary.pages.insert(key.clone());
             let day = entry.kind == PageKind::Journal;
+            // `journals` means journal files (the calendar dots); a fileless
+            // day row is a virtual journal and sets only `days`.
             summary.journals |= day && entry.rel_path.is_some();
-            summary.days |= day;
+            // `days` is the feed's day set and Upcoming (files listed, days
+            // referenced, planning). Editing an existing journal changes none
+            // of them by itself; its body reaches a loaded feed day through
+            // the page's own reload (D-20261102-PERF, audit row 9). A journal
+            // page that came or left (create, delete, rename, or a fileless
+            // day row) changes the listed days.
+            summary.days |= day && moved(i);
+            //
             // Inspect parsed facts of this edited page only, on both sides so
             // removing planning/template metadata invalidates its old answer.
             for doc in [before, after] {

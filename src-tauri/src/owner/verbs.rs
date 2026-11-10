@@ -398,6 +398,7 @@ fn read_failed(diag: Diag, message: String) -> ErrorBody {
 }
 
 pub(super) fn whole_graph(slot: &GraphSlot) -> Result<WholeGraph, ErrorBody> {
+    super::op_counts::count(&slot.root_key, super::op_counts::Op::View);
     slot.store
         .whole_graph()
         .map_err(|e| internal(Diag::GraphLoad, format!("graph load failed: {e:?}")))
@@ -461,28 +462,109 @@ pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, Err
 /// owner silently edits one twin while the agent never learns of the other.
 /// `None`: nothing claims the name. The claimants are the store's answer
 /// (`Resolved::Existing { id, others }`), never a second computation.
-pub(super) fn write_claimant(graph: &WholeGraph, name: &str) -> Result<Option<PageId>, ErrorBody> {
-    let claimants = |resolved| match resolved {
+pub(super) fn write_claimant(
+    slot: &GraphSlot,
+    graph: &WholeGraph,
+    name: &str,
+) -> Result<Option<PageId>, ErrorBody> {
+    let found = match claimants(lookup(slot, graph, name, false)) {
+        Err(_) => claimants(lookup(slot, graph, name, true)),
+        found => found,
+    };
+    let Ok((candidates, alias)) = found else {
+        return Ok(None);
+    };
+    Named::Claimed { candidates, alias }.page(name).map(Some)
+}
+
+/// One lookup of `name` in `graph` for a write, counted (`op_counts`).
+fn lookup(slot: &GraphSlot, graph: &WholeGraph, name: &str, journal: bool) -> Resolved {
+    super::op_counts::count(&slot.root_key, super::op_counts::Op::Lookup);
+    graph.resolve(name, journal)
+}
+
+/// The files or alias owners that claim a name, and whether they are alias
+/// owners; `Err` with the id a new page would get when nothing does.
+fn claimants(resolved: Resolved) -> Result<(Vec<PageId>, bool), PageId> {
+    match resolved {
         Resolved::Existing { id, mut others } => {
             others.insert(0, id);
-            (others, false)
+            Ok((others, false))
         }
-        Resolved::Alias { owners } => (owners, true),
-        Resolved::Absent { .. } => (Vec::new(), false),
+        Resolved::Alias { owners } => Ok((owners, true)),
+        Resolved::Absent { id } => Err(id),
+    }
+}
+
+/// What a name means to a command that creates its page when nothing claims
+/// it (`add --page`, `page create`): [`named_page`].
+pub(super) enum Named {
+    /// The files, or alias owners, that claim the name ([`write_claimant`]'s).
+    Claimed {
+        candidates: Vec<PageId>,
+        alias: bool,
+    },
+    /// Nothing claims it: the id the page created by this name gets.
+    New(PageId),
+}
+
+impl Named {
+    /// The page a write to this name lands in; several claimants refuse
+    /// `ambiguous` (CLI-DUPNAME).
+    pub(super) fn page(self, name: &str) -> Result<PageId, ErrorBody> {
+        match self {
+            Named::New(id) => Ok(id),
+            Named::Claimed {
+                mut candidates,
+                alias,
+            } => {
+                if candidates.len() > 1 {
+                    return Err(several_claimants(name, &candidates, alias));
+                }
+                Ok(candidates.pop().expect("a claimed name has a claimant"))
+            }
+        }
+    }
+}
+
+/// What `name` names for a command that creates its page when nothing claims
+/// it: the claimants [`write_claimant`] finds, or the id the new page gets. A
+/// name that is a date in the graph's journal format, claimed by nothing,
+/// creates that day's journal, as the app opens `[[name]]`
+/// (`JournalFormat::absent_link_is_journal`, the rule `WholeGraph::link_target`
+/// uses; OG files such a name under `journals/`: `transact-file-tx-if-not-exists!`).
+/// Any other name creates an ordinary page. A name claimed by an ordinary page
+/// of exactly that spelling keeps that page (D-20261107-KD), as `resolve`
+/// answers it. Cost: one lookup when a page, file or alias claims the name;
+/// else the journal format's date check, and for a date one more lookup, of
+/// the day's journal.
+pub(super) fn named_page(slot: &GraphSlot, graph: &WholeGraph, name: &str) -> Named {
+    let id = match claimants(lookup(slot, graph, name, false)) {
+        Ok((candidates, alias)) => return Named::Claimed { candidates, alias },
+        Err(id) => id,
     };
-    let (mut candidates, mut alias) = claimants(graph.resolve(name, false));
-    if candidates.is_empty() {
-        (candidates, alias) = claimants(graph.resolve(name, true));
+    if !slot
+        .store
+        .config()
+        .journal_format()
+        .absent_link_is_journal(name)
+    {
+        return Named::New(id);
     }
-    if candidates.len() > 1 {
-        return Err(several_claimants(name, &candidates, alias));
+    match claimants(lookup(slot, graph, name, true)) {
+        Ok((candidates, alias)) => Named::Claimed { candidates, alias },
+        Err(day) => Named::New(day),
     }
-    Ok(candidates.pop())
 }
 
 /// [`write_claimant`] for a write that needs an existing page.
-pub(super) fn resolve_write_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
-    write_claimant(graph, name)?.ok_or_else(|| not_found(format!("no page is named `{name}`")))
+pub(super) fn resolve_write_page(
+    slot: &GraphSlot,
+    graph: &WholeGraph,
+    name: &str,
+) -> Result<PageId, ErrorBody> {
+    write_claimant(slot, graph, name)?
+        .ok_or_else(|| not_found(format!("no page is named `{name}`")))
 }
 
 /// The journal file a write to `day` lands in; a day several files claim
@@ -494,7 +576,7 @@ pub(super) fn journal_write_page(
     day: JournalDate,
 ) -> Result<PageId, ErrorBody> {
     let title = slot.store.config().journal_format().title(day);
-    if let Resolved::Existing { id, mut others } = graph.resolve(&title, true) {
+    if let Resolved::Existing { id, mut others } = lookup(slot, graph, &title, true) {
         if !others.is_empty() {
             others.insert(0, id);
             return Err(several_claimants(&title, &others, false));

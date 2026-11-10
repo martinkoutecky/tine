@@ -205,6 +205,39 @@ mod tests {
         );
     }
 
+    /// AGENTS §2 sibling: every advisory file lock in the app goes through
+    /// this module. `flight_store` kept std's `File::try_lock`, which is
+    /// `Unsupported` on Android, so the diagnostics directory went unlocked
+    /// there (s3 FOLLOWUPS 2026-10-11). Std file-lock calls are named by what
+    /// a mutex lacks: `fs::TryLockError`, its `Error` arm, `unlock`, shared locks.
+    #[test]
+    fn every_file_lock_goes_through_this_module() {
+        let mut files = Vec::new();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        crate::host_slot_guard_tests::production_files(&src, &mut files);
+        assert!(files
+            .iter()
+            .any(|(path, _)| path.ends_with("flight_store.rs")));
+        let std_lock = [
+            "fs::TryLockError",
+            "TryLockError::Error",
+            ".unlock()",
+            "lock_shared(",
+        ];
+        let found: Vec<String> = (files.iter())
+            .filter(|(path, _)| !path.ends_with("file_lock.rs"))
+            .flat_map(|(path, source)| {
+                (std_lock.iter())
+                    .filter(|call| source.contains(*call))
+                    .map(move |call| format!("{path}: {call}"))
+            })
+            .collect();
+        assert!(
+            found.is_empty(),
+            "take file locks through crate::file_lock (std's is Unsupported on Android): {found:?}"
+        );
+    }
+
     /// The Linux arm (the same code Android and Apple compile) takes a real
     /// `flock`: a direct `flock` on a separate open file contends with it,
     /// and dropping the guard releases it.

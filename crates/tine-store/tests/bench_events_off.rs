@@ -11,7 +11,7 @@ fn threads() -> usize {
 
 #[test]
 fn unset_spawns_no_writer_thread() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::exclusive_integration_lock();
     if crate::isolated_case("bench_events_off::unset_spawns_no_writer_thread") {
         return;
     }

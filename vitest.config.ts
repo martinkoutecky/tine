@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
+import { vitestMaxWorkers } from "./scripts/lib/vitest-workers.mjs";
 
 // Store/editor-logic tests are pure TS (no DOM). Use the node environment and
 // skip the Solid JSX plugin so no jsdom is required.
@@ -12,6 +13,7 @@ export default defineConfig({
     __TINE_COMMUNITY_REGISTRY__: JSON.stringify(true),
   },
   test: {
+    ...vitestMaxWorkers(),
     environment: "node",
     // Tests assert behaviour, never wall time, and several do a fixed amount of
     // CPU work (whole-source scans through the TypeScript parser, 2500 wasm

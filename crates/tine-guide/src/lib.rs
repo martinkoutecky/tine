@@ -967,6 +967,15 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn date_formulas_following_the_day_are_taught_in_the_guide() {
+        let formulas = include_str!("templates/formulas.md");
+        assert!(formulas.contains(
+            "A formula that uses `now` or `today` is worked out again when the date changes"
+        ));
+        assert!(formulas.contains("`now` follows the day, not the minute"));
+    }
+
+    #[test]
     fn multiple_shortcuts_are_taught_in_the_onboarding_guide() {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Add keybinding**"));
@@ -2266,6 +2275,8 @@ mod og_20d_guide_tests {
             "every unreadable page",
             "claimed by more than one file",
             "exits with status 1",
+            // A date as `add --page`'s name is the day's journal, as a link is.
+            "is that day's journal, as `[[2026-10-13]]` is",
         ] {
             assert!(cli.contains(promised), "Guide omitted {promised}");
         }

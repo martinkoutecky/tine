@@ -12,6 +12,9 @@
 // mutations change nothing. FAKE_GITHUB_FAIL_READ=<text>:<n> fails the n-th
 // read whose arguments contain <text> with an HTTP 503 (which `gh release
 // view` reports as "release not found", as the real CLI can).
+//
+// state.moveTag = { tag, to, after } points <tag> at commit <to> right after the
+// <after>-th mutating call succeeds, as a concurrent retag would.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,6 +36,7 @@ const mutate = (apply, partial = () => {}) => {
     fail(`injected failure at mutation ${state.mutations}`);
   }
   apply();
+  if (state.moveTag?.after === state.mutations) state.tags[state.moveTag.tag] = state.moveTag.to;
   save();
 };
 const read = () => {

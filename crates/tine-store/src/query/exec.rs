@@ -65,6 +65,9 @@ pub(crate) use sample::pin_sample_seed;
 use sample::take_random_subset;
 
 #[cfg(test)]
+#[path = "exec_key_tests.rs"]
+mod key_tests;
+#[cfg(test)]
 #[path = "exec_scope_tests.rs"]
 mod scope_tests;
 

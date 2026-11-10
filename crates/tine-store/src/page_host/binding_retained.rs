@@ -17,8 +17,22 @@ pub(in crate::page_host) enum FlushRefusal {
 type HostShared = Shared<ProductionIo, SystemClock>;
 pub(super) type HostState = State<ProductionIo, SystemClock>;
 
-/// The longest a host operation's caller waits for admission, then for its
-/// answer and every page's publication (Finding B, R1).
+/// The stall bound of a host operation's caller (Finding B, R1, L2-06), not
+/// the longest it waits. From the caller's start it limits how long a page
+/// busy in another operation delays admission (`Busy`); a save-first flush
+/// past it refuses `Busy` only for a rename still finishing, and otherwise
+/// keeps waiting (`bounded`), after which admission gets a new budget. Once
+/// admitted, `settle` moves its deadline to this long after the answer and
+/// after each page's newly counted publication, so an operation that keeps
+/// progressing is waited for beyond it. A wait the driver is mid-ask on at
+/// its deadline gets `ASK_GRACE` more. `Deadline::Never` reads (naming a
+/// page, `register_all`) are in no bound.
+///
+/// Enforced by: `an_operation_over_a_running_order_is_busy_until_the_order_ends`
+/// (admission `Busy`), `a_flush_handed_to_a_rename_is_told_busy_after_the_bound`
+/// (the flush refusal), `a_moving_deadline_keeps_the_caller_waiting_only_while_the_step_moves_it`
+/// (a moved deadline outlives the first bound) and
+/// `an_answer_given_across_the_deadline_reaches_the_caller` (`ASK_GRACE`).
 pub const OPERATION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What a caller's admitted operation came to, by precedence: Superseded,
@@ -285,10 +299,8 @@ impl PageHost {
                 .map(|key| PageId::from(fs.spelling(key)))
                 .collect()
         };
-        self.driver
-            .shared
-            .read(read)
-            .expect("page host driver ended")
+        // A driver that ended meanwhile names none (`StopState::Ended`).
+        self.driver.shared.read(read).unwrap_or_default()
     }
 
     /// A key's current spelling, as the page it names.
@@ -345,7 +357,8 @@ impl PageHost {
     /// closes and the driver saves every dirty page it can at once, before
     /// any draft of it. A failed save puts the page at risk, which drafts it
     /// in a switch (the model's switchReq, needed by no page a save-first
-    /// order leaves dirty). False: the window has more to drain.
+    /// order leaves dirty). False: the window has more to drain, or the
+    /// driver ended (nothing is left to stop).
     pub(crate) fn stop_begin(&self, consumed_last_id: u64, mode: StopMode) -> bool {
         let begin = self.driver.shared.call(move |state| {
             let closed = state
@@ -360,16 +373,14 @@ impl PageHost {
             }
             closed
         });
-        begin.expect("page host driver ended")
+        begin.unwrap_or(false)
     }
 
-    /// The stop's barrier (§6 step 4) and its abort condition (step 5).
+    /// The stop's barrier (§6 step 4) and its abort condition (step 5);
+    /// `Ended` once the driver ended.
     pub(crate) fn stop_state(&self) -> StopState {
         let read = |state: &HostState| stop_state(&state.progress, &state.book);
-        self.driver
-            .shared
-            .read(read)
-            .expect("page host driver ended")
+        self.driver.shared.read(read).unwrap_or(StopState::Ended)
     }
 
     /// Stop a host no window owns any more (plan v3 §3, `HostRetirement`;
@@ -383,16 +394,17 @@ impl PageHost {
     /// the stop may complete, or `stop_abort` on `Aborted` and asks again
     /// later. While known draft vehicles are cleanup debt (REVIEW-3b-P1
     /// R2), each call first re-probes draft I/O, the Retry no window is
-    /// left to press, so a repaired filesystem lets the stop complete.
+    /// left to press, so a repaired filesystem lets the stop complete. A
+    /// driver that ended (a host bug) answers `Ended`: the caller ends the
+    /// host with `stop_finish`.
     pub fn orphan_stop(&self) -> StopState {
         let debt = |state: &HostState| !state.progress.host.vehicle_debt.is_empty();
-        if self
-            .driver
-            .shared
-            .read(debt)
-            .expect("page host driver ended")
-        {
-            let _ = self.drafts_retry();
+        match self.driver.shared.read(debt) {
+            Ok(true) => {
+                let _ = self.drafts_retry();
+            }
+            Ok(false) => {}
+            Err(_) => return StopState::Ended,
         }
         let stopped = self.driver.shared.call(|state| {
             if state.progress.host.switch_confirmation.is_none() {
@@ -414,7 +426,14 @@ impl PageHost {
             }
             stop_state(&state.progress, &state.book)
         });
-        stopped.expect("page host driver ended")
+        stopped.unwrap_or(StopState::Ended)
+    }
+
+    /// Whether the driver ended (a host bug panicked it): the host answers
+    /// nothing more, and only `stop_finish` is left for it. A reopen of
+    /// its retiring root never adopts it.
+    pub fn ended(&self) -> bool {
+        self.driver.shared.ended()
     }
 
     /// Point page mail at the window that now owns the binding (plan v3 §3,
@@ -436,18 +455,30 @@ impl PageHost {
     /// host step runs on the driver and is delivered with it), and the
     /// watcher indexes every page again. The binding holds no host until
     /// `Stopped::relaunch`. Otherwise the host is handed back.
+    ///
+    /// A host whose driver ended (`StopState::Ended`, a host bug) stops here
+    /// for good, which never fails: the driver is joined and every page it
+    /// held goes back to the watcher, which rereads it from disk (s3b O6);
+    /// every draft it wrote stays on disk, where the next host of this graph
+    /// recovers it. The driver's panic was reported as it happened and does
+    /// not go on here, unlike the host's drop.
     pub fn stop_finish(self) -> Result<Stopped, Self> {
         let stopped = self.driver.shared.call(|state| {
             stop_state(&state.progress, &state.book) == StopState::Ready
                 && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied
         });
-        let stopped = stopped.expect("page host driver ended");
-        if stopped {
-            let launch = self.launch.clone();
-            drop(self);
-            Ok(Stopped { launch })
-        } else {
-            Err(self)
+        let launch = self.launch.clone();
+        match stopped {
+            Ok(true) => {
+                drop(self);
+                Ok(Stopped { launch })
+            }
+            Ok(false) => Err(self),
+            // Unanswered with no deadline: the driver ended.
+            Err(_) => {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(self)));
+                Ok(Stopped { launch })
+            }
         }
     }
 
@@ -456,8 +487,9 @@ impl PageHost {
     /// `consumed_last_id`, wait for its barrier, then stop. When it cannot
     /// complete without losing custody, admission reopens and the host
     /// comes back with the affected pages (none: the window had more to
-    /// drain, or trash custody cannot be listed), named by their current
-    /// spellings; today's restore likewise stops when its flush fails.
+    /// drain, trash custody cannot be listed, or the driver ended), named by
+    /// their current spellings; today's restore likewise stops when its
+    /// flush fails.
     pub fn stop_saved(
         self,
         consumed_last_id: u64,
@@ -487,6 +519,9 @@ impl PageHost {
                     host.stop_abort();
                     return Err((Box::new(host), pages));
                 }
+                // Nothing closes over a dead host's lost work; its window's
+                // close retires it (`stop_finish`).
+                StopState::Ended => return Err((Box::new(host), BTreeSet::new())),
             }
         }
     }
