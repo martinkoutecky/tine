@@ -126,7 +126,9 @@ export async function checkViewer(target, { envelope, link, expectedText } = {})
       // Follow an actual reader page link, then reload and copy the address.
       await page.goto(`${base}${prefix}/page/Project`, { waitUntil: "domcontentloaded" });
       const next = page.locator('.page-ref').filter({ hasText: "Notes ü" }).first();
-      if (!fixture.doc || fixture.doc.snapshot.pages.some((entry) => entry.name === "Notes ü")) {
+      // A share without Project (page-queries shares Dashboard and Notes ü) has no link to follow from it.
+      const shared = (name) => !fixture.doc || fixture.doc.snapshot.pages.some((entry) => entry.name === name);
+      if (shared("Project") && shared("Notes ü")) {
         await next.waitFor({ timeout: 15_000 });
         await next.click();
         await page.locator(".page-title").filter({ hasText: "Notes ü" }).first().waitFor();

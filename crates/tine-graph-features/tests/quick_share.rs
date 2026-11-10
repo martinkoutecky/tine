@@ -103,6 +103,11 @@ fn request(argument: &str, name: &str) -> QueryExportRequest {
     }
 }
 
+/// The corpus's one macro written in page properties (`Dashboard`'s
+/// `description::`), and a selection that holds it and the page it finds.
+const PAGE_PROPERTY_QUERY: &str = "(page-property type note)";
+const PAGE_QUERIES: &str = "@page and name = 'Dashboard' or name = 'Notes ü'";
+
 const MANY: &str = "@page and name = 'Project' or name = 'Notes ü' or name = 'Dashboard' or name = 'Empty' or name = 'Org page' or name = 'Oct 17th, 2026' or name = 'Secret' or name = 'Hidden'";
 
 fn document(
@@ -290,6 +295,83 @@ fn quick_share_of_one_page_is_that_page() {
 /// the directory order of the private build graph, which differs by
 /// filesystem: the same selection must make the same document on Linux, macOS
 /// and Windows.
+/// The deepest page the app opens (128 outline levels, two JSON containers a
+/// level) is shared like any other: `prepare` read the document back with
+/// serde's default 128-container ceiling and refused a page 62 blocks deep,
+/// where the viewer admits 512 containers (REG-QS-DEEP-PAGE).
+#[test]
+fn quick_share_of_the_deepest_page_the_app_opens() {
+    let _integration_guard = crate::integration_lock();
+    let root = base();
+    let graph = root.join("graph");
+    for dir in ["pages", "logseq"] {
+        fs::create_dir_all(graph.join(dir)).unwrap();
+    }
+    fs::write(
+        graph.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    let levels = tine_core::outline_kernel::OUTLINE_MAX_DEPTH;
+    let text: String = (0..levels)
+        .map(|level| format!("{}- level {level}\n", "  ".repeat(level)))
+        .collect();
+    fs::write(graph.join("pages/Deep.md"), &text).unwrap();
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    let (preview, doc) = document(&store, &root, "@page and name = 'Deep'", "Ignored");
+    assert_eq!(preview.pages.len(), 1);
+    let document: Value = {
+        let mut reader = serde_json::Deserializer::from_slice(&doc);
+        reader.disable_recursion_limit();
+        serde::Deserialize::deserialize(&mut reader).unwrap()
+    };
+    let mut deepest = 0;
+    let mut block = &document["snapshot"]["pages"][0]["blocks"][0];
+    while !block.is_null() {
+        deepest += 1;
+        block = &block["children"][0];
+    }
+    assert_eq!(deepest, levels, "the page was shared whole");
+    // Past serde's default ceiling, inside the viewer's.
+    assert!(2 * levels + 4 > 128 && 2 * levels + 5 <= 512);
+}
+
+/// A `{{query}}` written in page properties has a baked answer, so the reader
+/// shows its results, not the static-export notice (REG-QS-PAGE-PROPERTY-QUERY).
+/// The page header renders it with no host block, so the record carries no
+/// properties; it is keyed by the page it is written on.
+#[test]
+fn quick_share_bakes_a_query_written_in_page_properties() {
+    let _integration_guard = crate::integration_lock();
+    let root = base();
+    let store = corpus(&root);
+    let (_, doc) = document(&store, &root, PAGE_QUERIES, "Fixture share");
+    let doc: Value = serde_json::from_slice(&doc).unwrap();
+    let records: Vec<&Value> = doc["snapshot"]["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|query| query["argument"] == PAGE_PROPERTY_QUERY)
+        .collect();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record = records[0];
+    assert_eq!(record["host"], "Dashboard");
+    assert_eq!(record["dialect"], "macro_query");
+    assert_eq!(record["properties"], serde_json::json!([]));
+    assert!(
+        record["result"].to_string().contains("Notes ü"),
+        "the baked answer lists the page the query finds: {}",
+        record["result"]
+    );
+    // The block query on the same page keeps its own record.
+    assert!(doc["snapshot"]["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|query| query["host"] == "Dashboard" && query["argument"] == "(task TODO)"));
+}
+
 #[test]
 fn quick_share_lists_pages_in_the_order_the_review_showed() {
     let _integration_guard = crate::integration_lock();
@@ -388,6 +470,8 @@ fn quick_share_generation_1_fixtures_stay_readable() {
         ("one-page", "@page and name = 'Project'", "Ignored"),
         // Written with `answers` v1 (CM step 2, census Q13).
         ("answers", MANY, "Fixture share"),
+        // Written with the query in page properties baked (REG-QS-PAGE-PROPERTY-QUERY).
+        ("page-queries", PAGE_QUERIES, "Fixture share"),
     ] {
         let (_, doc) = document(&store, &root, argument, name);
         let mut fresh: Value = serde_json::from_slice(&doc).unwrap();
@@ -435,6 +519,25 @@ fn quick_share_generation_1_fixtures_stay_readable() {
                 .as_object_mut()
                 .unwrap()
                 .remove("answers");
+        }
+        // So is the record of a macro written in page properties (contract,
+        // "Share document"): a document frozen before the writer baked it is
+        // compared without it.
+        let page_property_record = |query: &Value| {
+            query["host"] == "Dashboard" && query["argument"] == PAGE_PROPERTY_QUERY
+        };
+        let has_page_property_record = |doc: &Value| {
+            doc["snapshot"]["queries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(page_property_record)
+        };
+        if !has_page_property_record(&frozen) {
+            fresh_canonical["snapshot"]["queries"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|query| !page_property_record(query));
         }
         canonical_page_order(&mut frozen);
         canonical_page_order(&mut fresh_canonical);

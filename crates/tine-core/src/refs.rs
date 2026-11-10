@@ -834,6 +834,104 @@ mod rename_site_tests {
         assert_eq!(rename(code, false, "Old", "New"), code);
     }
 
+    /// REG-QS-RENAME-CODE-IN-DEFINITION: code is literal text, so a
+    /// `{{tine-query}}` in an inline code span or a fence is no query macro
+    /// and a rename leaves it, in a block's text and in a property's value
+    /// (the parser keeps a property line as one node; the app shows each value
+    /// as inline text), while the real macro beside it follows.
+    #[test]
+    fn a_tine_query_in_code_inside_a_definition_stays() {
+        let def = "{{tine-query @page and name = 'Old'}}";
+        let to = "{{tine-query @page and name = 'New'}}";
+        let og = "{{query (page \"Old\")}}";
+        let og_to = "{{query (page \"New\")}}";
+        for (text, want) in [
+            // In the block's text.
+            (
+                format!("- {def}\n  tine.export:: out\n  `{def}`\n"),
+                format!("- {to}\n  tine.export:: out\n  `{def}`\n"),
+            ),
+            (
+                format!("- {def}\n  tine.export:: out\n  ```\n  {def}\n  ```\n"),
+                format!("- {to}\n  tine.export:: out\n  ```\n  {def}\n  ```\n"),
+            ),
+            (
+                format!("- x\n  tine.export:: out\n  ~~~\n  {def}\n  ~~~\n  {def}\n"),
+                format!("- x\n  tine.export:: out\n  ~~~\n  {def}\n  ~~~\n  {to}\n"),
+            ),
+            (
+                format!("- x\n  tine.export:: out\n  ``{def}`` {def}\n"),
+                format!("- x\n  tine.export:: out\n  ``{def}`` {to}\n"),
+            ),
+            (
+                format!("- `{def}` and {def}\n  tine.share:: a/b\n"),
+                format!("- `{def}` and {to}\n  tine.share:: a/b\n"),
+            ),
+            // In a block property's value, a macro outside code still follows.
+            (
+                format!("- x\n  q:: `{def}`\n"),
+                format!("- x\n  q:: `{def}`\n"),
+            ),
+            (
+                format!("- {def}\n  tine.export:: `{def}`\n"),
+                format!("- {to}\n  tine.export:: `{def}`\n"),
+            ),
+            (
+                format!("- x\n  q:: `{og}` {og}\n"),
+                format!("- x\n  q:: `{og}` {og_to}\n"),
+            ),
+            (format!("- x\n  q:: {def}\n"), format!("- x\n  q:: {to}\n")),
+            // In a page property's value.
+            (
+                format!("tags:: `{def}`\n\n- x\n"),
+                format!("tags:: `{def}`\n\n- x\n"),
+            ),
+            (
+                format!("type:: `{def}` and {def}\n\n- x\n"),
+                format!("type:: `{def}` and {to}\n\n- x\n"),
+            ),
+            (
+                format!("type:: {def}\n\n- x\n"),
+                format!("type:: {to}\n\n- x\n"),
+            ),
+        ] {
+            assert_eq!(rename(&text, false, "Old", "New"), want, "{text:?}");
+        }
+        let org = format!(
+            "* {def}\n:PROPERTIES:\n:tine.export: out\n:Q: ~{def}~ {def}\n:END:\n#+BEGIN_SRC\n{def}\n#+END_SRC\n=a {def}=\n~{def}~\n"
+        );
+        let org_want = org.replacen("'Old'", "'New'", 1).replacen(
+            &format!("~{def}~ {def}"),
+            &format!("~{def}~ {to}"),
+            1,
+        );
+        assert_eq!(rename(&org, true, "Old", "New"), org_want, "{org:?}");
+    }
+
+    /// Item 2 of qs-leftovers-1109: a double-quoted TQL operand is an
+    /// identifier, not a name (the query is invalid and shares nothing), so its
+    /// bytes stay; the single-quoted spelling in the next macro follows, and the
+    /// OG DSL's quoted `(page "Old")` follows in its own spelling.
+    #[test]
+    fn a_double_quoted_tql_operand_stays_and_the_readable_spellings_follow() {
+        for (text, want) in [
+            (
+                "- {{tine-query @page and name = \"Old\"}}\n",
+                "- {{tine-query @page and name = \"Old\"}}\n",
+            ),
+            (
+                "- {{tine-query @page and name = 'Old'}} {{tine-query @page and name = \"Old\"}}\n",
+                "- {{tine-query @page and name = 'New'}} {{tine-query @page and name = \"Old\"}}\n",
+            ),
+            (
+                "- {{query (and (page \"Old\") (page-ref Old))}}\n",
+                "- {{query (and (page \"New\") (page-ref New))}}\n",
+            ),
+        ] {
+            assert_eq!(rename(text, false, "Old", "New"), want, "{text:?}");
+        }
+    }
+
     /// CRLF pages keep their line ends; only the names change.
     #[test]
     fn a_crlf_page_is_rewritten_in_place() {

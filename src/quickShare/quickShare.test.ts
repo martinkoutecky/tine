@@ -112,6 +112,26 @@ describe("quick share generation 1", () => {
     }
   });
 
+  /** REG-QS-PAGE-PROPERTY-QUERY. A `{{query}}` in page properties is rendered
+   *  with no host block (no properties, no block id), so the reader asks
+   *  `parseQuery(text, "macro_query", [])` and then `queryRun` with the page it
+   *  is on or with none. The share written with the baked record answers both;
+   *  a share frozen before the writer baked it still shows the static notice. */
+  it("answers a query written in page properties from the baked record", async () => {
+    const { publishedBackend } = await import("../publishedBackend");
+    const snapshot = (name: string): PublishedSnapshot =>
+      JSON.parse(readFileSync(new URL(`${name}/document.json`, FIXTURES), "utf8")).snapshot;
+    const argument = "(page-property type note)";
+    const api = publishedBackend(async () => snapshot("page-queries"));
+    const parsed = await api.parseQuery(argument, "macro_query", []);
+    for (const context of [{ current_page: "Dashboard" }, undefined]) {
+      const result = await api.queryRun(parsed.query, parsed.view, context);
+      expect(JSON.stringify(result)).toContain("Notes ü");
+    }
+    const old = publishedBackend(async () => snapshot("pages"));
+    await expect(old.parseQuery(argument, "macro_query", [])).rejects.toMatchObject({ reasonCode: "published_export_static" });
+  });
+
   it("finds a share whose login changed through the API, and only on GitHub's raw host", async () => {
     const dir = new URL("one-page/", FIXTURES);
     const hash = new URL(readFileSync(new URL("link.txt", dir), "utf8").trim()).hash;

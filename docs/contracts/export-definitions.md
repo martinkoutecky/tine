@@ -112,13 +112,25 @@ the old name is therefore not what the definition shares.
 - Not rewritten, deliberately: `like`, `namespace` and property comparisons; a
   selector naming an alias; a macro whose new argument would no longer be one
   macro (a new name containing `}`), which stays as it was.
+- Code is literal. A macro inside an inline code span, a fence or an Org
+  `=…=`/`~…~` span is no macro, in a block's text and in a property's value
+  (the outline parser keeps a property line as one node, so
+  `refs_rename::PropertyValueCode` asks the parser for the value read as
+  text, the way the app shows it, once per value that holds a macro, however
+  many it holds); the same macro outside code follows.
+- A name in **double quotes** is not a name in TQL: as in SQLite, `"Old"` is
+  an identifier, so `name = "Old"` is an invalid query (it shares nothing) and
+  has no literal to follow. The selector's spelling is the single-quoted one
+  above; the OG DSL's quoted `(page "Old")` is a string there and follows in
+  its own spelling.
 
 Unit cost: no new persisted record, file or transport record; a rename writes
 the pages whose query arguments change, through the existing rename
 transaction. Planning adds one in-memory scan: O(blocks) checks for `{{`, a
 case fold of each block holding one, and one block parse only where that fold
 contains a renamed name (or the name is escaped); the rewrite adds one outline
-and query parse per candidate page holding a query macro.
+and query parse per candidate page holding a query macro, and one more read of
+each property value that holds one (counted by `refs_rename::tests`).
 
 Tests: `crates/tine-graph-features/tests/query_publication.rs` (left-out pages, exports page, query text) and `crates/tine-core/src/export_definition.rs` (spelling, round trip,
 Markdown, Org, CRLF, scope) and
