@@ -3,6 +3,9 @@
 // child of that block, in the source file and the embed. Repeats E2E_SESSIONS fresh sessions and
 // records how often a parser trap ("lsdoc-wasm trap") or a misplaced edit occurs: the 2026-11-07
 // trap in outline_apply_json happened on the third page of such a session and never reproduced.
+// og-enter-family-1109 (UI-EDITOR-ENTER-SELECTION-DELETES): on each routed host page, Enter over a
+// selection in an ordinary block deletes the selection and splits at its start, as Logseq does, and
+// one Undo restores the block; the default editor of a develop build is the textarea.
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -27,9 +30,9 @@ const editorState = (browser) => browser.execute(() => {
   const el = document.activeElement;
   const row = el?.closest?.(".ls-block");
   const where = { id: row?.dataset.blockId ?? null, inEmbed: !!row?.closest(".embed-block") };
-  if (el instanceof HTMLTextAreaElement) return { ...where, text: el.value, start: el.selectionStart, end: el.selectionEnd };
+  if (el instanceof HTMLTextAreaElement) return { ...where, kind: "textarea", text: el.value, start: el.selectionStart, end: el.selectionEnd };
   const view = el?.cmTile?.root?.view;
-  if (view) { const s = view.state.selection.main; return { ...where, text: view.state.doc.toString(), start: s.from, end: s.to }; }
+  if (view) { const s = view.state.selection.main; return { ...where, kind: "cm6", text: view.state.doc.toString(), start: s.from, end: s.to }; }
   return { ...where, text: null, start: null, end: null };
 });
 // A state that never arrives is the product failing the journey (an Enter that made no block), not the harness.
@@ -52,13 +55,48 @@ function sourcePage(n) {
   return rows.join("");
 }
 
+/** Click the host page's `Keep this drop this rest n` block, select `drop this ` with Shift+Arrow, press
+ *  Enter: the file holds `Keep this` and, as the next block, `rest n`, and the new block is editing with the
+ *  caret at its start. Then one Undo restores the single block in the file. */
+async function selectionEnter(browser, graph, n) {
+  const file = path.join(graph, `pages/Host ${n}.md`);
+  const whole = `Keep this drop this rest ${n}`;
+  const id = await browser.execute(label => [...document.querySelectorAll(".main-content .ls-block")]
+    .find(row => !row.closest(".embed-block") && row.querySelector(":scope > .block-main .block-content")?.textContent.trim() === label)?.dataset.blockId, whole);
+  assert(id, `page ${n}: the host page shows the selection block`);
+  const content = await browser.$(`.main-content [data-block-id="${id}"] > .block-main .block-content`);
+  await content.scrollIntoView({ block: "center" });
+  await content.click();
+  await untilEditor(browser, "the selection block editing and focused", st => st.id === id && st.text === whole);
+  await browser.keys(["Control", "Home"]);
+  await untilEditor(browser, "the caret at the start of the selection block", st => st.id === id && st.start === 0 && st.end === 0);
+  for (let i = 0; i < "Keep this ".length; i++) await browser.keys("ArrowRight");
+  for (let i = 0; i < "drop this ".length; i++) await browser.keys(["Shift", "ArrowRight"]);
+  await untilEditor(browser, "`drop this ` selected", st => st.id === id && st.start === 10 && st.end === 20);
+  await browser.keys("Enter");
+  // The new block holds what followed the selection and has the caret at its start; the selection is gone.
+  const after = await untilEditor(browser, "the tail block editing after Enter over a selection",
+    st => st.id !== null && st.id !== id && st.text === `rest ${n}` && st.start === 0).then(() => editorState(browser));
+  const split = (text) => { const lines = text.split("\n"); const at = lines.findIndex(l => /^- Keep this ?$/.test(l)); return at >= 0 && lines[at + 1] === `- rest ${n}` && !text.includes("drop this"); };
+  let saved = null;
+  try { saved = await waitForFileText(file, split, { timeoutMs: 15_000 }); } catch { saved = fs.readFileSync(file, "utf8"); }
+  const selectionSplit = split(saved);
+  await browser.keys(["Control", "z"]);
+  const restored = (text) => text.includes(`- ${whole}\n`) && !text.split("\n").includes(`- rest ${n}`);
+  let undone = null;
+  try { undone = await waitForFileText(file, restored, { timeoutMs: 15_000 }); } catch { undone = fs.readFileSync(file, "utf8"); }
+  await browser.keys("Escape");
+  await untilNoEditor(browser, "no editor open after the selection Enter");
+  return { selectionEditor: after.kind, selectionSplit, selectionFile: saved, selectionUndo: restored(undone), selectionUndoFile: undone };
+}
+
 async function session(index) {
   const run = fs.mkdtempSync(path.join(out, `session-${index}-`));
   const graph = path.join(run, "graph");
   for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
   for (let n = 1; n <= pages; n++) {
     fs.writeFileSync(path.join(graph, `pages/Source ${n}.md`), sourcePage(n));
-    fs.writeFileSync(path.join(graph, `pages/Host ${n}.md`), `- Intro ${n}\n- {{embed [[Source ${n}]]}}\n- Host tail ${n}\n`);
+    fs.writeFileSync(path.join(graph, `pages/Host ${n}.md`), `- Intro ${n}\n- {{embed [[Source ${n}]]}}\n- Keep this drop this rest ${n}\n- Host tail ${n}\n`);
   }
   fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
   for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(run, dir));
@@ -131,11 +169,15 @@ async function session(index) {
       const at = lines.indexOf(`- Last block of source ${n}`);
       const edit = { page: n, sentinel, childOfLast: at >= 0 && /^[\t ]+- /.test(lines[at + 1] ?? "") && lines[at + 1].trim() === `- ${sentinel}`,
         lastUnchanged: at >= 0, embedCopies: view.copies, trapToasts: view.trap };
+      // Enter over a selection, on this routed page, outside the embed (og-enter-family-1109).
+      stage = `page ${n}: Enter over a selection`;
+      Object.assign(edit, await selectionEnter(browser, graph, n));
       result.edits.push(edit);
       fs.writeFileSync(path.join(run, `source-${n}.md`), saved);
       execFileSync("import", ["-window", "root", path.join(run, `page-${n}.png`)], { timeout: 10000 });
     }
-    result.outcome = result.edits.every(e => e.childOfLast && e.lastUnchanged && e.embedCopies === 1 && !e.trapToasts.length) ? "pass" : "fail";
+    result.outcome = result.edits.every(e => e.childOfLast && e.lastUnchanged && e.embedCopies === 1 && !e.trapToasts.length
+      && e.selectionSplit && e.selectionUndo) ? "pass" : "fail";
   } catch (error) {
     result.outcome = "error"; result.stage = stage; result.observed = String(error);
     result.classification = error.code === "ERR_ASSERTION" ? "product" : "harness";

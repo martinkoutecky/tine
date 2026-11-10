@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 - `tine page rename --json` reports each page the rename moved in `report.renamed`: its old name, its new name and the file it moved from (`null` for a page with no file, such as a namespace child that exists only through links). The app's tabs, Recent and sidebar follow exactly that list ([CLI output contract](docs/contracts/cli-output.md), `page.rename`).
 - A friendly search with a chosen sort order keeps only its best results while it scans instead of every match, with the same results and order as the full sort (internal: REG-OG-L7S3-02-SORTED-TOPK; OG audit L7s3-02).
 - Opening the journal template picker in Settings reads only template names; it no longer walks every page or sends whole template trees, and Edit loads just the chosen template (REG-TEMPLATE-NAMES).
@@ -24,9 +25,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Pressing Enter over selected text in the default editor now deletes the selection and splits the block where it began, as Logseq and the CodeMirror editor do; it used to keep the selected text in the new block. In both editors one Undo now restores the block with its selected text (internal: UI-EDITOR-ENTER-SELECTION-DELETES).
+- Choosing a template from the slash menu, or pasting several lines, no longer changes the block when the insert then fails: the `/template` text stays where it was, the block keeps its open editor and nothing is left to save, with one error message instead of two. A template that is inserted now undoes in one step. In the CodeMirror editor, pasting one block with children into an empty block now leaves the caret at the end of its text, as in the default editor (internal: UI-EDITOR-TEMPLATE-TRIGGER-REFUSED, UI-EDITOR-PASTE-OUTLINE-REFUSED).
 - Rename navigation now follows names actually rewritten in macro, query and Org link targets, and keeps reference-only children named solely in skipped conflicted files at their old names (REG-RENAME-REPORT-APPLIED-TARGETS).
 
 - `tine page rename OLD DATE` when that day already has a journal now refuses with `page-exists` and says nothing changed, as for any taken name. It used to answer `uncertain` ("inspect disk before retrying") although it had written nothing (internal: REG-CLI-RENAME-DATE-JOURNAL-REFUSAL).
+- A block move between pages made while Tine's storage session for the graph is not available (right after opening it, or after a failed start) is now refused and put back with a message, instead of looking done while only the pages were marked unsaved (internal: REG-L2-14-TRANSFER-NO-HOST; arrival audit L2-14).
+- On a published site or a quick share made by an older Tine, a link to an alias of a journal (such as `[[launch day]]` for a journal with `alias:: launch day`) opens that journal instead of a blank page, with the journal's linked references (internal: UI-PUBLISHED-LEGACY-JOURNAL-ALIAS-LINK).
 - Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).
 - An IME composition cancelled by losing focus (the window switched away, a picker took focus) no longer leaves the editor, or Quick Capture's File capture, ignoring what you type next (internal: UI-OG-L9-18-IME-BLUR-ABANDONED; OG audit L9-18).
 - Copying a large image or text through a Linux clipboard tool no longer pauses 5 ms each time the pipe fills, so a big copy to a tool that reads promptly finishes in a fraction of the time; a tool that stops reading is still given up on after the same stall (internal: REG-OG-RF1-CLIPBOARD-POLL; OG audit R-F1).
