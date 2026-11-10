@@ -112,6 +112,7 @@ impl<'a> PagePlan<'a> {
                 old: Some(self.stage(file, expected)?),
                 new: None,
                 opaque_rev: None,
+                parsed: None,
             }),
             Step::Save {
                 id,
@@ -131,14 +132,20 @@ impl<'a> PagePlan<'a> {
                     }
                     SaveBase::CreateNew => None,
                 };
-                let (new, _) =
-                    self.serialize_page(&file, doc, old.as_deref(), *markers == Markers::Resolve)?;
+                let path = self.path(&file)?;
+                let (new, parsed) = self.serialize_page_at(
+                    &path,
+                    doc,
+                    old.as_deref(),
+                    *markers == Markers::Resolve,
+                )?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
                     old,
                     new: Some(new),
                     opaque_rev: None,
+                    parsed: Some((path, parsed)),
                 })
             }
             Step::Create { file, content } => {
@@ -163,6 +170,7 @@ impl<'a> PagePlan<'a> {
                     old: None,
                     new: None,
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Unique {
@@ -227,6 +235,7 @@ impl<'a> PagePlan<'a> {
                     old: None,
                     new: None,
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Replace {
@@ -253,6 +262,7 @@ impl<'a> PagePlan<'a> {
                     old: Some(old),
                     new: Some(bytes.clone()),
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Rewrite {
@@ -288,6 +298,7 @@ impl<'a> PagePlan<'a> {
                     old: Some(old),
                     new: Some(new),
                     opaque_rev: None,
+                    parsed: None,
                 })
             }
             Step::Move {
@@ -331,6 +342,7 @@ impl<'a> PagePlan<'a> {
                     old,
                     new,
                     opaque_rev,
+                    parsed: None,
                 })
             }
             Step::Trash {
@@ -356,6 +368,7 @@ impl<'a> PagePlan<'a> {
                     old,
                     new: None,
                     opaque_rev,
+                    parsed: None,
                 })
             }
         }
@@ -469,20 +482,6 @@ impl PagePlan<'_> {
         }
     }
 
-    /// Serialize `doc` over `old`, the bytes it replaces (None creates), with
-    /// every content firewall: parse validation of both sides, VCS markers
-    /// (unless `resolving` them), the page-header and Org round-trip
-    /// firewalls in `prepare_page_bytes`.
-    pub(crate) fn serialize_page(
-        &self,
-        file: &FileId,
-        doc: &PageDto,
-        old: Option<&[u8]>,
-        resolving: bool,
-    ) -> Result<(Vec<u8>, Document), Why> {
-        self.serialize_page_at(&self.path(file)?, doc, old, resolving)
-    }
-
     /// Admission must retain input typed after a root detaches. Serialization
     /// uses only the validated page id and the host's comparison bytes; the
     /// later graph save still crosses every physical target/root guard. Keep
@@ -509,6 +508,10 @@ impl PagePlan<'_> {
         self.serialize_page_at(&path, doc, old, false)
     }
 
+    /// Serialize `doc` at `path` over `old`, the bytes it replaces (None
+    /// creates), with every content firewall: parse validation of both sides,
+    /// VCS markers (unless `resolving` them), the page-header and Org
+    /// round-trip firewalls in `prepare_page_bytes`.
     fn serialize_page_at(
         &self,
         path: &Path,
