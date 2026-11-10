@@ -201,7 +201,7 @@ impl CurrentPage {
 struct CurrentPageRequests(Mutex<HashMap<u64, mpsc::SyncSender<CurrentPage>>>);
 
 impl CurrentPageRequests {
-    fn ask(
+    fn ask_current_page(
         &self,
         send: impl FnOnce(u64) -> Result<(), tauri::Error>,
     ) -> Result<Value, super::wire::ErrorBody> {
@@ -221,7 +221,7 @@ impl CurrentPageRequests {
         })
     }
 
-    fn answer(&self, id: u64, page: CurrentPage) {
+    fn deliver_current_page(&self, id: u64, page: CurrentPage) {
         if let Some(answer) = self.0.lock().unwrap().remove(&id) {
             let _ = answer.try_send(page);
         }
@@ -313,7 +313,7 @@ impl WindowLink {
     /// The frontend owns workspace-window and pane focus. O(answer bytes), no
     /// graph I/O. Unresponsive or retired bindings answer busy within 5 s.
     pub(crate) fn current_page(&self) -> Result<Value, super::wire::ErrorBody> {
-        self.current.ask(|id| {
+        self.current.ask_current_page(|id| {
             self.app.emit_to(
                 self.label.as_str(),
                 "owner-current-page-request",
@@ -325,7 +325,7 @@ impl WindowLink {
     /// Accept only the graph binding that received the question.
     pub(crate) fn answer_current_page(&self, id: u64, page: CurrentPage, binding_generation: u64) {
         if binding_generation == self.binding_generation {
-            self.current.answer(id, page);
+            self.current.deliver_current_page(id, page);
         }
     }
 
@@ -412,7 +412,8 @@ mod current_page_tests {
     #[test]
     fn current_page_delivery_failure_is_busy_and_releases_the_request() {
         let requests = CurrentPageRequests::default();
-        let result = requests.ask(|_| Err(std::io::Error::other("window gone").into()));
+        let result =
+            requests.ask_current_page(|_| Err(std::io::Error::other("window gone").into()));
         let error = result.unwrap_err();
         assert_eq!(error.code, "busy");
         assert!(error.message.contains("window did not answer"));
@@ -444,9 +445,9 @@ mod current_page_tests {
             let questions = std::cell::Cell::new(0);
             let started = std::time::Instant::now();
             let payload = requests
-                .ask(|id| {
+                .ask_current_page(|id| {
                     questions.set(questions.get() + 1);
-                    requests.answer(id, page);
+                    requests.deliver_current_page(id, page);
                     Ok(())
                 })
                 .unwrap();
