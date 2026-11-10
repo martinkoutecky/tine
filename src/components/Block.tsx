@@ -119,7 +119,7 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
-import { bindRowHost, type RowHost } from "./block/embedRowHost";
+import { bindRowHost, bindRowPosition, type RowHost } from "./block/embedRowHost";
 import { beginEditGesture, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { bodyNeighbor, rawToWrite, threadRootOf, type PendingEdit } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
@@ -304,7 +304,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id}
-      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); }}
+      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope }); }}
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
