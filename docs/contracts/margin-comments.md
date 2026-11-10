@@ -81,7 +81,10 @@ findings 1 and 2.
   folded "N below" count, and every block's comment children (outline filter,
   highlights, compact entry and popup, margin column) and margin eligibility
   read it. A structural change rescans the scope's trees once with untracked
-  reads. A raw edit of any
+  reads. Each mounted block's child-list memo then compares its own list; an
+  unchanged list retains its value and does not rerun downstream comment views.
+  Covering-index selection follows the block's ancestry rather than a global
+  structural revision. A raw edit of any
   block on those pages runs one key screen (plus one facet lookup if it may
   quote): a comment whose selector or resolution changed is updated in place
   and notifies only its parent's readers and, for a root, the root readers; a

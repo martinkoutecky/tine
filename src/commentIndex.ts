@@ -17,7 +17,7 @@
 // page holds, and subscribes nothing per block.
 
 import { createContext, createMemo, createRoot, createSignal, onCleanup, untrack, useContext, type Accessor } from "solid-js";
-import { formatForPage, node as docNode, onPageRawChanged, someBlockInTrees, structureRevision, threadRootOf } from "./document";
+import { formatForPage, node as docNode, onPageRawChanged, someBlockInTrees, threadRootOf } from "./document";
 import { commentChildOf, NO_COMMENT_CHILDREN, sameChild, type CommentChild, type CommentChildren } from "./commentChildren";
 import type { Format } from "./types";
 
@@ -190,20 +190,18 @@ function treeIndex(top: string): CommentIndex {
 
 const SCOPE = Symbol("scope");
 /** The index that covers `id`: the enclosing scope's, else its tree's. Re-picked
- * after a structural edit (O(depth)), so a block moved out of the scope's trees
- * still reads a current answer. */
+ * when its ancestry changes (O(depth)); standalone blocks use their tree. */
 export function createCommentIndexFor(id: Accessor<string | null>): Accessor<CommentIndex | null> {
   const scope = useContext(CommentIndexContext);
   const key = createMemo<string | typeof SCOPE | null>(() => {
     const at = id();
     if (at === null) return null;
-    structureRevision();
-    return untrack(() => {
-      if (scope?.covers(at)) return SCOPE;
+    const pick = () => {
       let top = at;
       for (let parent = docNode(top)?.parent ?? null; parent !== null; parent = docNode(parent)?.parent ?? null) top = parent;
-      return top;
-    });
+      return scope?.covers(at) ? SCOPE : top;
+    };
+    return scope ? pick() : untrack(pick);
   });
   return createMemo(() => {
     const k = key();

@@ -6,7 +6,9 @@
 // facet lookups from outside the facet module.
 import "../keystrokeProbe.test.support";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { setImmediate } from "node:timers/promises";
 import { render } from "solid-js/web";
+import { createComputed } from "solid-js";
 import { SurfaceContext } from "./Block";
 import { BlockList } from "./BlockList";
 import { createMarginSurface } from "./MarginColumn";
@@ -25,6 +27,15 @@ import { tapHighlight } from "../tests/commentEntry";
 import type { BlockDto } from "../types";
 
 const facetCalls = vi.hoisted(() => ({ count: 0 }));
+const commentViews = vi.hoisted(() => ({ runs: 0 }));
+vi.mock("../commentIndex", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../commentIndex")>();
+  return { ...actual, createCommentChildren: (...args: Parameters<typeof actual.createCommentChildren>) => {
+    const children = actual.createCommentChildren(...args);
+    createComputed(() => { children(); commentViews.runs++; });
+    return children;
+  } };
+});
 vi.mock("solid-js/store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("solid-js/store")>();
   const probe = await import("../keystrokeProbe.test.support");
@@ -44,7 +55,8 @@ vi.mock("../render/facets", async (importOriginal) => {
 let dispose: (() => void) | undefined;
 beforeAll(async () => { await initParser(); });
 beforeEach(async () => { answerOpensFromDocument(await bindTestHost()); persistCommentMarginHidden(false); });
-afterEach(() => { dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); });
+// Give the worker's pending task-update RPCs an event-loop turn between mounts.
+afterEach(async () => { dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); await setImmediate(); });
 
 function b(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, children, collapsed: false, properties: blockRegions(raw, "md").properties.filter(p => p.primary).map(p => [p.key, p.value]) };
@@ -181,9 +193,10 @@ it("opening one passage mounts that passage's cards only at 4, 16 and 64 passage
   expect(results[2].ms, "opening at 64 passages vs 4").toBeLessThan(results[0].ms * 3 + 25);
 });
 
-it.each([0, 1])("a structural edit reruns constant comment-index work at 16, 64 and 256 groups (%s comments)", comments => {
-  const results = [16, 64, 256].map(n => {
-    const blocks = Array.from({ length: n }, (_, i) => b(`g${i}`, `Group ${i}`, [b(`k${i}`, `Child ${i}`),
+it.each([0, 1].flatMap(comments => [16, 64, 256].map(n => ({ comments, n }))))(
+  "a structural edit reruns constant downstream comment work ($n groups, $comments comments)", ({ comments, n }) => {
+    // Insert into a group directly: no extra ordinary child needs a setup render.
+    const blocks = Array.from({ length: n }, (_, i) => b(`g${i}`, `Group ${i}`, [
       ...(i === 0 && comments ? [b("t", "Comment\ntine.quote:: Group")] : [])]));
     loadSingle({ name: "Structure", title: "Structure", kind: "page", pre_block: null, format: "md", blocks });
     const pane = document.createElement("main"); pane.className = "main-content";
@@ -196,14 +209,18 @@ it.each([0, 1])("a structural edit reruns constant comment-index work at 16, 64 
       </MarginContext.Provider></CommentResolutionScope></SurfaceContext.Provider>;
     }, pane);
     let inserted: string | null = null;
-    const m = measure("k0", () => { inserted = insertEmptyChildBlock("k0", 0); });
+    commentViews.runs = 0;
+    const m = measure("g0", () => { inserted = insertEmptyChildBlock("g0", 0); });
     expect(inserted).not.toBeNull();
     expect(pane.querySelector(`[data-block-id="${inserted}"]`)).not.toBeNull();
     const sites = [...m.bySite].filter(([site]) => site.includes("src/commentIndex.ts:"));
     const indexRuns = sites.reduce((sum, [, stat]) => sum + stat.runs, 0);
-    dispose?.(); dispose = undefined; resetStore(); document.body.replaceChildren();
-    return { n, indexRuns, totalRuns: m.runs, ms: m.ms, sites: sites.map(([site, stat]) => [site, stat.runs]) };
-  });
-  console.log(JSON.stringify({ measurement: "structural edit", comments, results }));
-  expect(results.map(r => r.indexRuns)).toEqual([results[0].indexRuns, results[0].indexRuns, results[0].indexRuns]);
+    const memoEvaluations = Math.max(...sites.map(([, stat]) => stat.runs));
+    console.log(JSON.stringify({ measurement: "structural edit", comments, n, indexRuns, memoEvaluations, downstreamRuns: commentViews.runs,
+      totalRuns: m.runs, ms: m.ms, sites: sites.map(([site, stat]) => [site, stat.runs]) }));
+    // Only the new row initializes a downstream comment view. The remaining
+    // per-group work is one list-comparison memo, never an ancestry re-pick.
+    expect(commentViews.runs).toBe(1);
+    expect(memoEvaluations).toBe(n + comments + 1);
+    expect(indexRuns - memoEvaluations).toBe(6);
 });
