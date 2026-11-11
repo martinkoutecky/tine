@@ -761,6 +761,129 @@ fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
     }
 }
 
+/// Native15c admission of the generated merges (`merge_generated`): every
+/// case the model admits must be admitted on Tine's actual output. Three
+/// groups run and are reported, not asserted (RECEIPT-cm-b4-gen): field
+/// endings rounds 15c and 15f disagree on (pending 15f); memberless-only
+/// declarations (model question Q2); and a source `title::` in a first-root
+/// header, whose shadow this harness does not rebind (follow-up F1).
+fn native_generated(seed: u64, count: usize) {
+    let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
+        assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
+        return;
+    };
+    let mut failures = BTreeMap::<String, (usize, String)>::new();
+    let mut admitted = 0;
+    let mut reported = BTreeMap::<&str, (usize, usize)>::new();
+    let mut cases = crate::merge_generated::witnesses();
+    cases.extend(crate::merge_generated::cases(seed, count));
+    let total = cases.len();
+    for case in cases {
+        let ext = if case.org { "org" } else { "md" };
+        let source_path = format!("pages/src.{ext}");
+        let target_path = format!("pages/dst.{ext}");
+        let mut spec = GraphSpec::default();
+        spec.name = "generated-merge".into();
+        spec.files = BTreeMap::from([
+            (source_path.clone(), case.src_text()),
+            (target_path.clone(), case.dst_text()),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        spec.write(dir.path());
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let choice = Choice::Merge(target_path.clone());
+        let group = if crate::merge_generated::expected(&case).pending_15f() {
+            Some("pending 15f")
+        } else if crate::merge_generated::memberless_only(&case) {
+            Some("Q2 memberless only")
+        } else if case
+            .src
+            .iter()
+            .any(|l| l.header && !l.prefix.is_empty() && l.content.starts_with("title::"))
+        {
+            Some("F1 first-root source title")
+        } else {
+            None
+        };
+        let verdict = (|| {
+            let proof = merge_proof(&store, &spec, "src", "dst", &choice)
+                .ok_or("no merge proof")?
+                .2
+                .map_err(|e| format!("refused: {e}"))?;
+            execute(&store, "src", "dst", Some(&choice)).map_err(|e| format!("refused: {e}"))?;
+            let files = read_graph(dir.path());
+            let p = packet(
+                &store,
+                &spec,
+                "src",
+                "dst",
+                &source_path,
+                &target_path,
+                &proof,
+                &files,
+                json!([]),
+            );
+            let result = shared::run_bridge(Path::new(&bridge), &p)?;
+            let failed: Vec<_> = result["checks"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, v)| **v != true)
+                .map(|(k, _)| k.clone())
+                .collect();
+            if result["accepted"] == true && failed.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("rejected: {}", failed.join(",")))
+            }
+        })();
+        if let Some(group) = group {
+            let entry = reported.entry(group).or_default();
+            entry.0 += 1;
+            entry.1 += usize::from(verdict.is_ok());
+            continue;
+        }
+        match verdict {
+            Ok(()) => admitted += 1,
+            Err(class) => {
+                let witness = format!(
+                    "org={} source={:?} target={:?}",
+                    case.org,
+                    case.src_text(),
+                    case.dst_text()
+                );
+                let entry = failures.entry(class).or_insert((0, witness.clone()));
+                entry.0 += 1;
+                if witness.len() < entry.1.len() {
+                    entry.1 = witness;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "native generated merges: {total} cases, {admitted} admitted; reported only (run, admitted): {reported:?}"
+    );
+    let listing: String = failures
+        .iter()
+        .map(|(class, (n, w))| format!("  {class}: {n}\n    {w}\n"))
+        .collect();
+    assert!(failures.is_empty(), "native failing classes:\n{listing}");
+}
+
+#[test]
+fn native_generated_merges_are_admitted() {
+    let _guard = crate::integration_lock();
+    native_generated(crate::merge_generated::SEED, 32);
+}
+
+#[test]
+#[ignore]
+fn native_generated_merges_are_admitted_large() {
+    let _guard = crate::integration_lock();
+    let n = std::env::var("CM_GEN_COUNT").map_or(400, |v| v.parse().unwrap());
+    native_generated(crate::merge_generated::SEED ^ 0xBEEF, n);
+}
+
 #[test]
 fn native_split_query_and_guarded_title_controls() {
     let _guard = crate::integration_lock();

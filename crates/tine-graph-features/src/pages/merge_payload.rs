@@ -356,21 +356,15 @@ impl Writer {
         file: usize,
         line: &Line,
         additions: &[Vec<Placement>],
-        prefix: bool,
         rebuild: bool,
         org: bool,
     ) -> Result<(), TraceError> {
         let a = line.alias.as_ref().unwrap();
-        let start = if prefix {
-            line.range.start
-        } else {
-            line.content.start
-        };
+        let start = line.content.start;
         let raw = &self.trace.inputs[file][line.content.clone()];
         let ending = terminator(raw).len();
         let end = line.content.end - ending;
         if rebuild {
-            self.original(file, start..line.content.start)?;
             self.insert(if org { "#+alias: " } else { "alias:: " });
         } else if a.plain {
             let key = a.key.as_ref().unwrap();
@@ -542,17 +536,13 @@ pub fn propose(
     }
     let mut moved = Vec::<(usize, Range<usize>)>::new();
     if normalize_target {
-        for (n, line) in headers[0].lines.iter().enumerate() {
+        for line in &headers[0].lines {
             if line
                 .property
                 .as_ref()
                 .is_some_and(|(key, _)| key == "title")
             {
                 moved.push((0, line.range.clone()));
-            } else if (line.alias.is_none() || retained == Some((0, n)))
-                && line.range.start < line.content.start
-            {
-                moved.push((0, line.range.start..line.content.start));
             }
         }
     }
@@ -596,9 +586,7 @@ pub fn propose(
                     }
                 }
                 if a.movable {
-                    if line.range.start < line.content.start
-                        && !(file == 0 && retained == Some((file, n)))
-                    {
+                    if file == 1 && line.range.start < line.content.start {
                         moved.push((file, line.range.start..line.content.start));
                     }
                     // A rebuilt retained field leaves its protected spacing
@@ -666,6 +654,35 @@ pub fn propose(
         .iter()
         .rposition(|l| !target_text[l.range.clone()].trim().is_empty())
         .map_or(0, |n| n + 1);
+    // A target header's structural prefixes are positional: its j-th output
+    // line takes its j-th prefix (the first is the block's bullet), whichever
+    // line's content lands there. Prefixes left over are protected leftover
+    // bytes; a preamble header has none, a normalized one keeps none.
+    let kept = |(_, line): &(usize, &Line)| {
+        !(normalize_target
+            && line
+                .property
+                .as_ref()
+                .is_some_and(|(key, _)| key == "title"))
+    };
+    let emitted = |(n, line): &(usize, &Line)| line.alias.is_none() || retained == Some((0, *n));
+    let slots: Vec<_> = headers[0].lines[..header_insert]
+        .iter()
+        .enumerate()
+        .filter(kept)
+        .map(|(_, line)| line.range.start..line.content.start)
+        .filter(|r| !r.is_empty())
+        .collect();
+    let used = if normalize_target {
+        0
+    } else {
+        let lines = headers[0].lines[..header_insert].iter().enumerate();
+        slots
+            .len()
+            .min(lines.filter(kept).filter(emitted).count() + promoted.len())
+    };
+    moved.extend(slots[used..].iter().map(|r| (0, r.clone())));
+    let mut slots = slots[..used].iter();
     for (n, line) in headers[0].lines[..header_insert].iter().enumerate() {
         if normalize_target
             && line
@@ -678,35 +695,26 @@ pub fn propose(
         if line.alias.is_some() && retained != Some((0, n)) {
             continue;
         }
+        if let Some(prefix) = slots.next() {
+            w.original(0, prefix.clone())?;
+        }
         if retained == Some((0, n)) {
-            w.field(
-                0,
-                line,
-                &alias_additions,
-                !normalize_target,
-                rebuild_retained,
-                org,
-            )?;
+            w.field(0, line, &alias_additions, rebuild_retained, org)?;
         } else {
-            w.original(
-                0,
-                if normalize_target {
-                    line.content.clone()
-                } else {
-                    line.range.clone()
-                },
-            )?;
+            w.original(0, line.content.clone())?;
         }
     }
     let has_promoted = !promoted.is_empty() || headers[1].lines.iter().any(|l| l.alias.is_some());
     for n in promoted {
         let line = &headers[1].lines[n];
         w.newline();
-        if headers[0].first_root && !normalize_target {
-            w.insert(if org { "" } else { "  " });
+        if let Some(prefix) = slots.next() {
+            w.original(0, prefix.clone())?;
+        } else if headers[0].first_root && !normalize_target {
+            w.insert("  ");
         }
         if retained == Some((1, n)) {
-            w.field(1, line, &alias_additions, false, rebuild_retained, org)?;
+            w.field(1, line, &alias_additions, rebuild_retained, org)?;
         } else {
             w.original(1, line.content.clone())?;
         }
@@ -722,35 +730,95 @@ pub fn propose(
     w.newline();
     let leftover = !moved.is_empty();
     let leftover_start = w.text.len();
+    let mut lines: Vec<(usize, usize, Vec<Range<usize>>)> = Vec::new();
     if leftover {
         // OG collect-page-properties groups every top-level directive, even
         // below a headline (og 6e7afa8, graph-parser/mldoc.cljc). A quote owns
         // the source directives as body text rather than page properties.
+        // The leftover is laid out by original line: each moved line's
+        // fragments stay together on one line, ended by their own terminator
+        // (else an inserted one). Structural prefixes and whitespace-only
+        // fragments never start a line, where they could open a block; in
+        // Markdown they go on the title, which then never reads as a property.
+        let mut title = Vec::new();
+        let mut line_of = HashMap::new();
+        for (file, range) in &moved {
+            let header = &headers[*file].lines;
+            let first = header.partition_point(|l| l.range.end <= range.start);
+            for (n, line) in header.iter().enumerate().skip(first) {
+                if line.range.start >= range.end {
+                    break;
+                }
+                let prefix = range.start.max(line.range.start)..range.end.min(line.content.start);
+                let content = range.start.max(line.content.start)..range.end.min(line.range.end);
+                if prefix.start < prefix.end {
+                    title.push((*file, prefix));
+                }
+                if content.start < content.end {
+                    let at = *line_of.entry((*file, n)).or_insert_with(|| {
+                        lines.push((*file, n, Vec::new()));
+                        lines.len() - 1
+                    });
+                    lines[at].2.push(content);
+                }
+            }
+        }
+        // A whitespace-only remainder within one line joins the title; a
+        // blank original line that comes first ends it with its own bytes.
+        lines.retain(|(file, _, parts)| {
+            let inline = !org
+                && parts.iter().all(|r| {
+                    let t = &w.trace.inputs[*file][r.clone()];
+                    t.trim().is_empty() && !t.contains('\n')
+                });
+            if inline {
+                title.extend(parts.iter().map(|r| (*file, r.clone())));
+            }
+            !inline
+        });
         if org {
             w.insert("*\n#+BEGIN_QUOTE\n");
         } else {
-            // An empty title is native, persistent evidence that these old
-            // header bytes are body text, including on a headerless next save.
-            let property_first = moved.first().is_some_and(|(file, range)| {
-                !headers[*file].first_root
-                    && headers[*file]
-                        .lines
+            let blank = lines
+                .first()
+                .is_some_and(|(file, _, parts)| {
+                    parts
                         .iter()
-                        .any(|line| line.range.start == range.start && line.property.is_some())
-            });
-            w.insert(&if property_first {
-                format!("-{}  ", w.eol)
+                        .all(|r| w.trace.inputs[*file][r.clone()].trim().is_empty())
+                })
+                .then_some(0);
+            w.insert(if title.is_empty() && blank.is_none() {
+                "-"
             } else {
-                "- ".into()
+                "- "
             });
+            for (file, range) in &title {
+                w.original(*file, range.clone())?;
+            }
+            match blank.map(|at| lines.remove(at)) {
+                Some((file, _, parts)) => {
+                    for range in parts {
+                        w.original(file, range)?;
+                    }
+                }
+                None => {
+                    let eol = w.eol;
+                    w.insert(eol);
+                }
+            }
         }
-        for (i, (file, range)) in moved.iter().enumerate() {
-            if i > 0 && !org {
+        for (file, _, parts) in &lines {
+            if !org {
                 w.insert("  ");
             }
-            w.original(*file, range.clone())?;
+            for range in parts {
+                w.original(*file, range.clone())?;
+            }
+            if !w.text.ends_with('\n') {
+                let eol = w.eol;
+                w.insert(eol);
+            }
         }
-        w.newline();
         if org {
             w.insert("#+END_QUOTE\n");
         }
@@ -851,22 +919,22 @@ pub fn propose(
     let source_body_count = same_shape(source_body, &roots[source_start + source_prose..])
         .ok_or(RealizationError::BodyLaw)?;
     if org && leftover {
+        // The same lines, read where they came from: as header directives.
+        // A wholly moved alias line's members are in the field instead.
         let mut original = String::new();
-        let alias_ranges: HashSet<_> = headers
-            .iter()
-            .enumerate()
-            .flat_map(|(file, h)| {
-                h.lines
-                    .iter()
-                    .filter(|l| l.alias.is_some())
-                    .map(move |l| (file, l.range.start, l.range.end))
-            })
-            .collect();
-        for (file, range) in &moved {
-            if alias_ranges.contains(&(*file, range.start, range.end)) {
+        for (file, n, parts) in &lines {
+            let line = &headers[*file].lines[*n];
+            if line.alias.is_some()
+                && parts.iter().map(|r| r.len()).sum::<usize>() == line.content.len()
+            {
                 continue;
             }
-            original.push_str(&w.value(*file, range.clone())?);
+            for range in parts {
+                original.push_str(&w.value(*file, range.clone())?);
+            }
+            if !original.ends_with('\n') {
+                original.push('\n');
+            }
         }
         let mut required = HashMap::new();
         let count_refs = |block: &tine_core::DocBlock,

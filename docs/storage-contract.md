@@ -1006,10 +1006,15 @@ survivor and source bytes. Survivor header lines and both bodies retain their
 bytes and terminators outside legal name spans. Nonclashing source properties
 join the header; source titles, equal or differing property clashes, protected
 header syntax and blank header lines remain in one leftover block between the bodies. A
-Markdown leftover starting with an unbulleted property gets an empty native
-title line with the original header bytes on continuations. Its raw text
-starts with a newline; ordinary text, original outline prefixes and existing
-blank first lines already prevent promotion. An ordinary unchanged save cannot
+leftover keeps each moved header line's bytes together on one line, ended by
+that line's own terminator (else an inserted one). In Markdown, original
+outline prefixes and whitespace-only remainders go on the leftover's title
+line, so no moved byte starts a continuation line where it could open a block;
+with none, the title is empty (or a leading blank original line) and the raw
+text starts with a newline, so an old property cannot promote. A target
+header's outline prefixes are positional: its j-th output header line takes
+its j-th prefix (the first is the block's bullet), and prefixes left over are
+leftover bytes. An ordinary unchanged save cannot
 promote the old source title, including after earlier body roots are removed.
 During merge, a childless first-root survivor header is realized as a native
 preamble, with its protected outline prefix and any nonauthoritative title
