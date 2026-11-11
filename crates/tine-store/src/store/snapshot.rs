@@ -148,6 +148,12 @@ impl PendingFiles {
     }
 }
 
+/// Multi-row patch failure that no individual row explains. Root-scoped like
+/// the full-index fault; solo probes pass, so containment cannot blame a page.
+#[cfg(any(test, feature = "test-faults"))]
+pub(super) static TEST_PATCH_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
 impl Snapshot {
     /// The active pages changed by this publication, including opening
     /// siblings that no physical write touched. Physical evidence stays in
@@ -503,6 +509,14 @@ impl Snapshot {
             old.filter(|_| !config_changed && !rebuild),
             &changed_paths,
         );
+        #[cfg(any(test, feature = "test-faults"))]
+        if old.is_some()
+            && !rebuild
+            && files.len() > 1
+            && TEST_PATCH_PANIC_ROOTS.lock().unwrap().contains(&graph.root)
+        {
+            panic!("test: patch capture failed with no individual suspect");
+        }
         let (inventory, delta, counts, moved) =
             snapshot.answer_changes(old, &changed_paths, name_set_changed);
         // A carried answer that can list a page which started or stopped
