@@ -1988,9 +1988,49 @@ page; this can over-invalidate an unrelated edit within that source, but keeps
 ancestor edits live without a graph walk or a second Markdown parser.
 
 Initial publication, rebuild, a change of a build-relevant config setting
-(`checkpoint::config_key`), alias change, create/rename/delete,
-unavailable old/new pages, unreadable-inventory changes, more than 32 edited
-pages, or a day change since the previous publication set `full`. Any other
+(`checkpoint::config_key`), alias change, a named file that is active on
+neither side (a losing case twin), unavailable old/new pages,
+unreadable-inventory changes, more than 32 edited pages, or a day change since
+the previous publication set `full`. A publication that moves a page name
+(create, delete, rename, a `title::` change, a twin promoted or demoted) is
+precise (D-20261102-PERF row 3): `ReadSnapshot::page_changes` reads both sides
+of each changed path only, and the summary treats each side as an edit from or
+to the empty document, so it names that page's own blocks, references, tags,
+properties and templates, the moved key in `pages`, and, in `linksTo`,
+`textTo` and `tagsTo`, the moved name's reference-invalidation spellings in the
+old and new graph (namespace ancestors, journal-day spellings). A moved
+journal or date-spelling name sets `days` and `journals` and renews plans
+whose reference classes have a day or that name (`Plan::reference_classes_reshaped_by`);
+a moved name with an alias neighbour on either side stays `full`. Pages
+without a file that the publication brings or removes are edits too, of the
+empty document under their fileless entry (the row a page query evaluates): a
+namespace child brings its parent and its last child removes it, a page's
+references bring reference-only pages, and a file taking or leaving a name
+removes or brings that name's fileless row. The candidates are the changed
+pages' names and references and the namespace prefixes of both, each looked up
+on both sides by `ReadSnapshot::resident_reference_only_page` (the
+`reference_only_pages` rule for one name). It reads only the resident name
+table and day support; when either side has not built them, every mounted
+reader that can list a fileless page (a page-anchored query, a search) is named
+instead. Queries are named by the usual `touches_edit` rule on those synthetic
+edits. The `full` bound (more than 32 changed paths) is decided before any of
+this reads a page, and the preparation is linear in the batch (one active-path
+set). Unrelated mounted queries do not rerun: proof
+`crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario,
+fileless parents and reference-only pages on create, rename and delete, a
+counter at N = 8 and 64, and a batch-work counter at 8, 16, 40 and 400 files)
+and steps 60–62 of the random reader oracle in
+`crates/tine-store/tests/change_summary.rs`. The frontend create, delete and rename
+paths no longer add a full refresh of their own: create and delete no longer
+call `bumpDataRev()` with no summary, and the rename refresh
+(`refreshAfterRename` in `src/graph.ts`) no longer bumps `graphEpoch`, which
+re-subscribed every mounted query and reference panel. Each bumps only
+`pageInventoryRev` (the page index) and leaves readers to the publication
+summary. Their frontend results change (`beginResultsChange`) still gates
+adoption of and actions on shown answers, but a mounted `{{query}}` reruns only
+on its own `query:<id>` key: as in the Query workspace (GH #907), the macro
+passes its subscription as the membership resource's `scopedRevision` and
+re-adopts an unchanged answer (`src/components/Macro.tsx`). Any other
 config change (favorites, templates, display settings) rebuilds no name or
 index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own

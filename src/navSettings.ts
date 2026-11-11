@@ -1,4 +1,4 @@
-import { msg } from "./i18n";
+import { msg, renderEnglish } from "./i18n";
 // Device-local view/navigation preferences (persisted in tine-settings.json via the
 // generic app_bool backend, so they survive a restart; localStorage does not in the
 // Tine app on WebKitGTK).
@@ -9,6 +9,17 @@ import { writePreference, loadPreference, seedPreference, preferenceRevision, pr
 import { pushToast } from "./toasts";
 
 const KEY_REUSE_TABS = "nav_reuse_tabs";
+const KEY_SHOW_WORKSPACES = "show_workspaces";
+const [showWorkspacesSig, setShowWorkspacesSig] = createSignal(true);
+
+/** Reactive device preference for saved-Workspace controls; reading is O(1). */
+export const showWorkspaces = showWorkspacesSig;
+
+/** Show or hide controls without changing workspace data. One device write;
+ * failure rolls back and toasts through the shared preference writer. */
+export function setShowWorkspaces(on: boolean): void {
+  writePreference(showWorkspacesSig, setShowWorkspacesSig, on, next => backend().setAppBool(KEY_SHOW_WORKSPACES, next), renderEnglish(msg("settings-show-workspaces")));
+}
 
 const KEY_QUERY_TEXT_OPEN = "query_text_open";
 
@@ -81,6 +92,7 @@ export function setNavReuseTabs(on: boolean): void {
 
 /** Load the device preference at startup (default ON); read failure toasts and resolves. */
 export async function initNavSettings(): Promise<void> {
+  loadPreference(showWorkspacesSig, setShowWorkspacesSig, () => backend().getAppBool(KEY_SHOW_WORKSPACES, true), v => v, renderEnglish(msg("settings-show-workspaces")));
   loadPreference(queryTextOpenSig, setQueryTextOpenSig, () => backend().getAppBool(KEY_QUERY_TEXT_OPEN, false), (v) => v, "query text preference");
   loadPreference(mobileNavBottom, setMobileNavBottomSig, () => backend().getAppBool(KEY_MOBILE_NAV_BOTTOM, false), (v) => v, "navigation buttons preference");
   loadPreference(searchOpensHere, setSearchOpensHereSig, () => backend().getAppBool(KEY_SEARCH_OPENS_HERE, false), (v) => v, "search results preference");

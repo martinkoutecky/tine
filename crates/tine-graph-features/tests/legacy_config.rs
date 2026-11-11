@@ -98,6 +98,39 @@ fn show_brackets_defaults_parses_and_round_trips() {
     assert!(!Config::parse(&after).show_brackets);
 }
 
+/// GH #824: Logseq's `:ui/enable-tooltip?` round-trips through the guarded
+/// writer, keeping comments and other keys, and toggles back to on.
+#[test]
+fn enable_tooltip_defaults_parses_and_round_trips() {
+    let _integration_guard = crate::integration_lock();
+    assert!(Config::parse("{}").enable_tooltip);
+    assert!(Config::parse("{:ui/enable-tooltip? true}").enable_tooltip);
+    assert!(!Config::parse("{:ui/enable-tooltip? false}").enable_tooltip);
+    let (dir, store) = fixture(
+        "tooltip",
+        "{:preferred-format \"Markdown\"\n ;; preserve this comment\n :start-of-week 0}\n",
+    );
+    config::set_enable_tooltip(&store, false).unwrap();
+    let after = content(&dir);
+    assert!(
+        after.contains(":ui/enable-tooltip? false"),
+        "not written: {after}"
+    );
+    assert!(after.contains(":start-of-week 0"), "other keys preserved");
+    assert!(
+        after.contains(";; preserve this comment"),
+        "comments preserved"
+    );
+    assert!(!Config::parse(&after).enable_tooltip);
+    config::set_enable_tooltip(&store, true).unwrap();
+    let again = content(&dir);
+    assert!(
+        again.contains(":ui/enable-tooltip? true"),
+        "not rewritten: {again}"
+    );
+    assert!(Config::parse(&again).enable_tooltip);
+}
+
 #[test]
 fn set_preferred_format_replaces_keyword_value() {
     let _integration_guard = crate::integration_lock();

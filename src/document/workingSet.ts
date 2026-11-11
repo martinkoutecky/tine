@@ -11,7 +11,7 @@ import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
 import { readOwned, type Owner, bindingOwner } from "../owned";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
-import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
+import { bumpPageInventoryRev } from "../graphSession";
 import { type Route } from "../routeTypes";
 import { type PageTarget } from "../routeTypes";
 import { captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext, startEditing } from "../editorController";
@@ -408,9 +408,10 @@ export async function deletePage(
   }
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
-  // A page delete changes every live query / backlink result. Nudge dataRev so
-  // open {{query}} panels re-run and drop the deleted page's rows.
-  bumpDataRev();
+  // The delete's publication carries a precise change summary (its page, its
+  // blocks, the names it linked and the mounted queries it touched; full when
+  // aliases regroup), which releases those readers like any publication
+  // (D-20261102-PERF row 3). Only the name inventory is bumped here.
   bumpPageInventoryRev();
   return true;
 }

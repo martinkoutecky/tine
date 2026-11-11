@@ -599,6 +599,10 @@ describe("QueryMacro sheet integration", () => {
       await vi.waitFor(() => expect(blockProperty("todo", "collapsed")).toBe("true"));
       expect(root.querySelector('.query-group [data-block-id="child"]')).toBeNull();
       undo();
+      // The undo's save publishes; its summary names this query (the result's
+      // page changed). Local document changes alone no longer rerun a mounted
+      // query (D-20261102-PERF row 3); this test host has no publication feed.
+      bumpDataRev();
       await vi.waitFor(() => expect(root.querySelector('.query-group [data-block-id="child"]')).not.toBeNull());
       await click("Collapse all");
       await vi.waitFor(() => expect(blockProperty("todo", "collapsed")).toBe("true"));
@@ -623,6 +627,24 @@ describe("QueryMacro sheet integration", () => {
       finish();
       expect(block().getAttribute("aria-busy")).toBe("true");
       await vi.waitFor(() => expect(block().getAttribute("aria-busy")).not.toBe("true"));
+    } finally { dispose(); }
+  });
+  it("re-adopts its answer after an unrelated results change instead of rerunning", async () => {
+    // D-20261102-PERF row 3: a page create, delete or rename elsewhere opens a
+    // results change; only the query's own publication key reruns it.
+    loadQueryDoc("{{query (task TODO)}}");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const block = () => root.querySelector(".query-block")!;
+      const runs = vi.mocked(backend().queryRun).mock.calls.length;
+      beginResultsChange()();
+      await vi.waitFor(() => expect(block().getAttribute("aria-busy")).not.toBe("true"));
+      await settleQuery();
+      expect(vi.mocked(backend().queryRun).mock.calls.length).toBe(runs);
+      expect(block().querySelector('.query-group [data-block-id="todo"]')).not.toBeNull();
+      bumpDataRev();
+      await vi.waitFor(() => expect(vi.mocked(backend().queryRun).mock.calls.length).toBeGreaterThan(runs));
     } finally { dispose(); }
   });
   it("does not run an empty new query before a condition is added", async () => {

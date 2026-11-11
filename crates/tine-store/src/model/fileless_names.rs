@@ -142,7 +142,7 @@ impl DaySupport {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FilelessName {
     pub(crate) name: String,
     /// An unclaimed spelling of the day when its display title is claimed
@@ -236,13 +236,9 @@ impl ReadSnapshot {
                 .filter(|(key, _)| table.get(key).is_none())
                 .filter_map(|(_, bucket)| bucket.first().map(|((name, _), _)| name.as_str())),
         ) {
-            let Some(mut answer) = self.fileless_name(&format, name) else {
+            let Some(answer) = self.reference_only_row(&format, table, name) else {
                 continue;
             };
-            if answer.day.is_some() {
-                continue;
-            }
-            answer.namespace_parent = table.get(&refs::page_key(name)).is_none();
             rows.insert(refs::page_key(&answer.name), answer);
         }
         for (day, _) in support.days.iter() {
@@ -251,6 +247,50 @@ impl ReadSnapshot {
             }
         }
         rows.into_values().collect()
+    }
+
+    /// The non-day row of [`Self::reference_only_pages`] for one spelling.
+    fn reference_only_row(
+        &self,
+        format: &JournalFormat,
+        table: &super::referenced_names::ReferencedNameTable,
+        name: &str,
+    ) -> Option<FilelessName> {
+        let mut answer = self.fileless_name(format, name)?;
+        if answer.day.is_some() {
+            return None;
+        }
+        answer.namespace_parent = table.get(&refs::page_key(name)).is_none();
+        Some(answer)
+    }
+
+    /// The row [`Self::reference_only_pages`] lists for `name`, by the same
+    /// rule, for one name: a day spelling asks its day's row; any other name
+    /// its key's referenced spelling, else its least namespace-child prefix.
+    /// `None` when the name table or day support is not built for this
+    /// generation (it is never built here: the caller cannot tell), else
+    /// `Some(row)`. O(log names + spellings of one day); the change summary
+    /// compares it across a publication (D-20261102-PERF row 3, review F1).
+    pub(crate) fn resident_reference_only_page(&self, name: &str) -> Option<Option<FilelessName>> {
+        let table = self.referenced_name_table_built()?;
+        let support = self.day_support.get()?;
+        let format = self.config().journal_format();
+        let day = |name: &str| FilelessName::new(&format, name).day;
+        if let Some(day) = day(name) {
+            return Some(self.fileless_page_for_day(day));
+        }
+        let key = refs::page_key(name);
+        let spelling = match table.get(&key) {
+            Some(refs) => Some(refs.spelling.clone()),
+            None => support
+                .parents
+                .get(&key)
+                .and_then(|bucket| bucket.first().map(|((name, _), _)| name.clone())),
+        };
+        Some(spelling.and_then(|spelling| match day(&spelling) {
+            Some(day) => self.fileless_page_for_day(day),
+            None => self.reference_only_row(&format, table, &spelling),
+        }))
     }
 
     fn day_support(&self) -> &DaySupport {

@@ -1122,7 +1122,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section">
+    <div class="page-section" data-page-name={props.page.name}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>

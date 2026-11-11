@@ -54,6 +54,18 @@ thread_local! {
     static WATCHER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set while the page host processes a watcher-forwarded observation.
     static OBSERVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Calling thread's precise page-lifecycle summary work (path probes).
+    static LIFECYCLE_WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Calling thread's precise page-lifecycle summary work: one per changed
+/// path read on both sides, per named path checked against them, and per
+/// fileless name looked up on both sides (D-20261102-PERF row 3, review F2).
+pub fn lifecycle_work() -> u64 {
+    LIFECYCLE_WORK.with(std::cell::Cell::get)
+}
+pub(crate) fn lifecycle_probe() {
+    LIFECYCLE_WORK.with(|work| work.set(work.get() + 1));
 }
 
 /// Calling thread's journal day visits, inventory sorts, and reference-name visits.

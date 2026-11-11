@@ -221,7 +221,7 @@ const TARGETS: &[&str] = &[
     "DayShortcut",
 ];
 
-fn query_cases() -> Vec<(
+pub(super) fn query_cases() -> Vec<(
     &'static str,
     tine_core::query::ir::Query,
     tine_core::query::ir::ViewSettings,
@@ -283,7 +283,7 @@ fn query_cases() -> Vec<(
     .collect()
 }
 
-fn fixture(blocks: usize) -> (tempfile::TempDir, std::sync::Arc<Store>) {
+pub(super) fn fixture(blocks: usize) -> (tempfile::TempDir, std::sync::Arc<Store>) {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     fs::create_dir_all(dir.path().join("journals")).unwrap();
@@ -335,7 +335,7 @@ fn fixture(blocks: usize) -> (tempfile::TempDir, std::sync::Arc<Store>) {
     (dir, store)
 }
 
-fn apply_published(store: &std::sync::Arc<Store>, tx: crate::PagePlan<'_>) -> Value {
+pub(super) fn apply_published(store: &std::sync::Arc<Store>, tx: crate::PagePlan<'_>) -> Value {
     let subscription = store.subscribe();
     let op = tx.plan().expect("planned");
     crate::test_host_writer::HostWriter::for_store(store)
@@ -359,7 +359,7 @@ fn apply_published(store: &std::sync::Arc<Store>, tx: crate::PagePlan<'_>) -> Va
     crate::test_host_writer::merged_changes(own)
 }
 
-fn commit(store: &std::sync::Arc<Store>, pages: &[(&str, PageDto, SaveBase)]) -> Value {
+pub(super) fn commit(store: &std::sync::Arc<Store>, pages: &[(&str, PageDto, SaveBase)]) -> Value {
     let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     for (path, doc, base) in pages {
         tx.save_page(
@@ -372,13 +372,17 @@ fn commit(store: &std::sync::Arc<Store>, pages: &[(&str, PageDto, SaveBase)]) ->
     apply_published(store, tx)
 }
 
-fn edit(store: &std::sync::Arc<Store>, path: &str, mutate: impl FnOnce(&mut PageDto)) -> Value {
+pub(super) fn edit(
+    store: &std::sync::Arc<Store>,
+    path: &str,
+    mutate: impl FnOnce(&mut PageDto),
+) -> Value {
     let mut read = store.page(&PageId::from(path)).unwrap();
     mutate(&mut read.doc);
     commit(store, &[(path, read.doc, SaveBase::Existing(read.rev))])
 }
 
-fn strings(value: &Value) -> BTreeSet<String> {
+pub(super) fn strings(value: &Value) -> BTreeSet<String> {
     value
         .as_array()
         .unwrap()
@@ -485,17 +489,17 @@ fn block_ids(blocks: &[BlockDto], ids: &mut BTreeSet<String>) {
 }
 
 #[derive(Default)]
-struct Answers {
+pub(super) struct Answers {
     days: Value,
     journals: Value,
     templates: Value,
-    queries: BTreeMap<String, Value>,
+    pub(super) queries: BTreeMap<String, Value>,
     linked: BTreeMap<String, Value>,
     unlinked: BTreeMap<String, Value>,
     tagged: BTreeMap<String, Value>,
     icons: BTreeMap<String, Value>,
-    blocks: BTreeMap<String, Value>,
-    pages: BTreeMap<String, Value>,
+    pub(super) blocks: BTreeMap<String, Value>,
+    pub(super) pages: BTreeMap<String, Value>,
     referrers: BTreeMap<String, Value>,
     tables: BTreeMap<String, Value>,
 }
@@ -511,6 +515,18 @@ fn groups(groups: &[RefGroup]) -> Value {
 }
 
 fn answers(store: &Store, root: &std::path::Path) -> Answers {
+    answers_with(store, root, &[], &[], &[])
+}
+
+/// [`answers`] over extra reader targets, page paths and mounted queries
+/// (`(id, query)`, registered under the same id).
+pub(super) fn answers_with(
+    store: &Store,
+    root: &std::path::Path,
+    extra_targets: &[&str],
+    extra_paths: &[&str],
+    extra_queries: &[(&str, tine_core::query::ir::Query)],
+) -> Answers {
     let view = store.whole_graph().unwrap();
     let mut out = Answers::default();
     out.days = json!(view
@@ -524,7 +540,10 @@ fn answers(store: &Store, root: &std::path::Path) -> Answers {
     // A distinct presentation key forces a fresh evaluation rather than
     // validating the summary against the memo's own carried answer.
     static RUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    for (id, query, mut settings) in query_cases() {
+    let extra = extra_queries
+        .iter()
+        .map(|(id, query)| (*id, query.clone(), Default::default()));
+    for (id, query, mut settings) in query_cases().into_iter().chain(extra) {
         settings.columns = vec![tine_core::query::ir::Field(format!(
             "oracle-{}",
             RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -565,7 +584,10 @@ fn answers(store: &Store, root: &std::path::Path) -> Answers {
         "journals/2026_10_22.md",
         "pages/Life.md",
         "pages/Moved.md",
-    ] {
+    ]
+    .into_iter()
+    .chain(extra_paths.iter().copied())
+    {
         if !root.join(path).is_file() {
             continue;
         }
@@ -586,7 +608,7 @@ fn answers(store: &Store, root: &std::path::Path) -> Answers {
         PERSISTED.to_owned(),
         groups(&view.block_referrers(PERSISTED).unwrap()),
     );
-    for &target in TARGETS {
+    for &target in TARGETS.iter().chain(extra_targets) {
         let key = page_key(target);
         out.linked
             .insert(key.clone(), groups(&view.backlinks(target).unwrap()));
@@ -656,7 +678,11 @@ fn changed_keys(
         .collect()
 }
 
-fn check(before: &Answers, after: &Answers, summary: &Value) -> Result<[usize; 8], String> {
+pub(super) fn check(
+    before: &Answers,
+    after: &Answers,
+    summary: &Value,
+) -> Result<[usize; 8], String> {
     if summary["full"] != true {
         for (key, was, now) in [
             ("days", &before.days, &after.days),
@@ -973,6 +999,11 @@ fn change_summary_random_reader_oracle() {
             assert_eq!(summary["inventoryChanged"], wire["inventoryChanged"]);
             let counts = check(&before, &after, summary)
                 .unwrap_or_else(|key| panic!("seed={seed} step={step} omitted {key}: {summary}"));
+            // Create, rename (a move) and delete of an alias-free page are
+            // precise, so the oracle above checks their evidence (row 3).
+            if (60..=62).contains(&step) {
+                assert_eq!(summary["full"], false, "seed={seed} step={step}: {summary}");
+            }
             total += 1;
             if summary["full"] == true {
                 full += 1;
@@ -1400,7 +1431,9 @@ fn change_summary_bulk_rebuild_and_config_fallbacks() {
         .iter()
         .map(|path| (path.as_str(), template.clone(), SaveBase::CreateNew))
         .collect();
-    assert_eq!(commit(&store, &new)["summary"]["full"], true);
+    // Page creates publish a precise summary (D-20261102-PERF row 3), and
+    // the host publishes page by page; the bound is exercised below.
+    assert_eq!(commit(&store, &new)["summary"]["full"], false);
     for count in [32, 33] {
         let edits: Vec<_> = paths
             .iter()

@@ -6,6 +6,7 @@ import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { openJournals } from "./lib/e2e-navigation.mjs";
 
 const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || "target/artifacts/og-codeblock-menu-879");
 fs.mkdirSync(artifacts, { recursive: true });
@@ -57,7 +58,7 @@ try {
     for (const surface of ["page", "journal"]) {
       stage = `${engine}-${mobile ? "mobile" : "desktop"}-${surface}`;
       if (surface === "page") await openPage("CM6 code highlight regression");
-      else await page.getByRole("button", { name: "Journals", exact: true }).first().click();
+      else await openJournals(page);
       const card = page.locator(".main-content pre.code-block").filter({ hasText: surface === "page" ? "const greeting" : "fn main" }).first();
       await card.scrollIntoViewIfNeeded();
       const id = await card.locator("xpath=ancestor::*[@data-block-id][1]").getAttribute("data-block-id");

@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-page-current 1  "current " 
+.SH NAME
+tine\-page\-current \- Show the focused page name and Tine links without changing notes
+.SH SYNOPSIS
+\fBtine page current\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Show the focused page name and Tine links without changing notes
+.SH OPTIONS
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
