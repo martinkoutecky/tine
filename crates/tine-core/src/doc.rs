@@ -899,6 +899,19 @@ pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// The terminator a new line gets in `existing` text: CRLF when it has any,
+/// else `\r` when it has a lone one, else LF. Reused lines keep their own.
+/// One answer for the Markdown writers (store saves, page merge). O(n).
+pub fn line_convention(existing: &str) -> &'static str {
+    if existing.contains("\r\n") {
+        "\r\n"
+    } else if existing.contains('\r') {
+        "\r"
+    } else {
+        "\n"
+    }
+}
+
 /// Parse Markdown page text into a [`Document`]: a pre-block plus a block
 /// forest. lsdoc decides which lines open a block and how blocks nest
 /// (`crate::outline`, the outline authority): dash bullets and unbulleted ATX

@@ -217,6 +217,185 @@ fn valid_merge_keeps_source_header_children_under_leftover() {
     );
 }
 
+fn header_aliases(doc: &tine_core::model::PageDto, org: bool) -> Vec<String> {
+    tine_core::page_header::page_header_text(
+        doc.pre_block.as_deref(),
+        doc.blocks.first().map(|b| b.raw.as_str()),
+    )
+    .into_iter()
+    .flat_map(|header| tine_core::page_header::page_property_lines(header, org))
+    .filter(|(k, _)| tine_core::page_header::is_alias_key(k))
+    .flat_map(|(_, value)| tine_core::property_refs::linkable_names(&value, org))
+    .collect()
+}
+
+/// The terminator of every output line: original lines keep their own, a
+/// rebuilt alias field takes the model's field ending, and a line the merge
+/// inserts takes the survivor's Markdown convention. Org inserts LF: its model keeps a CRLF's `\r` in the
+/// line text, and the guarded saves below prove the survivor stays writable.
+#[test]
+fn valid_merge_keeps_every_line_ending() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        let (key, bullet, title) = if org {
+            ("#+alias: ", "*", "#+title: src")
+        } else {
+            ("alias:: ", "-", "title:: src")
+        };
+        let field = format!("{key}[[a]], [[a]]\n");
+        let cases = [
+            (
+                format!("{bullet} source\n"),
+                format!("{field}{bullet} target\n"),
+            ),
+            (
+                format!("{field}{bullet} source\n"),
+                format!("{bullet} target\n"),
+            ),
+            (
+                format!("{title}\n{bullet} source\n"),
+                format!("{bullet} target\n"),
+            ),
+            (
+                format!("{bullet} source\n"),
+                format!("{bullet} target\n{bullet} last"),
+            ),
+        ];
+        for (src, dst) in cases {
+            for (src_end, dst_end) in [
+                ("\n", "\n"),
+                ("\r\n", "\r\n"),
+                ("\r\n", "\n"),
+                ("\n", "\r\n"),
+            ] {
+                let src = src.replace('\n', src_end);
+                let dst = dst.replace('\n', dst_end);
+                // The model's active field ending (`mergeField`): the
+                // survivor's first declaration's, else LF.
+                let alias_end = if dst.starts_with(key) {
+                    Some(dst_end)
+                } else {
+                    src.starts_with(key).then_some("\n")
+                };
+                // Collect every witness rather than stopping at the first.
+                let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    valid_merge(&src, &dst, org, |doc, proof| {
+                        let text = &proof.text;
+                        if alias_end.is_some() {
+                            assert_eq!(header_aliases(doc, org), ["a"]);
+                        }
+                        for line in src.split_inclusive('\n').chain(dst.split_inclusive('\n')) {
+                            if line.ends_with('\n') && !line.starts_with(key) {
+                                assert!(text.contains(line), "lost {line:?}: {text:?}");
+                            }
+                        }
+                        if src_end == dst_end && !org {
+                            // A uniform Markdown pair stays uniform outside the
+                            // alias field: no LF-only line in a CRLF page.
+                            let body: String = text
+                                .split_inclusive('\n')
+                                .filter(|l| !l.starts_with(key))
+                                .collect();
+                            let lone_lf = body.replace("\r\n", "").contains('\n');
+                            let crlf = body.contains("\r\n");
+                            assert!(
+                                if dst_end == "\r\n" { !lone_lf } else { !crlf },
+                                "mixed terminators: {text:?}"
+                            );
+                        }
+                        if let Some(ending) = alias_end {
+                            let line = text
+                                .split_inclusive('\n')
+                                .find(|l| l.starts_with(key))
+                                .unwrap();
+                            assert!(
+                                line.ends_with(ending)
+                                    && (ending == "\r\n" || !line.ends_with("\r\n")),
+                                "alias line {line:?} lost its {ending:?}: {text:?}"
+                            );
+                        }
+                    })
+                }));
+                match run {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => failures.push(error),
+                    Err(panic) => failures.push(format!(
+                        "org={org}, source={src:?}, target={dst:?}: {}",
+                        panic
+                            .downcast_ref::<String>()
+                            .map_or("panic", String::as_str)
+                    )),
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} valid merges failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// A declaration whose value has no members for a reason the reader allows
+/// (wholly quoted, empty) is never the active field; its text stays protected.
+#[test]
+fn valid_merge_keeps_memberless_alias_declarations_as_text() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        let (key, bullet) = if org {
+            ("#+alias: ", "*")
+        } else {
+            ("alias:: ", "-")
+        };
+        for empty in ["\"literal\"", ""] {
+            let none = if empty.is_empty() {
+                format!("{}\n", key.trim_end())
+            } else {
+                format!("{key}{empty}\n")
+            };
+            let some = format!("{key}a\n");
+            for (src, dst) in [
+                (
+                    format!("{some}{bullet} source\n"),
+                    format!("{none}{bullet} target\n"),
+                ),
+                (
+                    format!("{none}{bullet} source\n"),
+                    format!("{some}{bullet} target\n"),
+                ),
+                (
+                    format!("{bullet} source\n"),
+                    format!("{none}{some}{bullet} target\n"),
+                ),
+                (
+                    format!("{none}{some}{bullet} source\n"),
+                    format!("{bullet} target\n"),
+                ),
+            ] {
+                for ending in ["\n", "\r\n"] {
+                    let src = src.replace('\n', ending);
+                    let dst = dst.replace('\n', ending);
+                    if let Err(error) = valid_merge(&src, &dst, org, |doc, proof| {
+                        assert_eq!(header_aliases(doc, org), ["a"], "{:?}", proof.text);
+                        assert!(proof.text.contains(empty), "{:?}", proof.text);
+                    }) {
+                        failures.push(error);
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} valid merges refused:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn preamble_prose_keeps_its_body_row_through_merge_and_saves() {
     let _guard = crate::integration_lock();

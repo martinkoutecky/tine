@@ -55,6 +55,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page merges no longer turn a CRLF survivor's own alias line into LF or add LF-only Markdown lines to a CRLF page, and accept a page with a wholly quoted or empty alias value (REG-CM-MERGE-LINE-ENDINGS, REG-CM-MERGE-MEMBERLESS-ALIAS).
 - Page merges accept retained aliases with duplicate wrapped, tag or unusually spaced members, and source property headers with children, preserving protected text and child depth (REG-CM-MERGE-RETAINED-ALIAS-DUPLICATES, REG-CM-MERGE-SOURCE-HEADER-CHILDREN).
 - Merging pages keeps equal clashing header properties, blank header lines, original body layout and mixed line endings (REG-CM-MERGE-COMPLETE-TEXT).
 - Merging Org pages keeps the survivor's title in Logseq by containing leftover source directives as body text (REG-CM-ORG-MERGE-DIRECTIVE-TITLE).

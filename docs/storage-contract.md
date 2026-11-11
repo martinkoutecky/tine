@@ -1030,6 +1030,13 @@ Protected duplicate wrapped members retain their property owner in the inert
 leftover. Member selection also applies within the retained declaration:
 duplicate encoded members and protected spacing relocate with their original
 property owner; a native alias key assembles the active selected members.
+The active field is the first declaration with members, survivor first; a
+declaration whose value has none (wholly quoted, empty) is protected leftover
+text. A rebuilt active field ends with the survivor's first alias declaration's
+terminator, else LF (conceptual model `mergeField`). Markdown lines the merger
+inserts take the survivor's line convention (`doc::line_convention`, shared
+with Markdown saves); Org inserts LF, since its model keeps a CRLF's `\r` in
+the line text.
 Preamble prose is already a separate visible body row in the reader.
 The merger materializes it as an outline row, keeping target prose before target
 outline bodies and source prose after the leftover and before source outline

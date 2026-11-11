@@ -646,6 +646,121 @@ fn native_valid_merges_with_duplicate_members_and_header_children() {
     }
 }
 
+/// Native15c admits the actual outputs for rebuilt-field line endings, the
+/// inserted Markdown lines of a CRLF survivor, and memberless alias values.
+/// A promoted source field whose own ending differs from the model's field
+/// ending is a model question (RECEIPT-cm-b4-fix2), so it is not listed here.
+#[test]
+fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
+    let _guard = crate::integration_lock();
+    let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
+        assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
+        return;
+    };
+    for org in [false, true] {
+        let (ext, key, bullet, title) = if org {
+            ("org", "#+alias: ", "*", "#+title: src")
+        } else {
+            ("md", "alias:: ", "-", "title:: src")
+        };
+        let source_path = format!("pages/src.{ext}");
+        let target_path = format!("pages/dst.{ext}");
+        let field = format!("{key}[[a]], [[a]]\n");
+        let mut cases = Vec::new();
+        for (src_end, dst_end) in [
+            ("\n", "\n"),
+            ("\r\n", "\r\n"),
+            ("\r\n", "\n"),
+            ("\n", "\r\n"),
+        ] {
+            for (source, target) in [
+                (
+                    format!("{bullet} source\n"),
+                    format!("{field}{bullet} target\n"),
+                ),
+                (
+                    format!("{field}{bullet} source\n"),
+                    format!("{bullet} target\n"),
+                ),
+                (
+                    format!("{title}\n{bullet} source\n"),
+                    format!("{bullet} target\n"),
+                ),
+                (
+                    format!("{bullet} source\n"),
+                    format!("{bullet} target\n{bullet} last"),
+                ),
+            ] {
+                cases.push((source.replace('\n', src_end), target.replace('\n', dst_end)));
+            }
+        }
+        for none in [
+            format!("{key}\"literal\"\n"),
+            format!("{}\n", key.trim_end()),
+        ] {
+            let some = format!("{key}a\n");
+            for ending in ["\n", "\r\n"] {
+                for (n, (source, target)) in [
+                    (
+                        format!("{some}{bullet} source\n"),
+                        format!("{none}{bullet} target\n"),
+                    ),
+                    (
+                        format!("{none}{bullet} source\n"),
+                        format!("{some}{bullet} target\n"),
+                    ),
+                    (
+                        format!("{bullet} source\n"),
+                        format!("{none}{some}{bullet} target\n"),
+                    ),
+                    (
+                        format!("{none}{some}{bullet} source\n"),
+                        format!("{bullet} target\n"),
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    // The last case promotes a source field into a survivor
+                    // with none: the model's ending is LF there.
+                    if ending == "\n" || n < 3 {
+                        cases.push((source.replace('\n', ending), target.replace('\n', ending)));
+                    }
+                }
+            }
+        }
+        for (source, target) in cases {
+            let mut spec = GraphSpec::default();
+            spec.name = "valid-merge".into();
+            spec.files =
+                BTreeMap::from([(source_path.clone(), source), (target_path.clone(), target)]);
+            let dir = tempfile::tempdir().unwrap();
+            spec.write(dir.path());
+            let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+            let choice = Choice::Merge(target_path.clone());
+            let proof = merge_proof(&store, &spec, "src", "dst", &choice)
+                .unwrap()
+                .2
+                .unwrap();
+            execute(&store, "src", "dst", Some(&choice)).unwrap();
+            let files = read_graph(dir.path());
+            let p = packet(
+                &store,
+                &spec,
+                "src",
+                "dst",
+                &source_path,
+                &target_path,
+                &proof,
+                &files,
+                json!([]),
+            );
+            assert_local_saves(&p);
+            admit(Path::new(&bridge), &p);
+        }
+    }
+}
+
 #[test]
 fn native_split_query_and_guarded_title_controls() {
     let _guard = crate::integration_lock();

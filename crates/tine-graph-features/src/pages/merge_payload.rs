@@ -275,6 +275,20 @@ impl Alias {
 struct Writer {
     trace: TextTrace,
     text: String,
+    /// The terminator of every inserted line (see `propose`).
+    eol: &'static str,
+    /// A rebuilt active field's terminator: the survivor's first alias
+    /// declaration's, else LF (the model's `mergeField`, SPEC §5.1).
+    field_end: &'static str,
+}
+fn terminator(line: &str) -> &'static str {
+    if line.ends_with("\r\n") {
+        "\r\n"
+    } else if line.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    }
 }
 impl Writer {
     fn prose(&mut self, file: usize, range: Range<usize>, org: bool) -> Result<(), TraceError> {
@@ -333,8 +347,8 @@ impl Writer {
         Ok(())
     }
     fn newline(&mut self) {
-        if !self.text.is_empty() && !self.text.ends_with('\n') {
-            self.insert("\n");
+        if !self.text.is_empty() && !self.text.ends_with(['\n', '\r']) {
+            self.insert(self.eol);
         }
     }
     fn field(
@@ -353,11 +367,7 @@ impl Writer {
             line.content.start
         };
         let raw = &self.trace.inputs[file][line.content.clone()];
-        let ending = if raw.ends_with("\r\n") {
-            2
-        } else {
-            usize::from(raw.ends_with('\n'))
-        };
+        let ending = terminator(raw).len();
         let end = line.content.end - ending;
         if rebuild {
             self.original(file, start..line.content.start)?;
@@ -394,7 +404,11 @@ impl Writer {
             }
         }
         if rebuild {
-            self.insert("\n");
+            self.insert(if self.field_end.is_empty() {
+                self.eol
+            } else {
+                self.field_end
+            });
         } else {
             self.original(file, end..line.content.end)?;
         }
@@ -472,19 +486,42 @@ pub fn propose(
         unrealized.extend(proposal.unrealized.into_iter().map(|site| (file, site)));
         rewritten.extend(proposal.rewritten);
     }
-    // The retained declaration is the first survivor alias, otherwise the
-    // first source declaration. Other source fields become protected leftover
-    // text unless their entire line is approved native syntax/name tokens.
-    let retained = (0..2).find_map(|file| {
-        headers[file]
-            .lines
-            .iter()
-            .position(|line| line.alias.is_some())
-            .map(|n| (file, n))
-    });
+    // The retained declaration is the first survivor alias with members,
+    // otherwise the first source one; with no members anywhere, the first
+    // declaration. A memberless value (wholly quoted, empty) cannot carry the
+    // union. Other fields become protected leftover text unless their entire
+    // line is approved native syntax/name tokens.
+    let first = |members: bool| {
+        (0..2).find_map(|file| {
+            headers[file]
+                .lines
+                .iter()
+                .position(|line| {
+                    line.alias
+                        .as_ref()
+                        .is_some_and(|a| !members || !a.names.is_empty())
+                })
+                .map(|n| (file, n))
+        })
+    };
+    let retained = first(true).or_else(|| first(false));
     let mut w = Writer {
         trace,
         text: String::new(),
+        // Markdown takes the survivor's convention, as its saves do. The Org
+        // model is LF-separated (a CRLF's `\r` belongs to its line text): an
+        // inserted empty `*\r` headline would not round-trip, leaving the
+        // survivor read-only (`valid_merge_keeps_every_line_ending`).
+        eol: if org {
+            "\n"
+        } else {
+            tine_core::doc::line_convention(target_text)
+        },
+        field_end: headers[0]
+            .lines
+            .iter()
+            .find(|line| line.alias.is_some())
+            .map_or("\n", |line| terminator(&target_text[line.content.clone()])),
     };
     let mut expected_aliases = Vec::new();
     let mut seen = HashSet::new();
@@ -701,7 +738,11 @@ pub fn propose(
                         .iter()
                         .any(|line| line.range.start == range.start && line.property.is_some())
             });
-            w.insert(if property_first { "-\n  " } else { "- " });
+            w.insert(&if property_first {
+                format!("-{}  ", w.eol)
+            } else {
+                "- ".into()
+            });
         }
         for (i, (file, range)) in moved.iter().enumerate() {
             if i > 0 && !org {
