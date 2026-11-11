@@ -35,6 +35,71 @@ fn bundle() -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
+fn query_publish_inventory_work_tracks_only_selected_pages() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let mut inventory_work = Vec::new();
+    for unrelated in [8, 128] {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("pages")).unwrap();
+        fs::write(root.path().join("pages/Selected.md"), "- TODO selected\n").unwrap();
+        for index in 0..unrelated {
+            fs::write(
+                root.path().join(format!("pages/Other{index}.md")),
+                "- DONE unrelated\n",
+            )
+            .unwrap();
+        }
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        let _ = store.whole_graph().unwrap();
+        let request = QueryExportRequest {
+            argument: "(task TODO)".into(),
+            dialect: QueryTextDialect::MacroQuery,
+            properties: vec![],
+            current_page: None,
+            name: "Selection".into(),
+            host_block_id: None,
+            folder: None,
+            replace: false,
+            asset_budget_bytes: None,
+            include_query_text: false,
+        };
+        let plan = plan_query(&store, &request).unwrap();
+        assert_eq!(plan.pages.len(), 1);
+        tine_store::cost_counters::reset();
+        let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+        let work = tine_store::cost_counters::snapshot().name_inventory_entries;
+        inventory_work.push(work);
+        assert_eq!(receipt.pages, 1);
+        let snapshot: serde_json::Value = serde_json::from_slice(
+            &fs::read(PathBuf::from(&receipt.path).join("app/snapshot.json")).unwrap(),
+        )
+        .unwrap();
+        let names: Vec<_> = snapshot["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|page| page["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"Selected"));
+        assert!(names.contains(&"Selection"));
+        assert_eq!(names.len(), 2, "selected page and synthetic home only");
+        eprintln!(
+            "source_pages={} selected_pages=1 inventory_entries={work}",
+            unrelated + 1
+        );
+        store.close();
+    }
+    // Static output, home naming and the snapshot each inventory the selected
+    // page and its reference-only TODO page. No source-only row belongs here.
+    assert_eq!(
+        inventory_work,
+        [6, 6],
+        "three two-row build inventories, independent of source graph size"
+    );
+}
+
+#[test]
 fn uuid_query_selector_uses_the_document_parser_and_host_context() {
     let _integration_guard = crate::integration_lock();
     let (graph, _, initial) = fixture();

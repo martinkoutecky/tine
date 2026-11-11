@@ -10,11 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Next comment** and **Previous comment** review a page in margin order, revealing each passage and focusing its live thread. Popovers and phone sheets offer the same page-wide controls; bind shortcuts in Settings (GH #891; UI-MC9-REVIEW).
 - Settings → Editor → Advanced has a **Reference previews** switch, Logseq's `:ui/enable-tooltip?` in the graph's `config.edn` (on when absent). Off, page links, tags and block references open no preview on mouse hover, and on a touch screen holding a page link or tag opens its page menu again instead of a preview. The **Hover preview delay** stays as it is (GH #824).
 
 ### Changed
 
 - Large pages defer author and comment controls until a row needs them, and bullet history state until the first hover (REG-BIGLOAD-ROW-WORK).
+- Opening the calendar now reads its content dots without rescanning pages or journal blocks (internal: REG-CALENDAR-CONTENT-DAYS-COST).
 - Settings → Appearance → Comments offers **In a popup**: hovering highlighted words opens their live, editable thread with the same delay and close rules as a page link's hover preview, at every width including Wide mode. A click on the words places the caret, touch tablets tap, a reply draft keeps the popover open, and phones keep the bottom sheet. **In the margin** stays the default; the choice uses a new device key, so an earlier On click choice returns to the default once (GH #891; UI-MC010-CLICK-DISPLAY).
 - Resolved comments remain reachable with Reopen and dates in narrow popovers and phone sheets, while staying out of markers and highlights (UI-MC010-COMPACT-RESOLVE; GH #891, #831).
 - Resolve closes a whole comment thread; the page's resolved count reveals it with Reopen, and replying reopens it. Closed threads leave highlights and open counts (UI-MC010-RESOLVE; GH #891).

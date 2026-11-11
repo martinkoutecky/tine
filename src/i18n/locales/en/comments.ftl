@@ -55,3 +55,4 @@ comment-thread-position = Passage { $current } of { $count }
 comment-prev-thread = Previous passage
 comment-next-thread = Next passage
 comment-close-threads = Close comments
+comment-review-position = Comment { $current } of { $count }

@@ -19,6 +19,7 @@ mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
 pub(crate) mod asset_ref_index;
+mod calendar_days;
 pub(crate) mod fileless_names;
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) mod index_oracle;
@@ -34,6 +35,8 @@ mod page_parse;
 mod parse_depth;
 pub(crate) mod referenced_names;
 mod template_names;
+#[cfg(test)]
+use calendar_days::doc_has_content;
 pub(crate) mod write_target;
 #[cfg(test)]
 pub(crate) use write_target::assert_checked_target;
@@ -595,6 +598,7 @@ pub(crate) struct ReadSnapshot {
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     template_names: template_names::TemplateNames,
+    calendar_days: calendar_days::CalendarDays,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
     pub(crate) transliteration_names: Arc<NameKeyMap>,
@@ -995,6 +999,7 @@ impl ReadSnapshot {
             }
         }
         let template_names = template_names::TemplateNames::capture(old, &pages, changed_paths);
+        let calendar_days = calendar_days::CalendarDays::capture(old, &pages, changed_paths);
         let mut snapshot = Self {
             physical_pages,
             pages,
@@ -1020,6 +1025,7 @@ impl ReadSnapshot {
             public_block_ref_counts: std::sync::OnceLock::new(),
             icon_index: std::sync::OnceLock::new(),
             template_names,
+            calendar_days,
             memos: SnapshotMemos::default(),
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
@@ -1399,14 +1405,6 @@ impl ReadSnapshot {
                 .get()
                 .expect("block counts built at publication"),
         )
-    }
-
-    pub(crate) fn journal_content_days(&self) -> Vec<i64> {
-        self.pages
-            .iter()
-            .filter(|(entry, _)| entry.kind == PageKind::Journal)
-            .filter_map(|(entry, doc)| entry.date_key.filter(|_| doc_has_content(&doc.roots)))
-            .collect()
     }
 
     pub(crate) fn run_graph_search_latest_scoped(
@@ -5154,14 +5152,6 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
             }
         }
     }
-}
-
-/// Journal text beyond properties (calendar days, carry); the parser's visible text
-/// decides, so Org `memo:: x` prose counts (OG-C5 L12-S1). Not the template guard.
-fn doc_has_content(blocks: &[DocBlock]) -> bool {
-    blocks
-        .iter()
-        .any(|b| !b.visible_text().trim().is_empty() || doc_has_content(&b.children))
 }
 
 /// Whether a page should load read-only: an org file whose on-disk bytes don't

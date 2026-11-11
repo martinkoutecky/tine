@@ -160,7 +160,9 @@ export interface MessageArgs {
   "command-builtin-sheet-range": {};
   "command-builtin-sheet-select-cell": {};
   "command-command-palette-toggle": {};
+  "command-comment-next": {};
   "command-comment-on-selection": {};
+  "command-comment-previous": {};
   "command-editor-backward-kill-word": {};
   "command-editor-backward-word": {};
   "command-editor-bold": {};
@@ -330,6 +332,7 @@ export interface MessageArgs {
   "comment-reply-placeholder": {};
   "comment-resolve": {};
   "comment-resolved-count": { "count": string | number };
+  "comment-review-position": { "count": string | number; "current": string | number };
   "comment-select-first": {};
   "comment-send": {};
   "comment-show": {};
