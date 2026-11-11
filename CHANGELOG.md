@@ -53,6 +53,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Ctrl+K typed while the window was still taking in the graph could offer only **Create page** for a page that exists; the switcher now asks again and lists the page without retyping (UI-SWITCHER-SEARCH-OUTLIVES-EPOCH-1111).
 - Opening large pages skips comment setup for leaf rows and hidden quote and folded-thread views (REG-BIGLOAD-ROW-WORK).
 - Bullet threading connectors remain continuous where parent rows meet child elbows at fractional display scaling (GH #129, bullet-threading #2).
 - CLI writes trim author names and refuse an empty `--author`; blank `TINE_AUTHOR` uses the default `agent` instead of creating an empty author property (GH #930).

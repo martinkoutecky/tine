@@ -659,6 +659,12 @@
       "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-switcher-warm.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Ctrl+K typed the moment the window is up lists the existing page once the graph can answer, without retyping and without a Create page row standing in for it; opening it creates no second file and leaves every source byte unchanged.","blocking":true}],
+      "acceptableVariations":["Load duration, row order, and how many commands are listed may vary while the existing page is offered and no Create row stands for it."],
+      "nonRequirements":["Exact pixels, incidental DOM structure, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh715-tagged-via-alias.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A page's Pages tagged with section lists pages tagged with its alias as well as its name, opened directly, through the alias, or in the right sidebar; a (page-tags) query keeps the literal match, and browsing preserves all source files.","blocking":true}],
       "acceptableVariations":["Link styling, layout and load latency may vary while the tagged rows agree."],
