@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
+
 ### Added
 
 - Settings → Editor → Advanced has a **Reference previews** switch, Logseq's `:ui/enable-tooltip?` in the graph's `config.edn` (on when absent). Off, page links, tags and block references open no preview on mouse hover, and on a touch screen holding a page link or tag opens its page menu again instead of a preview. The **Hover preview delay** stays as it is (GH #824).

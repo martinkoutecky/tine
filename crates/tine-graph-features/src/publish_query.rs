@@ -83,7 +83,7 @@ pub struct QueryExportRequest {
 }
 
 /// Resolve one persisted block UUID to the dialog's query publication input.
-/// O(graph blocks) over one held graph view, no writes. The parser owns query
+/// O(log I + candidate-page blocks) over one held graph view, no writes. The parser owns query
 /// recognition and raw arguments; publication still uses `plan_query`/`publish_query`.
 pub fn query_request_by_uuid(
     store: &Store,
@@ -94,11 +94,13 @@ pub fn query_request_by_uuid(
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let corpus = graph.corpus(None, true);
+    let corpus = graph.corpus(tine_store::CorpusScope::BlockIdCandidates(uuid), true);
     let mut found = None;
     for page in &corpus.pages {
         let mut stack: Vec<_> = page.document.roots.iter().collect();
         while let Some(block) = stack.pop() {
+            #[cfg(feature = "test-faults")]
+            tine_store::cost_counters::query_uuid_block(uuid);
             stack.extend(block.children.iter());
             if block
                 .property("id")
@@ -177,7 +179,7 @@ pub struct QueryExportPlan {
 }
 
 /// Published destination and number of selected source pages.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportReceipt {
     pub path: String,
