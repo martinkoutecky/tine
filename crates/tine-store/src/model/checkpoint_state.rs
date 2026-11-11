@@ -339,6 +339,7 @@ impl Graph {
             real_page_names,
             alias_relation: cell(alias_relation),
             link_graph: std::sync::OnceLock::new(),
+            backlink_membership: std::sync::OnceLock::new(),
             referenced_names: cell(derived.referenced_names),
             block_ref_counts: cell(state.block_ref_counts),
             public_block_ref_counts: cell(derived.public_block_ref_counts.map(|counts| counts.0)),

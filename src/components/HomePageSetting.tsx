@@ -4,7 +4,7 @@ import { msg, t } from "../i18n";
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pinyinMatchingEnabled } from "../launcherRanking";
-import { graphMeta, setGraphMeta } from "../graphSession";
+import { graphEpoch, graphMeta, setGraphMeta } from "../graphSession";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { readOr } from "../resourceRead";
@@ -15,7 +15,8 @@ import { readOr } from "../resourceRead";
 export function HomePageSetting(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [picking, setPicking] = createSignal(false);
-  const [matchesResource] = createResource(query, async (text) => {
+  // The epoch retires an outstanding owned read; keying on it asks again.
+  const [matchesResource] = createResource(() => ({ text: query(), epoch: graphEpoch() }), async ({ text }) => {
     const owner = graphOwner();
     if (!owner()) return [];
     const result = await readOwned(owner, backend().quickSwitch(text, 8, undefined, pinyinMatchingEnabled()));

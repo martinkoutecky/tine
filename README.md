@@ -364,13 +364,11 @@ unrestricted DOM/filesystem/network access. This is not Logseq or Obsidian plugi
 compatibility; see [the user overview](https://tine.page/plugins.html) and
 [developer guide](docs/plugins/README.md).
 
-**Planned / under evaluation:** graph view.
+**What's planned for each version:** [docs/ROADMAP.md](docs/ROADMAP.md) (updated at every Beta release).
 
 **Mobile:** Tine has a **native Android build** (Tauri v2) as of 0.4.0 — it opens and edits your real
 Logseq graph on the phone over your own sync, alongside the Logseq mobile app. **iOS** (iPhone and
 iPad) is on the [App Store](https://apps.apple.com/us/app/tineoutline/id6804403687).
-
-**Under discussion, not promised:** built-in git integration.
 
 **Out of scope (by design):** whiteboards, flashcards, and unrestricted in-process
 plugins. Tine's experimental plugin API instead uses capability-limited WebAssembly

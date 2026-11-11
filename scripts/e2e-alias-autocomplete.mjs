@@ -57,18 +57,6 @@ try {
     await ensureMainWindow(browser);
     return browser.$(".app-container").isExisting();
   }, { timeout: 20_000, interval: 100, timeoutMsg: "the main app did not mount" });
-  // The window paints before the graph's background name/alias index is
-  // warm. Use the same graph-scoped signal as frontend whole-graph readers.
-  await browser.waitUntil(async () => {
-    const result = await browser.executeAsync(done => {
-      window.__TAURI_INTERNALS__.invoke("warm_done").then(
-        ready => done({ ready }), error => done({ failure: String(error) }));
-    });
-    if (result.failure) throw new Error(result.failure);
-    return result.ready;
-  }, {
-    timeout: 20_000, interval: 100, timeoutMsg: "the graph's name/alias index did not finish warming",
-  });
   await openPageByName(browser, "Tine");
   await browser.$(".ls-block .block-content-wrapper").waitForExist({ timeout: 20000 });
   await browser.$(".ls-block .block-content-wrapper").click();

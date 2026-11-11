@@ -460,7 +460,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async pageModified() {
       return { rev: "0", modified: [] };
     },
-    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], []]; },
+    async pageBacklinkCounts(): Promise<import("./types").PageBacklinkCounts> { return [[], [], "0"]; },
     async resolvePage(name: string, kind: "journal" | "page") {
       return structuredClone((await answersOf()).resolve(name, kind));
     },

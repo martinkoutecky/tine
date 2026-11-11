@@ -43,7 +43,7 @@ beforeEach(async () => {
   }));
   vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
   vi.spyOn(backend(), "pageModified").mockResolvedValue({ rev: "1", modified: [] });
-  vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([[], []]);
+  vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([[], [], "1"]);
   installPageIndex(); bumpGraphEpoch();
   await vi.waitFor(() => expect(listed()).toEqual(["Home"]));
   vi.mocked(backend().pageInventory).mockClear();

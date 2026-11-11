@@ -969,8 +969,9 @@ pub(crate) async fn quick_switch(
 ) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // Completions are final on screen: not from the launch checkpoint.
         slot.store
-            .whole_graph()
+            .whole_graph_reconciled()
             .map(
                 |view| match (editor_page_name, editor_block_id, editor_original_raw) {
                     (Some(page), Some(id), Some(original)) => view.complete_page_names(

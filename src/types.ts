@@ -299,7 +299,8 @@ export interface PageInventory {
  *  graph-relative path (a non-owner twin has none: All pages shows a dash);
  *  `references` one row per reference-only page, by the name its inventory
  *  entry carries. */
-export type PageBacklinkCounts = [files: [string, number][], references: [string, number][]];
+/** The final tuple member orders this snapshot against publication deltas. */
+export type PageBacklinkCounts = [files: [string, number][], references: [string, number][], rev: string];
 
 /** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
  *  file whose last-modified time the store holds. A file with no time is absent. */
