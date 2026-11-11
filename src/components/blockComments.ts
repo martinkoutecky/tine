@@ -82,16 +82,16 @@ export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt:
   // children arrive; the covering index already owns membership for the page.
   const parent = createMemo(() => node()?.children.length ? node().id : null);
   const state = createMemo(() => parent() === null ? null : parentMarginOutline(node, fmt, showResolved));
-  const quoteCoverage = createQuoteCoverage();
   return {
     outlineChildren: () => state()?.outlineChildren() ?? node().children,
     marginComments: () => state()?.marginComments() ?? NO_IDS,
     commentChildren: () => state()?.comments() ?? NO_COMMENT_CHILDREN,
-    quoteCoverage,
+    quoteCoverage: () => state()?.quoteCoverage,
   };
 }
 
 function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", showResolved: () => boolean) {
+  const quoteCoverage = createQuoteCoverage();
   const comments = createCommentChildren(() => node().id);
   const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
   // A body editor that is hand-writing its first quote property must finish
@@ -115,7 +115,7 @@ function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", s
   }, [], { equals: sameIds });
   const marginComments = createMemo(() => (main() && !commentMarginHidden() ? comments().entries.flatMap(entry => entry.id !== heldBody()
     && (showResolved() || !entry.resolved) ? [entry.id] : []) : []), [], { equals: sameIds });
-  return { outlineChildren, marginComments, comments };
+  return { outlineChildren, marginComments, comments, quoteCoverage };
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
