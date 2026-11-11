@@ -47,6 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Bullet threading connectors remain continuous where parent rows meet child elbows at fractional display scaling (GH #129, bullet-threading #2).
 - Find in a long Journals feed no longer includes a retired day's matches after reloading another day; the total agrees with the loaded days and the omitted-day hint (internal: UI-L10-03-FIND-RETIRED-DAYS).
 - A relative PDF link such as `![paper](../papers/x.pdf)`, `![paper](file:../x.pdf)` or Org `[[file:../x.pdf][paper]]` now opens in Tine's read-only reader (desktop), like an embedded `file://` PDF, instead of the system viewer. The path is read from the graph folder, as for other file links; `![paper](assets/x.pdf)` still opens the annotated reader (#732).
 - Settings diagnostics always includes ready and publication times when the launch status is ready, including after load recovery (internal: REG-LAUNCH-DIAG-READY).
