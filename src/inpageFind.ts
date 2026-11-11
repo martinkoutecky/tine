@@ -39,6 +39,13 @@ function findBlockTextRoot(element: HTMLElement): HTMLElement | null {
   return element.querySelector<HTMLElement>(element.matches(".sheet-title-cell") ? ".sheet-cell-body" : ".block-content");
 }
 
+// A structural memo can run before Solid removes a retired day's DOM. The
+// loaded-page lookup owns membership, including for its displayed query rows.
+function isLoadedFindSurface(element: HTMLElement): boolean {
+  const day = element.closest<HTMLElement>("[data-feed-day]")?.dataset.feedDay;
+  return day === undefined || !!pageByName(day);
+}
+
 interface RenderedTextCacheEntry {
   raw: string;
   format: Format;
@@ -181,14 +188,21 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
   const removeAccents = searchRemoveAccents();
   state.surfaceRevision();
   const out: InPageFindMatch[] = [];
-  const scannedSurfaces = new Set<string>();
+  const scopesById = new Map<string, ReturnType<typeof findScopes>>();
   for (const scope of findScopes()) {
+    const scopes = scopesById.get(scope.id);
+    if (scopes) scopes.push(scope);
+    else scopesById.set(scope.id, [scope]);
+  }
+  for (const [scopeId, scopes] of scopesById) {
     const start = out.length;
-    appendOutlineMatches(scope.roots, docNode, q, scope.format, removeAccents, out);
-    for (let i = start; i < out.length; i++) out[i].scopeId = scope.id;
-    const element = findScopeElement(scope.id);
-    if (!element || scannedSurfaces.has(scope.id)) continue;
-    scannedSurfaces.add(scope.id);
+    // Journal days share a pane: count all its outlines before supplementing DOM.
+    for (const scope of scopes) {
+      appendOutlineMatches(scope.roots, docNode, q, scope.format, removeAccents, out);
+    }
+    for (let i = start; i < out.length; i++) out[i].scopeId = scopeId;
+    const element = findScopeElement(scopeId);
+    if (!element) continue;
     // Embeds and query tables can display blocks outside the page's own tree.
     // Keep the outline walk (including unmounted descendants), then add each
     // displayed block once. Sheet cells share the block identity, not a second
@@ -197,17 +211,17 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     for (const block of element.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR)) {
       const id = block.dataset.blockId;
       const root = findBlockTextRoot(block);
-      if (!id || !root || root.matches(".macro-host") || counted.has(id) || block.closest("[data-inpage-find-surface]")) continue;
+      if (!id || !root || root.matches(".macro-host") || counted.has(id) || !isLoadedFindSurface(block) || block.closest("[data-inpage-find-surface]")) continue;
       counted.add(id);
       findTextOccurrences(searchableTextForRoot(root), q, removeAccents).forEach((match, ordinalInBlock) => {
-        out.push({ blockId: id, scopeId: scope.id, ordinalInBlock, ...match });
+        out.push({ blockId: id, scopeId, ordinalInBlock, ...match });
       });
     }
     for (const surface of element.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
       const surfaceId = surface.dataset.inpageFindSurface;
-      if (!surfaceId) continue;
+      if (!surfaceId || !isLoadedFindSurface(surface)) continue;
       findTextOccurrences(searchableTextForRoot(surface), q, removeAccents).forEach((match, ordinalInBlock) => {
-        out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
+        out.push({ blockId: `surface:${surfaceId}`, scopeId, surfaceId, ordinalInBlock, ...match });
       });
     }
   }
