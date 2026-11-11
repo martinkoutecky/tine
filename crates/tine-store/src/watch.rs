@@ -1032,24 +1032,24 @@ impl WatchHandle {
                     *status = LoadStatus::Failed(format!("{error:?}"));
                     return Err(error);
                 }
-                // The recovery publication rebuilds every index: the same
-                // containment as the first publication, so an index-stage
-                // panic the load already failed on fails this retry too
-                // instead of poisoning the writer (the window refreshes on
-                // every focus).
-                let published = crate::store::contain_index_publication(
-                    &self.core.graph,
-                    &self.core.load,
-                    || {
-                        self.core.changes.publish_with(
-                            Origin::External,
-                            Vec::new(),
-                            false,
-                            Vec::new(),
-                            || *self.core.load.status.lock().unwrap() = LoadStatus::Ready,
-                        );
-                    },
-                );
+                // Initial-publication containment keeps retry panics off the writer.
+                let publish_began = Instant::now();
+                let graph = &self.core.graph;
+                let load = &self.core.load;
+                let published = crate::store::contain_index_publication(graph, load, || {
+                    self.core.changes.publish_with(
+                        Origin::External,
+                        Vec::new(),
+                        false,
+                        Vec::new(),
+                        || {
+                            load.status
+                                .lock()
+                                .unwrap()
+                                .record_ready(graph, publish_began)
+                        },
+                    );
+                });
                 if !published {
                     return Err(LoadError::Failed {
                         reason: "graph publication stopped: an index build panicked".into(),

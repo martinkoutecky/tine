@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [lib]
+doctest = false
 name = "tine_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 

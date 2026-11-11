@@ -955,7 +955,7 @@ pub(crate) fn launch_from(
     let found = watch.launch_diff().unwrap_or_default();
     let publish_began = Instant::now();
     // The cold load's containment backstop (`first_view`).
-    let published = super::first_view::contain_index_publication(graph, load, || {
+    super::first_view::contain_index_publication(graph, load, || {
         changes.publish_with(
             Origin::External,
             found.files,
@@ -964,14 +964,11 @@ pub(crate) fn launch_from(
             || {
                 let mut status = load.status.lock().unwrap();
                 if matches!(*status, LoadStatus::Loading) {
-                    *status = LoadStatus::Ready;
+                    status.record_ready(graph, publish_began);
                 }
             },
         );
     });
-    if published {
-        graph.diag.ready(publish_began);
-    }
     load.ready.notify_all();
     let _ = wake.send(());
     true

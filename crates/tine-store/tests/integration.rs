@@ -319,3 +319,5 @@ mod og_b_store_move;
 
 #[path = "own_test_binary.rs"]
 mod own_test_binary;
+
+mod disabled_doctests;
