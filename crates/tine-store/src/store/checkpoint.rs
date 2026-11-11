@@ -645,7 +645,8 @@ impl ChangeFeed {
         };
         // The first publication carries every answer, as a cold one does.
         let (inventory, delta, counts, moved) = snapshot.answer_changes(None, &[], true);
-        let summary = snapshot.change_summary(None, &[], true, inventory, &moved, None, &[], &[]);
+        let summary =
+            snapshot.change_summary(None, &[], true, inventory, &moved, None, None, &[], &[]);
         snapshot.answers = (inventory, counts, summary, delta);
         let change = Change {
             graph_rev: snapshot.rev,

@@ -6,6 +6,11 @@
  * src/shareIngest.ts. */
 import type { TineLink } from "./deepLinks";
 import type { LinkTarget, LinkDelivery } from "./deepLinkNavigation";
+/** A live route snapshot, not a graph read. Mirrors owner/window.rs. */
+export type CurrentPage =
+  | { kind: "current-page"; name: string; url: string; block_url: string | null }
+  | { kind: "no-current-page"; reason: "no-owner-endpoint" | "no-focused-window" | "not-page" | "journals" };
+export interface CurrentPageRequest { id: number; binding_generation: number }
 export interface ShareInboxResource { path: string; name?: string | null; type?: string | null }
 /** The ingest's durable record for an item (share_inbox.rs `Prepared`, ADR 0073):
  * the graph and frozen journal day it is bound to, its shaped Markdown (null
@@ -46,6 +51,8 @@ export interface NativeTineLinks {
   take(): Promise<LinkDelivery[]>;
   handoff(target: LinkTarget): Promise<boolean>;
   subscribe(cb: () => void): Promise<() => void>;
+  onCurrentPageRequest?(cb: (request: CurrentPageRequest) => void): Promise<() => void>;
+  currentPageAnswer?(id: number, page: CurrentPage, bindingGeneration: number): Promise<void>;
   inbox?: NativeShareInbox;
   /** Android: show the keyboard for the input a route just focused (the OS
    * shows it only for a tapped focus). Rejects off Android. */
@@ -61,6 +68,11 @@ export function nativeTineLinks(
     take: () => call("take_tine_links"),
     handoff: (target) => call("handoff_tine_link", { target }),
     subscribe,
+    onCurrentPageRequest: async (cb) => {
+      const { listen } = await import("@tauri-apps/api/event");
+      return listen<CurrentPageRequest>("owner-current-page-request", (event) => cb(event.payload));
+    },
+    currentPageAnswer: (id, page, bindingGeneration) => call("owner_current_page_answer", { id, page, bindingGeneration }),
     showKeyboard: async () => {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("plugin:native-integrations|showKeyboard");
