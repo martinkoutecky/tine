@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI writes trim author names and refuse an empty `--author`; blank `TINE_AUTHOR` uses the default `agent` instead of creating an empty author property (GH #930).
+
 ## [0.9.0-beta.10] - 2026-11-10
 
 ### Changed

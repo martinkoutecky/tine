@@ -347,6 +347,7 @@
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
       "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "Explicit blank add authors refuse without changing the file; blank client TINE_AUTHOR defaults to agent and nonblank names are trimmed, even with an existing owner.", "blocking": true, "authority": "GH #930; docs/contracts/cli-output.md" },
         { "class": "core-operation", "userOutcome": "Six parallel tine add commands to one page all land while the real app owns the graph, with the page open in its window and with it closed (#842).", "blocking": true, "authority": "docs/contracts/cli-output.md Writes; GH #842" },
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit keeps the block's properties the new text does not name, whether tine serve or the real app owns the graph (#840).", "blocking": true, "authority": "docs/contracts/cli-output.md block.edit; D-20261101-CLIE" },
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },

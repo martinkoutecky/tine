@@ -40,9 +40,9 @@ const native = Number(process.env.E2E_NATIVE_PORT || 4711);
 let driver, browser, serve;
 const steps = [];
 const failures = [];
-function cli(args, expected = 0) {
+function cli(args, expected = 0, overrides = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(APP, [...args, "--graph", GRAPH, "--json"], { env, timeout:60_000 });
+    const child = spawn(APP, [...args, "--graph", GRAPH, "--json"], { env: { ...env, ...overrides }, timeout:60_000 });
     let out = "", err = "";
     child.stdout.on("data", d => out += d);
     child.stderr.on("data", d => err += d);
@@ -64,6 +64,18 @@ try {
   fs.closeSync(log);
   await sleep(1000);
   assert.equal((await cli(["status"])).owner, "serve");
+  // #930: the CLI's environment may differ from the already-running owner's.
+  for (const author of ["", " \t"]) {
+    const before = fs.readFileSync(file, "utf8");
+    await cli(["add", "--page", "CLI", "- refused", "--author", author], 6);
+    assert.equal(fs.readFileSync(file, "utf8"), before);
+  }
+  const authorFile = path.join(GRAPH, "pages/author.md");
+  for (const author of ["", " \t", "  Shell Author  "]) {
+    await cli(["add", "--page", "author", "- attributed"], 0, { TINE_AUTHOR: author });
+  }
+  assert.equal(fs.readFileSync(authorFile, "utf8"), "- attributed\n  tine.author:: agent\n- attributed\n  tine.author:: agent\n- attributed\n  tine.author:: Shell Author\n");
+  steps.push("blank author refuses without writing; client environment trims and defaults on add");
   const page = await cli(["page", "show", "CLI"]);
   await cli(["edit", handle(page,1), "agent before handover"]);
   await cli(["edit", handle(await cli(["page","show","Props"]),0), "serve edited"]);
