@@ -368,12 +368,16 @@ fn page_lifecycle_summaries_name_every_dependent_reader() {
     );
     // A case twin of an existing page that loses the name is the active page
     // on neither side: the conservative path, and the oracle still holds.
-    for (label, text) in [
-        ("create twin", Some("- twin of A\n")),
-        ("delete twin", None),
-    ] {
-        let (summary, _) = oracle.step(label, |o| outside(&o.store, &root, "pages/a.md", text));
-        assert_eq!(summary["full"], true, "{label}: {summary}");
+    // On a case-insensitive file system (Windows, default macOS) `pages/a.md`
+    // is `pages/A.md`, so no twin can exist there and the step would edit A.
+    if !root.join("pages/a.md").exists() {
+        for (label, text) in [
+            ("create twin", Some("- twin of A\n")),
+            ("delete twin", None),
+        ] {
+            let (summary, _) = oracle.step(label, |o| outside(&o.store, &root, "pages/a.md", text));
+            assert_eq!(summary["full"], true, "{label}: {summary}");
+        }
     }
     // Aliases regroup pages: a page that declares one, or that another page
     // declares (Target has `alias:: Shortcut`), keeps the conservative path.

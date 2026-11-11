@@ -13,12 +13,17 @@ import { pushToast } from "./toasts";
 import { msg } from "./i18n";
 
 // Unsent reply drafts live in the composers' textareas, outside the document.
-const replyDrafts = new Set<() => string>();
+const replyDrafts = new Map<() => string, string | undefined>();
 clearOnBindingInvalidated(() => replyDrafts.clear());
 /** A mounted reply composer registers how to read its draft. */
-export function registerReplyDraft(draft: () => string): () => void {
-  replyDrafts.add(draft);
+export function registerReplyDraft(draft: () => string, root?: string): () => void {
+  replyDrafts.set(draft, root);
   return () => void replyDrafts.delete(draft);
+}
+
+/** Visibility changes must not discard a mounted composer's unsent text. */
+export function hasPendingReplyDraft(roots?: readonly string[]): boolean {
+  return [...replyDrafts].some(([draft, root]) => (!roots || root !== undefined && roots.includes(root)) && !!draft().trim());
 }
 
 /** Move a caret that sits in a comment thread to the commented block (its text is
@@ -41,11 +46,9 @@ function leaveThread(): boolean {
 export function setCommentMarginVisible(visible: boolean): boolean {
   if (visible === !commentMarginHidden()) return true;
   if (visible) return persistCommentMarginHidden(false);
-  for (const draft of replyDrafts) {
-    if (draft().trim()) {
-      pushToast(msg("comment-margin-draft-pending"), "warn");
-      return false;
-    }
+  if (hasPendingReplyDraft()) {
+    pushToast(msg("comment-margin-draft-pending"), "warn");
+    return false;
   }
   if (!leaveThread()) return false;
   return persistCommentMarginHidden(true);

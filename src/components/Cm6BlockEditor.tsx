@@ -22,6 +22,7 @@ import { PreviewWidget } from "../editor/cm6PreviewWidget";
 import { registerFocusedEditorCommandBridge } from "../editorCommandBridge";
 import { cm6Formatting } from "../editor/cm6Formatting";
 import { cm6Structure } from "../editor/cm6Structure";
+import { commentKey } from "../editor/commentKeys";
 import { CaptureCtx, CollapseSurfaceContext, EmbedNavExitContext } from "./Block";
 import { captureKeyIntent } from "../editor/captureKeys";
 import { cm6CommandHandlers } from "../editor/cm6Commands";
@@ -35,7 +36,7 @@ import { editorAssets } from "../editor/editorAssets";
 import { cm6Completions } from "../editor/cm6Completions";
 import { cm6Typing } from "../editor/cm6Typing";
 import { offsetThroughRewrite } from "../editor/caretThroughRewrite";
-import { editorCommandFor, isPermittedTabGesture } from "../keybindings";
+import { editorCommandFor, isPermittedTabGesture, isWebviewReloadChord } from "../keybindings";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { documentHasFocus, isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
@@ -399,12 +400,17 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (!view || !view.contentDOM.contains(event.target as Node) || !current()
         || event.isComposing || event.keyCode === 229 || typing.active()) return;
       // Global capture (including transient/suspension ownership) runs first.
-      // Tab is pre-cancelled there specifically for the editor to own.
-      if (event.defaultPrevented && !isPermittedTabGesture(event)) return;
+      // Tab and native reload chords are pre-cancelled there while their bound
+      // editor commands still own dispatch. Transients stop propagation upstream.
+      if (event.defaultPrevented && !isPermittedTabGesture(event)
+        && !(isWebviewReloadChord(event) && editorCommandFor(event))) return;
       // Run before CM's target handler: desktop WebKit suppresses its keymaps
       // just after compositionend, including an already committed plain Enter.
       if (completion.keydown(event)) {
         event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
+      if (commentKey(event, props.id, () => view!.dispatch(view!.state.replaceSelection("\n"), { userEvent: "input" }), () => { commit(view!.state.doc.toString()); endEdit("page-navigation"); })) {
+        event.stopImmediatePropagation(); return;
       }
       const id = editorCommandFor(event);
       const intent = captureKeyIntent(event, id, capture);

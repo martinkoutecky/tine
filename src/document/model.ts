@@ -95,6 +95,27 @@ export function onBlockRawChanged(fn: (id: string) => void, ids: Iterable<string
     }
   };
 }
+// The same notification for owners that follow every block of whole pages
+// (comment membership, GH #891 review round 3): one registration per page
+// instead of one per block, so a structural rescan re-registers nothing per row.
+const pageRawListeners = new Map<string, Set<(id: string) => void>>();
+/** Calls `fn(id)` after each committed raw write to a block of one of `pages`;
+ * returns the unsubscribe. Same funnel and timing as `onBlockRawChanged`. */
+export function onPageRawChanged(fn: (id: string) => void, pages: Iterable<string>): () => void {
+  const members = new Set(pages);
+  for (const page of members) {
+    let listeners = pageRawListeners.get(page);
+    if (!listeners) pageRawListeners.set(page, listeners = new Set());
+    listeners.add(fn);
+  }
+  return () => {
+    for (const page of members) {
+      const listeners = pageRawListeners.get(page);
+      listeners?.delete(fn);
+      if (listeners?.size === 0) pageRawListeners.delete(page);
+    }
+  };
+}
 /** The only in-place raw assignment, for `setDoc(produce(...))` drafts. */
 export function writeRaw(state: DocState, id: string, raw: string): void {
   state.byId[id].raw = raw;
@@ -113,7 +134,11 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
       const changedRaw = rawField ? [args[1] as string] : producedRaw;
       producedRaw = [];
       untrack(() => {
-        for (const id of changedRaw) for (const listener of rawListeners.get(id) ?? []) listener(id);
+        for (const id of changedRaw) {
+          for (const listener of rawListeners.get(id) ?? []) listener(id);
+          const page = pageRawListeners.size ? doc.byId[id]?.page : undefined;
+          if (page !== undefined) for (const listener of pageRawListeners.get(page) ?? []) listener(id);
+        }
         if (rawField) {
           updateAuthoredIdentity(args[1] as string);
         } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {

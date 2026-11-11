@@ -8,12 +8,14 @@ all of that. It is a pure model of meaning. How Tine writes files safely is the 
 - [`SPEC.md`](SPEC.md): the rules, in prose. Section 1 is written for Logseq users; the later sections are precise
   enough to implement against. The spec states the rules as they currently are; what changed, and when, is in git
   history.
-- [`lean/`](lean/): a Lake project with the [Lean 4](https://lean-lang.org/) model and its proofs (66 modules,
-  1,423 named theorems). The current model is the `*13` modules: `Consolidated13*.lean` (rename/merge candidates,
-  safety, effects, comparison), `Claimant13.lean` and `Twins13.lean` (which file a name opens when two files claim
-  it), `Presentation13.lean` (Linked References and query result lists), `Date13.lean` (date names) and
-  `DateComparison13.lean`. Earlier modules are kept because the current ones build on them; theorems there that
-  carry extra hypotheses are special cases, not guarantees of the current model (SPEC.md §5.3 lists which).
+- [`GUARANTEES.md`](GUARANTEES.md): what is proved, the hypotheses each headline theorem needs, where those may be
+  too strong, and the exhaustive comparison with the previous model round.
+- [`lean/`](lean/): a Lake project with the [Lean 4](https://lean-lang.org/) model and its proofs (77 modules,
+  1,480 named theorems). The current reader and operations are `Date13.lean` with the `*14` modules
+  (`DateOperations14`, `DateProofs14`, `Journal14`, `DateEffects14`, `DateSafety14`, `DateTwins14`), and
+  `Alias14.lean` for alias fields and complete-text accounting. The `*13` and earlier modules are libraries the
+  current ones build on; theorems there that carry extra hypotheses are special cases, not guarantees of the current
+  model (GUARANTEES.md lists which).
 
 ## What the model guarantees
 
@@ -22,7 +24,8 @@ rename literally, merge into any real page of the destination's alias group, or 
 The dialog shows the whole group and a preview; a caller without a dialog (the CLI, plugins, agents) succeeds only
 when exactly one candidate is safe, and is refused otherwise. For every offered candidate, Lean proves:
 
-- no user text is lost, and text outside the edited spans is unchanged (given the writer obligations in SPEC.md §5.1);
+- no user text is lost, and text outside the edited spans is unchanged (given the writer obligations in SPEC.md §5.1).
+  The one exception: merging two pages that both declare the same alias may drop the redundant declaration (SPEC.md §5.2);
 - file paths stay unique and the operation creates no new claim collision;
 - journal dates and task/priority markers never change;
 - no page is captured as somebody else's namespace child;
@@ -33,7 +36,9 @@ when exactly one candidate is safe, and is refused otherwise. For every offered 
   changes);
 - cancel changes nothing.
 
-These hold for every candidate the model offers, with no further assumptions beyond the named boundaries below.
+These hold for every candidate the model offers, under the named boundaries below and the hypotheses GUARANTEES.md
+lists for each headline. One rule is still open: how a date page may be renamed inside Tine. The model keeps that
+policy as an explicit parameter, and its rename theorems hold for every choice of it.
 An exhaustive comparison with the previous model round classifies every request as unchanged or as one of a named
 list of differences.
 

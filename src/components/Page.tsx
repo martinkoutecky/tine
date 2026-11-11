@@ -63,6 +63,8 @@ import { captureReadingViewport } from "./readingViewportAnchor";
 import { revealCommentMarginFor } from "../commentMargin";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
+import { CommentResolutionScope } from "./CommentResolutionScope";
+import { CommentSurface } from "./CommentSurface";
 import { JournalFeedDays } from "./JournalFeedDays";
 import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
 import { createPageSeen } from "../seen/pageSeen";
@@ -546,8 +548,7 @@ export function PageView(): JSX.Element {
           const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
           let readSource: PageReadSource | null = null;
           const result = await readOwned(routeOwner, r.path
-            ? backend().getPageByPath(r.path, source => { readSource = source; })
-                .catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
+            ? backend().getPageByPath(r.path, source => { readSource = source; }).catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
             : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;
@@ -986,12 +987,12 @@ function ZoomedView(props: { id: string }): JSX.Element {
           )}
         </For>
       </div>
-      <div class="page-blocks zoomed-block">
+      <div class="zoomed-block">
         {/* A zoom root is a viewing boundary: reveal its immediate subtree even
             when collapsed on the parent page, without mutating collapsed::.
             Descendants still honor their own individual collapse state. */}
         <OutlineScopeContext.Provider value={{ roots: [props.id], forceExpandedRoot: props.id }}>
-          <Block id={props.id} forceExpanded />
+          <CommentSurface main page={pageByName(pageName())} roots={[props.id]}><Block id={props.id} forceExpanded /></CommentSurface>
         </OutlineScopeContext.Provider>
       </div>
       <Show when={!pageByName(pageName())?.readOnly && !pageByName(pageName())?.guide}>
@@ -1299,11 +1300,10 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
       </Show>
       <ExternalChangeBar name={props.page.name} />
       <SeenHeader seen={seen} pageName={props.page.name} />
-      {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <FailureBoundary region="The conflict panel">
         <PageConflictPanel name={props.page.name} path={props.page.id} />
       </FailureBoundary>
-      <MarginContext.Provider value={margin.placement}>
+      <CommentResolutionScope roots={props.page.roots}><MarginContext.Provider value={margin.placement}>
       <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={preambleContent()}>
           {(content) => (
@@ -1325,7 +1325,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
         <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
       </div>
       </MarginContext.Provider>
-      <margin.Column />
+      <margin.Column /></CommentResolutionScope>
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>

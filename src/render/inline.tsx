@@ -1,6 +1,7 @@
 import { msg, t } from "../i18n";
 import { isRtlContext } from "./textDirection";
-import { hoverPreviewDelayMs, previewsEnabled } from "../hoverPreviewSettings";
+import { createPeekBridge } from "./peekBridge";
+import { previewsEnabled } from "../hoverPreviewSettings";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
@@ -170,7 +171,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       // Reactive only under a parent that may hold comments: a comment added,
       // edited or removed re-marks this run without re-rendering the block.
       if (quoted && quoted.blockId === blockId) {
-        return <>{renderQuotedPlain(s, quoted.ranges()) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
+        return <>{renderQuotedPlain(s, quoted.ranges(), quoted.drew) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
       }
       return renderPlain(s.text, s.span, s.span_map, spanMode);
     }
@@ -279,88 +280,7 @@ function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefine
   return extent ?? undefined;
 }
 
-// OG 0.10.9 page-preview-trigger / block-ref tippy: `:delay [1000, 100]` (ms open, close).
-// GH #735: a quicker open puts the popup over the reference you meant to click.
-const PEEK_CLOSE_MS = 100;
 const PEEK_BLOCK_CAP = 50;
-
-// `blocked`: this reference never previews (inside a preview, a Guide page). The
-// graph's `:ui/enable-tooltip?` switch (GH #824) is the one other condition: off,
-// nothing arms or fetches, on hover or by long press.
-function createPeekBridge(blocked: () => boolean) {
-  const disabled = () => blocked() || !previewsEnabled();
-  const [shown, setOpen] = createSignal(false);
-  const open = () => shown() && !disabled();
-  let touchOpen = false;
-  let openT: ReturnType<typeof setTimeout> | undefined;
-  let closeT: ReturnType<typeof setTimeout> | undefined;
-  // The popup's editor holds the caret (D-20261023-VQ): no hover timer closes it.
-  let held = false;
-  const setHeld = (value: boolean) => { held = value; };
-  const closeLater = () => { closeT = setTimeout(() => { if (!held) setOpen(false); }, PEEK_CLOSE_MS); };
-  const clearOpen = () => {
-    if (openT) {
-      clearTimeout(openT);
-      openT = undefined;
-    }
-  };
-  const clearClose = () => {
-    if (closeT) {
-      clearTimeout(closeT);
-      closeT = undefined;
-    }
-  };
-  const anchorEnter = (event: PointerEvent) => {
-    // Touch WebViews synthesize mouse hover around a hold. Only a real mouse
-    // may arm a hover preview; hybrid devices keep their mouse behavior.
-    if (event.pointerType !== "mouse") { dismiss(); return; }
-    if (disabled()) return;
-    clearClose();
-    clearOpen();
-    const delay = hoverPreviewDelayMs();
-    if (delay !== null) openT = setTimeout(() => setOpen(true), delay);
-  };
-  const anchorLeave = () => {
-    if (touchOpen) return;
-    clearOpen();
-    if (disabled()) return;
-    clearClose();
-    closeLater();
-  };
-  const popupEnter = () => {
-    if (disabled()) return;
-    clearClose();
-  };
-  const popupLeave = () => {
-    if (touchOpen) return;
-    if (disabled()) return;
-    clearClose();
-    closeLater();
-  };
-  const dismiss = () => {
-    touchOpen = false;
-    clearOpen();
-    clearClose();
-    setOpen(false);
-  };
-  // Disabling retires the preview, its hold and its timers, so enabling again opens nothing by itself.
-  createEffect(() => { if (disabled()) dismiss(); });
-  onCleanup(() => {
-    clearOpen();
-    clearClose();
-  });
-  /** Open the preview for a deliberate touch hold; false when this reference
-   *  does not preview, so the caller gives the hold its context menu. */
-  const hold = () => {
-    if (disabled()) return false;
-    clearOpen();
-    clearClose();
-    touchOpen = true;
-    setOpen(true);
-    return true;
-  };
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold, setHeld };
-}
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 // `file`: carry the physical claimant path for the alias group's Related pages row (R13-C4).
@@ -409,7 +329,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
-  const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
+  // The graph's `:ui/enable-tooltip?` switch (GH #824) is the one other condition: off,
+  // nothing arms or fetches, on hover or by long press.
+  const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()) || !previewsEnabled());
   // GH #655: native mobile holds open the shared page preview. Reuse the
   // deliberate-hold recognizer and its compatibility-click ownership; desktop
   // right-click and touch on desktop still use the page context menu, and so
@@ -1317,7 +1239,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // targetRaw below) and a failed lookup has not established that. Undefined
   // keeps a loaded reactive node winning and otherwise shows the short id.
   const grp = () => readOr(grpResource, undefined, "block reference target");
-  const peek = createPeekBridge(() => insidePeek);
+  const peek = createPeekBridge(() => insidePeek || !previewsEnabled());
   // GH #231's deliberate hold opens this reference's menu on touch, where it is
   // the route to Edit link / Remove reference (GH #417).
   const longPress = createLongPress(() => anchorEl);

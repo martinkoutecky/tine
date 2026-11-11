@@ -113,6 +113,8 @@ impl RunId {
 /// `run` and `author` from a write verb's arguments. A malformed id is
 /// `bad-args`, never silently ignored.
 pub(crate) fn run_of(args: &Value) -> Result<Option<RunCtx>, ErrorBody> {
+    let author = super::write::author_name(args.get("author").and_then(Value::as_str))
+        .map_err(|e| super::write::refused("kernel", None, e))?;
     let Some(text) = args
         .get("run")
         .and_then(Value::as_str)
@@ -129,18 +131,9 @@ pub(crate) fn run_of(args: &Value) -> Result<Option<RunCtx>, ErrorBody> {
     })?;
     Ok(Some(RunCtx {
         id,
-        author: author_of(args),
+        author,
         reverts: None,
     }))
-}
-
-pub(crate) fn author_of(args: &Value) -> String {
-    args.get("author")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| "agent".into())
 }
 
 /// Whether libgit2 checks that a repository belongs to this OS user (its
@@ -1317,7 +1310,8 @@ pub(crate) fn run_revert(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
     let plan = revert_plan(slot, &id)?;
     let ctx = RunCtx {
         id: RunId::mint(chrono::Utc::now().timestamp()),
-        author: author_of(args),
+        author: super::write::author_name(args.get("author").and_then(Value::as_str))
+            .map_err(|e| super::write::refused("kernel", None, e))?,
         reverts: Some(id.clone()),
     };
     let texts: Vec<Vec<(String, String)>> = plan

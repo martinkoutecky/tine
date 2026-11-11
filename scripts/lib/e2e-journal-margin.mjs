@@ -91,9 +91,14 @@ export async function checkJournalMargin(browser, fixture, shot, proof) {
   }
   const saved = fs.readFileSync(fixture.file, "utf8");
   await browser.setWindowSize(1000, 820);
+  // D-20261108-MC7/MC8: no counted markers; each day's highlight opens its thread on hover.
   await browser.waitUntil(async () => (await browser.$$(".margin-column")).length === 0
-    && (await browser.$$(".page-blocks .comment-card")).length === 2, { timeout: 5000 });
-  await shot("08-journal-narrow-inline");
+    && (await browser.$$(".page-blocks .comment-quote-anchor")).length === 2
+    && (await browser.$$(".page-blocks .margin-marker")).length === 0, { timeout: 5000 });
+  await browser.$(".page-blocks .comment-quote-anchor").moveTo();
+  await browser.$(".comment-thread-popup .comment-card").waitForExist({ timeout: 5000 });
+  await shot("08-journal-narrow-popover");
+  await browser.$(".comment-popup-close").click();
   if (fs.readFileSync(fixture.file, "utf8") !== saved) throw new Error("Changing width rewrote the journal");
   await browser.setWindowSize(1600, 1000);
   await browser.refresh();

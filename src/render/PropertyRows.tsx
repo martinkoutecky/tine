@@ -5,7 +5,7 @@ import { PagePropertyValue } from "../components/PagePropertyValue";
 import { isRenderHiddenProp, propertyKeyNorm } from "./block";
 import { graphMeta } from "../graphSession";
 import { isCommentBlock, isCommentPresentationKey } from "../comments";
-import { node as docNode } from "../document";
+import { node as docNode, threadRootOf } from "../document";
 
 // OG block.cljs property-cp/properties-cp: a linked key and one row per key.
 // Duplicate values collapse in file order (last wins), as extract-properties.
@@ -16,7 +16,8 @@ export function PropertyRows(props: {
     // Margin comments (vision §3.7): `author` is the block's author chip and a
     // comment's quote keys are its header, so neither shows as a row.
     const comment = props.blockId !== undefined
-      && isCommentBlock(props.entries, (docNode(props.blockId)?.parent ?? null) !== null);
+      && (isCommentBlock(props.entries, (docNode(props.blockId)?.parent ?? null) !== null)
+        || props.entries.some(([key]) => ["tine.date", "tine.resolved"].includes(propertyKeyNorm(key))) && threadRootOf(props.blockId, props.format) !== null);
     return [...new Map(props.entries.map(([key, value]) =>
       [propertyKeyNorm(key), value] as const))].filter(([key]) =>
       !isRenderHiddenProp(key, graphMeta()?.block_hidden_properties ?? [])

@@ -8,7 +8,7 @@ import { render } from "solid-js/web";
 import { ContextMenu } from "./ContextMenu";
 import { Block } from "./Block";
 import { backend } from "../backend";
-import { blockRegions, initParser } from "../render/parse";
+import { blockRegions, initParser, editBlock } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { pageByName, resetStore, undo } from "../document";
@@ -87,7 +87,7 @@ describe("block menu: Comment on selection", () => {
     commentItem()!.click();
     const parent = doc.byId["p"];
     expect(parent.children).toHaveLength(1);
-    expect(doc.byId[parent.children[0]].raw).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
+    expect(editBlock(doc.byId[parent.children[0]].raw, "md", { kind: "property", key: "tine.date", value: null })).toBe("\ntine.quote:: a phrase worth disputing\ntine.quote-prefix:: An agent wrote\ntine.quote-suffix:: here.");
     expect(editingId()).toBe(parent.children[0]);
     expect(doc.byId["q"].children).toHaveLength(0);
     undo();
