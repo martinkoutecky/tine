@@ -23,7 +23,7 @@ impl PagePlan<'_> {
             .problem
             .map(|problem| TxOutcome::NotCommitted {
                 step: 0,
-                why: Why::Failed(problem),
+                why: Why::Refused(Refusal::ConfigUnreadable(problem)),
                 rollback: Rollback::default(),
                 publication_errors: Vec::new(),
                 graph_rev: self.store.changes.rev(),

@@ -402,6 +402,8 @@ ui-failure-editor-load = Couldn't load the CodeMirror editor. You can keep editi
 
 ui-failure-config-read = Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.
 
+ui-failure-config-read-after = { $done }, but config.edn couldn't be read. The graph is open read-only; repair the config and reopen the graph.
+
 ui-failure-conflict-inventory = Couldn't refresh conflicts. The last successful inventory is kept.
 
 ui-failure-graph-verification = Couldn't verify graph files.

@@ -9,28 +9,30 @@ import { setTimeout as sleep } from "node:timers/promises";
 const PORT = 5225;
 const OUT = path.resolve(process.env.TOPBAR_SHOT_DIR || "notes");
 // GH #205 has real-fit tiers (master a006f1308). A phone (platform "android":
-// no tab strip, no window controls) keeps calendar/journals/theme and the
-// right-sidebar action direct down to a 345px content box. A desktop topbar
+// no tab strip, no window controls) keeps calendar/journals/share/theme and the
+// right-sidebar action direct down to a 386px content box (GH #926: was 345px
+// before Share joined the optional actions; a 390px phone no longer fits them). A desktop topbar
 // carries a tab strip, and a frameless one three window buttons: those collapse
 // optional actions at 460px so a tab pill stays readable (og H). Back/Forward
 // stay inline until the 300px floor; the sidebar action moves to overflow only
 // at the 250px last resort (or at 460px with window controls).
 const CASES = [
-  { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
+  { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
   { name: "system-frame-collapse-440", width: 440, sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme"], separator: false, minTabWidth: 100 },
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false, minTabWidth: 100 },
   { name: "system-frame-nav-collapse-400", width: 400, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "back", "forward"], separator: true, minTabWidth: 100 },
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true, minTabWidth: 100 },
   { name: "custom-frame-collapse-440", width: 440, sidebar: "closed", fakeWindowControls: true, menu: true, nav: 2, optional: 0, sidebarAction: 0, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "right-sidebar"], separator: false },
-  { name: "phone-actions-inline-400", width: 400, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
-  { name: "phone-actions-inline-390", width: 390, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar"], separator: false },
+  { name: "phone-actions-inline-420", width: 420, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
+  { name: "phone-optional-collapse-390", width: 390, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
   { name: "phone-optional-collapse-360", width: 360, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme"], separator: false },
+    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
   { name: "nav-collapse-280", width: 280, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "back", "forward"], separator: true },
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true },
   { name: "last-resort-240", width: 240, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "right-sidebar", "back", "forward"], separator: true },
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward"], separator: true },
 ];
 
 mkdirSync(OUT, { recursive: true });

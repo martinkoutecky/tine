@@ -22,11 +22,11 @@
     },
     "scripts/e2e-external-pdf.mjs": {
       "contracts": [
-        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
+        {"class":"core-operation","userOutcome":"Clicking a Markdown image file-PDF link or its Org equivalent, written absolute or relative to the graph folder (`../x.pdf`, `file:../x.pdf`), opens a synthetic PDF outside the scratch graph in the ordinary desktop reader. Search, native text selection/copy, zoom and page navigation work; unavailable annotation tools are explained. Missing and non-PDF files show a closable error naming the path.","blocking":false,"authority":"GH #732; docs/contracts/external-pdf.md"},
         {"class":"exact-safety-interoperability","userOutcome":"Every file and directory in the scratch graph is identical before and after opening and reading outside PDFs; no import, sidecar, highlight page or capture image is created.","blocking":false,"authority":"GH #732 read-only decision"}
       ],
       "acceptableVariations": ["Pane geometry, toolbar wrapping, selection appearance and reader timing can vary while the tools and preserved file outcomes hold."],
-      "nonRequirements": ["No annotation identity design, relative file: or parent-relative link behavior, Windows/macOS/mobile device certification, or manager release burn-in."],
+      "nonRequirements": ["No annotation identity design, Windows/macOS/mobile device certification, or manager release burn-in."],
       "stability":"burn-in"
     },
     "scripts/e2e-math-print.mjs": {
@@ -807,7 +807,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-alias-autocomplete.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Page and hashtag completion display every matching alias alongside its owner page and insert the selected alias with its authored casing. Optional TINE_LATENCY_GRAPH mode measures real keystrokes to painted rows for page/tag completion and quick-switcher page search on a synthetic graph (GH #899).","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page and hashtag completion display every matching alias alongside its owner page and insert the selected alias with its authored casing. Typing inside an existing [[link]] offers the link's own page first and picking it leaves one link (GH #888). Optional TINE_LATENCY_GRAPH mode measures real keystrokes to painted rows for page/tag completion and quick-switcher page search on a synthetic graph (GH #899).","blocking":true}],
       "acceptableVariations":["Popup geometry, highlighting, fonts and timing may vary while the ordered choices and inserted spelling remain correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting or platform certification outside Linux WebKitGTK.","Graph search continues to present one result per page identity."],
       "stability":"burn-in"

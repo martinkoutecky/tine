@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use tine_store::{ChangeKind, OpenOptions, Origin, Store, Subscription, WatchMode};
+use tine_store::{
+    ChangeKind, Content, FileId, OpenOptions, Origin, Refusal, Store, Subscription, TxOutcome,
+    WatchMode, Why,
+};
 
 fn scratch(name: &str) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -336,6 +339,43 @@ fn an_undownloaded_icloud_config_opens_the_graph_read_only() {
         store.config().problem.is_none(),
         "no config.edn at all is no problem"
     );
+    store.close();
+    drop(store);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Card HVgII. While config.edn cannot be read (here: not UTF-8; an undownloaded
+/// iCloud placeholder or an oversized file is the same state) the graph is
+/// read-only, and the one write guard says why with a typed refusal that
+/// carries the read error, not a plain I/O failure the window could only print
+/// raw. Nothing is written. Fixing the file lifts the refusal.
+#[test]
+fn a_write_while_config_is_unreadable_is_the_typed_config_refusal() {
+    let _integration_guard = crate::integration_lock();
+    let root = scratch("unreadable-write");
+    std::fs::write(root.join("logseq/config.edn"), b"{:a \"\xff\"}\n").unwrap();
+    let (store, _subscription) = open(&root, WatchMode::Poll);
+    let cause = store
+        .config()
+        .problem
+        .expect("a config.edn that is not UTF-8 is a config problem");
+    let create = |store: &Store| {
+        let mut tx = store.transaction(None);
+        tx.create(
+            &FileId::from("pages/New.md".to_owned()),
+            Content::Bytes(b"- new\n".to_vec()),
+        );
+        tx.commit()
+    };
+    match create(&store) {
+        TxOutcome::NotCommitted {
+            why: Why::Refused(Refusal::ConfigUnreadable(refused)),
+            step: 0,
+            ..
+        } => assert_eq!(refused, cause, "the refusal carries the read error"),
+        other => panic!("a write on a read-only graph must be the typed refusal: {other:?}"),
+    }
+    assert!(!root.join("pages/New.md").exists());
     store.close();
     drop(store);
     let _ = std::fs::remove_dir_all(root);
