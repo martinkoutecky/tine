@@ -7,6 +7,7 @@ import { For, type JSX } from "solid-js";
 import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import { Block } from "./components/Block";
+import { RefBlocks } from "./components/RefBlocks";
 import { CommentNameSetting } from "./components/CommentNameSetting";
 import { backend } from "./backend";
 import { commentRaw, replyRaw } from "./comments";
@@ -141,6 +142,19 @@ describe("what is shown", () => {
     expect(showThread("c")?.getAttribute("data-author")).toBe("Ada");
     expect(showThread("d")?.getAttribute("data-author")).toBe("claude");
     expect(root.querySelector('[data-block-id="plain"]')?.hasAttribute("data-author")).toBe(false);
+  });
+
+  // Review hold f4d4b3971: an authored block shown through RefBlocks (embed inside a
+  // hover preview, reference and query rows) is styled by the same custom.css hook.
+  it("exposes the stored author on reference and embed rows too", () => {
+    const host = document.createElement("div");
+    const stop = render(() => <RefBlocks page={PAGE} blocks={[
+      block("ra", "Agent note\ntine.author:: claude"), block("rp", "Unsigned"),
+    ]} />, host);
+    try {
+      expect(host.querySelector('[data-block-id="ra"]')?.getAttribute("data-author")).toBe("claude");
+      expect(host.querySelector('[data-block-id="rp"]')?.hasAttribute("data-author")).toBe(false);
+    } finally { stop(); }
   });
 
   it("renders every public comment class promised to custom.css", () => {

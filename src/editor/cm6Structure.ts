@@ -19,7 +19,7 @@ import { msg } from "../i18n";
 import { autoPairing, documentMode, docModeEnterForNewBlock } from "../ui";
 import { backspacePairEdit } from "./autopair";
 import { commentKey } from "./commentKeys";
-import { bodyScopeOf } from "../document/commentThreads";
+import { bodyScopeOf } from "../document";
 import { detectMacro } from "../components/Rendered";
 import { listLineAt } from "../components/blockParts";
 import { type CollapseSurfaceApi } from "../components/Block";

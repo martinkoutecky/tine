@@ -17,7 +17,7 @@ import { editingId } from "../editorController";
 import { createCommentChildren } from "../commentIndex";
 import { NO_COMMENT_CHILDREN } from "../commentChildren";
 import { createQuoteCoverage } from "../render/quoteHighlight";
-import { datedThreadRoot, hasMessageDate } from "../document/commentThreads";
+import { datedThreadRoot, hasMessageDate } from "../document";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }

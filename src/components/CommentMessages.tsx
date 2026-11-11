@@ -1,7 +1,7 @@
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { node } from "../document";
-import { datedThreadRoot, commentMessageIds } from "../document/commentThreads";
+import { datedThreadRoot, commentMessageIds } from "../document";
 import { t } from "../i18n";
 
 /** File pre-order messages, independent of body folds. The root owns the one

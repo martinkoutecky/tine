@@ -103,7 +103,7 @@ export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrange
 export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
 export { commentsFirst } from "./commentOrder";
 export { bodyNeighbor } from "./bodyNavigation";
-export { isCommentId, threadRootOf } from "./commentThreads";
+export { bodyScopeOf, commentMessageIds, commentThreadVisibleOrder, datedThreadRoot, hasMessageDate, isCommentId, threadRootOf } from "./commentThreads";
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undoTopTag, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
