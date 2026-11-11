@@ -586,6 +586,7 @@ fn query_export_args(args: &QueryExportArgs) -> Result<crate::owner::query_expor
         uuid,
         name: args.name.clone(),
         force: args.force,
+        epoch: tine_graph_features::publish_query::export_epoch().map_err(|e| e.to_string())?,
     })
 }
 

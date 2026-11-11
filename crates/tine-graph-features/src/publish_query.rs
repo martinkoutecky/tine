@@ -35,17 +35,24 @@ use tine_store::{IrAnswer, IrRequest, Store, WholeGraph};
 const MAX_PAGES: usize = 20_000;
 const MAX_EXPORT_BYTES: usize = 128 * 1024 * 1024;
 
-fn export_time() -> io::Result<String> {
-    let seconds = match std::env::var("SOURCE_DATE_EPOCH") {
+/// The export clock in seconds: `SOURCE_DATE_EPOCH` when set (reproducible
+/// builds), otherwise now. A CLI caller reads it in its own process and
+/// passes it to [`publish_query_at`], so a running owner never substitutes
+/// its own environment.
+pub fn export_epoch() -> io::Result<i64> {
+    match std::env::var("SOURCE_DATE_EPOCH") {
         Ok(raw) => raw
             .parse::<i64>()
-            .map_err(|_| refusal("invalid SOURCE_DATE_EPOCH"))?,
-        Err(_) => std::time::SystemTime::now()
+            .map_err(|_| refusal("invalid SOURCE_DATE_EPOCH")),
+        Err(_) => Ok(std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(io::Error::other)?
-            .as_secs() as i64,
-    };
-    time::OffsetDateTime::from_unix_timestamp(seconds)
+            .as_secs() as i64),
+    }
+}
+
+fn export_time(epoch: i64) -> io::Result<String> {
+    time::OffsetDateTime::from_unix_timestamp(epoch)
         .map_err(io::Error::other)?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(io::Error::other)
@@ -669,8 +676,17 @@ fn snapshot(
     name: &str,
     home: &str,
     home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
+    epoch: i64,
 ) -> io::Result<Vec<u8>> {
-    snapshot_at(graph, meta, corpus, name, home, home_query, &export_time()?)
+    snapshot_at(
+        graph,
+        meta,
+        corpus,
+        name,
+        home,
+        home_query,
+        &export_time(epoch)?,
+    )
 }
 
 /// [`snapshot`] stamped with a given `exported_at` (quick share stamps its
@@ -1054,6 +1070,40 @@ pub fn publish_query_with_sheets_in(
     sheets: Vec<SheetExport>,
     scratch: &Path,
 ) -> io::Result<ExportReceipt> {
+    let epoch = export_epoch()?;
+    publish_at(store, request, fingerprint, bundle, sheets, scratch, epoch)
+}
+
+/// `publish_query` stamped with a caller-supplied export clock
+/// ([`export_epoch`] read in the caller's process).
+pub fn publish_query_at(
+    store: &Store,
+    request: &QueryExportRequest,
+    fingerprint: &str,
+    bundle: &[(String, Vec<u8>)],
+    epoch: i64,
+) -> io::Result<ExportReceipt> {
+    let scratch = std::env::temp_dir();
+    publish_at(
+        store,
+        request,
+        fingerprint,
+        bundle,
+        Vec::new(),
+        &scratch,
+        epoch,
+    )
+}
+
+fn publish_at(
+    store: &Store,
+    request: &QueryExportRequest,
+    fingerprint: &str,
+    bundle: &[(String, Vec<u8>)],
+    sheets: Vec<SheetExport>,
+    scratch: &Path,
+    epoch: i64,
+) -> io::Result<ExportReceipt> {
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
@@ -1109,6 +1159,7 @@ pub fn publish_query_with_sheets_in(
                 &request.name,
                 &home,
                 Some((request, &planned.parsed, &planned.result)),
+                epoch,
             )?;
             Ok((files, snap))
         },
@@ -1299,7 +1350,10 @@ fn live(
                 32 * 1024 * 1024,
                 &mut Vec::new(),
             )?;
-            Ok((files, snapshot(build, meta, &corpus, name, &home, None)?))
+            Ok((
+                files,
+                snapshot(build, meta, &corpus, name, &home, None, export_epoch()?)?,
+            ))
         },
     )?;
     app_files(&mut files, bundle, snap, name)?;
@@ -1414,7 +1468,7 @@ mod snapshot_consistency_tests {
             &reviewed.selected.pages,
             temp.path(),
             BUILD_GRAPH_REFUSED,
-            |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None),
+            |build, meta, corpus| snapshot(build, meta, &corpus, "Export", "Public", None, 0),
         )
         .unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();

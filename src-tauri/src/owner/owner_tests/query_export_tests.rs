@@ -37,27 +37,6 @@ fn output_files(path: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
 
 #[test]
 fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
-    // Isolate the existing reproducible-export clock in a child process,
-    // without changing another test's process environment.
-    if std::env::var("SOURCE_DATE_EPOCH").as_deref() != Ok("0") {
-        let home = tempfile::tempdir().unwrap();
-        let result = std::process::Command::new(tine_store::test_binary::own_test_binary())
-            .args(["--exact", "owner::owner_tests::query_export::warm_owner_query_export_matches_shared_publisher_without_source_reopen", "--nocapture"])
-            .env("SOURCE_DATE_EPOCH", "0")
-            .env("HOME", home.path())
-            .env("XDG_DATA_HOME", home.path().join("data"))
-            .env("XDG_CONFIG_HOME", home.path().join("config"))
-            .env("XDG_STATE_HOME", home.path().join("state"))
-            .env("XDG_CACHE_HOME", home.path().join("cache"))
-            .output().unwrap();
-        assert!(
-            result.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&result.stdout),
-            String::from_utf8_lossy(&result.stderr)
-        );
-        return;
-    }
     let _guard = EXPORT_TEST.lock().unwrap();
     let graph = query_graph();
     graph.store.stop_watcher_for_tests();
@@ -65,6 +44,7 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
         uuid: QUERY_ID.into(),
         name: Some("Review".into()),
         force: false,
+        epoch: 0,
     };
     // Freeze the old path's shared publisher output before using the socket.
     let expected =
@@ -89,7 +69,7 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
     let receipt = conn
         .call(
             "query.export",
-            json!({"uuid":QUERY_ID, "name":"Review", "force":true}),
+            json!({"uuid":QUERY_ID, "name":"Review", "force":true, "epoch":0}),
         )
         .unwrap();
     assert_eq!(receipt["pages"], 1);
@@ -107,7 +87,7 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
     );
     let refused = conn.call(
         "query.export",
-        json!({"uuid":QUERY_ID, "name":"Review", "force":false}),
+        json!({"uuid":QUERY_ID, "name":"Review", "force":false, "epoch":0}),
     );
     match refused {
         Err(Failure::Owner(body)) => assert!(body.message.contains("use --force")),
@@ -115,7 +95,10 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
     }
     gate.pause();
     assert_eq!(
-        code(conn.call("query.export", json!({"uuid":QUERY_ID,"force":true}))),
+        code(conn.call(
+            "query.export",
+            json!({"uuid":QUERY_ID,"force":true,"epoch":0})
+        )),
         "busy"
     );
 }
@@ -133,12 +116,21 @@ fn cold_store_owner_query_export_loads_once() {
     let (_endpoint, _gate) = endpoint(&graph, Arc::new(slot));
     let mut conn = graph.connect();
     let receipt = conn
-        .call("query.export", json!({"uuid":QUERY_ID,"force":false}))
+        .call(
+            "query.export",
+            json!({"uuid":QUERY_ID,"force":false,"epoch":86400}),
+        )
         .unwrap();
     assert_eq!(receipt["pages"], 1);
-    assert!(Path::new(receipt["path"].as_str().unwrap())
-        .join("app/snapshot.json")
-        .is_file());
+    // The invoking CLI's clock stamps the output, not the owner's own
+    // environment or time (review hold 4aa451d71: `SOURCE_DATE_EPOCH=… tine
+    // export query` against a running owner).
+    let snapshot: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(Path::new(receipt["path"].as_str().unwrap()).join("app/snapshot.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot["exported_at"], "1970-01-02T00:00:00Z");
     assert_eq!(
         tine_store::cost_counters::take_query_export_work(&graph.root).opens,
         1

@@ -2,7 +2,7 @@
 //! The request contains selectors only; frontend assets come from this binary.
 use serde::{Deserialize, Serialize};
 use tine_graph_features::publish_query::{
-    plan_query, publish_query, query_request_by_uuid, ExportReceipt,
+    plan_query, publish_query_at, query_request_by_uuid, ExportReceipt,
 };
 use tine_store::Store;
 
@@ -12,6 +12,9 @@ pub(crate) struct Args {
     pub(crate) uuid: String,
     pub(crate) name: Option<String>,
     pub(crate) force: bool,
+    /// The invoking CLI's export clock (its `SOURCE_DATE_EPOCH` or now), so
+    /// the owner's own environment never stamps the output.
+    pub(crate) epoch: i64,
 }
 
 /// Run publication in the owning Store, preserving review and confirmation.
@@ -28,5 +31,6 @@ pub(crate) fn publish(
     if plan.exists && !args.force {
         return Err(format!("output already exists at {}; use --force to replace it (the previous export is kept in recovery)", plan.path));
     }
-    publish_query(store, &request, &plan.fingerprint, bundle).map_err(|e| e.to_string())
+    publish_query_at(store, &request, &plan.fingerprint, bundle, args.epoch)
+        .map_err(|e| e.to_string())
 }
