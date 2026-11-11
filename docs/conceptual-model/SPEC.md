@@ -1,704 +1,403 @@
 # Tine conceptual model
 
-## 1. Prior decisions and the user contract
+## 1. Prior decisions and user contract
 
-This specification follows the conceptual-model design's file-based identity,
-full alias groups, literal page-name queries, finite page universe, namespace
-closure, stored-query rewriting and configured Favorites exclusion. It follows
-the decisions in the decision journal D-20261106-CMS, D-20261106-R13,
-D-20261106-R13-UI, CM-TWINS, R13-C4, D-20261107-OWN2 and D-20261107-KD. The journal records authority and
-provenance; this document specifies the resulting behavior. It follows
-CM-COUNTS (reference count equals the Linked References panel size), the
-2026-10-13 query top-level-filter decision, and D-20261019-M2(6) for
-same-key cross-kind conflicts. Ordinary date pages retain the literal
-identities specified by D-20261107-KD. The files
-remain ordinary Logseq Markdown or Org files, and an operation must preserve
-user text.
+This specification follows file-based identity, full alias groups, literal name
+queries, namespace closure, stored-query rewriting, CM-TWINS, R13-C4,
+D-20261107-OWN2, D-20261110-CM (CM-DATE, CM-ORDER, CM-ONESTEP, CM-PLAIN),
+D-20261109-AL, D-20261110-CMF and D-20261111-CMR14 (CM-DAYFILE and CM-ALIASDUP).
+D-20261106-CMS governs the length measure; D-20261106-MF/UA govern model-first
+work and universal guarantees. These decisions are followed. Ordinary files
+remain Logseq Markdown or Org. No operation silently merges conflicting files.
 
-A **name** is something you can write in a page link. Different spellings can
-have the same literal name key, including configured case handling. File claims
-use those literal keys. Reference interpretation additionally recognizes dates
-and gives an existing ordinary file precedence at its own literal spelling.
-A **file** is the actual Markdown or Org document. A **page** can
-have a file, or exist because a link or namespace name uses it. An alias by
-itself does not create another empty page.
+**CM-DATEFIXED / M2 is open.** The right to rename a date source and which day
+identities must be fixed are parameters awaiting Martin's decision (§4.2).
+No default answer is selected. The reader, outside-file changes, ordinary
+non-date renames, text protection and journal creation do not require it.
 
-An ordinary page file is named by its title property, when present, otherwise
-by its decoded filename. A journal file is named by its filename's date; a
-journal title does not change that identity. A file opens itself when you use
-its name, even if the file is empty and another page declares that name as an
-alias. When no file claims the name, an alias opens a page that directly
-declares it. The choice among several direct declarers uses their current
-graph-relative file paths in unsigned UTF-8 order.
+A name can be written in a page link. An ordinary name has its normalized
+ordinary key. Every accepted spelling of a calendar date names the same day,
+which is a journal identity. A file named by a date under `pages/` is that
+journal, at its existing path. A day need not have a file. An alias by itself
+does not create an additional empty page.
 
-Aliases join names into **groups**. If A declares B and B declares C, all three
-names belong to one group. Several real files can belong to one group; joining
-their names does not combine their text. The reference relation is shared;
-Linked References projects it by excluding one self source and the configured
-Favorites source, so different members' panels and counts may differ. Opening
-a particular real page still opens its own file. A literal
-page-name query asks for that name, rather than following an alias to a different
-file. Thus a file-less alias can have Linked References without producing a
-separate row in a page-name query.
+A real file opens before an alias owner, even when empty. Without a real file,
+a name opens its least-path direct alias declarer, or itself as a virtual
+identity. Paths are graph-relative unsigned UTF-8 bytes. Physical claimants
+prefer the journals directory, then path bytes; direct alias declarers use
+path bytes across both directories. Losing claimants remain intact and are
+shown as conflicts, but contribute no meaning.
 
-A namespace link such as `[[Work/Projects/Tine]]` also references `Work/Projects`
-and `Work`. Those parents can exist without files. Nonblank active files also
-support their filename/title namespace parents. Relative paths and URLs with an
-origin are not treated as namespaces. Empty prefixes do not create pages.
+Aliases connect names into undirected groups; they do not combine file text.
+A literal name query tests the named identity, rather than following opening.
+A name's Linked References list is exactly the list of the page that name
+opens. That list excludes that opening page's own source and the configured
+Favorites source. Different real members of one alias group can therefore
+have different lists and counts. A count is the size of its displayed list.
 
-When two files claim the same name, Tine reports a conflict. Only the file that
-the name opens contributes aliases, blocks, references or namespace parents.
-The other file remains intact on disk and contributes nothing to the graph's
-meaning until the conflict is resolved. It must never be silently overwritten.
+A namespace mention references its nonempty namespace prefixes as well as
+its full spelling. Relative paths and URLs with an origin are not namespaces.
+A nonblank active file also supports its effective name's namespace parents.
 
-Renaming is an operation you choose after seeing its effects. The dialog shows
-the destination's whole alias group and every safe option: use the typed name,
-or combine the source into any eligible real page of the group. A file-less
-source has no content to append. Selecting a group member uses that member's
-own name for the entire operation, including children and stored queries.
+Ordinary renaming substitutes simultaneously, including children, aliases,
+covered occurrences, stored query arguments and the Favorites setting.
+For example, A → A/x moves an existing A/x child to A/x/x. The user can choose
+any offered safe destination option. A safe ordinary fresh rename with one
+option executes in one step, without a choice dialog. The timing of a reference
+preview is a UI question outside this specification. An unattended caller
+executes only a singleton safe option; cancel changes nothing.
 
-An ordinary page named `2026-11-06` remains its own page. A journal for that
-day can coexist under its configured journal name. Other accepted spellings
-of the date mean that journal, or a virtual journal when no active journal file supplies it.
-Opening the ordinary page or showing its Linked References uses its own
-identity; it is not overridden by a date panel redirect. Explicit aliases can
-still join the ordinary page and journal into a shared reference concept.
+Merging keeps both bodies and protected header text. Its active aliases form
+one native declaration with the exact-byte union of the substituted spellings.
+Only redundant recognized alias syntax and duplicate rendered alias tokens
+with identical retained member witnesses may be consumed (§5.2).
 
-The preferred option uses the typed name literally. If it is an alias with no
-file, renaming an ordinary source file there makes that name its own real page.
-It does not silently append the source into an alias owner. If a stationary
-file already claims the typed name, the content-bearing option is an explicit
-merge into that file. An unsafe preferred option is not offered.
+### Prior art
 
-Substitution is simultaneous. Renaming A to A/x moves an existing ordinary
-A/x child to A/x/x; it does not overwrite that child. Journal identities, task
-markers and priorities are fixed. Other names, aliases, covered references,
-stored query name arguments and favorite entries use the chosen substitution.
-The preview includes every block reference whose target changes, including
-changes caused by aliases and derived namespace parents. Such changes need not
-be limited to links whose spelling is edited. An unattended caller executes
-only when exactly one safe candidate exists. Cancel changes nothing.
+At OG revision `6e7afa8eb040686ff057156ee877193b581dd369`,
+`deps/graph-parser/src/logseq/graph_parser/block.cljs:273–284` converts parsed
+page names to journal days; `extract.cljc:159–162` applies it to effective
+file-page names independently of directory. `date_time_util.cljs:15–41`
+supplies the configured title format and title/ISO/underscore fallbacks.
+Tine also accepts its configured filename format, per the retained date-list
+decision. This is a classification principle, not authority to merge files or
+move imports. OG's `src/main/frontend/db/model.cljs:161–184` selects the first
+eligible result of an unordered alias query; the deterministic Tine path order
+is Tine's decided rule.
 
-## 2. Inputs and graph meaning
+## 2. Names, files and graph meaning
 
-### 2.1 Representation and parser boundary
+### 2.1 Representation and extraction
 
-A graph is a finite collection of files. A file has a graph-relative path,
-directory kind (`pages` or `journals`), format (Markdown or Org) and complete
-raw text. Distinct files have distinct paths. A page identity is `(kind, key)`.
-A block identity is `(file path, outline position)`; it is an ephemeral model
-identity, not a newly persisted ID.
+A graph is a finite list of complete Markdown/Org files. A file has a
+relative path, physical directory class, format and raw text. Well-formed
+published graphs have unique paths. Readers are total even on conflicting or
+malformed snapshots; operation safety checks paths separately. A block's model
+identity is `(path, outline position)`, not a new persisted identifier.
 
-The supplied functions are:
+An effective pages-directory name is its title property, otherwise its decoded
+filename. A journal filename supplies its parsed day independently of its
+displayed title; a journal's title property does not rename that day. Thus a
+pages-directory file with effective title Work is Work even if its filename
+looks like a date. A title that is an accepted date gives that file a day claim.
+The physical directory is separate from the semantic identity.
 
-| Input | Required interpretation |
+The identity of a non-date name is `(page, ordinaryKey)`. The identity of a date
+is `(journal, dayValue)`. Day values are calendar days, not rendered labels.
+The same interpretation is used by file claims, references, aliases, queries,
+opening, collision checks and journal creation. There is no ordinary-date
+claim ahead of date interpretation.
+
+The configured parser supplies accepted-date recognition and journal filename
+day extraction. A non-date journal-directory filename has no parsed day and
+falls back to the extracted effective filename name. Reading requires no rename
+history, and does not refuse a graph because a file moved outside the app.
+
+**Approved label limitation:** with title format `MM-dd`, 2026-11-02 and
+2027-11-02 can both display `11-02`. They remain distinct day identities,
+openable by their day/path handles. Typing the ambiguous, non-identifying label
+cannot select one. Textual self-opening applies when the displayed name
+identifies the file's claim. It is not a theorem for all journal labels.
+
+| Supplied boundary | Required interpretation |
 |---|---|
-| `key`, canonical `spell` | Literal name equality is key equality; `key(spell(k)) = k`. No namespace-congruence law is implicit. |
-| `stem` | Decoded effective filename, without the extension, using the graph's filename/date configuration. |
-| `title`, `aliasDecl` | Title and alias members from the file header, respecting Markdown/Org syntax. Whole quoted alias values produce no alias members. Bare alias members are names too. |
-| `outline`, `occ` | Ordered blocks and typed occurrences, including header/pre-block text when applicable. |
-| `inputNonblank`, `urlHasOrigin` | Nonblank input and URL recognition with a non-null origin. |
-| `kindPref`; generic compatibility orders | Physical claimants use `kindPref` across kinds and unsigned UTF-8 path order within a kind (§2.2). Direct alias declarers use path bytes across kinds. Equal-path ties use the fixed file totalization. Generic `pageLe`, `fileLe` and `refKind` fields remain available to the checked generic/raw-support library; they do not supply the production date or claimant policy. |
-| `Dates.canonical` | Recognize the configured accepted date spellings, after literal name normalization, and return the literal key of that day’s configured canonical journal title. Use the same date and title configuration as `stem`. This is an input/parser boundary, not permission to fold physical file claims by day. |
-| Filesystem path representation | Graph-relative UTF-8 paths. Their unsigned bytes define the order; production path conversion is a conformance boundary. No extension, basename, path-component, filename-match or canonical-date rank participates in the order. |
-| Query inputs | Outline depths, pre-block recognition, stored-query extraction and readings of opaque given leaves. `QueryRowParser.kind` distinguishes body, page-property header and preamble prose positions from the same extraction; it must agree with the outline, depths and header recognition. `QueryPresentation` supplies the requested header visibility and child-removal option. |
-| Rewrite/merge inputs | The text writer and its syntax, path, query, layout and complete-text realization laws in §5. |
+| ordinary `key`, `spell` | Configured ordinary normalization; ordinary representative spelling. Date parsing must factor through the literal key used by its adapter. No namespace-congruence law is assumed. |
+| `MemberNames.identifying`, `identifies` | Operation adapter supplies an accepted spelling for each physical claim and certifies that its normalized identity equals that claim. It need not equal the displayed label. Reading snapshots requires no such adapter. |
+| `Dates.parse`, `journalDay` | Accepted spellings return actual day values; filename extraction independently returns the day or no date. It must not substitute an ambiguous rendered title for the day. |
+| `stem`, `title`, `aliasDecl` | Decoded/configured effective names and native header aliases. Bare members are names. A wholly quoted alias value supplies no aliases. |
+| `outline`, `occ`, stored parser | Ordered blocks, typed occurrences and stored query arguments, including applicable header and preamble blocks. |
+| URL/nonblank/path conversion | URL-with-origin and nonblank tests; graph-relative unsigned UTF-8 bytes. |
+| query row/depth parser | Header, preamble and body classification and body ancestry from the same extraction. |
+| fixed text partition/classifier | Whole raw input split into legal name-edit, narrow alias-syntax/member and protected spans, independently of the chosen operation. |
 
-The Lean development does not prove a production Markdown/Org parser, filename
-decoder, date recognizer, URL parser or serializer correct. Their contracts are
-part of this model's size and its conformance obligations.
+### 2.2 Claimants, active files and page rows
 
-**Literal claims and date interpretation.** `key : String → K` is literal
-name normalization. Physical claims, conflict detection, substitution demands
-and writer contracts use this fixed key. An ordinary effective date name does
-not claim every spelling of its day. Journals’ stems are their configured
-canonical date titles; an ordinary file’s title property retains its ordinary
-name precedence over its filename.
+Physical claimants compete at the full normalized identity. The selected file
+is the least claimant: journals-directory first, then unsigned UTF-8 relative
+path. A fixed full-file totalization handles invalid equal-path input. It is
+not a configurable ordinary-first policy.
 
-The semantic vertex of a name, `target(D,G,s)`, is computed as follows:
+Every physical file remains on disk. Only selected files contribute aliases,
+blocks, namespace seeds, references or query rows. Input mutation and text
+certificates still cover all physical files, including losing claimants.
+Two accepted date spellings can therefore be a visible same-day conflict.
+If both `journals/2026_11_02.md` and `pages/2026-11-02.md` claim that day, the
+journals-directory file opens; neither is rewritten or merged on discovery.
 
-1. If a physical file claims `key(s)`, use the selected file’s `(kind,key)`
-   claim, including when that file is empty or when the key is conflicted.
-2. Otherwise, if the date recognizer returns canonical journal key `j`, use
-   `(journal,j)`.
-3. Otherwise use `(page,key(s))`.
+The page universe contains active real identities, plus namespace-closed
+reference/name seeds that have no real file and are not alias targets.
+All active real identities remain page rows, including empty ones. An alias
+alone has no additional page row. Namespace seeds are derived before their
+individual spellings are interpreted as ordinary names or days.
 
-Aliases, references, literal-name queries and virtual namespace seeds use
-these full vertices. Namespace closure precedes this interpretation. The
-interpretation is recomputed on each graph; creating or removing an ordinary
-date page can change an unedited reference, which must be previewed.
+### 2.3 Aliases and opening
 
-The kind matters even when literal keys coincide: an ordinary page named
-`Nov 6th, 2026` and that day’s **virtual** journal are different vertices.
-An alternate accepted date spelling can name the virtual journal without
-referencing or opening the ordinary page. Two **physical** files with the
-same literal key, however, are a conflict across kinds under §2.2. Selecting
-an active claimant is independent of reference interpretation. Every existing
-ordinary spelling gets its own precedence; normalized equal spellings share
-that precedence. Intentional alias edges may join these otherwise distinct
-vertices; no blanket promise of separate reference sets survives such a join.
-Semantic targets retain their kind across consumers; a displayed canonical
-label is not a substitute for its full target vertex.
+Every active file, in either directory, can declare aliases. Each declaration
+joins the file's normalized claim to the normalized declared name. The concept
+of a name is its connected component in this undirected graph, including the
+name itself. Transitive and reciprocal declarations do not create content merges.
 
-### 2.2 Claims, conflicts and active files
+Opening an identity returns itself if real; otherwise it returns the claim of
+the least-path direct declarer, or the original virtual identity. Opening is
+idempotent and stays in the starting name's alias component. A mention references
+what it opens. Opening a day physically does not relocate its file.
 
-Directory determines a file's kind. For ordinary pages, `name(f)` is title if
-present, otherwise stem. For journals it is stem. The claim is
-`(kind(f), key(name(f)))`. An actual file counts even when its text is empty.
+A non-date page can declare a date alias. Before a physical day file exists,
+that date spelling may open the declarer. Creating the journal finds physical
+day claimants, not alias owners: it creates a missing day file and thereafter
+the real day opens first. This can change opening while preserving the alias
+connection. The page/name query remains a test of the date identity throughout.
 
-All files claiming a key, across both kinds, use one lexicographic order:
-first prefer `kindPref`, then compare graph-relative paths by unsigned UTF-8
-bytes. Within a kind only the path comparison matters. `openingFile(G,k)`
-selects the least physical claimant. A key is conflicted when two distinct
-files claim it, including an ordinary and a journal file.
+### 2.4 References and Linked References
 
-Equal paths are invalid inputs. The fixed full-file order on
-`[path,text,directory-code,format-code]` totalizes those ties only; no
-text-dependent tie affects a valid graph. Filename format and configured date
-rendering play no role in selection.
+A block references a target when one of its namespace-closed occurrence names
+reaches the target in the active alias graph. Alias members share this relation.
 
-`activeGraph(G)` contains exactly the files selected by `openingFile`.
-Every static reading below is evaluated on this active graph. In particular,
-an inactive twin supplies no filename-parent seed, alias declaration, query
-block or reference. Selection never deletes its raw file. Mutation checks
-still inspect all physical files to prevent overwrite or damage.
-
-A safe operation does not match any conflicted claimant’s effective name:
-its original key would fail the local conflict check. Such claimants retain
-their name keys, kinds and paths under realization. Kind preference depends
-only on the fixed kinds, and the path comparison
-depends only on the fixed paths. Their relative order therefore stays fixed
-even when title spelling, alias or reference text changes. Neither claimant
-can be a content source or survivor, and no new distinct claimant key can join
-them. Every safe realized rename or merge keeps the active physical twin's
-path. An explicit resolution of the conflict is a separate operation.
-
-### 2.3 Namespace closure and pages
-
-A namespace name contains `/`, starts with neither `./` nor `../`, and is not
-an origin-bearing URL. For such a name, closure consists of the name and its
-nonempty proper slash prefixes. Otherwise closure contains just the name.
-For example, `/n/y` closes to `/n/y` and `/n`, without an empty name.
-
-The seven occurrence kinds are page link, tag, page embed, property key,
-linkable property value, task marker and priority. Ordinary plain mentions
-do not reference a page. UUID block references are outside this occurrence
-universe. All seven kinds contribute reference names through namespace closure.
-
-The page universe consists of:
-
-1. Every active file's real page.
-2. Interpreted occurrence-closure vertices and nonempty namespace parents of
-   nonblank active files, except vertices claimed by an active file or declared
-   as an alias member.
-
-Each virtual page has the kind and key returned by `target`. Alias members
-do not generate pages
-merely by being declared, even when linked. A real file with such a name
-remains a real page. Repetitions in executable lists do not create distinct
-page identities; observable membership and counts use sets/deduplication.
-
-Nodes are those pages and the active files' outline blocks.
-
-### 2.4 Alias groups, opening and references
-
-Both ordinary and journal files can declare aliases. Each active declaration
-adds an undirected edge from the declaring file’s full claim vertex to the
-alias member’s interpreted `target` vertex. A group is the full connected
-component, including transitive chains,
-cycles, repeated declarations, self declarations and several real declarers.
-
-To open a name, first compute its `target` vertex:
-
-1. If an active file claims that vertex, open it. Physical conflicts use §2.2;
-   content emptiness plays no part.
-2. Otherwise choose a real page directly declaring that vertex, ranked by
-   current unsigned UTF-8 graph-relative owner path.
-3. Otherwise open the virtual target itself.
-
-Path ranking is recomputed from the current graph after each operation.
-It does not choose a content-merge destination.
-
-A name’s concept is the connected component of its interpreted vertex. A block
-references
-a page iff one of its occurrence-closure names belongs to that page's
-component. This does not depend on the direct declarer selected for opening.
-The unprojected reference hits are the qualifying active block identities,
-deduplicated. Linked References applies these source exclusions to that set:
-
-- For a requested vertex claimed by a file, exclude blocks of that vertex
-  alone. Do not exclude other members of its alias group.
-- With no file at the requested vertex, the panel’s self vertex is the claim of the
-  lexicographically least effective name among active real files in its
-  component. This is independent of direct-declarer navigation path ranking.
-  If there is no real member, use the requested vertex; no actual source file
-  then has a vertex in that component.
-- Also exclude blocks whose containing file's own key equals the configured
-  Favorites arrangement name's key. An absent or normalized empty setting
-  adds no exclusion. Do not expand this name through aliases or navigation.
-
-Thus an alias-only name may have a panel without a separate query page row.
-Two real members A and B share the reference relation but A's panel excludes
-A's sources and B's excludes B's sources. They need not have equal panels or
-counts. A page's reference count is the length of this very panel list,
-computed once and shared by consumers; it counts blocks, not occurrences,
-spellings, or source-page groups. Raw panel requests use `target(D,G,s)`
-and the same self-source selection. A recognized date does not override an
-existing ordinary page’s panel or count.
-
-For a real requested page, the self exclusion has the same scope as OG
-0.10.9 `frontend.db.model/get-page-referenced-blocks` and its `-full` variant
-(`c67b8b5fa`, `src/main/frontend/db/model.cljs:1227–1290`): they remove
-blocks whose containing-page entity is the requested entity, not its entire
-alias set. OG also keeps sources at a different alias entity when the
-requested alias has no file. Tine's single least-name fallback in that case
-(`query.rs:445–485`) and its Favorites arrangement exclusion
-(`tine-core/src/refs.rs:78–96`) are explicit presentation policies.
+Panel self is the opening identity, using the same vertex-level function as
+navigation. The panel keeps deduplicated active blocks that reference the
+requested concept and whose actual source differs from panel self and the
+configured nonempty Favorites identity. It does not exclude a whole alias
+group. Order is the active block order after deduplication. Counts use this list.
+The Favorites setting follows renaming; exclusion uses the resulting setting
+and resulting graph, without assuming the old source or alias topology remains.
 
 ## 3. Queries, links and presentation
 
-### 3.1 Queries
-
-Queries have page or block anchors, leaves `refs(name)`, `name(name)`,
-`page(leaf)` and given predicates, combined with `and`, `or` and `not`.
-Page and block readings are evaluated separately.
-
-For a block, path references include its own reference vertices, its outline
-ancestors’ reference vertices and its containing page vertex. An earlier node is an
-ancestor when its depth is smaller and every intervening node has greater
-depth than that earlier node.
-
-| Leaf | Page reading | Block reading |
-|---|---|---|
-| `refs(s)` | False | Some path-reference vertex lies in the alias component of `target(D,G,s)`. |
-| `name(s)` | Page vertex equals `target(D,G,s)` | False |
-| `page(l)` | Read `l` on this page | Read `l` on the block's containing page, or false if absent. |
-| Given leaf | Supplied page predicate | Supplied block predicate |
-
-The denotation filters the anchor universe by the Boolean value. Negation is
-complement within that universe. `page(name(alias))` does not navigate through
-an alias and does not invent a row for a file-less alias. A page with a file
-is still eligible even when its name is also an alias.
-
-Opaque given predicates can inspect the graph; locality or transport of their
-results requires an explicit agreement law. The model does not infer that
-agreement from their function type. Property-value semantics beyond these
-given predicates are not defined here.
-
-Stored queries are independently extracted from actual block text. Rename
-maps every refs/name argument recursively through `page` and Boolean syntax.
-Opaque given tokens remain unchanged. Query-only names do not seed pages.
-Syntax rewriting does not imply unchanged query results, especially for
-negation, literal names, joined groups or externally supplied predicates.
-
-The query UI displays a defined projection of that raw denotation, in its
-existing order:
-
-1. Suppress page-property header blocks unless header rows were requested.
-   Preamble prose blocks remain eligible. Both kinds of pre-block have no
-   body parent or children. In Tine a query's explicitly requested block
-   anchor enables header rows; an implicit conversion from a page anchor to
-   block results does not (`query/exec.rs:210–230,508–514`).
-2. By default, suppress a matching body block if its **immediate parent**
-   also belongs to the raw denotation. Test raw parent membership before any
-   presentation hiding. A matched grandparent with an unmatched parent does
-   not hide the child. `:remove-block-children? false` disables this filter.
-3. Page rows pass through unchanged. Header visibility and child removal
-   are independent options; neither changes query truth or raw membership.
-
-`queryResults` is `queryProjection` applied to `den`; `QueryPresentation`
-defaults to child removal enabled and headers hidden. The parent is the last
-body ancestor in the parsed outline. OG's `get-query-result` calls
-`tree/filter-top-level-blocks` with the same immediate-parent raw-hit test
-(`c67b8b5fa`, `components/query/result.cljs:58–73`,
-`modules/outliner/tree.cljs:102–108`). Raw query inspection is a programmatic
-surface, if provided, not a separate unfiltered UI mode. Honoring an explicit
-false child-removal option remains required. Matching rows can consequently
-be absent from the UI without being absent from the query denotation.
-
-### 3.2 Links and neighborhoods
-
-A directed link S→T exists when both endpoints are pages, S and T are distinct,
-S's key is not the fixed configured Favorites exclusion name, and an active
-owner block of S references T. Favorites entries and the configured exclusion
-name are different state: entries follow substitution; the exclusion setting
-does not change when its currently named page is renamed.
-
-Out and in neighborhoods are directed reachability within the requested
-number of steps, including seeds at distance zero. “Both” is the union of the
-out and in neighborhoods. It is not a walk that alternates directions.
-
-### 3.3 Trees and views
-
-Namespace trees use deduplicated existing page identities. A page's parent is
-the interpreted vertex of its immediate canonical-spelling namespace parent
-iff that page exists in the
-universe. There is no alias substitution and no jump over a missing parent.
-Children are the inverse relation. The namespace-only tree contains pages
-having a parent or children and omits isolated pages.
-
-List, table, sort, group, board and collapsed views preserve the membership
-of the projected result list in §3.1. Collapsing hides presentation, not
-projected membership or denotation. A kind-uniformity
-test compares only existing page/pre-block pairs.
-
-## 4. Rename and merge candidates
-
-### 4.1 Request, substitution and candidate set
-
-A request supplies an existing graph G, source spelling `old`, destination
-spelling `new`, and configured favorite entries. No candidate mutates an
-entirely unsupported source. The operation API takes literal spellings: a supported source key occurs in
-the raw active name-support view as a physical claim, raw alias endpoint,
-occurrence closure or filename parent. Physical safety uses this literal
-view; a navigation result is not an implicit source-content selection. This includes
-virtual date-shaped names. An actual journal's identity is a fixed anchor.
-
-For a chosen destination d, `m = nsSubst(old,d)` replaces the first nonempty
-slash prefix with the source key, once. For flat/nonnamespace names only a
-whole-name match is replaced. Every original spelling is processed once,
-without recursively processing the result. All files are transformed from
-the same before-graph.
-
-An ordinary source file S exists only when one physical file across both
-kinds uniquely claims the source key and that file is ordinary. There is no
-source-content file for an alias-only or reference-only source.
-
-A candidate contains a destination spelling d and an optional survivor D.
-For a destination d, choose D precisely when S exists, d's key differs from
-old's, one file uniquely claims d's key, and that file's proposed name stays
-at its current key under m. Otherwise there is no survivor. An ordinary own
-child that moves is therefore not a stationary survivor.
-
-The finite candidate set is the literal candidate for `new`, plus the
-candidate for the own name of every active real file in `new`'s alias group
-whose key differs from old's. Remove duplicate candidates. There is no
-automatic direct-declarer routing. The preferred candidate is the safe literal
-candidate, if it passes; preference does not authorize execution.
-
-| Candidate presented to the user | Transformation | Additional safety condition |
-|---|---|---|
-| Rename/make the typed name its own page | Apply m to every file; an ordinary root file rebinds to d. No file is created for a file-less source. | No root survivor; every common check in §4.2 passes. An occupied stationary destination cannot be overwritten. |
-| Merge into the stationary file at the typed name | Delete S only after its text has been represented in D; rewrite D and all other files using m. | S and D are distinct, same format, D uniquely claims d and remains stationary; every common check passes. |
-| Merge into a selected real member of the destination group | Use the selected member's own name as d for the entire substitution and merge, including descendants and query arguments. | Same stationary-survivor and common checks. A moving member is not a content survivor. |
-| Redirect a file-less source to a selected group member's name | Rewrite all files under the substitution to the selected name. No content file is deleted or appended. | Every common check; no source-format condition exists without a source file. |
-| Cancel | Return G exactly. | Always available. |
-
-The first and third descriptions can produce the same candidate; display one
-operation. A same-key request is a respelling, without root-content merging.
-An actual journal can participate in a consistent same-key respelling of
-references; its own path/date identity remains fixed. Ordinary pages can be
-merged into journals when all conditions hold.
-
-### 4.2 One finite safety check
-
-Safety is evaluated separately for each candidate and its computed after-graph.
-The parser/writer must satisfy §5's realization contract. Under that contract,
-the finite predicate checks all of the following:
-
-1. **Supported source.** The source is supported as defined in §4.1.
-2. **Consistent key substitution.** Collect every physical file's effective
-   name, aliases, occurrence spellings of all seven kinds, stored query name
-   arguments, and favorite entries. For each spelling s demand
-   `(key(s),key(m(s)))`. Add `(key(old),key(d))`. Add identity demands for
-   every actual journal name and task-marker/priority spelling. Demands sharing
-   an input key must agree on the output key. The resulting finite function
-   is identity outside the table.
-3. **Local conflict freedom.** Check old, d, every used/name-site spelling
-   matched by the source-prefix map, and their images. None of these keys may
-   be claimed by two distinct physical files. This includes moved alias-only
-   images, even though aliases do not create pages. Unrelated conflicts do
-   not forbid the operation.
-4. **Valid content pair.** A survivor requires a distinct ordinary source,
-   equal source/target formats, unique literal destination ownership and a
-   stationary survivor key.
-5. **No new claimant collisions.** Remove only the confirmed source of a
-   content pair. If two remaining files' computed output claims have the same
-   key, their original claims must already have had the same key. Physical
-   output paths must be distinct.
-6. **No virtual-child capture.** A moved page descendant cannot land on a
-   stationary real file. The root is exempt for the explicit root operation;
-   a file that itself moves out of the way is not stationary. This applies
-   to raw name-support page keys, not raw alias-only endpoints. This literal
-   eligibility analysis is independent of date reference folding.
-7. **Path well-formedness.** Before and after physical file paths are unique.
-
-Consistency does not demand that old namespace ancestor sets map to new ones.
-Ancestors are recomputed. A move from A/x to B/z can therefore remove an
-induced reference to A, including a journal A. That change must be previewed.
-A journal's editable alias is not another fixed journal-date anchor.
-
-### 4.3 Dialog and unattended execution
-
-The dialog must show the entire destination component: real pages and their
-file identities, alias names, and names without files. Mark which file-less
-names have virtual page rows and which are alias-only. Include conflicts and
-the selected physical claimant, not only a preferred alias owner.
-
-For each safe candidate show its chosen destination, any source/survivor,
-all file moves including simultaneous child moves, affected journals, changed
-aliases and stored query arguments, and the reference preview below. Refused
-candidates can be explained by their failed finite checks. Offer every safe
-candidate; never omit a safe group member because another member is preferred.
-
-Only an offered candidate may execute. Cancel returns the original graph.
-A CLI, plugin or agent without a choice dialog receives a mutating answer
-only when the safe-candidate list has exactly one member. Zero and multiple
-members are refusals. The preferred option is not an unattended fallback.
-
-### 4.4 Reference preview
-
-For each old active block compute its output block images using rewritten
-file paths, or the merger's source/target origin table. For every old/image
-pair compare its reference signature:
-
-* Namespace-closed raw reference spellings.
-* Their interpreted reference vertices.
-* The current opening targets of the original closed reference spellings.
-* The entire active alias-edge list.
-
-Include each unequal signature as a preview row. This is conservative: an
-unrelated alias-edge change may include a block whose final targets are equal.
-Equal signatures imply equal reference membership for every target page, so
-every changed target is covered. A reference change need not involve changed
-link text. Separately show old blocks with no images and new active blocks
-without old origins. Complete text and origin realization is required before
-publishing an operation; a missing source block is not an acceptable merge.
-
-## 5. Text realization, interoperability and guarantees
-
-### 5.1 Writer obligations
-
-Every file rewrite preserves directory and format. It rebinds an ordinary
-file's effective name under m; journals retain their effective name and path.
-An unchanged-key ordinary file retains its path. Alias members in every file,
-including inactive twins, are rewritten. Covered occurrence kinds use m;
-task markers and priorities keep their spelling. Stored query arguments use
-the same m. The ordered block-occurrence lists obey these laws exactly.
-
-A content merge retains the survivor's path, directory, format and name.
-Alias members from both files remain active under substitution. Every output
-block has valid source/target origins; every input block and occurrence has
-an output origin and the required rewritten occurrence. The survivor has at
-most one combined header, then target body blocks in order, at most one
-leftover source-header block, then source body blocks in order. Ordinary body
-blocks remain separate. Source title and clashing header properties remain as
-ordinary text; nonclashing properties join the target header. Unknown header
-text must survive. Stored queries follow block origins using the same m.
-
-Namespace parents are recomputed from the merged survivor’s resulting
-complete text and effective name. They are not required to equal the parents
-of the separately rewritten target. Appending text to an empty `B/x` therefore
-activates parent `B`. All other merge laws describe the writer’s identity,
-alias, occurrence, origin, layout or stored-query behavior; none assumes
-reference, alias-component, query-result or parent-set preservation.
-
-General header parsing/property promotion is a specified serializer boundary,
-not a computed general property-value implementation in this Lean model.
-Equal-format merging is required because no Markdown/Org translator is supplied.
-
-### 5.2 Complete-text certificate
-
-Occurrence extraction is insufficient to protect opaque prose. A fixed input
-span partition, independent of the selected operation, accounts for every byte
-of every physical file, including headers and malformed/unknown input. Only
-legal name-edit spans are marked editable; everything else is protected.
-The span parser must establish that grammar interpretation.
-
-The text certificate records tagged original fragments and their placements
-in output files, with explicit inserted serialization syntax. Concatenating
-input fragments equals each complete input text; concatenating rendered
-placements equals each complete output text. Original fragments in the two
-graphs form a permutation with multiplicity. Editable fragments render under
-m; protected fragments render byte-for-byte unchanged. This provides finite,
-inspectable evidence rather than equating “all occurrences survived” with
-“all text survived”. The body-layout contract additionally protects block order
-and separation; fragment conservation alone would permit reordering.
-
-The Lean certificate theorem proves preservation of marked original fragments
-and unchanged protected bytes. Fidelity of the production span partition and
-construction of a certificate for every proposed writer result remain
-conformance obligations. A Boolean candidate check alone cannot certify an
-arbitrary text writer. A writer that does not realize these contracts is not
-a valid instance of the offered-operation safety theorem.
-
-### 5.3 Universal guarantees and their boundaries
-
-For every offered candidate, the after-graph is the retained physical files
-mapped by the candidate’s output-file function: the source is removed only
-for a content pair, the survivor is merged, and other files are rewritten.
-All static readings are recomputed on that actual output, after selecting its
-active files again. No injectivity, namespace-closure transport, fixed query
-result, unchanged outline-depth, or unchanged alias-component hypothesis is
-required for these guarantees.
-
-The universal actual-effect equations specify:
-
-- Alias edges are exactly the active output files’ declarations. Components
-  are reachability in those recomputed edges; classes may split or join.
-- A block references a target exactly when one of its recomputed closed
-  occurrence spellings reaches the full target vertex in those edges. Linked References
-  contain precisely those deduplicated active block identities whose source
-  passes §2's exact self/Favorites exclusions, computed on the after-graph.
-  Counts are the size of that panel and equal retained plus gained panel blocks,
-  with no assumption that source names or alias topology stayed the same.
-- Raw query denotations consist exactly of nodes in the recomputed anchor universe
-  whose Boolean query evaluates true on the recomputed leaves. This covers
-  negation, page wrapping, path references and supplied predicates. Stored
-  arguments use the chosen substitution; result changes are the exact set
-  differences of before and after denotations. Given predicates are evaluated
-  on each graph, without assuming that they keep their answers. The presented
-  results are exactly that after-denotation filtered by the header and raw
-  immediate-parent rules in §3.1. Their gained/lost rows are computed separately
-  from gained/lost raw hits. No result-invariance or parent-invariance premise
-  is required.
-- A link exists exactly for distinct resulting page endpoints, with the
-  configured Favorites source excluded, and a resulting source-page block
-  referencing the target. Neighborhoods use these recomputed directed links.
-- Navigation uses resulting real files first, then current direct-declarer
-  path ranks, then virtual fallback. Namespace support uses resulting text.
-- For every old block/image pair and every target, a changed reference answer
-  appears in the reference preview. Lost and newly active origins have separate
-  rows. The preview may include extra rows; query-result changes need not be
-  displayed, although changed stored arguments must be displayed.
-
-For any finite result sets, added members are exactly after-members absent
-before; removed members are exactly before-members absent after. Membership
-is unchanged exactly outside those two sets. These are actual-effect and
-coverage guarantees, rather than promises that every reading is preserved.
-
-The semantic Lean API is `Date13`. It uses `Consolidated13` for literal
-substitution, finite physical safety, execution and text realization. Its
-offers, group enumeration, readings and preview use the date interpretation.
-`Date13.offered_safe` transfers every offered choice to the existing physical
-safety theorems; `offered_twins` and `offered_text_safety` state the resulting
-ownership and text guarantees for these offers. The following table is the
-complete hypothesis ledger
-for current headlines. **A** follows from definitions/safety; **B** is a named
-input/parser/writer boundary; **C** is an extra semantic restriction.
-
-| Guarantee | Hypotheses and classification |
-|---|---|
-| Candidate authorization, cancellation, unattended uniqueness | A: offered choice or successful call as stated; no external hypothesis. |
-| Fixed-key lookup, paths, no new claim collision, local-conflict isolation | A: finite candidate safety; well-formed before/after paths follow from it. |
-| Physical journal identity, lawful claimant order and stationary conflicting ownership | A: safety, file membership/conflict as the objects described; all comparison inputs are proved stationary and whole-group opening paths agree. B: rewrite/merge syntax realization; fixed literal name extraction and graph-relative UTF-8 path interpretation as in §2.1. No abstract order-preservation or unchanged-date hypothesis. |
-| Protected original text survives completely | A: offered choice and actual file/fragment membership. B: fixed legal span partition, complete-text certificate, syntax/body/query realization. |
-| Literal claims/date precedence and physical conflicts | A: target’s physical/date/fallback branches and full `(kind,key)` vertices; literal conflict definition, exact opening selection. Branch lemmas identify an actual selected file or parser answer, without restricting operation eligibility. B: literal normalization, configured accepted-date recognition and canonical-title agreement with journal stems. |
-| Recomputed aliases, reference relation, raw query denotations, links, navigation and exact added/removed results | No premise beyond the definitions; the equations also hold for raw candidate executions. B: production interpretation of parsers, configured date recognition, query predicates and writers. Offered execution is identified with the actual after-graph by authorization. |
-| Linked References and panel counts | No premise: arbitrary target and optional Favorites setting; exact after-source lookup, self-key selection, exclusion, deduplication and panel length. B: configured Favorites/key interpretation. There is no whole-alias-group exclusion or unchanged-panel hypothesis. |
-| Query presentation and rendering views | No premise: arbitrary query, anchor, row parser and presentation options; raw-hit filtering and exact after/gained equations. B: row kinds/depths/header recognition from the same production extraction, requested header/child-removal flags. Views preserve the projected list; no promise that the UI displays every raw hit. |
-| Changed-reference preview coverage | A: old active block and its computed image, or a computed lost/introduced origin. No reference-preservation premise. |
-| Date-aware structural comparison | No premise: concrete differing reference paths, anchor-universe membership or query-leaf truth, or source-exclusion input; otherwise the corresponding answer agrees. Every positive diagnostic names a finite object; query leaves and source rules expand its cause. |
-| Generic literal-operation old/new exhaustive comparison | No semantic premise: compare a named old choice; classify refusal/cancel, an explicit diagnostic, or equal physical after-graphs. Static comparison has the separate diagnostics below. |
-
-There are **no C premises** on current operation headlines. Equal-format content
-merges and fixed-anchor/local-collision checks are explicit eligibility rules,
-not hidden theorem restrictions. Parser/interchange fidelity, legal editable
-span marking and general header promotion are B obligations that must be checked
-by implementation conformance; they are not proved by a Boolean safety test.
-
-Historical injective/fresh-rename, mapped-edge, positive-merge-query and
-link-transport preservation results are special-case lemmas. Their stronger
-transport assumptions are not current operation guarantees or eligibility rules.
-
-### 5.4 Exhaustive comparison and diagnostic interpretation
-
-The old API has several user choices and no default. Comparison therefore names
-an old choice and compares it to the safe literal default, treating cancellation
-as cancellation. For every request and old choice, either the old call has no
-answer, it is cancel, an independently defined diagnostic holds, or the new
-default exists and its complete physical after-graph equals the old answer.
-File-less old “merge” operations are included as substitutions with no content pair.
-
-The diagnostics include the alias/group, moving-target, anchor, key-consistency,
-image-conflict, journal-closure, source-kind, literal-spelling and twin cases;
-legacy own-page routing; different physical content-pair selection; and each
-failed common safety check individually. A differing query-map spelling has a
-concrete spelling witness, including noncongruent namespace keys. Diagnostics
-are conservative causes, not a claim that each positive flag forces a different
-result. Every category has a kernel-executed witness.
-
-Since key and writer functions range over infinitely many spellings, equality
-of their entire spelling maps is not generally a finite Boolean test. The exact
-comparison includes an existential, executable spelling witness for a map split;
-it does not silently assume function equality from equal destination keys.
-
-Static comparison separately accounts for inactive-file masking, configured
-reader normalization (concrete claimant order, both-kind alias policy, current
-navigation ranks), and empty-real-file navigation. Normalization differences
-are exactly a differing order comparison or alias-policy value, each with a
-finite witness; deciding absence over an arbitrary function is not a finite
-check. Outside these explicit causes all references, page/block membership,
-raw query denotations and links agree, and navigation agrees for declared as
-well as undeclared names. The historical model has no explicit panel/query
-presentation projection. Applying the current projections to its equal raw
-readings yields equal panels, counts and displayed query rows; this does not
-assert that historical raw-hit lengths were panel counts. Direct comparison
-with those historical raw readings additionally identifies every projected-away
-input: a reference hit rejected by the source exclusions, or a query block
-rejected by the header/immediate-parent rule. Outside these explicit
-suppression witnesses and the reader diagnostics, panels, counts and displayed
-queries equal the historical raw readings. Suppression tests the input row and
-the stated rule, not inequality of complete result sets. These generic
-comparison theorems remain checked for `Consolidated13`.
-The date-aware reference comparison additionally returns a concrete closed
-spelling with a path in one interpretation and no closed-spelling path in the
-other, or equal reference answers. Raw-query comparison returns a differing
-anchor-universe membership, a concrete query leaf with a differing truth
-value, or equal denotation membership. Panel comparison returns a block with
-a differing reference path answer or source-exclusion answer, or equal panels
-and counts. These are universal structural diagnostics, with the target,
-edge, page-seed, leaf and source rules above expanding their causes. Query
-presentation uses the same header/immediate-parent projection of the resulting
-denotation. Date-aware and historical key-only readings need not be equal.
-
-Final-reader navigation has two additional finite diagnostics. The **target**
-diagnostic compares the literal/date vertex with the generic real-first
-target (preferred real kind, other real kind, otherwise the configured raw-key
-reference kind). The **direct-declarer** diagnostic compares the optional
-selected direct declarer in the two readers; a real target bypasses that
-selection. If both inputs agree, navigation agrees. Together with inactive-file,
-reader-normalization and empty-real diagnostics, these exhaust navigation
-differences from the historical reader for every graph and spelling, including
-unknown names and empty graphs. A changed target can be masked by a shared
-direct declarer, so a positive diagnostic does not require different openings.
-
-The complete final static reader also has an exhaustive comparison
-(`Date13.static_comparison_exhaustive_final` in `DateComparison13.lean`).
-Besides those diagnostics it identifies an individual primitive difference:
-
-- A raw page-creation spelling produces a different optional virtual vertex,
-  through target interpretation, real-file suppression or alias-target suppression.
-- A closed reference spelling has a different alias-path answer for a target.
-- A query leaf differs on a node in an actual page or block anchor universe.
-- A source-exclusion answer differs for an actual block and requested panel.
-- A block belongs to different source pages under path lookup and owner-block
-  enumeration. This diagnostic includes malformed graphs with duplicate paths;
-  the comparison does not assume path uniqueness.
-- An immediate raw-parent lookup differs between full-vertex matching and
-  key-only matching, including the historical duplicate-removal step.
-
-Outside these causes, the comparison certificate gives equal page and block
-lists, reference answers, all raw query denotations, links, directed neighborhoods
-in every direction and radius, full trees, namespace trees, and the selected
-navigation request. Panels/counts and displayed queries equal the same current
-projections of the historical raw readings. Direct comparison with unprojected
-historical readings additionally identifies each source-excluded reference hit
-or header/immediate-parent-suppressed query block
-(`Date13.presented_comparison_exhaustive_final`).
-
-The diagnostics inspect primitive inputs or finite selections, not inequality
-of complete result graphs, queries, trees or neighborhoods. They are
-conservative causes. Each family has a kernel-executed witness, including a
-target-only navigation change and a direct-declarer-only navigation change
-with equal targets and no generic static diagnostic. Existential witnesses
-over arbitrary configured functions are executable individually; deciding
-their absence over all spellings or query leaves is not a finite check.
-These comparisons have no semantic-operation, graph-validity, date-preservation,
-canonical-spelling or realization premise. The parser/writer and configured
-date-interpretation conformance boundaries remain as stated above.
-
-This is a pure graph transformation specification. It does not implement
-publication, disk crash recovery, revisions, locks or synchronization. The host
-must publish through Tine's audited storage path. No new persisted identity,
-hidden graph database, storage mode, or non-Logseq serialization is authorized.
+### 3.1 Raw queries and displayed rows
+
+The page anchor universe is §2.2's pages; the block anchor universe is active
+blocks. A literal `name(s)` leaf tests the normalized identity s, without alias
+routing. A `refs(s)` block leaf tests paths through the block's own and body
+ancestors' references plus its containing page. Page wrapping evaluates a page
+leaf on the actual containing identity. Supplied predicates evaluate on the
+current graph. Conjunction, disjunction and negation evaluate normally over
+that anchor universe. There is no positivity or invariant-predicate restriction.
+
+Stored query name arguments receive the same simultaneous substitution as
+covered graph names. Their actual output denotations are recomputed.
+
+Displayed query rows filter the complete raw denotation. Header rows are
+hidden unless requested. The default child filter removes a body row only if
+its immediate body parent is itself a raw hit. A matching grandparent does
+not suffice. Header/preamble blocks are not body ancestors. Explicitly disabling
+the child filter is honored. Page rows are unaffected. Rendering views preserve
+the projected membership; raw hits and displayed rows need not be equal.
+
+### 3.2 Links, neighborhoods and namespaces
+
+A directed link has distinct resulting page endpoints, a source other than
+the configured Favorites page, and an active source block referencing the
+target. Outgoing and incoming walks repeatedly add neighbors from the finite
+page universe. The both-direction view concatenates those walks. Every radius
+uses the actual recomputed directed relation.
+
+An immediate namespace parent uses the effective spelling's raw parent and
+looks up that full interpreted identity in the page universe. Children,
+full trees and the namespace-only tree derive from that lookup. Body parents
+and namespace parents are separate. Parent support may change when a merge
+makes an empty file nonblank. No fixed-parent-set assumption is imposed.
+
+### 3.3 Actual changes
+
+Added members are after-members absent before; removed members are
+before-members absent after. Outside those two sets, membership is unchanged.
+This applies to raw and displayed queries, references, panels, links and tree
+readings separately. It does not promise that arbitrary Boolean queries,
+namespace closure or alias components are transported unchanged by renaming.
+
+## 4. Operations
+
+### 4.1 Substitution, candidates and physical assembly
+
+A request has an old spelling and a destination spelling. The spelling map is
+simultaneous namespace substitution using normalized identity equality and the
+shared URL/namespace test. It affects the entire operation, including stored
+queries. A source file is the unique physical source claimant eligible under
+§4.2; a file-less source supplies no content.
+
+The preferred literal candidate keeps the typed destination. It does not
+follow an alias to its owner. If a distinct stationary unique file claims that
+destination, it is the explicit content survivor. A physically journal-directory
+survivor is stationary independently of an ambiguous displayed label. A moving
+ordinary own-child is rewritten, not overwritten.
+
+Additional candidates select each distinct real member of the destination
+component by its actual identity and an identifying spelling. The operation
+adapter `MemberNames` certifies that spelling against the member's physical
+claim. Use the effective name when it identifies the claim; otherwise use the
+adapter's accepted spelling. The displayed label need not identify the member
+and is never reparsed as an unrelated ordinary destination. That one chosen
+spelling drives the whole substitution, including namespaces and stored queries.
+Every safe member choice is enumerated and offered, independently of whether
+its label identifies it. The adapter is an explicit naming boundary; it cannot
+be implemented by assuming a rendered-title parse round trip.
+
+For Foo → Shared with two journals declaring Shared and both displaying
+`11-02`, full identifying spellings `2026-11-02` and `2027-11-02` select their
+respective physical survivors. Both are offered when safe, alongside the typed
+Shared choice; unattended execution refuses the multiple choices. Typing
+`11-02` still cannot select either day. This does not choose a date-source policy.
+Exact duplicate serialized candidates are removed. Different output spellings
+can remain different candidates even when they name the same day.
+
+Execution merges only an actual source/survivor pair; otherwise it rewrites
+all physical files without changing file count. A content pair removes its
+source, keeps the survivor, and rewrites every other retained physical file.
+This retained-file map is the actual after-graph. All readings select its
+active files again. No hidden content union is performed on opening.
+
+### 4.2 Finite safety and the open date-source policy
+
+Every candidate passes one finite check:
+
+1. The source identity is in play.
+2. Demanded identity mappings are consistent: the root, every direct name/site,
+   extra/configured name and every fixed anchor agree on one image per input
+   identity. Namespace congruence and injectivity are not assumptions.
+3. Touched original and image identities have no unresolved physical conflicts.
+   Unrelated existing conflicts do not block an operation.
+4. A content pair has distinct files, equal formats, a unique destination
+   claimant and a stationary survivor.
+5. Two retained files cannot newly collide in normalized claim unless their
+   original claims were already equal.
+6. A moved non-root virtual page descendant cannot capture stationary content.
+7. Before and after physical paths are unique.
+
+Physical journal-directory files, task markers and priorities remain fixed
+anchors. Marker/priority spellings are not rewritten. The additional fixed-day
+policy is unresolved. `DatePolicy.fixed(G, day)` isolates that question:
+
+- A would fix every day, including file-less dates.
+- B would fix days with physical files, independent of directory.
+- C would fix only days claimed from the journals directory.
+
+There is no selected instance. Under the supplied policy, a fixed date cannot
+be a moving date source, and its identity demands stay fixed. The generic
+proofs apply to every policy argument; they do not establish a product right
+to rename date sources or an unconditional all-date identity guarantee.
+Ordinary non-date source behavior does not decide M2.
+
+### 4.3 Choice, cancellation and preview
+
+The choice UI shows the destination component, real file identities, aliases,
+virtual versus alias-only names, conflicts and the selected physical claimant.
+For each safe candidate it shows the chosen destination, content pair, moves,
+changed aliases and stored arguments, and reference effects. The safe literal
+option and every safe distinct real-member option are offered, with no
+identifying-display-label condition; a preferred unsafe option is absent. The ordinary fresh
+singleton case needs no choice dialog. Unattended execution accepts exactly
+one safe option. Zero and multiple options refuse; cancel returns the original
+state, including the Favorites setting.
+
+Reference preview compares, for each old active block and actual output image,
+its closed raw names, interpreted target vertices, opening targets and active
+alias edges. Every changed reference membership answer has a preview row.
+Extra rows are permitted. Lost and newly active origins are listed separately.
+A changed answer can arise from an unedited link. Query-result preview timing
+and a general query-result-preview UI are not additional model obligations.
+
+The state operation returns the after-graph and the substituted Favorites
+setting together. The setting participates in the same name demands, as an
+extra/configured site. Subsequent panels and links read that resulting state.
+
+### 4.4 Ensure a journal
+
+To open/create day d, find physical claimants of `(journal,d)` using §2's exact
+identity and claimant order. If one exists, return the selected file and the
+unchanged graph, with all claimants available as conflict information. Reuse
+works in any directory and does not require the graph's other conflicts to be
+resolved. Do not follow an alias owner as the physical day file.
+
+With no claimant, propose an empty native file in the configured journals
+directory. Check its parsed claim is d, its path is unoccupied and input paths
+are well formed. Add it while retaining every original file byte-for-byte.
+Failure returns the unchanged graph with no selected file; never overwrite an
+occupied path. Repeated ensure with the same proposal is idempotent. Once a
+day is represented, any fresh proposal is ignored and no second file is created.
+
+Thus a pages-directory file produced by Foo → an accepted date spelling is
+already the journal. Subsequent ensure reuses it. External tools can still add
+another claimant; discovery exposes a conflict and preserves both files.
+
+### 4.5 Outside moves and renames
+
+The reader accepts the new snapshot without rename history or refusal. Moving
+`journals/2026_11_02.md` to `pages/Work.md`, with no overriding date title,
+keeps the bytes at Work and leaves date references naming the date, normally
+virtual if no claimant or date alias remains. Renaming `pages/<date>.md` to a
+non-date name has the same result. Renaming a non-date file to a recognized
+date makes it the journal and ensure reuses it. An unchanged date title can
+continue to make a renamed pages-directory file a journal.
+
+There is no outside-rename guarantee that references follow the moved content.
+A later in-app date-page command may offer weaker guarantees than ordinary
+renaming. Its design and date-source rules await M2; no exploratory design is
+an operation authorized by this specification.
+
+## 5. Text realization and interoperability
+
+### 5.1 Native rewriting and merging
+
+Rewriting preserves directory and format, rebinds ordinary effective names,
+and preserves physical journal-directory names/paths. Unchanged literal-name
+keys retain paths. Aliases in every physical file, including inactive twins,
+and covered occurrence/query name spans use the chosen substitution. Fixed
+marker and priority spellings remain unchanged.
+
+A merge keeps the survivor's path, directory, format and effective-name key.
+Alias spelling union is survivor-first after substitution, deduplicated only
+by exact rendered bytes. X and x remain distinct. The result has one native
+alias field when members exist; other properties are not deduplicated.
+Markdown uses `alias::`; Org uses native `#+alias:` (recognized native variants
+are classified by the parser). The native field parser and alias extractor
+must agree with the concrete serialized result.
+
+Every output block has valid origins, possibly multiple origins for a merged
+header; each input block/occurrence has an image. The layout is at most one
+combined header, target body blocks in order, at most one leftover source-header
+block, then source body blocks in order. Bodies remain separate. Source titles,
+clashing properties and unknown header text survive as ordinary text;
+nonclashing properties join the target header. Equal non-alias properties
+remain protected with multiplicity. Stored queries follow the same origins
+and substitution. Namespace support comes from the actual merged text/name.
+
+General header parsing and property promotion are serializer boundaries. This
+model includes a bounded native alias serializer and concrete certificates,
+not a full production Markdown/Org property parser or format translator.
+
+### 5.2 Complete text with exactly the alias exception
+
+A fixed input partition accounts for every raw byte before a candidate is
+chosen. Legal editable spans render under substitution. Every other original
+span either has an original placement or is explicitly approved consumption.
+The original spans form a permutation, with multiplicity, of retained spans
+plus consumed spans. Input and rendered-output concatenations equal the complete
+physical file texts. Inserted serialization syntax is explicit.
+
+Consumption is confined to the actual merge pair. It permits only:
+
+- Redundant recognized alias declaration keys, separators and line endings,
+  with a retained native alias declaration witness.
+- A duplicate rendered alias-name token with a retained alias-member token
+  whose rendered bytes are identical.
+
+The bounded syntax classifier accepts native alias keys, comma separators and
+LF/CRLF. Odd spacing, bracket wrappers, quoted or unrecognized remainders,
+examples and non-alias properties are protected unless separately, explicitly
+classified as approved narrow alias syntax. They are not discarded with a
+whole second line. The concrete prototype keeps them protected.
+
+The complete-text theorem states the retained-or-approved-consumed alternative.
+Protected byte multiplicities survive unchanged. The body law additionally
+protects block order and separation. Production partition legality and writer
+certificate construction remain explicit conformance boundaries; a Boolean
+candidate check alone proves neither.
+
+The proof ledger, hypotheses and exhaustive comparison are in
+[GUARANTEES.md](GUARANTEES.md). The source/statement inventory and measurement
+are evidence alongside the Lean development, not additional product rules.
+
+This is a pure graph/state specification. Publication, crash recovery, locks,
+revisions and synchronization use the host's audited storage path. No new
+persisted identity, hidden graph database, storage mode or non-Logseq format is
+authorized.
