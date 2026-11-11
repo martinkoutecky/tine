@@ -30,7 +30,8 @@ import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, 
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock, removeAuthor, removeAuthorTarget } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
-import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
+import { collapseComments, commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
+import { threadRootOf } from "../document";
 import { favoriteBlock, isFavoriteBlock, unfavoriteBlock } from "../favorites";
 import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
@@ -1155,6 +1156,8 @@ function favoriteAction(id: string): MenuAction {
 function blockActions(id: string, x: number, y: number, commentSelection: ReturnType<typeof renderedSelectionIn> = null): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
+  const commentRoot = threadRootOf(id);
+  const commentParent = commentRoot ? docNode(commentRoot)!.parent! : id;
   const ids = multi ? selected : [id];
   const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
   const text = (cut = false) => multi ? selectionMarkdown(cut || undefined) : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
@@ -1188,6 +1191,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
     { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
     // Margin dialogue (vision §3.7): comment on the words selected in this block.
+    ...(!multi && docNode(commentParent)?.children.some(child => threadRootOf(child) === child) ? [{ label: msg("comment-collapse-all"), run: () => collapseComments(commentParent) }] : []),
     ...(commentSelection && !multi
       ? [{ label: msg("command-comment-on-selection"), run: () => commentOnRenderedSelection(commentSelection) }]
       : []),

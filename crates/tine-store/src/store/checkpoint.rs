@@ -648,7 +648,8 @@ impl ChangeFeed {
         let (inventory, delta, counts, moved) = snapshot.answer_changes(None, &[], true);
         let summary =
             snapshot.change_summary(None, &[], true, inventory, &moved, None, None, &[], &[]);
-        snapshot.answers = (inventory, counts, summary, delta);
+        let metrics = snapshot.metric_changes(None, &[], &[]);
+        snapshot.answers = (inventory, counts, summary, delta, metrics);
         let change = Change {
             graph_rev: snapshot.rev,
             origin: Origin::External,

@@ -18,7 +18,7 @@ import { pushToast } from "../../toasts";
 import { blockRegions } from "../../render/parse";
 import type { OutlineNode } from "../../editor/outline";
 import { offsetInLiteral } from "../../editor/inlineLiteral";
-import { threadRootOf } from "../commentThreads";
+import { bodyScopeOf } from "../commentThreads";
 
 const ID_LOOKUP_CHUNK_SIZE = 128;
 
@@ -186,7 +186,7 @@ function insertClipboardBlocksSync(
   warnCopy: boolean,
 ): string | null {
   const target = doc.byId[targetId];
-  if (!blocks.length || !target || !blockWritable(targetId) || threadRootOf(targetId) !== null) return null;
+  if (!blocks.length || !target || !blockWritable(targetId) || bodyScopeOf(targetId) === undefined) return null;
   // Same shared ceiling as every other outline inserter (I-22): a deeper page
   // would be refused by save/page admission after the edit appeared to land.
   if (!outlineFits(targetId, blocks)) {

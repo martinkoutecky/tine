@@ -1,6 +1,4 @@
 //! The owner endpoint end to end, in process: a real Store and page host,
-//! a real socket, the client's handshake and calls (CLI PROTOCOL §2–5),
-//! and the app lease through retirement and adoption (§3.1–3.2).
 // Shared protocol and lifecycle tests run on all three desktop transports.
 
 use std::path::{Path, PathBuf};
@@ -31,6 +29,8 @@ mod lifecycle;
 #[path = "owner_tests/proof.rs"]
 mod proof;
 
+#[path = "owner_tests/comment_message_tests.rs"]
+mod comment_messages;
 mod page_prop_tests;
 #[path = "owner_tests/page_tests.rs"]
 mod page_tests;

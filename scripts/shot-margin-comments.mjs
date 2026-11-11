@@ -9,6 +9,9 @@ import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { bulletlessFacts, checkBulletless } from "./lib/margin-bulletless.mjs";
 
+if (process.argv.includes("--messages")) {
+  await import("./shot-comment-messages.mjs");
+} else {
 const PORT = 5217;
 const OUT = process.argv[2] ?? "scratch/margin-s1";
 const CASES = [
@@ -102,3 +105,5 @@ try {
   server.kill();
 }
 process.exit(failed ? 1 : 0);
+
+}

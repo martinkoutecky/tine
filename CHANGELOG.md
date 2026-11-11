@@ -12,12 +12,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
 - Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).
 - **Next comment** and **Previous comment** review a page in margin order, revealing each passage and focusing its live thread. Popovers and phone sheets offer the same page-wide controls; bind shortcuts in Settings (GH #891; UI-MC9-REVIEW).
 - Settings → Editor → Advanced has a **Reference previews** switch, Logseq's `:ui/enable-tooltip?` in the graph's `config.edn` (on when absent). Off, page links, tags and block references open no preview on mouse hover, and on a touch screen holding a page link or tag opens its page menu again instead of a preview. The **Hover preview delay** stays as it is (GH #824).
 
 ### Changed
 
+- All Pages stays fast while you type: panes share timestamps and backlink counts, updated from publication deltas (internal: REG-ALLPAGES-METRICS-PUBLICATION-COST).
 - Pages open with less work when checking whether a tag table is available (REG-TAG-TABLE-AVAILABILITY).
 - Large pages defer author and comment controls until a row needs them, and bullet history state until the first hover (REG-BIGLOAD-ROW-WORK).
 - Opening the calendar now reads its content dots without rescanning pages or journal blocks (internal: REG-CALENDAR-CONTENT-DAYS-COST).

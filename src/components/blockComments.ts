@@ -5,8 +5,7 @@ import { createMemo, useContext } from "solid-js";
 import type { OutlineScope } from "../document";
 import { storedAuthorOf, quoteSelectorOf } from "../comments";
 import { authorTint, isOwnAuthor } from "../commentIdentity";
-import { marginNext, marginPrev, threadRootOf } from "../margin";
-import { nextVisible, prevVisible } from "../document";
+import { marginNext, marginPrev, outlineNext, outlinePrev, threadRootOf } from "../margin";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
@@ -17,6 +16,7 @@ import { editingId } from "../editorController";
 import { createCommentChildren } from "../commentIndex";
 import { NO_COMMENT_CHILDREN } from "../commentChildren";
 import { createQuoteCoverage } from "../render/quoteHighlight";
+import { datedThreadRoot, hasMessageDate } from "../document";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
@@ -45,9 +45,9 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   const author = () => authorship().author;
   const continued = () => authorship().continued;
   const continues = () => authorship().continues;
-  const showsAuthor = () => (author() !== null && !continued()) || commentSelector() !== null || inThread();
+  const showsAuthor = () => (author() !== null && !continued()) || bulletless();
   // Comments and their replies draw no bullet; the chip keeps the block menu.
-  const bulletless = () => commentSelector() !== null || inThread();
+  const bulletless = () => (commentSelector() !== null || inThread()) && (!datedThreadRoot(node().id) || hasMessageDate(node().id));
   const commentClasses = () => {
     const by = author();
     const selector = commentSelector();
@@ -56,7 +56,8 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     const classes: Record<string, boolean> = {
       "comment-card": selector !== null && !thread,
       "comment-resolved": selector !== null && !thread && threadResolved(node().id),
-      "comment-in-thread": selector !== null || thread,
+      "comment-in-thread": bulletless(),
+      "comment-message": bulletless() && datedThreadRoot(node().id) !== null,
       authored: by !== null,
       "author-run-continued": !bulletless() && continued(),
       "author-run-continues": !bulletless() && continues(),
@@ -107,6 +108,7 @@ function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", s
   const outlineChildren = createMemo(() => {
     const n = node();
     if (!n) return [];
+    if (datedThreadRoot(n.id)) return n.children.filter(id => !hasMessageDate(id));
     if (!comments().entries.length) return n.children;
     if (main() || commentMarginHidden()) return n.children.filter(id => id === heldBody() || !comments().has(id));
     // Replies retain file pre-order, even when a hand-nested reply has a quote.
@@ -128,7 +130,7 @@ export function marginNavigation(id: string, scope: OutlineScope | null, surface
   const place = useContext(MarginContext);
   const nav = () => place && (place.thread !== null || (place.api.active() && !inlineSurface(surfaceKey)))
     ? { thread: place.thread, format: fmt() } : null;
-  const viewPrev = () => { const n = nav(); return n ? marginPrev(id, scope, n) : prevVisible(id, scope); };
-  const viewNext = () => { const n = nav(); return n ? marginNext(id, scope, n) : nextVisible(id, scope); };
+  const viewPrev = () => { const n = nav(); return n ? marginPrev(id, scope, n) : outlinePrev(id, scope); };
+  const viewNext = () => { const n = nav(); return n ? marginNext(id, scope, n) : outlineNext(id, scope); };
   return { viewPrev, viewNext };
 }

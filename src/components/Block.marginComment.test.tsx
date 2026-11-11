@@ -10,7 +10,7 @@ import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { blockRegions, initParser, editBlock } from "../render/parse";
-import { node as docNode, resetStore, setRaw, undo } from "../document";
+import { node as docNode, resetStore, setRaw, setCollapsed, undo } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { pageByName } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
@@ -98,6 +98,8 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(docNode(reply)!.parent).toBe("c");
       expect(docNode("a")!.children).toEqual(["deep"]);
       expect(docNode("deep")!.raw).toBe(raw);
+      expect(root.querySelector('[data-block-id="deep"]')).toBeNull();
+      setCollapsed("a", false);
       expect([...root.querySelectorAll(".comment-header")].map(el => el.closest<HTMLElement>(".ls-block")!.dataset.blockId))
         .toEqual(["c", "a", "deep", "b", reply]);
     } finally { dispose(); }
