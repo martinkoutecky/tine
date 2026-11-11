@@ -3202,6 +3202,7 @@ export interface MessageArgs {
   "ui-failure-conflict-inventory": {};
   "ui-failure-css-draft": {};
   "ui-failure-custom-css": {};
+  "ui-failure-editor-load": {};
   "ui-failure-export-preview": {};
   "ui-failure-external-link": {};
   "ui-failure-graph-verification": {};

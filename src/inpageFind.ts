@@ -39,6 +39,13 @@ function findBlockTextRoot(element: HTMLElement): HTMLElement | null {
   return element.querySelector<HTMLElement>(element.matches(".sheet-title-cell") ? ".sheet-cell-body" : ".block-content");
 }
 
+// A structural memo can run before Solid removes a retired day's DOM. The
+// loaded-page lookup owns membership, including for its displayed query rows.
+function isLoadedFindSurface(element: HTMLElement): boolean {
+  const day = element.closest<HTMLElement>("[data-feed-day]")?.dataset.feedDay;
+  return day === undefined || !!pageByName(day);
+}
+
 interface RenderedTextCacheEntry {
   raw: string;
   format: Format;
@@ -188,7 +195,7 @@ function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<nu
       const shown = new Set<string>();
       for (const block of element?.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR) ?? []) {
         const id = block.dataset.blockId, root = findBlockTextRoot(block);
-        if (!id || !root || root.matches(".macro-host") || index.byId.has(id) || shown.has(id)
+        if (!id || !root || root.matches(".macro-host") || index.byId.has(id) || shown.has(id) || !isLoadedFindSurface(block)
           || block.closest("[data-inpage-find-surface]")) continue;
         shown.add(id);
         findTextOccurrences(searchableTextForRoot(root), index.q, index.accents).forEach((match, ordinalInBlock) => {
@@ -197,7 +204,7 @@ function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<nu
       }
       for (const surface of element?.querySelectorAll<HTMLElement>("[data-inpage-find-surface]") ?? []) {
         const surfaceId = surface.dataset.inpageFindSurface;
-        if (!surfaceId) continue;
+        if (!surfaceId || !isLoadedFindSurface(surface)) continue;
         findTextOccurrences(searchableTextForRoot(surface), index.q, index.accents).forEach((match, ordinalInBlock) => {
           out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
         });
@@ -295,7 +302,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     for (const block of element.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR)) {
       const id = block.dataset.blockId;
       const root = findBlockTextRoot(block);
-      if (!id || !root || root.matches(".macro-host") || counted.has(id) || block.closest("[data-inpage-find-surface]")) continue;
+      if (!id || !root || root.matches(".macro-host") || counted.has(id) || !isLoadedFindSurface(block) || block.closest("[data-inpage-find-surface]")) continue;
       counted.add(id);
       findTextOccurrences(searchableTextForRoot(root), q, removeAccents).forEach((match, ordinalInBlock) => {
         out.push({ blockId: id, scopeId: scope.id, ordinalInBlock, ...match });
@@ -303,7 +310,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     }
     for (const surface of element.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
       const surfaceId = surface.dataset.inpageFindSurface;
-      if (!surfaceId) continue;
+      if (!surfaceId || !isLoadedFindSurface(surface)) continue;
       findTextOccurrences(searchableTextForRoot(surface), q, removeAccents).forEach((match, ordinalInBlock) => {
         out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
       });

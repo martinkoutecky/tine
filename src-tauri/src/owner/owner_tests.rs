@@ -75,13 +75,13 @@ impl Graph {
         Self::watching(Default::default())
     }
 
-    /// A graph whose store sees the disk by polling every three seconds, not
-    /// by notifications 200 ms after a write. A test that edits a file behind
-    /// the store and expects the store to lag (the host-read tests) needs
-    /// this: under load the 200 ms debounce elapses before the verb runs and
-    /// the store re-indexes the edit it was meant not to have seen.
+    /// Host-read fixtures refresh explicitly, then change the file behind the
+    /// index. Join the watcher so neither startup reconciliation nor a poll
+    /// can invalidate that stale-index premise between show and edit.
     fn lagging() -> Self {
-        Self::watching(tine_store::WatchMode::Poll)
+        let graph = Self::watching(tine_store::WatchMode::Poll);
+        graph.store.stop_watcher_for_tests();
+        graph
     }
 
     fn watching(watch: tine_store::WatchMode) -> Self {

@@ -1,5 +1,6 @@
 // Durable margin-comment journey. Baseline mode records missing affordances and
 // continues via the existing shortcut so later defects can also be observed.
+import "./lib/e2e-auto-account-home.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -199,8 +200,11 @@ try {
     await shot("08-thread-deleted");
     await browser.keys(["Control", "z"]);
     await persisted(COMMENT, REPLY);
+    step = "09-thread-undo";
+    await browser.waitUntil(() => browser.execute((reply) => [...document.querySelectorAll(".margin-thread")].some(thread => thread.textContent.includes(reply)), REPLY), {
+      timeout: 5000, timeoutMsg: "Undo did not restore the thread and replies",
+    });
     await shot("09-thread-undo");
-    check(await browser.execute((reply) => [...document.querySelectorAll(".margin-thread")].some(thread => thread.textContent.includes(reply)), REPLY), "Undo did not restore the thread and replies");
   }
   await browser.setWindowSize(1000, 820);
   // D-20261108-MC7/MC8: medium panes have no counted marker; hovering the

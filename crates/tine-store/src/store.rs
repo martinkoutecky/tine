@@ -1209,9 +1209,7 @@ impl Store {
                 let _writer = worker_writer.lock().unwrap();
                 let mut found = crate::watch::Deferred::default();
                 if matches!(completed, Ok(true)) {
-                    // GH #623 / storage spec §5.1: the baseline is what the
-                    // load pass observed, then one full stat diff catches
-                    // every file that changed since its stamp was taken.
+                    // Storage spec §5.1: diff against the load pass's own observations.
                     let written = match worker_graph.take_launch_observations() {
                         Some(mut observed) => {
                             let written = std::mem::take(&mut observed.announce);
@@ -1229,10 +1227,7 @@ impl Store {
                             worker_watch.announce_written_since_open(written, &mut deferred);
                             found = deferred;
                         }
-                        // The root vanished or the store closed: the graph
-                        // still opens on what was read; the next watcher
-                        // cycle or rescan reconciles (an external-editor or
-                        // sync race, not a reason to refuse the graph).
+                        // Root gone/store closed: open read data; the next scan reconciles.
                         Err(_) => {}
                     }
                 }
@@ -1248,13 +1243,18 @@ impl Store {
                                     found.files,
                                     found.config_changed,
                                     found.pages,
-                                    || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
+                                    || {
+                                        worker_load
+                                            .status
+                                            .lock()
+                                            .unwrap()
+                                            .record_ready(&worker_graph, publish_began)
+                                    },
                                 );
                             },
                         );
                         if published {
                             worker_changes.end_deferral(&worker_watch, true);
-                            worker_graph.diag.ready(publish_began);
                             let _ = worker_watch_wake.send(());
                         }
                     }

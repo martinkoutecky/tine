@@ -8,6 +8,7 @@ import { dbg } from "./debug";
 import { pushToastUnique } from "./toasts";
 
 export type UiFailureFamily =
+  | "editor-load"
   | "block-history"
   | "external-link"
   | "capture-preference"
@@ -44,6 +45,7 @@ export type UiFailureFamily =
   | "sheet-export";
 
 const MESSAGES: Record<UiFailureFamily, Msg> = {
+  "editor-load": msg("ui-failure-editor-load"),
   "block-history": msg("ui-failure-block-history"),
   "custom-css": msg("ui-failure-custom-css"),
   "css-draft": msg("ui-failure-css-draft"),

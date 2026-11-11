@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+doctest = false
+
 # The bundled Guide pages and assets, kept out of tine-core so a Guide-only
 # edit recompiles this crate and its consumers instead of the whole workspace.
 [dependencies]

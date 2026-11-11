@@ -7,6 +7,7 @@ import { doc } from "../document/model";
 import { loadSingle } from "../document/workingSet";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { setCm6EditorEnabled } from "../editor/cm6Setting";
+import { preloadCm6Editor } from "./EditorGate";
 import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { initParser } from "../render/parse";
 import { logbookInfo } from "../logbook";
@@ -16,7 +17,7 @@ import * as router from "../router";
 import * as ui from "../ui";
 import { registerWindow } from "../windowRealm";
 
-beforeAll(() => initParser());
+beforeAll(async () => { await initParser(); await preloadCm6Editor(); });
 
 const PAGE = "Editor exit parity";
 const leaf = (raw: string) => ({ id: "exit-block", raw, collapsed: false, children: [] });
