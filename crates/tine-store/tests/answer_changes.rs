@@ -112,14 +112,35 @@ fn create_delete_and_rename_publish_both_answers() {
     let mut tx = store.page_plan(Some(EditKind::CreatePage));
     tx.save_page(&[EditKind::CreatePage], &new, SaveBase::CreateNew, &dto);
     let created = apply_published(&store, tx);
-    assert_eq!(created["summary"]["full"], true);
+    // D-20261102-PERF row 3: a create, rename or delete is summarised
+    // precisely (it was `full`); the summary names the moved page keys and
+    // the referenced block, so its readers still refresh.
+    let precise = |signal: &Value, pages: &[&str]| {
+        assert_eq!(signal["summary"]["full"], false, "{signal}");
+        let mut named: Vec<_> = signal["summary"]["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key.as_str().unwrap())
+            .collect();
+        named.sort_unstable();
+        assert_eq!(named, pages, "{signal}");
+        assert!(
+            signal["summary"]["refsTo"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(ONE)),
+            "{signal}"
+        );
+    };
+    precise(&created, &["new"]);
     assert_eq!(created["inventoryChanged"], true);
     counts(&created, json!({ONE:1}));
     let renamed = store.file_id(Area::Pages, "Renamed.md").unwrap();
     let mut tx = store.page_plan(Some(EditKind::RenamePage));
     tx.move_file(&new.file(), store.page(&new).unwrap().rev, &renamed, None);
     let moved = apply_published(&store, tx);
-    assert_eq!(moved["summary"]["full"], true);
+    precise(&moved, &["new", "renamed"]);
     assert_eq!(moved["inventoryChanged"], true);
     // The destination publishes first and the source's removal last, so the
     // merged value carries the final count.
@@ -131,7 +152,7 @@ fn create_delete_and_rename_publish_both_answers() {
         crate::TrashIf::Any,
     );
     let deleted = apply_published(&store, tx);
-    assert_eq!(deleted["summary"]["full"], true);
+    precise(&deleted, &["renamed"]);
     assert_eq!(deleted["inventoryChanged"], true);
     counts(&deleted, json!({ONE:0}));
     store.close();
