@@ -16,6 +16,9 @@ print retains unconstrained KaTeX layout without formula scrollport clipping.
 Published HTML uses its own stylesheet. Fitting indivisible math to paper narrower
 than its natural width is a separate print-policy question.
 
-The layout adds no file operations, stat calls, fsyncs, IPC, typesetting passes,
-or application renders. Browser layout remains proportional to the rendered
-formula; there is no graph-wide work or resize listener.
+Containment is CSS-only: it adds no application file operations, stat calls,
+fsyncs or IPC. The shared MathView typesets once per formula instance and once
+per TeX/display-mode change; resizing panes and scrolling locally add zero
+typesetting passes or component mounts (`src/render/mathOperations.test.tsx`).
+Browser layout remains proportional to the rendered formula; there is no
+graph-wide work or application resize listener for containment.
