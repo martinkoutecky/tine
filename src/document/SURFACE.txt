@@ -218,6 +218,7 @@ undo
 undoTopTag  # why: the query crossing notice offers Undo only while its own save is still the top undo step; batch14q4a
 unsavedDrafts  # why: the unsaved-changes recovery panel and close prompt list each page whose edits are not on disk, with its draft (GH #540); batch20b
 unsavedPageCount  # why: a close that discards drafts records how many pages it dropped, as a count only; batch18a
+visibleNeighbor  # why: leaving a dated thread drawn inline skips the thread in one scoped pass (MC5/MC6, #891); batch-mc-messages-1111
 visibleOrder
 whenPageReplaceable  # why: a refused load retries once the holder is replaceable; batchJ1
 withBlockMoving

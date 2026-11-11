@@ -6,7 +6,7 @@
 
 import { anchorQuote, type QuoteSelector } from "./comments";
 import { commentChildOf } from "./commentChildren";
-import { nextVisible, prevVisible, node as docNode, type OutlineScope } from "./document";
+import { nextVisible, prevVisible, visibleNeighbor, node as docNode, type OutlineScope } from "./document";
 import type { Format } from "./render/ast";
 import { bodyNeighbor } from "./document";
 import { commentsInPopup } from "./commentMarginPref";
@@ -125,24 +125,36 @@ export function marginNext(id: string, scope: OutlineScope | null, nav: MarginNa
 
 /** Neighbours on a surface that draws threads inline (reference previews,
  * the sidebar): the stored outline, except that a dated thread is read in
- * message order, as it is drawn. Body blocks still step over threads
- * (visibleNeighbor). O(thread size). */
+ * message order, as it is drawn, within the surface's scope. Body blocks
+ * still step over threads (visibleNeighbor). O(thread size x depth) plus one
+ * scoped order. */
 export function outlinePrev(id: string, scope: OutlineScope | null): string | null {
   const root = datedThreadRoot(id);
-  const order = root ? datedThreadOrder(root, scope) : null;
+  const order = root ? surfaceThreadOrder(root, scope) : null;
   const at = order?.indexOf(id) ?? -1;
-  if (order && at > 0) return order[at - 1];
-  return prevVisible(id, scope);
+  return order && at > 0 ? order[at - 1] : prevVisible(id, scope);
 }
 
 export function outlineNext(id: string, scope: OutlineScope | null): string | null {
   const root = datedThreadRoot(id);
-  const order = root ? datedThreadOrder(root, scope) : null;
+  const order = root ? surfaceThreadOrder(root, scope) : null;
   const at = order?.indexOf(id) ?? -1;
-  if (order && at >= 0 && at + 1 < order.length) return order[at + 1];
-  let next = nextVisible(id, scope);
-  if (root && at >= 0) while (next !== null && insideThread(next, root)) next = nextVisible(next, scope);
-  return next;
+  if (!root || !order || at < 0) return nextVisible(id, scope);
+  if (at + 1 < order.length) return order[at + 1];
+  // Leave from the root, which stays visible when the last message's stored ancestor is folded.
+  return visibleNeighbor(inScope(root, scope) ? root : id, 1, scope, at => !insideThread(at, root));
+}
+
+/** The thread's message order, cut to what a scope shows (a reply opened alone). */
+function surfaceThreadOrder(root: string, scope: OutlineScope | null): string[] | null {
+  const order = datedThreadOrder(root, scope);
+  return order && !inScope(root, scope) ? order.filter(id => inScope(id, scope)) : order;
+}
+
+function inScope(id: string, scope: OutlineScope | null): boolean {
+  if (!scope) return true;
+  for (let at: string | null = id; at !== null; at = docNode(at)?.parent ?? null) if (scope.roots.includes(at)) return true;
+  return false;
 }
 
 /** The last visible message of a thread. O(thread size). */

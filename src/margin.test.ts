@@ -153,7 +153,7 @@ describe("arrow keys through a dated thread drawn inline (secondary surfaces)", 
   const outline = (folded: boolean) => load([
     block("p", "commented text", [
       block("r", "First message\ntine.quote:: commented" + date, [
-        { ...block("ev", "Evidence", [block("nested", "nested body"), block("reply", "Hand-nested reply" + date)]), collapsed: folded },
+        { ...block("ev", "Evidence", [block("nested", "nested body"), block("reply", "Hand-nested reply" + date, [block("rbody", "reply body")])]), collapsed: folded },
         block("trail", "trailing body"),
       ]),
     ]),
@@ -165,8 +165,25 @@ describe("arrow keys through a dated thread drawn inline (secondary surfaces)", 
     expect(outlineNext("nested", null)).toBe("trail");
     expect(outlineNext("trail", null)).toBe("reply");
     expect(outlinePrev("reply", null)).toBe("trail");
-    expect(outlineNext("reply", null)).toBe("after");
+    expect(outlineNext("reply", null)).toBe("rbody");
+    expect(outlineNext("rbody", null)).toBe("after");
     expect(outlinePrev("r", null)).toBe("p");
+  });
+
+  it("a reply opened alone (sidebar scope) stays inside what the surface shows", () => {
+    outline(false);
+    const scope = { roots: ["reply"] };
+    expect(outlinePrev("reply", scope)).toBeNull();
+    expect(outlineNext("reply", scope)).toBe("rbody");
+    expect(outlinePrev("rbody", scope)).toBe("reply");
+    expect(outlineNext("rbody", scope)).toBeNull();
+  });
+
+  it("a page scope leaves the thread for the next body block", () => {
+    outline(false);
+    const scope = { roots: ["p", "after"] };
+    expect(outlineNext("nested", scope)).toBe("trail");
+    expect(outlineNext("rbody", scope)).toBe("after");
   });
 
   it("a folded body still leads on to the messages under it", () => {
@@ -174,6 +191,7 @@ describe("arrow keys through a dated thread drawn inline (secondary surfaces)", 
     expect(outlineNext("ev", null)).toBe("trail");
     expect(outlineNext("trail", null)).toBe("reply");
     expect(outlinePrev("reply", null)).toBe("trail");
-    expect(outlineNext("reply", null)).toBe("after");
+    expect(outlineNext("rbody", null)).toBe("after");
+    expect(outlineNext("rbody", { roots: ["p", "after"] })).toBe("after");
   });
 });
