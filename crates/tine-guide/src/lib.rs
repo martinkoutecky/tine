@@ -1130,6 +1130,9 @@ mod rename_guide_tests {
 
     #[test]
     fn margin_comments_are_documented() {
+        for fact in ["**Next comment**", "**Previous comment**", "Steps stop at either end", "review stays on the day you last used", "Both commands have no default key"] {
+            assert!(include_str!("templates/tips.md").contains(fact));
+        }
         let tips = include_str!("templates/tips.md");
         for behavior in [
             "- ## Comment on a passage — Ctrl+R",

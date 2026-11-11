@@ -31,6 +31,11 @@ pixels, and compare it with the frozen table `SURFACES` in
 
 ## Failure modes
 
+MC9 (D-20261109-MC9; GH #891 c13) explicitly adds **Next comment** and
+**Previous comment** to both the palette and Keyboard shortcuts. The approved
+review capability sets `commands.registry` to 153 (from 151) and
+`commands.palette` to 93 (from 91).
+
 - A count above its budget fails, naming the surface, the count, the budget, and
   how to raise it.
 - A count of 0, or a surface the test did not reach, fails: a probe that counts

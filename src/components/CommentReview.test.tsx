@@ -1,0 +1,118 @@
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { render } from "solid-js/web";
+import { createRoot, For } from "solid-js";
+import { CommentSurface } from "./CommentSurface";
+import { Block } from "./Block";
+import { initParser, blockRegions } from "../render/parse";
+import { loadSingle } from "../document/workingSet";
+import { node, pageByName, resetStore, setRaw } from "../document";
+import { createCommentIndex } from "../commentIndex";
+import { setDoc } from "../document/model";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { changeCommentsInPopup, persistCommentMarginHidden } from "../commentMarginPref";
+import { commandDefaults, paletteCommands, runGlobalCommand } from "../keybindings";
+import { endEdit } from "../editorController";
+import type { BlockDto } from "../types";
+
+let dispose: (() => void) | undefined;
+beforeAll(async () => { await initParser(); if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList; });
+beforeEach(async () => { await bindTestHost(); persistCommentMarginHidden(false); });
+afterEach(() => { endEdit("page-navigation"); dispose?.(); resetStore(); changeCommentsInPopup(false); document.body.replaceChildren(); vi.restoreAllMocks(); });
+const b = (id: string, raw: string, children: BlockDto[] = [], collapsed = false): BlockDto => ({ id, raw, children, collapsed,
+  properties: blockRegions(raw, "md").properties.filter(p => p.primary).map(p => [p.key, p.value]) });
+const stepPageComment = (step: number) => { expect(runGlobalCommand(step > 0 ? "comment/next" : "comment/previous")).toBe(true); };
+function mount(width: number, popup: boolean, blocks?: BlockDto[]) {
+  changeCommentsInPopup(popup);
+  loadSingle({ name: "Review", title: "Review", id: "/graph/pages/Review.md", rev: "fixture", kind: "page", format: "md", pre_block: null, blocks: blocks ?? [
+    b("p", "first then last", [b("last", "Last\ntine.quote:: last"), b("first", "First\ntine.quote:: first"),
+      b("tie", "Tie\ntine.quote:: first"), b("closed", "Closed\ntine.quote:: then\ntine.resolved:: true")]),
+    b("q", "another passage", [b("third", "Third\ntine.quote:: passage")]),
+  ] });
+  const pane = document.createElement("main"); pane.className = "main-content"; document.body.append(pane);
+  Object.defineProperty(pane, "clientWidth", { value: width });
+  dispose = render(() => <CommentSurface main page={pageByName("Review")}><For each={pageByName("Review")?.roots}>{id => <Block id={id} />}</For></CommentSurface>, pane);
+  return pane;
+}
+const focused = () => (document.activeElement as HTMLElement)?.dataset.replyRoot;
+it.each([[1400, false, ".margin-column"], [800, false, ".comment-thread-popup"], [1400, true, ".comment-thread-popup"], [390, false, ".comment-bottom-sheet"]] as const)("reviews in margin order at width %s, popup %s", async (width, popup, target) => {
+  const pane = mount(width, popup);
+  const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  const drawn = () => [...pane.querySelectorAll<HTMLElement>(".margin-column .comment-card")].map(card => card.dataset.blockId);
+  if (target === ".margin-column") expect(drawn()).toEqual(["first", "tie", "last", "third"]);
+  for (const id of ["first", "tie", "last", "third"]) {
+    stepPageComment(1);
+    await vi.waitFor(() => expect(focused()).toBe(id));
+    expect(document.activeElement?.closest(target)).not.toBeNull();
+  }
+  stepPageComment(1); expect(focused()).toBe("third");
+  stepPageComment(-1); await vi.waitFor(() => expect(focused()).toBe("last"));
+  expect(scroll).toHaveBeenCalledTimes(5);
+  pane.querySelector<HTMLButtonElement>(".comment-resolved-toggle")!.click();
+  if (target === ".margin-column") expect(drawn()).toEqual(["first", "tie", "closed", "last", "third"]);
+  stepPageComment(-1); await vi.waitFor(() => expect(focused()).toBe("closed"));
+  if (width < 1100 || popup) {
+    document.querySelector<HTMLButtonElement>(".comment-next-thread")!.click();
+    await vi.waitFor(() => expect(focused()).toBe("last"));
+    document.querySelector<HTMLButtonElement>(".comment-next-thread")!.click();
+    await vi.waitFor(() => expect(focused()).toBe("third"));
+  }
+});
+
+it("offers localized review commands in the palette and shortcut settings without default collisions", () => {
+  for (const [id, label] of [["comment/next", "Next comment"], ["comment/previous", "Previous comment"]]) {
+    expect(paletteCommands().find(command => command.id === id)?.label).toBe(label);
+    expect(commandDefaults().find(command => command.id === id)).toMatchObject({ label, binding: "" });
+  }
+});
+
+it("reviews a parent's own thread before hidden descendant threads and reveals only their ancestor path", async () => {
+  mount(1400, true, [b("p", "Parent", [b("q", "Child", [b("child", "Child thread\ntine.quote:: Child")]), b("own", "Own thread\ntine.quote:: Parent")], true),
+    b("unrelated", "Unrelated", [b("untouched", "Hidden body")], true)]);
+  stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe("own"));
+  expect(node("p")?.collapsed).toBe(true);
+  stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe("child"));
+  expect(node("p")?.collapsed).toBe(false);
+  expect(node("unrelated")?.collapsed).toBe(true);
+});
+
+it("keeps review inside the selected journal day", async () => {
+  mount(1400, true);
+  dispose?.();
+  const pane = document.querySelector<HTMLElement>("main")!;
+  dispose = render(() => <><section data-day="one"><CommentSurface main page={pageByName("Review")} roots={["p"]}><Block id="p" /></CommentSurface></section>
+    <section data-day="two"><CommentSurface main page={pageByName("Review")} roots={["q"]}><Block id="q" /></CommentSurface></section></>, pane);
+  stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe("first"));
+  pane.querySelector('[data-day="two"] .block-content')!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe("third"));
+  stepPageComment(1); expect(focused()).toBe("third");
+  stepPageComment(-1); expect(focused()).toBe("third");
+});
+
+it("review metadata stays current after the outline releases its shared comment view", () => {
+  mount(1400, true);
+  createRoot(stop => {
+    const index = createCommentIndex(() => pageByName("Review")!.roots);
+    let releaseOutline!: () => void, releaseReview!: () => void;
+    createRoot(dispose => { releaseOutline = dispose; return index.childrenOf("p"); });
+    const reviewed = createRoot(dispose => { releaseReview = dispose; return index.childrenOf("p"); });
+    releaseOutline();
+    setRaw("first", node("first")!.raw + "\ntine.resolved:: true", { timetracking: false });
+    expect(reviewed().entries.find(entry => entry.id === "first")?.resolved).toBe(true);
+    releaseReview();
+    const reopenedView = createRoot(dispose => {
+      const value = index.childrenOf("p")().entries.find(entry => entry.id === "first")?.resolved;
+      dispose(); return value;
+    });
+    expect(reopenedView).toBe(true);
+    stop();
+  });
+});
+
+it.each([[1400, false, ".margin-column"], [1400, true, ".comment-thread-popup"], [390, false, ".comment-bottom-sheet"]] as const)("focuses a read-only thread card at width %s, popup %s", async (width, popup, target) => {
+  mount(width, popup);
+  setDoc("pages", 0, "readOnly", true);
+  stepPageComment(1);
+  await vi.waitFor(() => expect((document.activeElement as HTMLElement).dataset.blockId).toBe("first"));
+  expect(document.activeElement?.closest(target)).not.toBeNull();
+  expect(document.querySelector(".comment-reply-draft")).toBeNull();
+});

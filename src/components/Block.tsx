@@ -440,7 +440,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
         </Switch>
       </Show>
-      <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>
+      <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} /></Show>
       <SeenRemoved after={props.id} />
     </div>
   );

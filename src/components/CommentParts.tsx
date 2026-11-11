@@ -140,7 +140,7 @@ export function CommentActions(props: { id: string }): JSX.Element {
 
 /** No document node exists while composing: abandoning an empty draft costs
  * zero writes. Once submitted it is an ordinary editable child block. */
-export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
+export function CommentComposer(props: { id: string; surface: string; card?: () => HTMLElement | null | undefined }): JSX.Element {
   const { draft, setDraft, expanded, setExpanded } = commentDraftState(props.id, props.surface);
   // Hiding the margin would unmount this textarea and its unsent text.
   onCleanup(registerReplyDraft(() => draft(), props.id));
@@ -150,11 +150,14 @@ export function CommentComposer(props: { id: string; surface: string }): JSX.Ele
   onMount(() => createEffect(() => {
     const held = replyFocusRequest();
     if (!held || held.id !== props.id || held.surface !== null && held.surface !== props.surface) return;
-    setExpanded(true);
+    const writable = blockWritable(props.id);
+    if (writable) setExpanded(true);
     // Let the expanded class render and the old editor finish unmounting.
     queueMicrotask(() => {
-      if (replyFocusRequest() !== held || !input.isConnected) return;
-      input.focus();
+      const target = writable ? input : props.card?.();
+      if (replyFocusRequest() !== held || !target?.isConnected) return;
+      if (!writable) target.tabIndex = -1;
+      target.focus({ preventScroll: held.preventScroll });
       consumeReplyFocus();
     });
   }));
