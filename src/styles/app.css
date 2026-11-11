@@ -3777,15 +3777,14 @@ html[data-system-insets="native-viewport"] {
 /* Titles and one-line labels have no parser verdict; each takes its own text's direction. */
 .page-title, .crumb, .sticky-ancestor-label { unicode-bidi: plaintext; }
 
-/* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
-   request this known visual vocabulary but cannot inject CSS or DOM. */
+/* Host-owned `thread-lines` rendering; the guest cannot inject CSS or DOM. */
 .plugin-thread-lines {
   --thread-bullet-x: 26px;
   --thread-active-color: var(--thread-color, var(--ls-link-text-color));
   --thread-normal-color: color-mix(in srgb, var(--guide-color) 82%, transparent);
 }
 .plugin-thread-lines-standard { --thread-normal-color: var(--guide-color); }
-.plugin-thread-lines > .block-children-container > .block-children {
+.ls-block.plugin-thread-lines:not(.plugin-thread-lines-active) > .block-children-container > .block-children {
   border-inline-start-color: transparent;
 }
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block {
@@ -3821,14 +3820,12 @@ html[data-system-insets="native-viewport"] {
   z-index: 1;
 }
 
-/* Active mode follows the focused branch using only host-owned focus state. It
-   does not reveal block contents to the guest or let the guest select DOM. */
+/* Active elbows follow host-owned focus; ordinary guide borders stay visible. */
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:not(:focus-within) > .block-main::before {
   display: none;
 }
 
-/* The remaining connectors are the edited block's ancestry; emphasize them in
-   the active color, as the ported Logseq plugin does (GH #614). */
+/* Emphasize the edited block's ancestry as the Logseq plugin does (GH #614). */
 .plugin-thread-lines > .block-main {
   position: relative;
   --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
@@ -3836,8 +3833,7 @@ html[data-system-insets="native-viewport"] {
 .plugin-thread-lines > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
 .plugin-thread-lines > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
 .plugin-thread-lines > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
-/* Start beneath the parent bullet, then span preceding siblings. Stop at the
-   focused child's elbow, so unrelated guides retain their normal appearance. */
+/* Start beneath the parent bullet and span preceding siblings to the active elbow. */
 .plugin-thread-lines:not(.collapsed) > .block-main::after {
   content: "";
   position: absolute;
@@ -3859,6 +3855,11 @@ html[data-system-insets="native-viewport"] {
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
   pointer-events: none;
 }
+/* An elbow ends the path at the final sibling; a straight continuation through
+   that row would cross the curve and extend into its descendants (GH #129). */
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:last-child) > .ls-block:last-child::after {
+  display: none;
+}
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
   border-inline-start-color: var(--thread-active-color);
 }
@@ -3870,8 +3871,7 @@ html[data-system-insets="native-viewport"] {
 :is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
   display: block;
 }
-/* Shell windowing groups siblings in separate wrappers. Carry the vertical
-   path across preceding windows and their unmounted height placeholders. */
+/* Carry the vertical path across preceding windows and unmounted placeholders. */
 .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window {
   position: relative;
 }
