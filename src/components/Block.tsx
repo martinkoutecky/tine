@@ -244,23 +244,15 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
   // The children-source sheet this block owns (a query block's table/board is the macro's).
   const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
-  // `thread-lines` only decorates the ordinary outline container below this row,
-  // so a leaf (most blocks of a large flat page) does not subscribe to plugin
-  // installation/settings at all. Collapsed parents stay eligible so their
-  // decoration is already current when they expand (master ce9a796fb). A plain
-  // function, not a memo: a memo would allocate a reactive node per block to
-  // answer "false" thousands of times.
+  // Only ordinary-outline parents (including folded ones) read plugin decoration.
   const threadLineDecoration = (): ThreadLineDecoration => {
     if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
     return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
       key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
-  // Heading level of THIS block's first line, so the bullet column can match the
-  // (taller) heading line box and the bullet stays centered on it. Shared with
-  // `Rendered`, so the `depthOf` parent walk happens once per block, not twice.
+  // Share first-line heading/bullet alignment with Rendered: one depthOf walk.
   const headingLevel = createMemo(() => effectiveHeadingLevel(blockFacets(), depthOf(props.id)));
-  // Editor-only derivations, read solely while THIS block is being edited: lazy,
-  // so a page load never runs `splitProps` over every block's raw text.
+  // Editor-only: page load never runs splitProps over every block's text.
   const editorVisibleValue = () => {
     const n = node();
     if (!n) return "";
@@ -287,6 +279,14 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
+  const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
+  // One conditional owner for identity chrome across the row's separate slots.
+  const commentPresentation = createMemo(() => hasCommentIdentity() ? {
+    quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() ? null : commentSelector()} />,
+    header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>,
+    gutter: <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />,
+    composer: <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>,
+  } : null);
   // A page-embed host pins its own bullet while its embedded page scrolls (GH #898).
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
   let mainEl: HTMLDivElement | undefined;
@@ -313,8 +313,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
       <Show when={stickyParent() ? macro()?.kind ?? "outline" : false} keyed><StickyAncestor id={props.id} raw={macro()?.kind === "embed" ? macro()!.inner.slice("embed ".length) : node().raw} /></Show>
-      <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() ? null : commentSelector()} />
-      <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>
+      {commentPresentation()?.quote}
+      {commentPresentation()?.header}
       <div
         class="block-main"
         ref={(el) => {
@@ -377,11 +377,11 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
-          <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />
+          {commentPresentation()?.gutter}
           <Show
             when={editing() ? node() : undefined} keyed
             fallback={
-              <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0} comments={commentChildren} coverage={quoteCoverage}>
+              <QuoteHighlightProvider parentId={props.id} format={fmt()} when={node().children.length > 0} comments={commentChildren} coverage={quoteCoverage()}>
                 {() => <Rendered
                   id={props.id}
                   node={node}
@@ -404,8 +404,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="authored-editor"><Show when={showsAuthor() && !bulletless()}><AuthorChip author={author()} menuOf={props.id} /></Show><Editor id={props.id} propertySession={propertySession} /></div>
           </Show>
         </div>
-        <MarginMarker parentId={props.id} comments={marginComments()} source={commentChildren} coverage={quoteCoverage} />
-        <CommentBelowChip id={props.id} collapsed={collapsed() && !props.forceExpanded && !bulletless()} expand={() => toggleViewFold(props.id, viewCollapseSurface(), true)} />
+        <Show when={node().children.length > 0}><MarginMarker parentId={props.id} comments={marginComments()} source={commentChildren} coverage={quoteCoverage()} />
+        <CommentBelowChip id={props.id} collapsed={collapsed() && !props.forceExpanded && !bulletless()} expand={() => toggleViewFold(props.id, viewCollapseSurface(), true)} /></Show>
       </div>
       <SeenRemoved first={props.id} />
       <Show when={showRefs()}>
@@ -440,7 +440,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
         </Switch>
       </Show>
-      <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>
+      {commentPresentation()?.composer}
       <SeenRemoved after={props.id} />
     </div>
   );

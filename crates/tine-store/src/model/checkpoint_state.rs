@@ -319,6 +319,7 @@ impl Graph {
         let mut read = ReadSnapshot {
             template_names: template_names::TemplateNames::capture(None, &pages, &[]),
             path_membership: Default::default(),
+            calendar_days: calendar_days::CalendarDays::capture(None, &pages, &[]),
             physical_pages,
             pages,
             semantic_changed_paths: Vec::new(),
