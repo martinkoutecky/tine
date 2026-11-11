@@ -1866,22 +1866,91 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
 }
 
 #[test]
+fn gh930_add_refuses_blank_authors_without_writing() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let file = graph.root.join("pages/a.md");
+    let before = std::fs::read(&file).unwrap();
+    for author in ["", " \t\n", "\u{2003}"] {
+        let result = verb(
+            &slot,
+            "block.add",
+            json!({"page":"a", "content":"- new", "author":author}),
+        );
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            before,
+            "blank author changed the page"
+        );
+        let (code, detail) = error_code(result);
+        assert_eq!(code, "refused");
+        assert_eq!(detail["reason"], "kernel");
+    }
+    verb(
+        &slot,
+        "block.add",
+        json!({"page":"a", "content":"- new", "author":"  Ada  "}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(text.contains("tine.author:: Ada\n"), "{text}");
+    assert!(!text.contains("tine.author::   "), "{text}");
+}
+
+#[test]
+fn gh930_author_property_set_refuses_blank_and_remove_still_works() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let file = graph.root.join("pages/a.md");
+    let before = std::fs::read(&file).unwrap();
+    let result = verb(
+        &slot,
+        "block.prop",
+        json!({"handle":UUID, "key":"tine.author", "value":" \t"}),
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    assert_eq!(error_code(result).0, "refused");
+    verb(
+        &slot,
+        "block.prop",
+        json!({"handle":UUID, "key":"tine.author", "value":"  Ada  "}),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(&file)
+        .unwrap()
+        .contains("tine.author:: Ada\n"));
+    verb(
+        &slot,
+        "block.prop",
+        json!({"handle":UUID, "key":"tine.author", "value":null}),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(file).unwrap(), before);
+}
+
+#[test]
 fn add_resolves_author_environment_and_explicit_override() {
     // A child process owns its environment, so parallel owner tests never see
     // a process-global env mutation.
     if std::env::var_os("TINE_ADD_AUTHOR_TEST_CHILD").is_none() {
-        assert!(
-            std::process::Command::new(tine_store::test_binary::own_test_binary())
-                .args([
-                    "--exact",
-                    "owner::owner_tests::add_resolves_author_environment_and_explicit_override"
-                ])
-                .env("TINE_ADD_AUTHOR_TEST_CHILD", "1")
-                .env("TINE_AUTHOR", "Environment Author")
-                .status()
-                .unwrap()
-                .success()
-        );
+        for (environment, expected) in [
+            ("  Environment Author  ", "Environment Author"),
+            ("", "agent"),
+            (" \t\u{2003}", "agent"),
+        ] {
+            assert!(
+                std::process::Command::new(tine_store::test_binary::own_test_binary())
+                    .args([
+                        "--exact",
+                        "owner::owner_tests::add_resolves_author_environment_and_explicit_override"
+                    ])
+                    .env("TINE_ADD_AUTHOR_TEST_CHILD", expected)
+                    .env("TINE_AUTHOR", environment)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
         return;
     }
     let graph = Graph::new();
@@ -1899,7 +1968,11 @@ fn add_resolves_author_environment_and_explicit_override() {
     )
     .unwrap();
     let text = std::fs::read_to_string(graph.root.join("pages/env.md")).unwrap();
-    assert!(text.contains("tine.author:: Environment Author"), "{text}");
+    let expected = std::env::var("TINE_ADD_AUTHOR_TEST_CHILD").unwrap();
+    assert!(
+        text.contains(&format!("tine.author:: {expected}\n")),
+        "{text}"
+    );
     assert!(text.contains("tine.author:: Ada"), "{text}");
 }
 

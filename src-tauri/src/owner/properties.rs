@@ -35,6 +35,15 @@ pub(super) fn prop_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
         .ok_or_else(|| ErrorBody::new("bad-args", "block.prop needs a handle", false))?;
     let handle = parse_handle(text)?;
     let page = handle_page(slot, &handle)?;
+    let value = if args.key.eq_ignore_ascii_case(tine_core::tine_keys::AUTHOR) {
+        args.value
+            .as_deref()
+            .map(|name| super::write::author_name(Some(name)))
+            .transpose()
+            .map_err(|e| refused("kernel", Some(&page), e))?
+    } else {
+        args.value.clone()
+    };
     write_page(
         slot,
         &page,
@@ -49,7 +58,7 @@ pub(super) fn prop_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 doc.format == Format::Org,
                 tine_core::block_regions::Edit::Property {
                     key: args.key.clone(),
-                    value: args.value.clone(),
+                    value: value.clone(),
                 },
             )
             .map_err(|e| refused("kernel", Some(page), e))?;
