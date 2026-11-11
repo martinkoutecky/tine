@@ -107,7 +107,21 @@ try {
   passed.push(stage); console.log(`PASS ${stage}: ${deliveredToast}`);
 
   stage = "repairing the refused file makes its page available without reopening the graph";
+  // Search is a snapshot of its query. Wait for the external repair's named
+  // publication before issuing that query, rather than searching the old graph.
+  await browser.executeAsync(done => {
+    window.__repairedDeliveryPublished = false;
+    const handler = window.__TAURI_INTERNALS__.transformCallback(event => {
+      if (event.payload?.name === "Delivered" && !event.payload?.removed) window.__repairedDeliveryPublished = true;
+    });
+    window.__TAURI_INTERNALS__.invoke("plugin:event|listen", { event: "graph-changed", target: { kind: "Any" }, handler })
+      .then(id => { window.__repairedDeliveryListener = id; done(); }, error => done({ error: String(error) }));
+  });
   fs.writeFileSync(delivered, "- repaired external delivery\n");
+  await browser.waitUntil(() => browser.execute(() => window.__repairedDeliveryPublished),
+    { timeout: 15_000, interval: 200, timeoutMsg: "the repaired page was not published" });
+  await browser.executeAsync(done => window.__TAURI_INTERNALS__.invoke("plugin:event|unlisten",
+    { event: "graph-changed", eventId: window.__repairedDeliveryListener }).then(() => done(), error => done({ error: String(error) })));
   await openPageByName(browser, "Delivered");
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".block-content")].some((node) => node.textContent?.includes("repaired external delivery"))),
