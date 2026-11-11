@@ -16,6 +16,14 @@ export function pageOpenMismatch(r: Extract<Route, { kind: "page" }>, dto: PageR
   return pathMismatch || nameMismatch || kindMismatch ? { pathMismatch, nameMismatch, kindMismatch } : null;
 }
 
+/** Whether a route opens a read under the read's identity instead of refusing it:
+ * the same file in another case spelling, or the same file and name with the
+ * store's kind (GH #863). The route loader and the recovery probe both ask this. */
+export function routeAdoptsRead(r: Extract<Route, { kind: "page" }>, dto: PageRead | null): boolean {
+  return !!(r.path && dto?.id && dto.id.toLowerCase() === r.path.toLowerCase()
+    && (dto.id !== r.path || (dto.name === r.name && dto.kind !== r.pageKind)));
+}
+
 /** Record the comparisons that refused this read, without its identity operands. */
 export function recordPageOpenRefusal(stage: "route" | "probe", mismatch: NonNullable<ReturnType<typeof pageOpenMismatch>>, source: PageReadSource | null): void {
   void recordDiagnostic("page_open_refused", { pageOpen: { stage, readSource: source, ...mismatch } });
@@ -90,7 +98,7 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
           if (result.kind === "stale") return;
           const dto = result.value;
           const mismatch = pageOpenMismatch(r, dto);
-          if (refusal === "unreadable" || !mismatch) {
+          if (refusal === "unreadable" || !mismatch || routeAdoptsRead(r, dto)) {
             retry();
             return;
           }
