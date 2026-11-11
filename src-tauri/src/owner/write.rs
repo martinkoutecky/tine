@@ -17,7 +17,8 @@ use tine_core::doc::DocBlock;
 use tine_core::editor_text::{set_text_with_policy, split, HidePolicy};
 use tine_core::model::{BlockDto, Format, PageDto};
 use tine_store::{
-    ApplyRefusal, EditKind, HostExpected, HostReadError, Input, PageId, SaveBase, StoreError, Why,
+    ApplyRefusal, EditKind, HostExpected, HostReadError, Input, PageId, Refusal, SaveBase,
+    StoreError, Why,
 };
 
 use super::endpoint::busy;
@@ -819,10 +820,14 @@ pub(super) fn write_page_in_turn(
         let mut op = match tx.plan() {
             Ok(op) => op,
             Err(Why::Conflict { .. }) => continue,
+            // An unreadable config.edn stays the write failure the CLI has
+            // always reported; only the window words it (CLI codes are API).
+            Err(Why::Failed(error) | Why::Refused(Refusal::ConfigUnreadable(error))) => {
+                return Err(plan_failed(error, &read.page))
+            }
             Err(Why::Refused(refusal)) => {
                 return Err(refused("store", Some(&read.page), format!("{refusal:?}")))
             }
-            Err(Why::Failed(error)) => return Err(plan_failed(error, &read.page)),
         };
         // The store planned from its own read; the host's must be the same
         // bytes, or the page moved in between (PROTOCOL §5).

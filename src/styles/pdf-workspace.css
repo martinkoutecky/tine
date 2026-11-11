@@ -339,7 +339,7 @@
   background: color-mix(in srgb, var(--link-color) 13%, transparent);
 }
 
-@container pdfviewer (max-width: 520px) {
+@container pdfviewer (max-width: 32.5rem) {
   .pdf-toolbar {
     height: 64px;
     flex-basis: 64px;

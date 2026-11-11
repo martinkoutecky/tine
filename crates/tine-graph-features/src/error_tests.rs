@@ -149,3 +149,25 @@ fn fail_read_asset_inventory_cannot_be_an_empty_success() {
     store.close();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_config_refusal_after_a_partial_save_keeps_its_family_and_what_was_saved() {
+    // Review of HVgII: the PDF highlights sidecar is saved, then planning the
+    // annotation page is refused because config.edn became unreadable.
+    let refused = why_error(Why::Refused(Refusal::ConfigUnreadable(IoError {
+        kind: io::ErrorKind::InvalidData,
+        message: "invalid utf-8 sequence of 1 bytes from index 35".into(),
+    })));
+    let error = after_partial("The highlights were saved", refused);
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<ConfigUnreadable>()));
+    assert_eq!(
+        error.to_string(),
+        "config-unreadable-after: The highlights were saved\ninvalid utf-8 sequence of 1 bytes from index 35"
+    );
+    // Any other failure keeps the plain prefix.
+    let other = after_partial("The merge was saved", io::Error::other("Disk full"));
+    assert_eq!(other.to_string(), "The merge was saved, but disk full");
+}

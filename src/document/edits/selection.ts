@@ -108,6 +108,11 @@ export function selectedIds(): string[] {
 // call — so without this, a selection over N visible blocks costs O(N²). The
 // memo recomputes only when the anchor/focus or the visible tree changes.
 const selectedSet = createRoot(() => createMemo(() => new Set(selectedIds())));
+/** The lone selected block, or null. Reads the existing memo without ordering the outline again. */
+export function singleSelectedId(): string | null {
+  const selected = selectedSet();
+  return selected.size === 1 ? selected.values().next().value! : null;
+}
 const selectedMembership = new ChangeKeyRegistry();
 createRoot(() => {
   let previous = new Set<string>();

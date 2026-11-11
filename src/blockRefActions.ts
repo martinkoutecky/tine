@@ -21,9 +21,13 @@ import {
   pageByName,
   pasteClipboardPayload,
   selectedIds,
+  singleSelectedId,
   setCollapsed,
   storedFold,
   withUndoUnit,
+  blockProperty,
+  blockWritable,
+  setBlockProperty,
   node as docNode,
 } from "./document";
 import { openInNewTab, openPage, openPageAtBlock, zoomToBlock } from "./router";
@@ -31,7 +35,7 @@ import { openBlockInSidebar, openPageInSidebar, openSwitcher } from "./ui";
 import { focusedPaneId, openRouteInOtherPane, paneRouter } from "./panes";
 import { refClickZoom } from "./copySettings";
 import type { InternalLinkDest } from "./linkGesture";
-import { editingId, editingSurface, startEditing } from "./editorController";
+import { editingId, editingSurface, endEdit, startEditing } from "./editorController";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
 import { copyBlockLink } from "./components/blockLinkCopy";
@@ -103,6 +107,25 @@ export function copyTargetBlockRefs(): boolean {
   }
   void copyBlockLink(ids, "ref");
   return true;
+}
+
+/** "Remove author" (GH #918): the block it acts on, or null where it is not
+ *  offered. The block context menu offers it on one writable block carrying
+ *  `tine.author::`; the command takes the same block from the selection or the
+ *  editor, so a selection of several offers nothing. Target lookup reuses the
+ *  memoized selection; property checks read only the target block. */
+export function removeAuthorTarget(ids?: readonly string[]): string | null {
+  const id = ids ? (ids.length === 1 ? ids[0] : null)
+    : hasSelection() ? singleSelectedId() : editingId();
+  return id !== null && blockWritable(id) && blockProperty(id, "tine.author") !== null ? id : null;
+}
+
+/** The one "Remove author" action, for the block context menu and its command:
+ *  leaves the editor and deletes the block's `tine.author::` through the
+ *  ordinary property write (one undo step, the guarded save). */
+export function removeAuthor(id: string): void {
+  endEdit("select-block");
+  setBlockProperty(id, "tine.author", null);
 }
 
 function ancestorsIn(id: string, set: ReadonlySet<string>): boolean {
