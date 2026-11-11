@@ -1455,7 +1455,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-search-parity.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching and default accent folding, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results; search folding does not broaden exact page identity.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching and default accent folding, current-page scope, evidence and Shift-Enter sidebar opening; search folding does not broaden exact page identity. Search shows the opening claimant once and excludes inactive claimant blocks. Conflicts marks the opening file and links both exact files; selecting either preserves its physical edit owner in one same-name sidebar slot and leaves the sibling unchanged.", "blocking": true, "authority": "docs/storage-contract.md claimant order; 74408bb8e; REG-CM-ACTIVE-TWINS; UI-SEARCH-EXACT-STORAGE-IDENTITY-001" }],
       "acceptableVariations": ["Search result layout and ranking among equally valid matches may evolve."],
       "nonRequirements": ["Exact result-row geometry, highlight palette, or animation."],
       "stability": "stable"
