@@ -18,6 +18,7 @@ import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { graphEpoch, setGraphMeta } from "../graphSession";
 import { PageView, reloadJournalsFeedFromStart } from "./Page";
 import type { PageDto, PageRead } from "../types";
+import { rightSidebar, setRightSidebar } from "../ui";
 
 beforeAll(initParser);
 beforeEach(async () => { resetStore(); await bindTestHost(); });
@@ -95,11 +96,15 @@ it("a pathless route that remembered a loaded journal as a page opens it as a jo
     pre_block: null, blocks: [{ id: "held-root", raw: "Held day body", collapsed: false, children: [] }] };
   loadFeed([file]);
   vi.spyOn(backend(), "getPageByPath").mockImplementation(async p => p === path ? file : null);
+  // An ordinary page file with the same title is another owner; its sidebar pin stays its own.
+  const twin = { kind: "page" as const, name: file.name, pageKind: "page" as const, path: "pages/2026-01-03.md" };
+  setRightSidebar([twin]);
   mainPaneRouter.openPageTarget({ name: file.name, pageKind: "page" });
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <PageView />, root);
   try {
     await vi.waitFor(() => expect(root.textContent).toContain("Held day body"));
     expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: file.name, pageKind: "journal", path });
-  } finally { dispose(); }
+    expect(rightSidebar()).toContainEqual(expect.objectContaining(twin));
+  } finally { dispose(); setRightSidebar([]); }
 });

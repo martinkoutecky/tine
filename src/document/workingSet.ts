@@ -1,7 +1,7 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
 import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, pageFrozen, rekeyPage, releaseHolds, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
-import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, setPageKind, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, reconcileLoadedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
@@ -120,11 +120,9 @@ function upsertPage(dto: PageDto & { id?: string }) {
 /** Whether a file holds a journal day is the store's answer (`page_entry_in`:
  * by its path), carried on every read of it. A slot holding that file takes
  * it, so a guess made before the file was read (a route's kind, a creation)
- * never outlives the read (GH #863). Guesses carry no revision. O(loaded pages). */
+ * never outlives the read (GH #863). Guesses carry no revision. O(1). */
 function adoptFileKind(dto: PageDto & { id?: string }): void {
-  if (typeof dto.rev !== "string" || !dto.id) return;
-  const i = doc.pages.findIndex((p) => p.name === dto.name && p.id === dto.id);
-  if (i >= 0 && doc.pages[i].kind !== dto.kind) setDoc("pages", i, "kind", dto.kind);
+  if (typeof dto.rev === "string" && dto.id) setPageKind(dto.name, dto.id, dto.kind);
 }
 
 function dtoHasSameEditor(dto: PageDto, id: string): boolean {

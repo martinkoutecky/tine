@@ -553,8 +553,9 @@ export function PageView(): JSX.Element {
           if (dto?.id && routeAdoptsRead(r, dto, r.path ?? loadedPath)) {
             const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
-            if (r.path) router.rewritePageTarget(from, to); else rewritePageTargetAcrossPanes(from, to);
+            // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
+            if (!r.path) rewritePageTargetAcrossPanes(from, to);
+            else { renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) }); router.rewritePageTarget(from, to); }
             return;
           }
           if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name
