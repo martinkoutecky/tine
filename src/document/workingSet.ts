@@ -91,6 +91,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
   // refresh the save baseline and keep the working copy + undo intact. A GENUINE
   // external change (content differs) still reloads + invalidates (data-safety #42).
   if (existing && pageContentMatches(dto, existing)) {
+    adoptFileKind(dto);
     setBaseRev(dto.name, dto.rev ?? null);
     return;
   }
@@ -132,6 +133,16 @@ function upsertPage(dto: PageDto & { id?: string }) {
   if (replacing) invalidateUndoForPage(dto.name);
 }
 
+/** Whether a file holds a journal day is the store's answer (`page_entry_in`:
+ * by its path), carried on every read of it. A slot holding that file takes
+ * it, so a guess made before the file was read (a route's kind, a creation)
+ * never outlives the read (GH #863). Guesses carry no revision. O(loaded pages). */
+function adoptFileKind(dto: PageDto & { id?: string }): void {
+  if (typeof dto.rev !== "string" || !dto.id) return;
+  const i = doc.pages.findIndex((p) => p.name === dto.name && p.id === dto.id);
+  if (i >= 0 && doc.pages[i].kind !== dto.kind) setDoc("pages", i, "kind", dto.kind);
+}
+
 function dtoHasSameEditor(dto: PageDto, id: string): boolean {
   const current = doc.byId[id];
   if (current.originatedFromPageHeader || (dto.format ?? "md") !== pageByName(dto.name)?.format) return false;
@@ -142,7 +153,8 @@ function dtoHasSameEditor(dto: PageDto, id: string): boolean {
 }
 
 /** Install the page host's text (or, for null, its "no file") as loaded page
- * `name`'s content: the slot keeps its name, kind and title; `path` names the
+ * `name`'s content: the slot keeps its name and title, and takes the text's
+ * kind (a host read's is the store's answer for the file); `path` names the
  * file when the page had none and the host supplies file content. A no-file
  * reply's path is only a creation proposal. Only `host/wiring.ts` calls this. */
 export function installPageContent(name: string, dto: PageDto | null, path?: string | null): void {
@@ -152,7 +164,7 @@ export function installPageContent(name: string, dto: PageDto | null, path?: str
   // new page to `.org`, so its first edits must be spelled as Org.
   const file = page?.id ?? path ?? null;
   const text = dto ?? emptyPage(name, page?.kind ?? "page", file ? formatOfFile(file) : page?.format);
-  upsertPage({ ...text, name, kind: page?.kind ?? text.kind, title: page?.title ?? text.title,
+  upsertPage({ ...text, name, kind: dto?.kind ?? page?.kind ?? text.kind, title: page?.title ?? text.title,
     id: page?.id ?? (dto ? path ?? undefined : undefined), rev: dto ? dto.rev : null });
 }
 
@@ -291,6 +303,7 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusa
     // window holds only a loaded copy. Reuse the feed's guarded replacement
     // and deferred replay; unchanged revisions need no body comparison.
     if (dto.rev !== undefined && dto.rev !== baseRevFor(dto.name)) return upsertUnlessDirty(dto);
+    adoptFileKind(dto);
     return null;
   }
   // A path-pinned route may intentionally load a duplicate-day stray with the
