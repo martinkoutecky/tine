@@ -522,6 +522,9 @@ class TauriBackend implements Backend {
   taggedPages(name: string) {
     return this.call<QueryResult>("tagged_pages", { name });
   }
+  tagTableAvailable(name: string) {
+    return this.call<boolean>("tag_table_available", { name });
+  }
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
   }

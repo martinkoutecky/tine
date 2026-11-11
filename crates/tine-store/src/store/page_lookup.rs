@@ -7,7 +7,88 @@
 use super::*;
 use tine_core::CorpusPage;
 
+impl<'a> From<Option<&'a str>> for CorpusScope<'a> {
+    fn from(name: Option<&'a str>) -> Self {
+        Self::Page(name)
+    }
+}
+
 impl WholeGraph {
+    /// Return an owned `Corpus` of pages in this view for evaluation: every
+    /// page for `None`; for `Some(name)`, the parsed pages whose Logseq
+    /// identity (`refs::page_key`) is `name`'s, ordinary pages and journals
+    /// alike, in page order (what filtering the whole corpus by that key
+    /// gives). `active_only` selects semantic documents; false retains every
+    /// physical claimant for mutation and safety checks. Cost O(P)
+    /// for `None`, O(C log P) for C claimants of the name; parsed documents
+    /// are shared while the result is held.
+    /// BlockIdCandidates uses the existing block index: O(log I + candidate pages),
+    /// with no I/O. Callers verify the persisted-ID predicate within those documents.
+    pub fn corpus<'a>(
+        &self,
+        scope: impl Into<CorpusScope<'a>>,
+        active_only: bool,
+    ) -> tine_core::Corpus {
+        let name = match scope.into() {
+            CorpusScope::Page(name) => name,
+            CorpusScope::BlockIdCandidates(uuid) => {
+                return tine_core::Corpus {
+                    pages: self
+                        .graph
+                        .block_id_candidate_pages(uuid)
+                        .into_iter()
+                        .filter(|(entry, _)| {
+                            !active_only
+                                || self
+                                    .graph
+                                    .pages
+                                    .positions
+                                    .contains_key(entry.rel_path_str())
+                        })
+                        .filter_map(|(entry, document)| {
+                            Some(tine_core::CorpusPage {
+                                id: entry.rel_path.clone()?,
+                                name: entry.name.clone(),
+                                kind: entry.kind,
+                                document: Arc::clone(document),
+                            })
+                        })
+                        .collect(),
+                };
+            }
+        };
+        if let Some(name) = name {
+            let mut corpus = self.corpus_named(name);
+            if active_only {
+                corpus
+                    .pages
+                    .retain(|page| self.graph.pages.positions.contains_key(page.id.as_str()));
+            }
+            return corpus;
+        }
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::corpus();
+        let pages = {
+            let pages = if active_only {
+                &self.graph.pages
+            } else {
+                &self.graph.physical_pages
+            };
+            pages
+                .iter()
+                .filter_map(|(entry, document)| {
+                    Some(tine_core::CorpusPage {
+                        id: entry.rel_path.clone()?,
+                        name: entry.name.clone(),
+                        kind: entry.kind,
+                        document: Arc::clone(document),
+                    })
+                })
+                .collect()
+        };
+        tine_core::Corpus { pages }
+    }
+
     /// See [`WholeGraph::corpus`]: the parsed pages whose `page_key` is
     /// `name`'s, in page order.
     pub(super) fn corpus_named(&self, name: &str) -> tine_core::Corpus {

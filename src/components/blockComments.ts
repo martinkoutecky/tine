@@ -3,7 +3,7 @@
 
 import { createMemo, useContext } from "solid-js";
 import type { OutlineScope } from "../document";
-import { authorOf, quoteSelectorOf } from "../comments";
+import { storedAuthorOf, quoteSelectorOf } from "../comments";
 import { authorTint, isOwnAuthor } from "../commentIdentity";
 import { marginNext, marginPrev, threadRootOf } from "../margin";
 import { nextVisible, prevVisible } from "../document";
@@ -30,22 +30,21 @@ const NO_COMMENT_CLASSES: Record<string, boolean> = {};
 export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org", run?: { id: () => string; neighbours: () => AuthorNeighbors | undefined }) {
   const inThread = () => inCommentThread(node().parent, fmt());
   const commentSelector = () => (node().parent !== null ? quoteSelectorOf(properties()) : null);
-  // Your own name (Settings → Your name) is "you": null, as for a block without `tine.author::`.
-  const author = () => {
-    const written = authorOf(properties());
-    return written !== null && isOwnAuthor(written) ? null : written;
-  };
-  // Keep pair comparisons independent of unrelated row-chrome invalidations.
-  // Only the list IDs and these three nodes' local fields invalidate this memo.
-  const joins = createMemo(() => {
+  // Carry stored attribution through the memo that already owns adjacent-run comparisons.
+  const authorship = createMemo(() => {
+    const stored = storedAuthorOf(properties());
+    const written = stored?.trim() || null;
+    const author = written !== null && isOwnAuthor(written) ? null : written;
     // Thread presentation is gated below. Do not read ancestors here: their
     // raw text would make a parent's keystroke recompute every descendant run.
-    if (author() === null || commentSelector() !== null) return [false, false];
+    if (author === null || commentSelector() !== null) return { stored, author, continued: false, continues: false };
     const neighbours = run?.neighbours()?.();
-    return [authorRunContinues(neighbours?.[0], run?.id(), fmt()), authorRunContinues(run?.id(), neighbours?.[1], fmt())];
+    return { stored, author, continued: authorRunContinues(neighbours?.[0], run?.id(), fmt()), continues: authorRunContinues(run?.id(), neighbours?.[1], fmt()) };
   });
-  const continued = () => joins()[0];
-  const continues = () => joins()[1];
+  const storedAuthor = () => authorship().stored;
+  const author = () => authorship().author;
+  const continued = () => authorship().continued;
+  const continues = () => authorship().continues;
   const showsAuthor = () => (author() !== null && !continued()) || commentSelector() !== null || inThread();
   // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => commentSelector() !== null || inThread();
@@ -67,7 +66,7 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     if (by !== null) classes[`author-tint-${authorTint(by)}`] = true;
     return classes;
   };
-  return { commentSelector, author, showsAuthor, bulletless, commentClasses };
+  return { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses };
 }
 
 const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:");

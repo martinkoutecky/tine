@@ -2005,6 +2005,10 @@ mod customize_look_guide_tests {
         for needed in [
             "logseq/custom.css",
             "--ls-block-properties-background-color",
+            "--tine-comment-highlight-bg",
+            "--tine-comment-card-bg",
+            ".comment-popup-content",
+            "data-author",
             "**Edit global CSS**",
             "**Open in default app**",
             "**Open custom.css in default app**",

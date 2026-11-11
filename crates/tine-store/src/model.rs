@@ -33,6 +33,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
+mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
 #[cfg(test)]
@@ -598,6 +599,7 @@ pub(crate) struct ReadSnapshot {
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     template_names: template_names::TemplateNames,
+    path_membership: path_membership::PathMembership,
     calendar_days: calendar_days::CalendarDays,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
@@ -941,7 +943,7 @@ impl ReadSnapshot {
             ) {
                 if changed_paths.is_empty() {
                     if Arc::ptr_eq(&old.pages, &pages) {
-                        let _ = referenced_name_table.set(table.clone());
+                        let _ = referenced_name_table.set(table.unchanged());
                     }
                 } else {
                     fn side<'a>(
@@ -1025,6 +1027,7 @@ impl ReadSnapshot {
             public_block_ref_counts: std::sync::OnceLock::new(),
             icon_index: std::sync::OnceLock::new(),
             template_names,
+            path_membership: Default::default(),
             calendar_days,
             memos: SnapshotMemos::default(),
             query_index,
@@ -1044,6 +1047,8 @@ impl ReadSnapshot {
         if let Some(old) = old {
             snapshot.carry_completion_rank(old, changed_paths);
         }
+        snapshot.path_membership =
+            path_membership::PathMembership::capture(old, &snapshot, changed_paths);
         if let Some(support) =
             old.and_then(|old| fileless_names::DaySupport::carry(old, &snapshot, changed_paths))
         {
@@ -1628,7 +1633,7 @@ impl ReadSnapshot {
     /// The pages that may hold a block whose id (runtime or persisted) is
     /// `uuid` ignoring ASCII case and surrounding whitespace, in page order:
     /// a superset of the pages a whole-graph walk would find, from keyed
-    /// lookups plus the (normally empty) non-canonical keys. Callers verify
+    /// lookups plus the matching non-canonical key range. Callers verify
     /// their own predicate on these pages only (I-13: no whole-graph scan).
     pub(crate) fn block_id_candidate_pages(&self, uuid: &str) -> Vec<&(PageEntry, Arc<Document>)> {
         self.block_index
@@ -1748,19 +1753,6 @@ impl ReadSnapshot {
                 .collect(),
         )
     }
-    pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
-        let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
-        (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
-    }
-    pub(crate) fn physical_explicit_referrers(&self, names: &[String]) -> Vec<crate::PageId> {
-        let paths = self.explicit_index.candidates(names);
-        self.physical_pages
-            .iter()
-            .filter(|(entry, _)| paths.contains(&entry.path))
-            .filter_map(|(entry, _)| entry.rel_path.clone())
-            .collect()
-    }
-
     fn referenced_name_index(&self) -> &SnapshotPageDerivedIndex {
         self.referenced_name_index.get_or_init(|| {
             #[cfg(test)]
@@ -2091,276 +2083,8 @@ pub(crate) fn page_list_reads() -> usize {
     PAGE_LIST_READS.with(std::cell::Cell::get)
 }
 
-/// Block id (runtime uuid or persisted `id::`) → the pages that hold it.
-/// Exact for the pages it was captured against: a full build walks every
-/// page, and each publication swaps a changed path's previous ids for its
-/// current ones, so an id the index lacks is held by no page (I-13: a lookup
-/// never needs a whole-graph scan). Slots are `Pages` slots, which never move
-/// for a live path, are never reused, and ascend in page order. This rests on
-/// the same publication delta (`changed_paths` names every path whose
-/// document changed) that the reference and explicit indexes rest on.
-#[derive(Clone)]
-struct SnapshotBlockIndex {
-    uuids: inline_map::InlineMap<u128, BlockOwners>,
-    uuid_overlay: inline_map::InlineMap<u128, Option<BlockOwners>>,
-    base: Arc<SharedMap<String, BlockOwners>>,
-    /// Ids changed since the last fold; `None`: no page holds it any more.
-    overlay: Arc<SharedMap<String, Option<BlockOwners>>>,
-}
-
-impl SnapshotBlockIndex {
-    // Persistent roots share untouched ids; folding N/8 changed ids into the
-    // base updates those tree paths without copying all N base entries.
-
-    fn authored_id(block: &DocBlock) -> Option<&str> {
-        block
-            .projection()
-            .properties()
-            .iter()
-            .find(|(key, _)| key.trim().eq_ignore_ascii_case("id"))
-            .map(|(_, value)| value.as_str())
-            .filter(|id| !id.is_empty())
-    }
-
-    fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(&'a str)) {
-        fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(&'a str)) {
-            for block in blocks {
-                if !block.uuid.is_empty() {
-                    visit(&block.uuid);
-                }
-                if let Some(id) = SnapshotBlockIndex::authored_id(block) {
-                    visit(id);
-                }
-                walk(&block.children, visit);
-            }
-        }
-        walk(&doc.roots, &mut visit);
-    }
-
-    #[cfg(test)]
-    fn block_ids(doc: &Document) -> std::collections::HashSet<String> {
-        let mut ids = std::collections::HashSet::new();
-        Self::for_each_block_id(doc, |id| {
-            ids.insert(id.to_string());
-        });
-        ids
-    }
-
-    fn fold_limit(&self) -> usize {
-        (self.len() / 8).max(1)
-    }
-
-    fn len(&self) -> usize {
-        self.uuids.len() + self.base.len()
-    }
-
-    // Index keys and authored values are case-sensitive. UUID parsing alone
-    // would collapse uppercase, simple and URN spellings that were distinct.
-    fn compact_uuid(id: &str) -> Option<u128> {
-        if id.len() != 36 || id.bytes().any(|b| b.is_ascii_uppercase()) {
-            return None;
-        }
-        uuid::Uuid::try_parse(id).ok().map(|id| id.as_u128())
-    }
-
-    fn rows(&self) -> impl Iterator<Item = (String, &BlockOwners)> {
-        let uuids = self
-            .uuids
-            .iter()
-            .filter(|(id, _)| self.uuid_overlay.get(id).is_none())
-            .chain(
-                self.uuid_overlay
-                    .iter()
-                    .filter_map(|(id, owners)| owners.as_ref().map(|owners| (id, owners))),
-            )
-            .map(|(id, owners)| (uuid::Uuid::from_u128(*id).to_string(), owners));
-        let strings = self
-            .base
-            .iter()
-            .filter(|(id, _)| self.overlay.get(id.as_str()).is_none())
-            .chain(
-                self.overlay
-                    .iter()
-                    .filter_map(|(id, owners)| owners.as_ref().map(|owners| (id, owners))),
-            )
-            .map(|(id, owners)| (id.clone(), owners));
-        uuids.chain(strings)
-    }
-
-    fn owners(&self, id: &str) -> Option<&BlockOwners> {
-        if let Some(id) = Self::compact_uuid(id) {
-            return match self.uuid_overlay.get(&id) {
-                Some(changed) => changed.as_ref(),
-                None => self.uuids.get(&id),
-            };
-        }
-        match self.overlay.get(id) {
-            Some(changed) => changed.as_ref(),
-            None => self.base.get(id),
-        }
-    }
-
-    /// Apply `change` to `id`'s ascending owner slots, recording only a change.
-    fn edit(&mut self, id: &str, change: impl FnOnce(&mut Vec<usize>)) {
-        let prior = self.owners(id);
-        let mut slots = prior.map_or_else(Vec::new, |owners| owners.slots().to_vec());
-        change(&mut slots);
-        let next = BlockOwners::from_slots(slots);
-        if next.as_ref() != prior {
-            if let Some(id) = Self::compact_uuid(id) {
-                self.uuid_overlay.insert(id, next);
-            } else {
-                Arc::make_mut(&mut self.overlay).insert(id.to_owned(), next);
-            }
-        }
-    }
-
-    /// Full build over `pages`, or `old` carried across a publication that
-    /// changed `changed_paths`: one cold sort, changed blocks' tree paths live.
-    fn capture(
-        old: Option<(&Self, &Arc<Pages>)>,
-        pages: &Arc<Pages>,
-        changed_paths: &[String],
-    ) -> Self {
-        let slot_page = |pages: &'_ Pages, rel: &str| {
-            pages
-                .positions
-                .get(rel)
-                .and_then(|&slot| pages.get(slot).map(|(_, doc)| (slot, Arc::clone(doc))))
-        };
-        if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
-            !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
-        }) {
-            let mut index = previous.clone();
-            for rel_path in changed_paths {
-                if let Some((slot, doc)) = slot_page(previous_pages, rel_path) {
-                    Self::for_each_block_id(&doc, |id| {
-                        index.edit(id, |slots| slots.retain(|owner| *owner != slot));
-                    });
-                }
-                if let Some((slot, doc)) = slot_page(pages, rel_path) {
-                    Self::for_each_block_id(&doc, |id| {
-                        index.edit(id, |slots| {
-                            if let Err(at) = slots.binary_search(&slot) {
-                                slots.insert(at, slot);
-                            }
-                        });
-                    });
-                }
-            }
-            if index.overlay.len() + index.uuid_overlay.len() >= index.fold_limit() {
-                for (id, owners) in index.uuid_overlay.iter() {
-                    match owners {
-                        Some(owners) => index.uuids.insert(*id, owners.clone()),
-                        None => index.uuids.remove(id),
-                    }
-                }
-                index.uuid_overlay = inline_map::InlineMap::new();
-                let base = Arc::make_mut(&mut index.base);
-                for (id, owners) in index.overlay.iter() {
-                    match owners {
-                        Some(owners) => base.insert(id.clone(), owners.clone()),
-                        None => base.remove(id),
-                    };
-                }
-                index.overlay = Arc::new(SharedMap::new());
-            }
-            index
-        } else {
-            Self::build(pages)
-        }
-    }
-
-    /// Borrow ids until sorting/deduplication is complete, then allocate each
-    /// distinct key once and consume the sorted rows in one AVL build.
-    fn build(pages: &Pages) -> Self {
-        let mut uuids = Vec::new();
-        let mut strings = Vec::new();
-        for (slot, (_, doc)) in pages.slots() {
-            Self::for_each_block_id(doc, |id| {
-                if let Some(id) = Self::compact_uuid(id) {
-                    uuids.push((id, slot));
-                } else {
-                    strings.push((id, slot));
-                }
-            });
-        }
-        Self::from_rows(uuids, strings)
-    }
-
-    fn from_rows<K: AsRef<str> + Ord + Into<String>>(
-        mut uuids: Vec<(u128, usize)>,
-        mut strings: Vec<(K, usize)>,
-    ) -> Self {
-        fn merge<K: Eq>(rows: Vec<(K, usize)>) -> Vec<(K, BlockOwners)> {
-            let mut entries: Vec<(K, BlockOwners)> = Vec::with_capacity(rows.len());
-            for (id, slot) in rows {
-                if let Some((_, owners)) = entries.last_mut().filter(|(key, _)| *key == id) {
-                    if owners.slots().last() != Some(&slot) {
-                        match owners {
-                            BlockOwners::One(first) => {
-                                *owners = BlockOwners::Many(Arc::new(vec![*first, slot]))
-                            }
-                            BlockOwners::Many(slots) => Arc::make_mut(slots).push(slot),
-                        }
-                    }
-                } else {
-                    entries.push((id, BlockOwners::One(slot)));
-                }
-            }
-            entries
-        }
-        uuids.sort_unstable();
-        strings.sort_unstable();
-        Self {
-            uuids: inline_map::InlineMap::from_sorted_unique(merge(uuids)),
-            uuid_overlay: inline_map::InlineMap::new(),
-            base: Arc::new(SharedMap::from_sorted_unique(
-                merge(strings)
-                    .into_iter()
-                    .map(|(id, owners)| (id.into(), owners))
-                    .collect(),
-            )),
-            overlay: Arc::new(SharedMap::new()),
-        }
-    }
-
-    #[cfg(test)]
-    fn first_owner(&self, id: &str) -> Option<usize> {
-        self.owners(id).map(|owners| owners.slots()[0])
-    }
-
-    /// Every slot holding a block id equal to `id` ignoring ASCII case and
-    /// surrounding whitespace, ascending (page order). Keys are exact, so the
-    /// canonical lowercase spelling is one keyed probe; any other spelling of
-    /// the same id (uppercase, padded) can only be a string key, and those
-    /// keys are scanned: O(log I + S), S = ids that are not canonical
-    /// lowercase UUIDs (runtime ids and Logseq-written `id::` never are).
-    fn owners_ignoring_case(&self, id: &str) -> Vec<usize> {
-        let id = id.trim();
-        let lower = id.to_ascii_lowercase();
-        let mut slots: Vec<usize> = self
-            .owners(&lower)
-            .map_or_else(Vec::new, |owners| owners.slots().to_vec());
-        let strings = self
-            .base
-            .iter()
-            .filter(|(key, _)| self.overlay.get(key.as_str()).is_none())
-            .chain(
-                self.overlay
-                    .iter()
-                    .filter_map(|(key, owners)| owners.as_ref().map(|owners| (key, owners))),
-            );
-        for (key, owners) in strings {
-            if key.as_str() != lower && key.trim().eq_ignore_ascii_case(id) {
-                slots.extend_from_slice(owners.slots());
-            }
-        }
-        slots.sort_unstable();
-        slots.dedup();
-        slots
-    }
-}
+mod block_index;
+use block_index::SnapshotBlockIndex;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotPageDerivedIndex {
@@ -7231,7 +6955,7 @@ mod tests {
     }
 
     #[test]
-    fn block_index_is_eager_and_lazy_indexes_carry_across_a_save() {
+    fn block_index_and_reference_table_carry_across_a_save() {
         let dir = scratch("lazy-snapshot-index-carry");
         fs::write(
             dir.join("pages").join("Target.md"),
@@ -7244,6 +6968,7 @@ mod tests {
         let before = published_snapshot(&store);
         assert!(before.block_index.get().is_some());
         assert!(before.referenced_name_index.get().is_none());
+        assert!(before.referenced_name_table_built().is_some());
         std::thread::scope(|scope| {
             for _ in 0..2 {
                 let snapshot = Arc::clone(&before);
@@ -7271,8 +6996,8 @@ mod tests {
             before
                 .referenced_name_full_builds
                 .load(std::sync::atomic::Ordering::Relaxed),
-            1,
-            "racing readers must share one referenced-name build"
+            0,
+            "the resident spelling table needs no per-page cache build"
         );
 
         save_model_page(&store, "Target", |target| {
@@ -7283,7 +7008,8 @@ mod tests {
         });
         let after = published_snapshot(&store);
         assert!(after.block_index.get().is_some());
-        assert!(after.referenced_name_index.get().is_some());
+        assert!(after.referenced_name_index.get().is_none());
+        assert!(after.referenced_name_table_built().is_some());
         assert_eq!(
             after
                 .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001", true)

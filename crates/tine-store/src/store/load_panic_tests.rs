@@ -790,6 +790,75 @@ fn a_save_while_a_rescan_failed_reaches_every_index_after_recovery() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// A failed multi-row patch consumed its pending paths, but published nothing.
+/// The watcher has already observed those bytes: only the failed-capture
+/// restore carries their rows into the next successful patch.
+#[test]
+fn a_failed_patch_restores_its_pending_rows_for_recovery() {
+    let root = graph_with_bad_page("failed-patch-restore", "- ordinary\n", 1);
+    let old = std::time::SystemTime::now() - Duration::from_secs(3600);
+    for entry in fs::read_dir(root.join("pages")).unwrap() {
+        fs::File::options()
+            .write(true)
+            .open(entry.unwrap().path())
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    store.whole_graph().unwrap();
+    store.stop_watcher_for_tests();
+    let canonical = fs::canonicalize(&root).unwrap();
+    let roots = &super::snapshot::TEST_PATCH_PANIC_ROOTS;
+    roots.lock().unwrap().push(canonical.clone());
+    for name in ["Good", "Bad"] {
+        let path = root.join(format!("pages/{name}.md"));
+        fs::write(&path, "- links to [[Recovered]]\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let before = store.changes.rev();
+    let failed = store.refresh(Depth::Stamps).unwrap();
+    roots.lock().unwrap().retain(|r| *r != canonical);
+    assert_eq!(failed, before, "a failed capture publishes no revision");
+    assert!(matches!(
+        store.is_graph_ready(),
+        Err(LoadError::Failed { .. })
+    ));
+    // A nonempty recovery delta must patch, not fall back to a full index
+    // rebuild (which would mask the lost paths and make this mutant pass).
+    fs::write(
+        root.join("pages/Filler 00.md"),
+        "- unrelated recovery trigger\n",
+    )
+    .unwrap();
+    store.refresh(Depth::Stamps).unwrap();
+    let view = store.whole_graph().unwrap();
+    let mut pages: Vec<_> = view
+        .backlinks("Recovered")
+        .unwrap()
+        .iter()
+        .map(|group| group.page.clone())
+        .collect();
+    pages.sort();
+    assert_eq!(
+        pages,
+        ["Bad", "Good"],
+        "both changed rows reach the recovered index"
+    );
+    assert!(
+        view.backlinks("Target").unwrap().is_empty(),
+        "old links are retired"
+    );
+    store.close();
+    drop((view, store));
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// The page cache's document for `rel`, for identity comparison: the same
 /// `Arc` afterwards means that page was neither re-read nor re-parsed.
 pub(super) fn cached_doc(store: &Store, rel: &str) -> Arc<tine_core::doc::Document> {

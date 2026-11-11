@@ -1181,8 +1181,8 @@ fn the_table_after_a_checkpoint_launch_equals_the_one_before() {
         "loaded"
     );
     assert!(
-        launched.graph.referenced_name_table_built().is_none(),
-        "a launch holds no table"
+        launched.graph.referenced_name_table_built().is_some(),
+        "availability publication holds the shared spelling table"
     );
     assert!(
         launched.graph.alias_list_built(),
@@ -1373,9 +1373,8 @@ fn property_completion_splits_keys_from_one_keys_values() {
 /// Resident cost of the name table on a real-sized graph (og-perf-names
 /// receipt), not a gate: `TINE_NAMES_PROBE=<copy of a generated graph> cargo
 /// test -p tine-store --lib names_table_resident_probe -- --ignored --nocapture`.
-/// Per key: one tree node (`Arc<Node>`, 56 B + 16 B counts), one entry
-/// (`Arc<(String, KeyReferrers)>`, 72 B + 16 B), the key and spelling bytes,
-/// and 8 B per referring page; each heap block rounded to 16 B.
+/// Per key and per referring slot: persistent tree node and entry allocations,
+/// plus the key and spelling bytes; each heap block rounded to 16 B.
 #[test]
 #[ignore]
 fn names_table_resident_probe() {
@@ -1391,12 +1390,15 @@ fn names_table_resident_probe() {
     let (mut keys, mut slots, mut bytes) = (0usize, 0usize, 0usize);
     for (key, referrers) in table.iter() {
         keys += 1;
-        slots += referrers.slots().len();
-        bytes += round(16 + 56)
-            + round(16 + 72)
+        let members = referrers.slots().count();
+        slots += members;
+        bytes += round(16 + 40)
+            + round(
+                16 + std::mem::size_of::<(String, crate::model::referenced_names::KeyReferrers)>(),
+            )
             + round(key.len())
             + round(referrers.spelling.len())
-            + round(8 * referrers.slots().len());
+            + members * (round(16 + 40) + round(16 + 8));
     }
     let pages = view.graph.pages.len();
     println!(

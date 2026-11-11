@@ -318,6 +318,7 @@ impl Graph {
             .map(Arc::new);
         let mut read = ReadSnapshot {
             template_names: template_names::TemplateNames::capture(None, &pages, &[]),
+            path_membership: Default::default(),
             calendar_days: calendar_days::CalendarDays::capture(None, &pages, &[]),
             physical_pages,
             pages,
@@ -360,6 +361,7 @@ impl Graph {
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        read.path_membership = path_membership::PathMembership::capture(None, &read, &[]);
         read.transliteration_names = read.build_name_keys(None, &[]);
         Ok((Arc::new(read), list))
     }

@@ -80,7 +80,10 @@ fn keyed_block(whole: &WholeGraph, uuid: &str) -> Result<Option<BlockHit>, ()> {
     let Some(group) = group else {
         return Ok(None);
     };
-    let pages = whole.corpus(Some(&group.page), true).pages.into_iter();
+    let pages = whole
+        .corpus(Some(group.page.as_str()), true)
+        .pages
+        .into_iter();
     for page in pages.filter(|page| page.name == group.page && page.kind == group.kind) {
         let mut path = Vec::new();
         if find(&page.document.roots, uuid, &mut path) {

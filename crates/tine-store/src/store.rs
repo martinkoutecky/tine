@@ -420,6 +420,15 @@ mod scan_entry;
 mod snapshot;
 pub(crate) use snapshot::PublishedObservations;
 
+/// Selection for the existing corpus read. Block candidates are a superset:
+/// verify the desired block predicate inside the returned parsed documents.
+pub enum CorpusScope<'a> {
+    /// All pages, or the claimants of one page identity.
+    Page(Option<&'a str>),
+    /// Pages from the existing case-insensitive block ID candidate index.
+    BlockIdCandidates(&'a str),
+}
+
 impl ChangeFeed {
     /// Record the watcher's live-notification state. A new refusal message is
     /// reported once (a retry failing the same way stays quiet); `restored`
@@ -1124,6 +1133,8 @@ impl Store {
     ) -> Result<(Self, tine_core::model::GraphMeta, ConfigState), OpenError> {
         let checkpoint = opts.launch_checkpoint.clone();
         let root = Self::canonical_root(root)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::source_store_open(&root);
         let graph =
             Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
                 .map_err(|error| match error {
@@ -2451,6 +2462,11 @@ pub enum QueryDialect {
 /// One request to [`WholeGraph::query_ir`].
 #[derive(Debug, Clone, Copy)]
 pub enum IrRequest<'a> {
+    /// Exact tag-table existence, without querying or constructing block rows.
+    TagTableAvailable {
+        /// The decoded page, journal title, or alias name.
+        name: &'a str,
+    },
     /// Evaluate a query (`query_run`).
     Run {
         /// The parsed query.
@@ -2483,6 +2499,8 @@ pub enum IrRequest<'a> {
 /// The answer to one [`IrRequest`], in the same variant.
 #[derive(Debug, Clone)]
 pub enum IrAnswer {
+    /// Exact tag-table existence in this published generation.
+    Available(bool),
     /// Rows, totals and statistics.
     Result(Box<tine_core::query::ir::QueryResult>),
     /// One explanation row per root conjunct, each with the conjunct's count
@@ -2810,48 +2828,6 @@ impl WholeGraph {
             .collect()
     }
 
-    /// Return an owned `Corpus` of pages in this view for evaluation: every
-    /// page for `None`; for `Some(name)`, the parsed pages whose Logseq
-    /// identity (`refs::page_key`) is `name`'s, ordinary pages and journals
-    /// alike, in page order (what filtering the whole corpus by that key
-    /// gives). `active_only` selects semantic documents; false retains every
-    /// physical claimant for mutation and safety checks. Cost O(P)
-    /// for `None`, O(C log P) for C claimants of the name; parsed documents
-    /// are shared while the result is held.
-    // The evaluator receives a copy of the parsed-page table.
-    pub fn corpus(&self, name: Option<&str>, active_only: bool) -> tine_core::Corpus {
-        if let Some(name) = name {
-            let mut corpus = self.corpus_named(name);
-            if active_only {
-                corpus
-                    .pages
-                    .retain(|page| self.graph.pages.positions.contains_key(page.id.as_str()));
-            }
-            return corpus;
-        }
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::corpus();
-        let pages = {
-            let pages = if active_only {
-                &self.graph.pages
-            } else {
-                &self.graph.physical_pages
-            };
-            pages
-                .iter()
-                .filter_map(|(entry, document)| {
-                    Some(tine_core::CorpusPage {
-                        id: entry.rel_path.clone()?,
-                        name: entry.name.clone(),
-                        kind: entry.kind,
-                        document: Arc::clone(document),
-                    })
-                })
-                .collect()
-        };
-        tine_core::Corpus { pages }
-    }
-
     /// Asset names mentioned in page preambles or blocks, including decoded URL
     /// spellings and the first segment of nested image references. Cost
     /// O(P + B + scanned text bytes) on every call. This does not infer a
@@ -3061,18 +3037,11 @@ impl WholeGraph {
         }
     }
 
-    /// The IR query front door (SPEC §7.1): `Run` binds the query to its
-    /// context and today (§4.4) and evaluates it in memory under the fixed
-    /// construction bounds, returning an over-bound answer with `exceeded` set
-    /// (`TryFrom<IrAnswer>` refuses it for transport); `ExplainEmpty` counts each probe's rows
-    /// without constructing any (N19); `Registry` is the observed property
-    /// registry (§6.1). Only a statistics fold over its memory budget fails.
-    ///
-    /// `Run`/`ExplainEmpty` check `cancel` once per candidate page and within
-    /// link work (docs/contracts/tql-links-near.md); `Ok(None)` = cancelled: no
-    /// partial answer, never served from nor stored into the memo. Cost: graph-wide `Run`/`ExplainEmpty` is O(P + B) per plan/probe, memoized.
-    /// Exact page-name scopes visit their owners unless global coercions/tag
-    /// facts are needed. Registry build is O(P + B) once per generation, then shared.
+    /// IR door (SPEC §7.1): `Run` binds context/today and marks over-bound answers
+    /// `exceeded` (TryFrom refuses transport). `ExplainEmpty` counts without DTOs.
+    /// `Run`/`ExplainEmpty`: cancellable O(P + B); exact page scopes visit owners.
+    /// Registry builds O(P + B) once per generation; statistics budgets can fail.
+    /// `TagTableAvailable`: O(alias component × log targets), zero row DTOs.
     pub fn query_ir(
         &self,
         request: IrRequest<'_>,
