@@ -761,6 +761,103 @@ fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
     }
 }
 
+/// Native15c admission of lone-CR and mixed-ending merges
+/// (REG-CM-MERGE-LONE-CR), the inputs of
+/// `merge_text_trace::valid_merge_keeps_lone_cr_line_endings`. A source field
+/// promoted into a survivor without one keeps its own CR, which round 15c's
+/// field ending (LF) disagrees with: pending 15f, so it is not listed here.
+/// Nor is a source opening with a blank line: Native15c rejects that in pure
+/// LF too, at 04029874d (`mergeBodyOccurrences`; RECEIPT-cm-b4-fix3 F-BLANK).
+#[test]
+fn native_valid_merges_keep_lone_cr_line_endings() {
+    let _guard = crate::integration_lock();
+    let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
+        assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
+        return;
+    };
+    let mut rejected = Vec::new();
+    for org in [false, true] {
+        let (ext, key, b, title) = if org {
+            ("org", "#+alias: ", "*", "#+title: src")
+        } else {
+            ("md", "alias:: ", "-", "title:: src")
+        };
+        let source_path = format!("pages/src.{ext}");
+        let target_path = format!("pages/dst.{ext}");
+        let cases = [
+            (format!("{b} source\r{b} second\r"), format!("{b} target\n")),
+            (format!("{b} source\r"), format!("{b} target\r")),
+            (format!("{b} source\r"), format!("{b} first\r{b} target")),
+            (
+                format!("{key}b\r{b} source\r"),
+                format!("{key}[[a]], [[a]]\r{b} target\r"),
+            ),
+            (format!("{title}\r{b} source\r"), format!("{b} target\r")),
+            (
+                format!("{key}a, b\r{title}\r{b} source\r"),
+                format!("{key}c\r{b} target\r"),
+            ),
+            (
+                format!("{key}a\r\n{b} one\r{b} two\n{b} three\r\n"),
+                format!("{key}b\n{b} target\r"),
+            ),
+            (
+                format!("{title}\n{key}a\r{b} one\r\n"),
+                format!("{key}[[b]], [[b]]\r\n{b} target\r{b} last"),
+            ),
+            (
+                format!("{title}\r\n{b} source\n"),
+                format!("{key}a\r\n\r{b} target\r"),
+            ),
+        ];
+        for (source, target) in cases {
+            let witness = format!("org={org} source={source:?} target={target:?}");
+            let mut spec = GraphSpec::default();
+            spec.name = "valid-merge".into();
+            spec.files =
+                BTreeMap::from([(source_path.clone(), source), (target_path.clone(), target)]);
+            let dir = tempfile::tempdir().unwrap();
+            spec.write(dir.path());
+            let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+            let choice = Choice::Merge(target_path.clone());
+            let proof = merge_proof(&store, &spec, "src", "dst", &choice)
+                .unwrap()
+                .2
+                .unwrap();
+            execute(&store, "src", "dst", Some(&choice)).unwrap();
+            let files = read_graph(dir.path());
+            let p = packet(
+                &store,
+                &spec,
+                "src",
+                "dst",
+                &source_path,
+                &target_path,
+                &proof,
+                &files,
+                json!([]),
+            );
+            assert_local_saves(&p);
+            let result = shared::run_bridge(Path::new(&bridge), &p).unwrap();
+            let failed: Vec<_> = result["checks"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, v)| **v != true)
+                .map(|(k, _)| k.clone())
+                .collect();
+            if result["accepted"] != true || !failed.is_empty() {
+                rejected.push(format!("{witness}: {}", failed.join(",")));
+            }
+        }
+    }
+    assert!(
+        rejected.is_empty(),
+        "Native15c rejected:\n{}",
+        rejected.join("\n")
+    );
+}
+
 /// Native15c admission of the generated merges (`merge_generated`): every
 /// case the model admits must be admitted on Tine's actual output. Three
 /// groups run and are reported, not asserted (RECEIPT-cm-b4-gen): field
@@ -837,6 +934,10 @@ fn native_generated(seed: u64, count: usize) {
                 Err(format!("rejected: {}", failed.join(",")))
             }
         })();
+        let group = group.or_else(|| {
+            matches!(&verdict, Err(e) if e.ends_with("FusedLineEnding"))
+                .then_some("Q4 fused ending")
+        });
         if let Some(group) = group {
             let entry = reported.entry(group).or_default();
             entry.0 += 1;

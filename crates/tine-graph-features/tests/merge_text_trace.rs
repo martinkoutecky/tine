@@ -338,6 +338,172 @@ fn valid_merge_keeps_every_line_ending() {
     );
 }
 
+/// Physical lines with their terminators: CRLF, LF or a lone CR ends a line,
+/// as mldoc's `eol_chars` and Tine's reader read it. The oracle's own split,
+/// independent of the writer's.
+fn physical_lines(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let end = rest.find(['\r', '\n']).map_or(rest.len(), |at| {
+            at + if rest[at..].starts_with("\r\n") { 2 } else { 1 }
+        });
+        out.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    out
+}
+
+/// Lone-CR files are valid pages (REG-CM-MERGE-LONE-CR): they merge in both
+/// formats, with headers on either side and endings mixed within one file.
+/// Every original line keeps its exact terminator (a lone CR is never fused
+/// into a CRLF), and in an all-CR pair every inserted line takes CR too.
+#[test]
+fn valid_merge_keeps_lone_cr_line_endings() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        let (key, b, title) = if org {
+            ("#+alias: ", "*", "#+title: src")
+        } else {
+            ("alias:: ", "-", "title:: src")
+        };
+        // (source, target, aliases, exact survivor bytes when pinned)
+        let cases: Vec<(String, String, Vec<&str>, Option<String>)> = vec![
+            // The review's witness: a lone-CR source into an LF target.
+            (
+                format!("{b} source\r{b} second\r"),
+                format!("{b} target\n"),
+                vec![],
+                Some(format!("{b} target\n{b} source\r{b} second\r")),
+            ),
+            (
+                format!("{b} source\r"),
+                format!("{b} target\r"),
+                vec![],
+                Some(format!("{b} target\r{b} source\r")),
+            ),
+            // An unterminated survivor gets the file's own CR.
+            (
+                format!("{b} source\r"),
+                format!("{b} first\r{b} target"),
+                vec![],
+                Some(format!("{b} first\r{b} target\r{b} source\r")),
+            ),
+            // A source alias header becomes the survivor's field verbatim.
+            (
+                format!("{key}a\r{b} source\r"),
+                format!("{b} target\r"),
+                vec!["a"],
+                Some(format!("{key}a\r{b} target\r{b} source\r")),
+            ),
+            // A target field rebuilt from duplicates, plus a source member.
+            (
+                format!("{key}b\r{b} source\r"),
+                format!("{key}[[a]], [[a]]\r{b} target\r"),
+                vec!["a", "b"],
+                None,
+            ),
+            // A source title becomes leftover text.
+            (
+                format!("{title}\r{b} source\r"),
+                format!("{b} target\r"),
+                vec![],
+                None,
+            ),
+            // Fields on both sides, the target's retained.
+            (
+                format!("{key}a, b\r{title}\r{b} source\r"),
+                format!("{key}c\r{b} target\r"),
+                vec!["c", "a", "b"],
+                None,
+            ),
+            // Mixed endings within each file.
+            (
+                format!("{key}a\r\n{b} one\r{b} two\n{b} three\r\n"),
+                format!("{key}b\n{b} target\r"),
+                vec!["b", "a"],
+                None,
+            ),
+            (
+                format!("{title}\n{key}a\r{b} one\r\n"),
+                format!("{key}[[b]], [[b]]\r\n{b} target\r{b} last"),
+                vec!["b", "a"],
+                None,
+            ),
+            // A survivor ending in a lone CR before a source that opens
+            // with a blank LF line: the two must not fuse into one CRLF.
+            (
+                format!("\n{b} source\n"),
+                format!("{b} target\r"),
+                vec![],
+                None,
+            ),
+            (
+                format!("{title}\r\n{b} source\n"),
+                format!("{key}a\r\n\r{b} target\r"),
+                vec!["a"],
+                None,
+            ),
+        ];
+        for (src, dst, aliases, exact) in cases {
+            let all_cr = !format!("{src}{dst}").contains('\n');
+            let no_crlf = !format!("{src}{dst}").contains("\r\n");
+            // Org's quote frame would end `#+BEGIN_QUOTE` with the survivor's
+            // CR right before the source's blank LF line: one CRLF, two lines
+            // joined. It refuses, files unchanged (RECEIPT-cm-b4-fix3 Q4).
+            if org && src.starts_with('\n') && dst.ends_with('\r') {
+                match valid_merge(&src, &dst, org, |_, _| {}) {
+                    Err(e) if e.contains("FusedLineEnding") => {}
+                    other => failures.push(format!("expected FusedLineEnding: {other:?}")),
+                }
+                continue;
+            }
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                valid_merge(&src, &dst, org, |doc, proof| {
+                    let text = &proof.text;
+                    assert_eq!(header_aliases(doc, org), aliases, "{text:?}");
+                    if let Some(exact) = &exact {
+                        assert_eq!(text, exact);
+                    }
+                    let out = physical_lines(text);
+                    for line in physical_lines(&src).into_iter().chain(physical_lines(&dst)) {
+                        let terminated = line.ends_with(['\r', '\n']);
+                        if terminated && !line.starts_with(key) {
+                            assert!(
+                                out.iter().any(|l| l.ends_with(line)),
+                                "lost {line:?} with its own terminator: {text:?}"
+                            );
+                        }
+                    }
+                    if all_cr {
+                        assert!(!text.contains('\n'), "an LF in an all-CR pair: {text:?}");
+                    }
+                    if no_crlf {
+                        assert!(!text.contains("\r\n"), "a CR fused with an LF: {text:?}");
+                    }
+                })
+            }));
+            match run {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => failures.push(error),
+                Err(panic) => failures.push(format!(
+                    "org={org}, source={src:?}, target={dst:?}: {}",
+                    panic
+                        .downcast_ref::<String>()
+                        .map_or("panic", String::as_str)
+                )),
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} lone-CR merges failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 /// A declaration whose value has no members for a reason the reader allows
 /// (wholly quoted, empty) is never the active field; its text stays protected.
 #[test]

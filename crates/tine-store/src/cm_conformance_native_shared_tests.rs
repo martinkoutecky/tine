@@ -103,10 +103,10 @@ pub fn decorate(file: &mut Value, config: &Config) {
         // A mixed-ending header cannot borrow another field's terminator.
         let physical_end = if pre.is_some() { first } else { outline.first().map_or(0, |b| b.0.end) };
         let mut at = 0;
-        let endings: BTreeMap<_, _> = raw.split_inclusive('\n').zip(text[..physical_end].split_inclusive('\n')).map(|(logical, physical)| {
+        let endings: BTreeMap<_, _> = raw.split_inclusive('\n').zip(tine_core::doc::physical_lines(&text[..physical_end])).map(|(logical, physical)| {
             let start = at;
             at += logical.len();
-            (start, if physical.ends_with("\r\n") { "\r\n" } else if physical.ends_with('\n') { "\n" } else { "" })
+            (start, tine_core::doc::line_terminator(physical))
         }).collect();
         let regions = tine_core::block_regions::parse_document(raw, org);
         regions.page_properties().filter(|p| tine_core::page_header::is_alias_key(&p.key)).map(|p| {
@@ -128,7 +128,8 @@ pub fn decorate(file: &mut Value, config: &Config) {
                         if lf == r.start {
                             return at;
                         }
-                        if c != '\r' {
+                        // A CRLF's CR is dropped; a lone CR reads as LF.
+                        if !text[at..].starts_with("\r\n") {
                             lf += c.len_utf8();
                         }
                     }

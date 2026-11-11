@@ -40,6 +40,7 @@ pub enum RealizationError {
     SurvivorIdentity,
     AliasField,
     DirectiveEscape,
+    FusedLineEnding,
 }
 impl std::fmt::Display for RealizationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -113,7 +114,10 @@ impl Header {
         let mut physical = 0;
         let mut logical = String::new();
         let mut lines = Vec::new();
-        for raw in text[..end].split_inclusive('\n') {
+        // Physical lines (`doc::physical_lines`); the classifier reads them in
+        // the same-length view where a lone CR is LF, as the reader does.
+        let view = tine_core::org::lone_cr_to_lf(&text[..end]);
+        for raw in tine_core::doc::physical_lines(&text[..end]) {
             let skip = if first_root && blocks.first().is_some_and(|b| b.0.start == physical) {
                 blocks.first().map_or(0, |b| b.1 - physical)
             } else if first_root && blocks.first().is_some_and(|b| physical > b.0.start) {
@@ -126,7 +130,7 @@ impl Header {
                 0
             };
             let start = logical.len();
-            logical.push_str(&raw[skip..]);
+            logical.push_str(&view[physical + skip..physical + raw.len()]);
             lines.push((
                 physical..physical + raw.len(),
                 physical + skip..physical + raw.len(),
@@ -182,15 +186,20 @@ impl Header {
         let mut cuts = vec![self.end];
         if let Some(prose) = &self.prose {
             cuts.push(prose.start);
-            cuts.extend(
-                text[prose.clone()]
-                    .match_indices('\n')
-                    .map(|(at, _)| prose.start + at + 1),
-            );
+            cuts.extend(tine_core::doc::physical_lines(&text[prose.clone()]).scan(
+                prose.start,
+                |at, l| {
+                    *at += l.len();
+                    Some(*at)
+                },
+            ));
         }
         for l in &self.lines {
             cuts.extend([l.range.start, l.content.start, l.content.end]);
             if let Some(a) = &l.alias {
+                // The field writer copies or replaces the line's terminator.
+                let raw = &text[l.content.clone()];
+                cuts.push(l.content.end - tine_core::doc::line_terminator(raw).len());
                 for r in a
                     .key
                     .iter()
@@ -209,10 +218,7 @@ impl Header {
 impl Alias {
     fn read(text: &str, range: Range<usize>, value: &str, org: bool) -> Self {
         let raw = &text[range.clone()];
-        let body = raw
-            .strip_suffix("\r\n")
-            .or_else(|| raw.strip_suffix('\n'))
-            .unwrap_or(raw);
+        let body = &raw[..raw.len() - tine_core::doc::line_terminator(raw).len()];
         let key = ["alias:: ", "aliases:: ", "#+alias: ", "#+aliases: "]
             .into_iter()
             .find(|key| body.starts_with(key))
@@ -258,7 +264,9 @@ impl Alias {
         if at != body.len() {
             plain = false;
         }
-        if body.len() < raw.len() {
+        // The model's consumable alias syntax ends a line with LF or CRLF only
+        // (SPEC §5.2); a lone CR stays protected text (RECEIPT-cm-b4-fix3 Q3).
+        if matches!(&raw[body.len()..], "\n" | "\r\n") {
             syntax.push(range.start + body.len()..range.end);
         }
         Self {
@@ -280,29 +288,39 @@ struct Writer {
     /// A rebuilt active field's terminator: the survivor's first alias
     /// declaration's, else LF (the model's `mergeField`, SPEC §5.1).
     field_end: &'static str,
+    /// Where the text's last placement ended, when it was original bytes.
+    after: Option<(usize, usize)>,
+    /// A CR that ended a line was followed by an LF it did not precede
+    /// before: they would read as one CRLF, joining two lines.
+    fused: bool,
 }
-fn terminator(line: &str) -> &'static str {
-    if line.ends_with("\r\n") {
-        "\r\n"
-    } else if line.ends_with('\n') {
-        "\n"
-    } else {
-        ""
-    }
+/// Append placed bytes to the writer's text; `from` is the original piece's
+/// (file, start, end). O(bytes).
+fn place(
+    text: &mut String,
+    after: &mut Option<(usize, usize)>,
+    fused: &mut bool,
+    bytes: &str,
+    from: Option<(usize, usize, usize)>,
+) {
+    let adjacent = from.is_some_and(|(file, start, _)| *after == Some((file, start)));
+    *fused |= !adjacent && text.ends_with('\r') && bytes.starts_with('\n');
+    *after = from.map(|(file, _, end)| (file, end));
+    text.push_str(bytes);
 }
 impl Writer {
     fn prose(&mut self, file: usize, range: Range<usize>, org: bool) -> Result<(), TraceError> {
         self.insert(if org { "* " } else { "- " });
         let mut at = range.start;
-        while at < range.end {
-            let end = self.trace.inputs[file][at..range.end]
-                .find('\n')
-                .map_or(range.end, |n| at + n + 1);
-            self.original(file, at..end)?;
-            if end < range.end && !org {
+        let lines: Vec<_> = tine_core::doc::physical_lines(&self.trace.inputs[file][range.clone()])
+            .map(str::len)
+            .collect();
+        for len in lines {
+            self.original(file, at..at + len)?;
+            at += len;
+            if at < range.end && !org {
                 self.insert("  ");
             }
-            at = end;
         }
         self.newline();
         Ok(())
@@ -321,7 +339,13 @@ impl Writer {
         Ok(text)
     }
     fn insert(&mut self, syntax: &str) {
-        self.text.push_str(syntax);
+        place(
+            &mut self.text,
+            &mut self.after,
+            &mut self.fused,
+            syntax,
+            None,
+        );
         self.trace.output.push(Placement::Insert(syntax.into()));
     }
     fn ids(&mut self, ids: impl IntoIterator<Item = usize>) {
@@ -329,12 +353,17 @@ impl Writer {
             if self.trace.wrappers.contains(&id) {
                 self.insert("[[");
             }
-            self.text.push_str(
+            let piece = &self.trace.pieces[id];
+            place(
+                &mut self.text,
+                &mut self.after,
+                &mut self.fused,
                 self.trace
                     .substitution
                     .get(&id)
                     .map(String::as_str)
                     .unwrap_or_else(|| self.trace.original(id)),
+                Some((piece.file, piece.range.start, piece.range.end)),
             );
             self.trace.output.push(Placement::Original(id));
             if self.trace.wrappers.contains(&id) {
@@ -347,7 +376,7 @@ impl Writer {
         Ok(())
     }
     fn newline(&mut self) {
-        if !self.text.is_empty() && !self.text.ends_with(['\n', '\r']) {
+        if !self.text.is_empty() && tine_core::doc::line_terminator(&self.text).is_empty() {
             self.insert(self.eol);
         }
     }
@@ -362,7 +391,7 @@ impl Writer {
         let a = line.alias.as_ref().unwrap();
         let start = line.content.start;
         let raw = &self.trace.inputs[file][line.content.clone()];
-        let ending = terminator(raw).len();
+        let ending = tine_core::doc::line_terminator(raw).len();
         let end = line.content.end - ending;
         if rebuild {
             self.insert(if org { "#+alias: " } else { "alias:: " });
@@ -502,20 +531,24 @@ pub fn propose(
     let mut w = Writer {
         trace,
         text: String::new(),
-        // Markdown takes the survivor's convention, as its saves do. The Org
-        // model is LF-separated (a CRLF's `\r` belongs to its line text): an
-        // inserted empty `*\r` headline would not round-trip, leaving the
-        // survivor read-only (`valid_merge_keeps_every_line_ending`).
-        eol: if org {
-            "\n"
-        } else {
-            tine_core::doc::line_convention(target_text)
+        // A new line takes the survivor's convention, as its saves do. The
+        // Org model keeps a CRLF's `\r` in its line text, so an Org CRLF
+        // survivor gets LF: an inserted empty `*\r\n` headline would not
+        // round-trip, leaving it read-only (`valid_merge_keeps_every_line_ending`).
+        // A lone CR ends an Org line, so `*\r` round-trips as `*\n`.
+        eol: match tine_core::doc::line_convention(target_text) {
+            "\r\n" if org => "\n",
+            eol => eol,
         },
+        after: None,
+        fused: false,
         field_end: headers[0]
             .lines
             .iter()
             .find(|line| line.alias.is_some())
-            .map_or("\n", |line| terminator(&target_text[line.content.clone()])),
+            .map_or("\n", |line| {
+                tine_core::doc::line_terminator(&target_text[line.content.clone()])
+            }),
     };
     let mut expected_aliases = Vec::new();
     let mut seen = HashSet::new();
@@ -769,7 +802,7 @@ pub fn propose(
             let inline = !org
                 && parts.iter().all(|r| {
                     let t = &w.trace.inputs[*file][r.clone()];
-                    t.trim().is_empty() && !t.contains('\n')
+                    t.trim().is_empty() && tine_core::doc::line_terminator(t).is_empty()
                 });
             if inline {
                 title.extend(parts.iter().map(|r| (*file, r.clone())));
@@ -777,7 +810,8 @@ pub fn propose(
             !inline
         });
         if org {
-            w.insert("*\n#+BEGIN_QUOTE\n");
+            let eol = w.eol;
+            w.insert(&format!("*{eol}#+BEGIN_QUOTE{eol}"));
         } else {
             let blank = lines
                 .first()
@@ -814,13 +848,14 @@ pub fn propose(
             for range in parts {
                 w.original(*file, range.clone())?;
             }
-            if !w.text.ends_with('\n') {
+            if tine_core::doc::line_terminator(&w.text).is_empty() {
                 let eol = w.eol;
                 w.insert(eol);
             }
         }
         if org {
-            w.insert("#+END_QUOTE\n");
+            let eol = w.eol;
+            w.insert(&format!("#+END_QUOTE{eol}"));
         }
     }
     let leftover_end = w.text.len();
@@ -829,11 +864,16 @@ pub fn propose(
     }
     w.original(1, headers[1].end..source_text.len())?;
     w.trace.check(&w.text, &w.trace.substitution)?;
+    if w.fused {
+        // In scope: a mixed-ending page (external editors, sync). No
+        // convention-following terminator can separate the lines here.
+        return Err(RealizationError::FusedLineEnding);
+    }
     let fmt = if org { Format::Org } else { Format::Md };
     if org && leftover {
-        let ast =
-            tine_core::render::parse_text_bounded(&w.text[leftover_start..leftover_end], true)
-                .ok_or(RealizationError::DirectiveEscape)?;
+        let quote = tine_core::org::lone_cr_to_lf(&w.text[leftover_start..leftover_end]);
+        let ast = tine_core::render::parse_text_bounded(&quote, true)
+            .ok_or(RealizationError::DirectiveEscape)?;
         if ast
             .blocks
             .iter()
@@ -932,7 +972,7 @@ pub fn propose(
             for range in parts {
                 original.push_str(&w.value(*file, range.clone())?);
             }
-            if !original.ends_with('\n') {
+            if tine_core::doc::line_terminator(&original).is_empty() {
                 original.push('\n');
             }
         }
@@ -948,6 +988,7 @@ pub fn propose(
                     .or_default() += 1;
             }
         };
+        let original = tine_core::org::lone_cr_to_lf(&original);
         for (_, block) in tine_core::page_properties::pre_block_projections(&original, true) {
             count_refs(&block, &mut required);
         }

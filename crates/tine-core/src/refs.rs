@@ -229,8 +229,10 @@ pub use rename::{RenameProposal, Site, Unrealized};
 
 /// Physical block ranges from the same outline authority as the page reader.
 /// Each tuple is (whole block, content start, structural level, continuation
-/// indentation). Ranges include line terminators; children follow their parent.
-/// O(page bytes), one outline parse, no I/O.
+/// indentation). Ranges include line terminators (CRLF, LF or a lone CR,
+/// `doc::physical_lines`); children follow their parent. The outline reads
+/// the same-length view with each lone CR as LF (`org::lone_cr_to_lf`), so
+/// its offsets are the file's. O(page bytes), one outline parse, no I/O.
 pub fn physical_outline(
     text: &str,
     is_org: bool,
@@ -240,9 +242,13 @@ pub fn physical_outline(
     } else {
         crate::outline::OutlineFormat::Markdown
     };
-    let headers = crate::outline::headers(text, format).unwrap_or_default();
+    let headers =
+        crate::outline::headers(&crate::org::lone_cr_to_lf(text), format).unwrap_or_default();
     let mut starts = vec![0];
-    starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));
+    starts.extend(crate::doc::physical_lines(text).scan(0, |at, line| {
+        *at += line.len();
+        Some(*at)
+    }));
     headers
         .iter()
         .enumerate()

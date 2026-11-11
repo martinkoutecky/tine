@@ -100,11 +100,15 @@ fn alias_line(rng: &mut Rng, org: bool) -> String {
 }
 
 fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
-    let ending = rng.below(3);
+    // Uniform LF, CRLF or lone CR (a valid page, mldoc `eol_chars`), or
+    // mixed within the page: LF/CRLF, or all three.
+    let ending = rng.below(5);
     let end = |rng: &mut Rng| match ending {
         0 => "\n",
         1 => "\r\n",
-        _ => rng.pick(&["\n", "\r\n"]),
+        2 => "\r",
+        3 => rng.pick(&["\n", "\r\n"]),
+        _ => rng.pick(&["\n", "\r\n", "\r"]),
     };
     let mut entries = Vec::new();
     for _ in 0..rng.pick(&[0, 1, 1, 2, 2, 3]) {
@@ -176,6 +180,14 @@ fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
     }
     if rng.chance(1, 8) {
         lines.last_mut().unwrap().end = "";
+    }
+    // A CR before an empty LF line is one CRLF on disk, not two lines: give
+    // that empty line the CR too, so each generated line is a physical one.
+    for n in 1..lines.len() {
+        let empty = lines[n].prefix.is_empty() && lines[n].content.is_empty();
+        if lines[n - 1].end == "\r" && empty && lines[n].end.starts_with('\n') {
+            lines[n].end = "\r";
+        }
     }
     lines
 }
@@ -298,9 +310,31 @@ fn first_lines(blocks: &[tine_core::model::BlockDto], out: &mut Vec<String>) {
     }
 }
 
+/// Physical lines with terminators: CRLF, LF or a lone CR ends a line (the
+/// oracle's own split, independent of the writer's).
+fn physical_lines(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let end = rest.find(['\r', '\n']).map_or(rest.len(), |at| {
+            at + if rest[at..].starts_with("\r\n") { 2 } else { 1 }
+        });
+        out.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    out
+}
+
+fn ending(line: &str) -> &'static str {
+    ["\r\n", "\n", "\r"]
+        .into_iter()
+        .find(|e| line.ends_with(e))
+        .unwrap_or("")
+}
+
 /// The output's page-header lines that declare aliases, with terminators.
 fn header_alias_lines<'a>(output: &'a str, org: bool) -> Vec<&'a str> {
-    let lines: Vec<_> = output.split_inclusive('\n').collect();
+    let lines = physical_lines(output);
     let first_root = !org && lines.first().is_some_and(|l| l.starts_with("- "));
     let mut found = Vec::new();
     for (n, line) in lines.iter().enumerate() {
@@ -331,8 +365,15 @@ fn header_alias_lines<'a>(output: &'a str, org: bool) -> Vec<&'a str> {
     found
 }
 
+/// Occurrences of `needle`; one ending in a lone CR must not be fused into a
+/// CRLF by the byte after it.
 fn count(haystack: &str, needle: &str) -> usize {
-    haystack.match_indices(needle).count()
+    haystack
+        .match_indices(needle)
+        .filter(|(at, _)| {
+            !needle.ends_with('\r') || !haystack[at + needle.len()..].starts_with('\n')
+        })
+        .count()
 }
 
 fn hashes(text: &str) -> usize {
@@ -365,13 +406,7 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
                 format!("{} alias header lines", fields.len()),
             );
         } else {
-            let end = if fields[0].ends_with("\r\n") {
-                "\r\n"
-            } else if fields[0].ends_with('\n') {
-                "\n"
-            } else {
-                ""
-            };
+            let end = ending(fields[0]);
             if !want.pending_15f() && end != want.end_15c {
                 fail(
                     "field-ending",
@@ -415,7 +450,8 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
             }
         }
     }
-    // A uniform Markdown pair stays uniform (inserted lines follow it).
+    // A uniform pair stays uniform (inserted lines follow it); an Org CRLF
+    // survivor takes LF for inserted lines (its codec, RECEIPT-cm-b4-fix2).
     let uniform = |lines: &[GenLine]| {
         let ends: Vec<_> = lines
             .iter()
@@ -426,26 +462,23 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
             .copied()
             .filter(|e| ends.iter().all(|x| x == e))
     };
-    if let (false, Some(a), Some(b)) = (org, uniform(&case.dst), uniform(&case.src)) {
-        if a == b {
-            for line in out.split_inclusive('\n') {
+    if let (Some(a), Some(b)) = (uniform(&case.dst), uniform(&case.src)) {
+        if a == b && !(org && a == "\r\n") {
+            for line in physical_lines(out) {
                 let is_field = fields.first() == Some(&line);
-                let bad = if a == "\r\n" {
-                    !line.ends_with("\r\n")
-                } else {
-                    line.ends_with("\r\n")
-                };
-                if bad && line.ends_with('\n') && !(is_field && want.pending_15f()) {
+                let end = ending(line);
+                if !end.is_empty() && end != a && !(is_field && want.pending_15f()) {
                     fail("mixed-endings", format!("{line:?} in a {a:?} pair"));
                 }
             }
         }
     }
-    if out
-        .match_indices('\r')
-        .any(|(at, _)| !out[at + 1..].starts_with('\n'))
-    {
-        fail("bare-cr", "a lone CR".into());
+    let lone_cr = |t: &str| physical_lines(t).into_iter().any(|l| ending(l) == "\r");
+    if lone_cr(out) && !lone_cr(&input) {
+        fail("bare-cr", "a lone CR no input had".into());
+    }
+    if out.contains("\r\n") && !input.contains("\r\n") {
+        fail("fused-crlf", "a CRLF no input had".into());
     }
     // Bodies stay separate and in order: target's, then source's (§5.1).
     let mut rows = Vec::new();
@@ -568,6 +601,9 @@ pub fn run(case: &Case) -> Run {
 pub struct Report {
     pub merged: usize,
     pub pending: usize,
+    /// Refused, files unchanged, because a CR would fuse with a following
+    /// LF into one CRLF (model question Q4 of RECEIPT-cm-b4-fix3).
+    pub fused: usize,
     pub classes: BTreeMap<String, (usize, String)>,
 }
 
@@ -575,6 +611,7 @@ pub fn report(cases: &[Case]) -> Report {
     let mut r = Report {
         merged: 0,
         pending: 0,
+        fused: 0,
         classes: BTreeMap::new(),
     };
     for case in cases {
@@ -584,6 +621,10 @@ pub fn report(cases: &[Case]) -> Report {
             Ok(Run::Merged { failures, .. }) => {
                 r.merged += 1;
                 failures
+            }
+            Ok(Run::Refused(e)) if e == "merge realization: FusedLineEnding" => {
+                r.fused += 1;
+                Vec::new()
             }
             Ok(Run::Refused(e)) => vec![("refused", e)],
             Err(p) => vec![(
@@ -622,8 +663,8 @@ pub fn report(cases: &[Case]) -> Report {
 
 fn assert_clean(r: &Report, total: usize) {
     eprintln!(
-        "generated merges: {total} cases, {} merged, {} pending 15f (field ending not asserted)",
-        r.merged, r.pending
+        "generated merges: {total} cases, {} merged, {} pending 15f (field ending not asserted), {} fused-ending refusals (Q4, files unchanged)",
+        r.merged, r.pending, r.fused
     );
     let listing: String = r
         .classes
