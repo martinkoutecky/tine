@@ -16,7 +16,12 @@ export function privilegedActionPinProblems(text) {
   if (!privileged) return [];
   const problems = [];
   for (const [index, line] of source.split("\n").entries()) {
-    for (const match of line.matchAll(/(?:^|[{,])\s*(?:-\s*)?["']?uses["']?\s*:\s*["']?([^\s"'#,}]+)/g)) {
+    for (const match of line.matchAll(/(?:^|[{,])\s*(?:-\s*)?["']?uses["']?\s*:\s*["']?([^\s"'#,}]*)/g)) {
+      // Fail closed: a value continued on later lines (plain or block scalar) is not checked by line.
+      if (!match[1] || /^[>|]/.test(match[1])) {
+        problems.push(`line ${index + 1}: uses needs its action on the same line`);
+        continue;
+      }
       if (match[1].startsWith("./")) continue;
       if (!/@[0-9a-f]{40}$/.test(match[1]) || !/\s+#\s+\S+/.test(line)) {
         problems.push(`line ${index + 1}: ${match[1]} needs a full commit SHA and release comment`);

@@ -24,4 +24,7 @@ test("all external actions need a full SHA and comment; local actions are exempt
   assert.equal(check(`${prefix}  - uses: owner/action@${"a".repeat(40)}`).length, 1);
   assert.equal(check(`${prefix}  - { uses: actions/checkout@v4 }`).length, 1);
   assert.equal(check(`${prefix}  - 'uses': 'actions/checkout@v4'`).length, 1);
+  for (const continued of ["  - uses:\n    actions/checkout@v4", "  - uses: >-\n    actions/checkout@v4", "  - uses: |\n    actions/checkout@v4"]) {
+    assert.equal(check(`${prefix}${continued}`).length, 1, continued);
+  }
 });
