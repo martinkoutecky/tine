@@ -1,6 +1,7 @@
 // A controlled transport, not a host implementation. Every command and event is
 // JSON from the real Rust binding. Kept outside production builds by test imports.
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
@@ -22,13 +23,17 @@ export interface NativeReply {
   bytes: string | null;
 }
 
-export function buildPeer(): string {
+export async function buildPeer(): Promise<string> {
   mkdirSync("artifacts/conformance-f1-f6", { recursive: true });
-  const result = spawnSync("bash", ["-c",
+  // Keep the fork worker responsive to task-update RPC while Cargo waits
+  // for a build lock or compiles the native peer.
+  const result = await promisify(execFile)("bash", ["-c",
     'source scripts/env.sh; CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo test -p tine-store --lib --no-run --message-format=json'],
-  { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 600_000 });
+  { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 600_000 }).catch(error => {
+    writeFileSync("artifacts/conformance-f1-f6/peer-build.log", error.stderr ?? String(error));
+    throw error;
+  });
   writeFileSync("artifacts/conformance-f1-f6/peer-build.log", result.stderr ?? "");
-  if (result.status !== 0) throw new Error(`native peer build failed: ${result.stderr}\n${result.error ?? ""}`);
   const artifact = result.stdout.split("\n").filter(line => line.startsWith("{"))
     .map(line => JSON.parse(line)).find(row => row.reason === "compiler-artifact"
       && row.target.name === "tine_store" && row.profile.test && row.executable);

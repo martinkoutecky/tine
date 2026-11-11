@@ -212,6 +212,8 @@ impl Core {
         // A rebuild or a bytes refresh ignores the stamp shortcut: every
         // file is hashed.
         let force = matches!(trigger, DiffTrigger::Rebuild | DiffTrigger::Bytes);
+        #[cfg(feature = "test-faults")]
+        let _cycle = crate::cost_counters::watcher_cycle(trigger.token(), paths.is_none());
         let result = self.reconcile_walk(
             paths,
             include_config,
@@ -450,7 +452,17 @@ impl Core {
                         new.rev = old.rev.clone();
                         continue;
                     }
-                    let hashed = racy::hash_settled(&path, new);
+                    let hashed = {
+                        #[cfg(feature = "test-faults")]
+                        let _cause = crate::cost_counters::watcher_read_cause(
+                            if same && racy.contains(&path) {
+                                crate::cost_counters::WatcherReadCause::RacyRehash
+                            } else {
+                                crate::cost_counters::WatcherReadCause::InitialHash
+                            },
+                        );
+                        racy::hash_settled(&path, new)
+                    };
                     if same && matches!(hashed, Ok(false)) && !refused {
                         // §5.4: a racy stamp cannot vouch for the bytes, so
                         // they were reread; it stops being racy once observed
@@ -469,9 +481,17 @@ impl Core {
                     }
                     hash_error = hashed.err();
                 } else if let Some(new) = now.get_mut(&path) {
+                    #[cfg(feature = "test-faults")]
+                    let _cause = crate::cost_counters::watcher_read_cause(
+                        crate::cost_counters::WatcherReadCause::InitialHash,
+                    );
                     hash_error = racy::hash_settled(&path, new).err();
                 }
             } else if let Some(new) = now.get_mut(&path) {
+                #[cfg(feature = "test-faults")]
+                let _cause = crate::cost_counters::watcher_read_cause(
+                    crate::cost_counters::WatcherReadCause::InitialHash,
+                );
                 // Keep exact notifications on their existing one-stamp path:
                 // sync_file_internal compares this hash with the bounded read.
                 // Only a failed read needs the extra metadata observation below.

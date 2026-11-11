@@ -280,16 +280,16 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
+  let mainEl: HTMLDivElement | undefined;
   // One conditional owner for identity chrome across the row's separate slots.
   const commentPresentation = createMemo(() => hasCommentIdentity() ? {
     quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() ? null : commentSelector()} />,
     header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>,
     gutter: <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />,
-    composer: <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} /></Show>,
+    composer: <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} /></Show>,
   } : null);
   // A page-embed host pins its own bullet while its embedded page scrolls (GH #898).
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
-  let mainEl: HTMLDivElement | undefined;
 
   return (
     <div

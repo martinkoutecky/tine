@@ -1,7 +1,6 @@
 // GH #675 / #676: observe real backend candidates, displayed choices and insertion.
 import { spawn, execFileSync } from "node:child_process";
 import { remote } from "webdriverio";
-import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +9,11 @@ import { createHash } from "node:crypto";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { measureCompletionLatency } from "./lib/e2e-completion-latency.mjs";
+import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+
+ensurePrivateSessionBus();
+// Install inside the private-bus child so its lease sampler stays responsive.
+await import("./lib/e2e-auto-account-home.mjs");
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
@@ -19,7 +23,7 @@ const latency = process.env.TINE_LATENCY_GRAPH;
 const candidate = process.env.TINE_LATENCY_LABEL || "working tree";
 const TMP = latency
   ? path.join(ROOT, "target/artifacts/og-ac-latency-899", `native-${process.env.TINE_LATENCY_LABEL || Date.now()}`)
-  : path.join(ROOT, "artifacts/gh675", String(Date.now()));
+  : path.join(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/gh675"), String(Date.now()));
 const GRAPH = path.join(TMP, "graph");
 if (latency) fs.cpSync(latency, GRAPH, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
@@ -41,14 +45,30 @@ const log = fs.openSync(path.join(TMP, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOME, "bin/tauri-driver"),
   ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
   { env, stdio: ["ignore", log, log], detached: true });
-await sleep(2500);
 let browser;
 const observations = [];
 try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 1,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true,
       "tauri:options": { application: APP } } });
-  await ensureMainWindow(browser);
+  // Window handles can exist before their documents navigate away from
+  // about:blank. Re-select until the main app's navigation is actually there.
+  await browser.waitUntil(async () => {
+    await ensureMainWindow(browser);
+    return browser.$(".app-container").isExisting();
+  }, { timeout: 20_000, interval: 100, timeoutMsg: "the main app did not mount" });
+  // The window paints before the graph's background name/alias index is
+  // warm. Use the same graph-scoped signal as frontend whole-graph readers.
+  await browser.waitUntil(async () => {
+    const result = await browser.executeAsync(done => {
+      window.__TAURI_INTERNALS__.invoke("warm_done").then(
+        ready => done({ ready }), error => done({ failure: String(error) }));
+    });
+    if (result.failure) throw new Error(result.failure);
+    return result.ready;
+  }, {
+    timeout: 20_000, interval: 100, timeoutMsg: "the graph's name/alias index did not finish warming",
+  });
   await openPageByName(browser, "Tine");
   await browser.$(".ls-block .block-content-wrapper").waitForExist({ timeout: 20000 });
   await browser.$(".ls-block .block-content-wrapper").click();
