@@ -1,16 +1,17 @@
-import { For, Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, children, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openInNewTab } from "../router";
 import { t } from "../i18n";
 import { contextMenu, openPageContextMenu } from "../ui";
 import { PagePropertyValue } from "../components/PagePropertyValue";
 import { PropertyKey, visiblePageProperties } from "./PropertyKey";
 import { FloatingPortal } from "../components/FloatingPortal";
+import { placePopover } from "../components/popoverFit";
 import { RefBlocks } from "../components/RefBlocks";
 import { LiveRefGroup } from "../components/LiveRefGroup";
 import { editingId, endEdit } from "../editorController";
 import type { BlockDto } from "../types";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { isHTMLElementNode, isNodeValue, useOwnerWindow, viewportOf } from "../windowRealm";
+import { isHTMLElementNode, isNodeValue, requestFrame, useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
 
@@ -92,6 +93,11 @@ export function PeekPopup(props: {
   truncatedCount?: () => number;
   /** Extra title-row buttons, after Open source (GH #417: a reference's Edit link / Remove). */
   actions?: JSX.Element;
+  /** Live content supplied by another preview entry point (margin comments). */
+  content?: JSX.Element;
+  class?: string;
+  label?: string;
+  bottomSheet?: boolean;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
   onDismiss: () => void;
@@ -99,6 +105,7 @@ export function PeekPopup(props: {
   onHold?: (held: boolean) => void;
 }): JSX.Element {
   let popupEl: HTMLDivElement | undefined;
+  const customContent = children(() => props.content);
   const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
@@ -111,7 +118,7 @@ export function PeekPopup(props: {
   // render inline.
   const surfaceKey = `ref:peek-${layerId}`;
   const [editorFocused, setEditorFocused] = createSignal(false);
-  const editingInside = () => editingId() !== null && editorFocused();
+  const editingInside = () => editorFocused() && (editingId() !== null || !!popupEl?.ownerDocument.activeElement?.matches(".comment-reply-draft"));
   createEffect(() => props.onHold?.(editingInside()));
   // Page menus live outside the preview DOM. Identify this preview's menu by
   // its exact opener, so unrelated menus retain normal outside dismissal.
@@ -148,6 +155,12 @@ export function PeekPopup(props: {
     const root = anchor.ownerDocument.documentElement;
     const viewportWidth = viewport.width || root.clientWidth || POPUP_FALLBACK_WIDTH;
     const viewportHeight = viewport.height || root.clientHeight || POPUP_FALLBACK_HEIGHT;
+    if (props.bottomSheet) {
+      const visibleHeight = viewport.visual?.height || viewportHeight;
+      const bottom = Math.max(0, viewportHeight - visibleHeight - (viewport.visual?.offsetTop ?? 0));
+      setStyle({ left: "8px", right: "8px", bottom: `${bottom}px`, width: "auto", "max-height": `${Math.floor(visibleHeight * 0.55)}px` });
+      return;
+    }
     const width = Math.min(
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
@@ -159,7 +172,7 @@ export function PeekPopup(props: {
     const above = Math.max(0, rect.top - POPUP_OFFSET - POPUP_MARGIN);
     // Prefer below, then above. If neither fits, use the larger side: never
     // clamp the popup back across its reference (GH #750).
-    const openAbove = naturalHeight > below && (naturalHeight <= above || above > below);
+    const openAbove = placePopover(naturalHeight, below, above).flip;
     const room = openAbove ? above : below;
     // Pin the edge next to the reference and reserve the room on that side:
     // later growth (images, embeds, folds) extends away from the link and
@@ -170,6 +183,15 @@ export function PeekPopup(props: {
       ? { left: `${left}px`, bottom: `${viewportHeight - rect.top + POPUP_OFFSET}px`, "max-height": maxHeight }
       : { left: `${left}px`, top: `${rect.bottom + POPUP_OFFSET}px`, "max-height": maxHeight });
   };
+  // Click-triggered previews can switch to another passage without unmounting.
+  createEffect<boolean>(previousSheet => {
+    const sheet = !!props.bottomSheet;
+    const changed = previousSheet !== sheet;
+    props.anchor();
+    if (changed) setStyle({}); // discard the other presentation's insets before measuring
+    if (changed || !editingInside()) queueMicrotask(updatePosition);
+    return sheet;
+  }, !!props.bottomSheet);
 
   createEffect(() => {
     const unregister = registerTransientLayer({
@@ -196,34 +218,56 @@ export function PeekPopup(props: {
 
   onMount(() => {
     const anchor = props.anchor();
+    let revealingSource = false;
+    if (props.bottomSheet && anchor) {
+      const bottom = anchor.getBoundingClientRect().bottom;
+      const viewport = viewportOf(anchor);
+      const sourceEdge = (viewport.visual?.offsetTop ?? 0) + (viewport.visual?.height || viewport.height) * 0.4;
+      if (bottom > sourceEdge) {
+        for (let scroller = anchor.parentElement; scroller; scroller = scroller.parentElement) {
+          if (scroller.scrollHeight <= scroller.clientHeight || !/auto|scroll/.test(ownerWindow.getComputedStyle(scroller).overflowY)) continue;
+          revealingSource = true;
+          scroller.scrollTop += bottom - sourceEdge;
+          onCleanup(requestFrame(anchor, () => { revealingSource = false; }));
+          break;
+        }
+      }
+    }
     if (anchor) setStyle({ "max-height": `${peekMaxHeight(viewportOf(anchor).height)}px` });
     // Measure once after the initial children mount. Later folds, live refreshes
     // and future editing must not move the popup underneath the pointer.
     queueMicrotask(updatePosition);
     const close = () => { if (!editingInside()) props.onDismiss(); };
+    const resize = () => { if (props.bottomSheet && editingInside()) updatePosition(); else close(); };
+    const resizeVisible = () => { if (props.bottomSheet) updatePosition(); else resize(); };
+    const visibleViewport = ownerWindow.visualViewport;
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
     // fires for every scroller, so filter out events originating inside the popup.
     const onScroll = (e: Event) => {
+      if (revealingSource) return;
       if (ownsMenu()) return;
       const t = e.target as Node | null;
       if (popupEl && t && (popupEl === t || popupEl.contains(t))) return;
       close();
     };
     ownerWindow.addEventListener("scroll", onScroll, true);
-    ownerWindow.addEventListener("resize", close);
+    ownerWindow.addEventListener("resize", resize);
+    visibleViewport?.addEventListener("resize", resizeVisible);
     onCleanup(() => {
       ownerWindow.removeEventListener("scroll", onScroll, true);
-      ownerWindow.removeEventListener("resize", close);
+      ownerWindow.removeEventListener("resize", resize);
+      visibleViewport?.removeEventListener("resize", resizeVisible);
     });
   });
 
   return (
     <FloatingPortal>
       <div
-        class="peek-popup"
+        class={`peek-popup ${props.class ?? ""}`}
         ref={popupEl}
         role="dialog"
+        aria-label={props.label}
         tabIndex={-1}
         data-lenis-prevent
         style={style()}
@@ -257,6 +301,7 @@ export function PeekPopup(props: {
           </div>
         </Show>
         <PeekContext.Provider value={true}>
+          <Show when={customContent()} fallback={<>
           <Show when={visiblePageProperties(props.properties ?? []).length}>
             <div class="peek-page-properties">
               <For each={visiblePageProperties(props.properties ?? [])}>{([key, value]) => <div><span class="prop-key"><PropertyKey name={key} /></span>{": "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
@@ -268,6 +313,7 @@ export function PeekPopup(props: {
             {(page) => <LiveRefGroup page={page()} kind={props.pageKind ?? "page"} path={props.path} blocks={props.blocks()}
               surface="preview" surfaceKey={surfaceKey} eager onOpenBlock={openSource} />}
           </Show>
+          </>}>{customContent()}</Show>
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
           <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>

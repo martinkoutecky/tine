@@ -28,8 +28,10 @@ export function renderPlain(sourceText: string, span: Span | undefined, spanMap:
 // inside ONE plain text run whose text is byte-identical to its source (no span
 // map): anything spanning markup or escapes keeps its ordinary rendering, and the
 // comment card still shows the quote. Each piece keeps its own source span, so
-// click-to-caret mapping is unchanged.
-export function renderQuotedPlain(s: Extract<Inline, { k: "plain" }>, ranges: readonly QuotedRange[]): JSX.Element | null {
+// click-to-caret mapping is unchanged. `drew` hears every comment a mark is drawn
+// for (a thread quoting the same passage shares its mark), so entry points know
+// which threads have no highlight (`QuoteCoverage`).
+export function renderQuotedPlain(s: Extract<Inline, { k: "plain" }>, ranges: readonly QuotedRange[], drew?: (commentId: string) => void): JSX.Element | null {
   if (ranges.length === 0 || !s.span || (s.span_map && s.span_map.length > 0)) return null;
   const [from, to] = s.span;
   if (utf8ByteLength(s.text) !== to - from) return null;
@@ -39,8 +41,13 @@ export function renderQuotedPlain(s: Extract<Inline, { k: "plain" }>, ranges: re
   const pieces: JSX.Element[] = [];
   let byte = from;
   let at = 0;
-  for (const [start, end, commentId] of hits) {
+  let last: QuotedRange | undefined;
+  for (const hit of hits) {
+    const [start, end, commentId] = hit;
+    if (last && start === last[0] && end === last[1]) drew?.(commentId); // same passage, same mark
     if (start < byte) continue; // overlaps the previous mark: keep the first
+    last = hit;
+    drew?.(commentId);
     const a = utf8ByteToUtf16Offset(s.text, start - from);
     const b = utf8ByteToUtf16Offset(s.text, end - from);
     if (a > at) pieces.push(renderPlain(s.text.slice(at, a), [byte, start], undefined, true));

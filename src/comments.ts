@@ -15,11 +15,14 @@ import { propertyKeyNorm } from "./propertyKey";
 import type { Format } from "./render/ast";
 import { comment_quote } from "./render/wasm/lsdoc_wasm.js";
 import { utf8ToUtf16Cursor } from "./render/utf16Cursor";
+import { appNow } from "./journal";
 
 export const COMMENT_QUOTE_KEY = "tine.quote";
 export const COMMENT_QUOTE_PREFIX_KEY = "tine.quote-prefix";
 export const COMMENT_QUOTE_SUFFIX_KEY = "tine.quote-suffix";
 export const AUTHOR_KEY = "tine.author";
+export const COMMENT_RESOLVED_KEY = "tine.resolved";
+export const COMMENT_DATE_KEY = "tine.date";
 /** Initial context budget; repeated passages can require more (GH #891). */
 export const QUOTE_CONTEXT_MAX = 32;
 
@@ -246,6 +249,22 @@ export function authorOf(properties: readonly (readonly [string, string])[]): st
   return propertyValue(properties, AUTHOR_KEY) || null;
 }
 
+export function resolvedOf(properties: readonly (readonly [string, string])[]): boolean {
+  return propertyValue(properties, COMMENT_RESOLVED_KEY)?.toLowerCase() === "true";
+}
+
+/** Creation only: editing a message retains its existing hidden properties. */
+export function stampCommentDate(raw: string, format: Format): string {
+  return editBlock(raw, format, { kind: "property", key: COMMENT_DATE_KEY, value: appNow("instant").toISOString().slice(0, 16) + "Z" });
+}
+
+export function commentDateOf(properties: readonly (readonly [string, string])[]): string | null {
+  const value = propertyValue(properties, COMMENT_DATE_KEY);
+  if (!value || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/.test(value)) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 16) + "Z" === value ? value : null;
+}
+
 /** A block is a comment iff it has a `tine.quote::` property and a parent block. */
 export function isCommentBlock(properties: readonly (readonly [string, string])[], hasParentBlock: boolean): boolean {
   return hasParentBlock && quoteSelectorOf(properties) !== null;
@@ -255,7 +274,8 @@ export function isCommentBlock(properties: readonly (readonly [string, string])[
 export function isCommentPresentationKey(key: string, comment: boolean): boolean {
   const k = propertyKeyNorm(key);
   if (k === AUTHOR_KEY) return true;
-  return comment && (k === COMMENT_QUOTE_KEY || k === COMMENT_QUOTE_PREFIX_KEY || k === COMMENT_QUOTE_SUFFIX_KEY);
+  return comment && (k === COMMENT_QUOTE_KEY || k === COMMENT_QUOTE_PREFIX_KEY || k === COMMENT_QUOTE_SUFFIX_KEY
+    || k === COMMENT_RESOLVED_KEY || k === COMMENT_DATE_KEY);
 }
 
 /** Raw text of a new, empty-bodied comment: an empty first line (the caret's

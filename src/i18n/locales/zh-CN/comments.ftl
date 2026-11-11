@@ -15,6 +15,15 @@ comment-margin-label = 评论
 comment-toolbar = 评论
 comment-toolbar-shortcut = 评论 (Ctrl/Cmd+R)
 comment-reply = 回复
+comment-send = 发送
+comment-new-thread = 新建讨论串
+comment-resolve = 标为已解决
+comment-reopen = 重新打开
+comment-resolved-count = { NUMBER($count, useGrouping: 0) } 个已解决
+comment-below = 下方 { NUMBER($count, useGrouping: 0) } 个
+comment-below-expand = 展开以显示下方 { NUMBER($count, useGrouping: 0) } 个评论讨论串
+comment-show = 显示评论
+comment-hide = 隐藏评论
 comment-reply-placeholder = 回复…
 comment-delete = 删除评论及其回复
 comment-select-first = 请先在块中选中文字，再选择“评论所选内容”（或在编辑时按 Ctrl+R）
@@ -36,3 +45,12 @@ comment-name-prompt-save = 使用此名字
 comment-name-prompt-graph-changed = 在询问你的名字时图谱已切换，因此没有写入该批注。
 comment-remove-author = 移除作者
 comment-margin-draft-pending = 请先发送或放弃未发送的回复，再隐藏评论
+comment-open-thread = 打开评论对话
+comment-unanchored-marker = { $count ->
+        [one] 打开引用文字无法高亮的评论
+       *[other] 打开 { NUMBER($count, useGrouping: 0) } 条引用文字无法高亮的评论
+    }
+comment-thread-position = 第 { $current } 处，共 { $count } 处
+comment-prev-thread = 上一处
+comment-next-thread = 下一处
+comment-close-threads = 关闭评论

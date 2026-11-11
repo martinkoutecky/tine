@@ -9,7 +9,7 @@ import {
   setRaw,
   bodyNeighbor, threadRootOf, type PendingEdit,
 } from "../document";
-import { captureEditIntent, editingId, startEditing, type EditorSelection as CaretSelection } from "../editorController";
+import { captureEditIntent, editingId, endEdit, startEditing, type EditorSelection as CaretSelection } from "../editorController";
 import { navigateJournalDown } from "./journalNavigation";
 import { isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { guardedCommands } from "./cm6Commands";
@@ -18,7 +18,7 @@ import { pushToast } from "../toasts";
 import { msg } from "../i18n";
 import { autoPairing, documentMode, docModeEnterForNewBlock } from "../ui";
 import { backspacePairEdit } from "./autopair";
-import { replyOnEnter } from "../commentActions";
+import { commentKey } from "./commentKeys";
 import { detectMacro } from "../components/Rendered";
 import { listLineAt } from "../components/blockParts";
 import { type CollapseSurfaceApi } from "../components/Block";
@@ -211,10 +211,10 @@ export function cm6Structure(ctx: StructureContext) {
     }
     // Enter over a selection is one gesture: the kernel splits the text the selection leaves, and the
     // editor and the block lose the selected text only once it has answered. A refusal or a parser
-    // failure leaves both as they were, with the selection (og-wasm-enter-trap).
+    // failure leaves both as they were, with the selection (og-wasm-enter-trap). In a comment Enter is
+    // a line break and Ctrl/Cmd+Enter sends (GH #891), so no reply branch here.
     const replacement = s.empty ? undefined : ctx.deleteSelection(v, s.from, s.to);
     if (!replacement) ctx.commit(raw);
-    if (s.empty && replyOnEnter(ctx.id, raw, s.from, editSurface())) return true;
     const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
     splitBlock(ctx.id, s.from, zoom, zoom, editSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement);
     return true;
@@ -241,6 +241,7 @@ export function cm6Structure(ctx: StructureContext) {
   };
   const keydown = (e: KeyboardEvent, v: EditorView) => {
     if (!ctx.current() || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
+    if (commentKey(e, ctx.id, () => { softNewline(v); }, () => { ctx.commit(v.state.doc.toString()); endEdit("page-navigation"); })) return true;
     if (isTabLikeEvent(e) && !isPermittedTabGesture(e)) return false;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
     if (e.key === "Enter" && plain) {
