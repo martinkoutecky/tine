@@ -114,8 +114,8 @@ fn org_meta_line(trimmed: &str) -> bool {
 
 /// Rewrite the preamble title that [`page_title_from_preamble`] reads to
 /// `new_name`, when that title still names `old_name` (`refs::same_page`). A
-/// `title::` line becomes `title:: <new_name>`; an Org `#+title:` directive or
-/// `:title:` drawer line keeps its own spelling and only its value changes.
+/// `title::` property, Org `#+title:` directive or `:title:` drawer line
+/// keeps its own spelling and only its name value changes.
 /// Line endings and every other byte are kept. `None`: no title, or a title
 /// naming another page (user content a rename must not touch). Cost
 /// O(content bytes); no I/O or error.
@@ -129,26 +129,18 @@ pub fn rebind_page_title(
     if !crate::refs::same_page(&content[line.value.clone()], old_name) {
         return None;
     }
-    let (replaced, text) = if line.property {
-        (line.line, format!("title:: {new_name}"))
-    } else {
-        (line.value, new_name.to_owned())
-    };
+    let replaced = line.value;
     Some(format!(
         "{}{}{}",
         &content[..replaced.start],
-        text,
+        new_name,
         &content[replaced.end..]
     ))
 }
 
-/// Where the preamble title is: the line without its newline, the trimmed
-/// value, and whether it is a `title::` property line (else an Org directive
-/// or drawer line). The one scan both title readers and the rebind share.
+/// The preamble title's value. Both title readers and the rebind share it.
 struct TitleLine {
-    line: std::ops::Range<usize>,
     value: std::ops::Range<usize>,
-    property: bool,
 }
 
 /// Byte length of the page's preamble: where the outline authority opens the
@@ -167,17 +159,18 @@ fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
     page_title_line_before(content, format, preamble_end(content, format))
 }
 
+pub(crate) fn title_name_span(content: &str, format: Format) -> Option<std::ops::Range<usize>> {
+    page_title_line(content, format).map(|line| line.value)
+}
+
 fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {
     let text = crate::org::lone_cr_to_lf(content);
     let regions = crate::block_regions::parse_document(&text[..end], format == Format::Org);
     let p = regions
         .page_properties()
         .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())?;
-    let line = p.line.0..text[..p.line.1].trim_end_matches(['\r', '\n']).len();
     Some(TitleLine {
-        line,
         value: p.value_range.0..p.value_range.1,
-        property: format == Format::Md,
     })
 }
 

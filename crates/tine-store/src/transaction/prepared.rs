@@ -4,6 +4,49 @@
 use super::*;
 use tine_core::config::FileNameFormat;
 
+impl PagePlan<'_> {
+    pub(super) fn record_kinds(&mut self, kinds: &[crate::EditKind]) {
+        assert!(!kinds.is_empty(),"OG-RULES Rule 8: page save needs a kind; exemplar crates/tine-graph-features/src/pages.rs");
+        for kind in kinds {
+            if !self.kinds.contains(kind) {
+                self.kinds.push(*kind);
+            }
+        }
+    }
+    /// Queue certified physical bytes from the planning read. `Some(renames)`
+    /// permits a stale reference rewrite to be recomputed; `None` is a merge
+    /// survivor and refuses a mismatch rather than recomputing only references.
+    /// Preflight checks the revision, exact old bytes, filename format and
+    /// complete-text certificate under the Org and conflict-marker firewalls.
+    /// O(file bytes), no additional I/O beyond the ordinary staged rewrite.
+    pub fn rewrite_refs_prepared(
+        &mut self,
+        kinds: &[crate::EditKind],
+        id: &PageId,
+        expected: FileRev,
+        text: (String, String),
+        renames: Option<&RenameMap>,
+        format: FileNameFormat,
+        certificate: tine_core::text_trace::TextTrace,
+    ) {
+        self.record_kinds(kinds);
+        self.steps.push(Step::Rewrite {
+            id: id.clone(),
+            expected,
+            renames: renames.cloned().unwrap_or_default(),
+            rebind_title: false,
+            prepared: Some(Box::new(PreparedRewrite::new(
+                id.file(),
+                text.0,
+                text.1,
+                format,
+                certificate,
+                renames.is_none(),
+            ))),
+        });
+    }
+}
+
 /// One page file's reference rewrite, computed by the shared rewriter
 /// (`tine_core::refs::rename_rewrite`) from the bytes the caller read and
 /// passed to [`PagePlan::rewrite_refs`]. It never leaves the transaction:
@@ -24,17 +67,31 @@ pub(super) struct PreparedRewrite {
     old: String,
     new: String,
     name_format: FileNameFormat,
+    certificate: tine_core::text_trace::TextTrace,
+    strict: bool,
 }
 
 impl PreparedRewrite {
+    pub(super) fn is_merge(&self) -> bool {
+        self.strict
+    }
     /// The rewrite of `old`, the text the caller read for `file`; `new` is
     /// `rename_rewrite(old)` under `name_format`.
-    pub(super) fn new(file: FileId, old: String, new: String, name_format: FileNameFormat) -> Self {
+    pub(super) fn new(
+        file: FileId,
+        old: String,
+        new: String,
+        name_format: FileNameFormat,
+        certificate: tine_core::text_trace::TextTrace,
+        strict: bool,
+    ) -> Self {
         PreparedRewrite {
             file,
             old,
             new,
             name_format,
+            certificate,
+            strict,
         }
     }
 
@@ -46,8 +103,26 @@ impl PreparedRewrite {
         file: &FileId,
         old: &[u8],
         name_format: FileNameFormat,
-    ) -> Option<Vec<u8>> {
-        (self.file == *file && self.old.as_bytes() == old && self.name_format == name_format)
-            .then(|| self.new.clone().into_bytes())
+    ) -> Result<Option<Vec<u8>>, Why> {
+        let matches =
+            self.file == *file && self.old.as_bytes() == old && self.name_format == name_format;
+        if !matches {
+            if self.strict {
+                return Err(Why::Refused(Refusal::TextRealization(
+                    tine_core::text_trace::TraceError::Partition,
+                )));
+            }
+            return Ok(None);
+        }
+        let trace = &self.certificate;
+        if trace.inputs.first().map(String::as_str) != Some(self.old.as_str()) {
+            return Err(Why::Refused(Refusal::TextRealization(
+                tine_core::text_trace::TraceError::Partition,
+            )));
+        }
+        trace
+            .check(&self.new, &trace.substitution)
+            .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
+        Ok(Some(self.new.clone().into_bytes()))
     }
 }

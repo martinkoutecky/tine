@@ -2,6 +2,47 @@
 //! exercised as-is; missing candidates become attributed diagnostic rows.
 use super::*;
 use tine_core::model::PageId;
+use tine_graph_features::pages::merge_payload::{self, MergeProposal, Origin};
+
+fn merge_proof(
+    store: &Store,
+    spec: &GraphSpec,
+    old: &str,
+    new: &str,
+    choice: &Choice,
+) -> Option<(
+    String,
+    Result<MergeProposal, merge_payload::RealizationError>,
+)> {
+    let Choice::Merge(path) = choice else {
+        return None;
+    };
+    let view = store.whole_graph().unwrap();
+    let Resolved::Existing { id: source, .. } = view.resolve(old, false) else {
+        return None;
+    };
+    let target = PageId::from(path.as_str());
+    let src = &spec.files[source.as_str()];
+    let dst = &spec.files[path];
+    let a = store.page_of(&source, src.as_bytes()).unwrap().doc;
+    let b = store.page_of(&target, dst.as_bytes()).unwrap().doc;
+    let links = std::collections::HashMap::from([(tine_core::refs::page_key(old), new.to_owned())]);
+    let queries =
+        std::collections::HashMap::from([(tine_core::refs::page_key(old), b.name.clone())]);
+    Some((
+        path.clone(),
+        merge_payload::propose(
+            &b,
+            dst,
+            &a,
+            src,
+            &links,
+            &queries,
+            path.ends_with(".org"),
+            spec.name_format(),
+        ),
+    ))
+}
 
 #[derive(Clone)]
 enum Choice {
@@ -230,9 +271,67 @@ fn compare_outputs(
     root: &Path,
     candidate: &Value,
     original_input: &Value,
+    writer: Option<&(
+        String,
+        Result<MergeProposal, merge_payload::RealizationError>,
+    )>,
     diffs: &mut Vec<String>,
 ) -> Value {
     let files = read_graph(root);
+    if let Some((path, proof)) = writer {
+        let proof = proof
+            .as_ref()
+            .expect("an applied merge has a realizable writer proposal");
+        proof
+            .trace
+            .check(&files[path], &proof.trace.substitution)
+            .expect("production TraceValid, against disk bytes");
+    }
+    let links =
+        std::collections::HashMap::from([(tine_core::refs::page_key(old), requested.to_owned())]);
+    let queries = std::collections::HashMap::from([(
+        tine_core::refs::page_key(old),
+        candidate["candidate"]["destination"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    )]);
+    let mut referrer_traces = 0;
+    for (path, after) in &files {
+        if writer.is_some_and(|(survivor, _)| survivor == path) {
+            continue;
+        }
+        let Some(before) = spec.files.get(path).filter(|before| *before != after) else {
+            continue;
+        };
+        let org = path.ends_with(".org");
+        let mut proposal =
+            tine_core::refs::rename_proposal(before, org, &links, &queries, spec.name_format())
+                .unwrap();
+        if proposal.text != *after {
+            let format = if org {
+                tine_core::model::Format::Org
+            } else {
+                tine_core::model::Format::Md
+            };
+            let name = tine_core::model::decode_page_name(
+                Path::new(path).file_stem().unwrap().to_str().unwrap(),
+                spec.name_format(),
+            );
+            if let Some(title) = tine_core::model::page_title_from_preamble(before, format) {
+                if let Some(new) = tine_core::refs::renamed_page_name(&title, &links)
+                    .filter(|new| tine_core::refs::same_page(new, &name))
+                {
+                    proposal.rebind_title(org, &new).unwrap();
+                }
+            }
+        }
+        proposal
+            .trace
+            .check(after, &proposal.trace.substitution)
+            .expect("production referrer certificate against disk bytes");
+        referrer_traces += 1;
+    }
     for fragment in contract["protectedText"].as_array().into_iter().flatten() {
         let text = fragment.as_str().unwrap();
         let before: usize = spec.files.values().map(|s| s.matches(text).count()).sum();
@@ -259,6 +358,75 @@ fn compare_outputs(
     let store = Store::open(root, Default::default()).unwrap().0;
     let view = store.whole_graph().unwrap();
     let mut input = shared::model_input_r13(&view, &after_spec);
+    if let Some((path, Ok(proof))) = writer {
+        let file = input["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["path"] == *path)
+            .unwrap();
+        assert_eq!(
+            proof.origins.len(),
+            file["blocks"].as_array().unwrap().len(),
+            "production origins cover every parsed output block"
+        );
+        assert!(proof.origins.iter().all(|origins| !origins.is_empty()));
+        let before = original_input["files"].as_array().unwrap();
+        let target = before.iter().find(|f| f["path"] == *path).unwrap();
+        // Byte-identical source files of the same format have the same block count. The
+        // trace binds the actual merge input; no model-side image is used.
+        let source = before
+            .iter()
+            .find(|f| {
+                f["path"] != *path
+                    && f["format"] == target["format"]
+                    && f["text"].as_str() == Some(proof.trace.inputs[1].as_str())
+            })
+            .unwrap();
+        let org = path.ends_with(".org");
+        let parsed = if org {
+            tine_core::org::parse_org(&proof.trace.inputs[0])
+        } else {
+            tine_core::doc::parse(&proof.trace.inputs[0])
+        };
+        let header = parsed.pre_block.as_deref().map_or_else(
+            || {
+                usize::from(
+                    tine_core::page_header::page_header_text(
+                        None,
+                        parsed.roots.first().map(|b| b.raw()),
+                    )
+                    .is_some(),
+                )
+            },
+            |pre| tine_core::page_properties::pre_block_projections(pre, org).len(),
+        );
+        let mut target = vec![false; target["blocks"].as_array().unwrap().len()];
+        let mut source = vec![false; source["blocks"].as_array().unwrap().len()];
+        for origins in &proof.origins {
+            for origin in origins {
+                match origin {
+                    Origin::TargetHeader => {
+                        assert!(header > 0);
+                        for slot in &mut target[..header] {
+                            *slot = true;
+                        }
+                    }
+                    Origin::Target(j) => {
+                        target[*j] = true;
+                    }
+                    Origin::Source(j) => {
+                        source[*j] = true;
+                    }
+                    Origin::Leftover => {}
+                }
+            }
+        }
+        assert!(
+            target.into_iter().chain(source).all(|image| image),
+            "every input block has a production origin image"
+        );
+    }
     input["favorites"] = json!(actual_config.favorites);
     let actual: BTreeMap<_, _> = input["files"]
         .as_array()
@@ -506,7 +674,11 @@ fn compare_outputs(
     }
     // Whole bytes are retained as evidence. Symbolic predictions cannot certify
     // protected text/layout or true writer origins (G7), even when projections agree.
-    let evidence = json!({"files": files, "parsed": input["files"], "meaning": model_after,
+    let writer=writer.map(|(path,proof)| match proof {
+        Ok(p)=>json!({"path":path,"pieces":p.trace.pieces.len(),"consumed":p.trace.consumed,"origins":format!("{:?}",p.origins),"unrealized":format!("{:?}",p.unrealized),"traceValid":true}),
+        Err(e)=>json!({"path":path,"unrealizable":format!("{e:?}")}),
+    });
+    let evidence = json!({"files": files, "parsed": input["files"], "meaning": model_after, "writer":writer,"referrerTraces":referrer_traces,
         "causalRepairs": repaired});
     drop(view);
     store.close();
@@ -571,6 +743,7 @@ pub fn run(bridge: &Path) {
                     spec.write(dir.path());
                     let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
                     let before = read_graph(dir.path());
+                    let writer=merge_proof(&store,spec,old,new,choice);
                     let result = execute(&store, old, new, Some(choice));
                     let allowed = result.is_ok();
                     if allowed != (candidate["safe"] == true) {
@@ -578,7 +751,7 @@ pub fn run(bridge: &Path) {
                     }
                     store.close();
                     if allowed {
-                        compare_outputs(bridge, &spec, old, new, expected, dir.path(), candidate, &input, &mut rows)
+                        compare_outputs(bridge, &spec, old, new, expected, dir.path(), candidate, &input, writer.as_ref(), &mut rows)
                     } else {
                         assert_eq!(before, read_graph(dir.path()), "refusal must not write page bytes");
                         json!({"refused": result.err()})

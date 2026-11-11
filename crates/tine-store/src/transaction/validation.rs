@@ -12,20 +12,32 @@ pub(crate) fn rewrite(
     map: &RenameMap,
     name_format: tine_core::config::FileNameFormat,
 ) -> Result<Vec<u8>, Why> {
+    let proposal = rewrite_proposal(old, path, map, name_format)?;
+    let is_org = Format::from_path(path) == Format::Org;
+    refuse_read_only_org(old, proposal.text.as_bytes(), is_org)?;
+    Ok(proposal.text.into_bytes())
+}
+
+fn rewrite_proposal(
+    old: &[u8],
+    path: &Path,
+    map: &RenameMap,
+    name_format: tine_core::config::FileNameFormat,
+) -> Result<tine_core::refs::RenameProposal, Why> {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::transaction_rewrite();
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     let is_org = Format::from_path(path) == Format::Org;
-    let rewritten = tine_core::refs::rename_rewrite_with_queries(
-        text,
-        is_org,
-        &map.0,
-        &map.1,
-        name_format,
-        None,
-    );
-    refuse_read_only_org(text.as_bytes(), rewritten.as_bytes(), is_org)?;
-    Ok(rewritten.into_bytes())
+    let keyed = |pairs: &[(String, String)]| {
+        pairs
+            .iter()
+            .map(|(a, b)| (tine_core::refs::page_key(a), b.clone()))
+            .collect()
+    };
+    let proposal =
+        tine_core::refs::rename_proposal(text, is_org, &keyed(&map.0), &keyed(&map.1), name_format)
+            .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
+    Ok(proposal)
 }
 
 /// Refuse changing an Org file that does not round-trip. Scenario: malformed
@@ -50,10 +62,15 @@ pub(crate) fn rewrite_move(
     map: &RenameMap,
     name_format: tine_core::config::FileNameFormat,
 ) -> Result<Vec<u8>, Why> {
-    let rewritten = rewrite(old, path, map, name_format)?;
+    let mut proposal = rewrite_proposal(old, path, map, name_format)?;
+    refuse_read_only_org(
+        old,
+        proposal.text.as_bytes(),
+        Format::from_path(path) == Format::Org,
+    )?;
     let format = tine_core::model::Format::from_path(path);
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-        return Ok(rewritten);
+        return Ok(proposal.text.into_bytes());
     };
     let destination_name = tine_core::model::decode_page_name(stem, name_format);
     let source = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
@@ -62,24 +79,24 @@ pub(crate) fn rewrite_move(
         panic!("deterministic test sentinel for a rename title-read panic");
     }
     let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
-        return Ok(rewritten);
+        return Ok(proposal.text.into_bytes());
     };
     let Some((from, new_name)) = map.0.iter().find(|(from, to)| {
         tine_core::refs::same_page(from, &title)
             && tine_core::refs::same_page(to, &destination_name)
     }) else {
-        return Ok(rewritten);
+        return Ok(proposal.text.into_bytes());
     };
-    let text = std::str::from_utf8(&rewritten).map_err(|_| Why::Refused(Refusal::Undecodable))?;
-    let Some(rebound) = tine_core::model::rebind_page_title(text, format, from, new_name) else {
-        return Ok(rewritten);
-    };
+    let _ = from;
+    proposal
+        .rebind_title(format == Format::Org, new_name)
+        .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
     if format == tine_core::model::Format::Org && !tine_core::org::org_editable(source) {
         return Err(Why::Refused(Refusal::ReadOnly(
             "org file is read-only (does not round-trip)".into(),
         )));
     }
-    Ok(rebound.into_bytes())
+    Ok(proposal.text.into_bytes())
 }
 
 pub(super) fn validate_stream(source: &File, max_bytes: u64) -> Result<(), Why> {

@@ -281,7 +281,9 @@ impl<'a> PagePlan<'a> {
                 let name_format = self.store.config().file_name_format;
                 let reused = prepared
                     .as_ref()
-                    .and_then(|prepared| prepared.reuse(&file, &old, name_format));
+                    .map(|prepared| prepared.reuse(&file, &old, name_format))
+                    .transpose()?
+                    .flatten();
                 let new = if *rebind_title {
                     rewrite_move(&old, &path, renames, name_format)?
                 } else if let Some(new) = reused {
@@ -292,6 +294,9 @@ impl<'a> PagePlan<'a> {
                     rewrite(&old, &path, renames, name_format)?
                 };
                 refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
+                if prepared.as_ref().is_some_and(|p| p.is_merge()) {
+                    refuse_marker_rewrite(&new, &old, Format::from_path(&path))?;
+                }
                 Ok(Prepared {
                     src: file,
                     dst: None,

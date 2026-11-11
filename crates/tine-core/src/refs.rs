@@ -225,6 +225,57 @@ pub fn rename_rewrite_with_queries(
     )
 }
 
+pub use rename::{RenameProposal, Site, Unrealized};
+
+/// Native spelling of one linkable-property member, sharing the span writer's
+/// wrapper rule so commas inside a name do not become member separators.
+pub fn linkable_member_spelling(name: &str) -> String {
+    rename::member_spelling(name)
+}
+
+/// Physical block ranges from the same outline authority as the page reader.
+/// Each tuple is (whole block, content start, structural level, continuation
+/// indentation). Ranges include line terminators; children follow their parent.
+/// O(page bytes), one outline parse, no I/O.
+pub fn physical_outline(
+    text: &str,
+    is_org: bool,
+) -> Vec<(std::ops::Range<usize>, usize, u32, usize)> {
+    let format = if is_org {
+        crate::outline::OutlineFormat::Org
+    } else {
+        crate::outline::OutlineFormat::Markdown
+    };
+    let headers = crate::outline::headers(text, format).unwrap_or_default();
+    let mut starts = vec![0];
+    starts.extend(text.match_indices('\n').map(|(at, _)| at + 1));
+    headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            let start = starts[h.line];
+            let end = headers.get(i + 1).map_or(text.len(), |h| starts[h.line]);
+            (start..end, start + h.prefix_len, h.level, h.content_indent)
+        })
+        .collect()
+}
+
+/// Prepare the physical span rewrite with its checked complete-text certificate
+/// and covered sites that could not be realized. O(page bytes), no I/O.
+pub fn rename_proposal(
+    text: &str,
+    is_org: bool,
+    renames: &std::collections::HashMap<String, String>,
+    queries: &std::collections::HashMap<String, String>,
+    format: FileNameFormat,
+) -> Result<RenameProposal, crate::text_trace::TraceError> {
+    rename::proposal(
+        text,
+        is_org,
+        &rename::Renames::new(renames, Some(queries), format, true),
+    )
+}
+
 /// [`rename_rewrite`] with the renames already keyed by `normalize(old)`.
 pub fn rename_rewrite_keyed(
     text: &str,
@@ -240,8 +291,8 @@ pub fn rename_rewrite_keyed(
     )
 }
 
-/// [`rename_rewrite_keyed`] for one block's raw body (a page DTO's block, as
-/// the merge rewrites it); `queries` as [`rename_rewrite_with_queries`].
+/// [`rename_rewrite_keyed`] for one held block's raw body;
+/// `queries` as [`rename_rewrite_with_queries`].
 /// `rewritten` records applied edits as in that function.
 pub fn rename_block_raw(
     raw: &str,
@@ -259,8 +310,8 @@ pub fn rename_block_raw(
     )
 }
 
-/// [`rename_rewrite_keyed`] for a page's pre-block text (a page DTO's
-/// `pre_block`, as the merge rewrites it): its page properties; `queries` as
+/// [`rename_rewrite_keyed`] for a held page DTO's `pre_block`: its page
+/// properties; `queries` as
 /// [`rename_rewrite_with_queries`].
 /// `rewritten` records applied edits as in that function.
 pub fn rename_pre_block(

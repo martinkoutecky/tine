@@ -2,7 +2,9 @@
 //! master 7160c501cb88 `merge_pages_after_rename`; GH #327). The golden is the
 //! master oracle's output on the same input. og differs by design in exactly
 //! one file, asserted literally below: the survivor unites the source's
-//! `alias::` (master drops it, leaving `[[Former]]` dangling).
+//! `alias::` (master drops it, leaving `[[Former]]` dangling), preserves its
+//! blank header separator as leftover text, and keeps source indentation
+//! verbatim (CM §5.1–5.2). The frozen master golden is unchanged.
 use serde::Deserialize;
 use std::{fs, path::Path};
 use tine_graph_features::pages;
@@ -119,7 +121,9 @@ fn rename_merge_paths_and_bytes_match_master_7160c501() {
     );
     survivor.1 = survivor
         .1
-        .replace("alias:: Kept\n", "alias:: Kept, Former\n");
+        .replace("alias:: Kept\n", "alias:: Kept, Former\n")
+        .replace("- old body links", "- \n- old body links")
+        .replace("\t- nested #New", "  - nested #New");
     assert_eq!(actual, expected, "merged output paths or bytes differ");
     let graph = store.whole_graph().unwrap();
     assert!(

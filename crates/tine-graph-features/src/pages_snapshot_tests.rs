@@ -2,6 +2,7 @@ use super::*;
 use crate::test_host_writer::{save_on, HostWriter, SaveRefused};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs as disk, sync::Arc};
+use tine_core::model::PageDto;
 use tine_store::{FileRev, Refusal, SaveBase, Why};
 
 /// Keep mine: a save guarded on the bytes on disk now, not the editor's base.

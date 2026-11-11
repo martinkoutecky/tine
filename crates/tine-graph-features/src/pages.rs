@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 
-use tine_core::model::{Format, PageDto, PageKind};
+use tine_core::model::{Format, PageKind};
 use tine_core::refs;
 #[path = "pages_rename_plan.rs"]
 mod rename_plan;
@@ -29,7 +29,7 @@ impl RenamePlan {
 }
 use tine_store::{
     Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
-    Resolved, SaveBase, Store, StoreError, TitleRebind,
+    Resolved, Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -827,15 +827,17 @@ fn rename_transaction<'s>(
         None => None,
     };
     if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
-        let kinds = [
-            tine_store::EditKind::RenamePage,
-            tine_store::EditKind::InsertBlocks,
-        ];
-        tx.save_page(
-            &kinds,
+        tx.rewrite_refs_prepared(
+            &[
+                tine_store::EditKind::RenamePage,
+                tine_store::EditKind::InsertBlocks,
+            ],
             dst,
-            SaveBase::Existing(survivor.dst_rev.clone()),
-            &survivor.doc,
+            survivor.dst_rev.clone(),
+            (survivor.old.clone(), survivor.proposal.text.clone()),
+            None,
+            config.file_name_format,
+            survivor.proposal.trace.clone(),
         );
     }
     let name_format = config.file_name_format;
@@ -897,19 +899,26 @@ fn rename_transaction<'s>(
             tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
             new != content
         } else {
-            let prepared = rewritten
-                .remove(&id)
-                .or_else(|| (!planned).then(|| (rewrite(&mut names), std::mem::take(&mut names))));
-            if let Some((new, recorded)) = prepared {
-                names = recorded;
-                let changed = new != content;
+            let prepared = match rewritten.remove(&id) {
+                Some(p) => Some(p),
+                None if !planned => Some(
+                    refs::rename_proposal(&content, org, &lookup, &query_lookup, name_format)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+                ),
+                None => None,
+            };
+            if let Some(proposal) = prepared {
+                names = proposal.rewritten;
+                let changed = proposal.text != content;
                 if changed {
                     tx.rewrite_refs_prepared(
+                        &[tine_store::EditKind::RenamePage],
                         &id,
                         rev.clone(),
-                        (content.clone(), new),
-                        &map,
+                        (content.clone(), proposal.text),
+                        Some(&map),
                         name_format,
+                        proposal.trace,
                     );
                 }
                 changed
@@ -1359,14 +1368,17 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
     let transaction = |survivor: &Survivor| {
         let mut tx = store.page_plan(Some(tine_store::EditKind::InsertBlocks));
-        tx.save_page(
+        tx.rewrite_refs_prepared(
             &[
                 tine_store::EditKind::InsertBlocks,
                 tine_store::EditKind::DeletePage,
             ],
             &dst_id,
-            SaveBase::Existing(survivor.dst_rev.clone()),
-            &survivor.doc,
+            survivor.dst_rev.clone(),
+            (survivor.old.clone(), survivor.proposal.text.clone()),
+            None,
+            store.config().file_name_format,
+            survivor.proposal.trace.clone(),
         );
         tx.trash(&src, survivor.src_rev.clone(), tine_store::TrashIf::Any);
         tx
@@ -1393,28 +1405,13 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
 }
 
 struct Survivor {
-    doc: PageDto,
+    old: String,
+    proposal: merge_payload::MergeProposal,
     src_rev: FileRev,
     dst_rev: FileRev,
 }
 
-/// The survivor page after appending `src`, with `renames` applied to both.
-/// OG `merge-pages!` moves the source's property block with its blocks; here
-/// each source header property (Markdown `key::`, Org `#+KEY:`) the survivor
-/// lacks joins its header, alias values are united, a line equal to a survivor
-/// header line (same key, same trimmed value) is already there, and the rest
-/// (a clash, the source title, free text, an Org drawer) moves as one ordinary
-/// block, so the source identity never renames the survivor and every source
-/// alias keeps resolving (I-4, I-12).
-///
-/// The source payload (the moved block, if any, then the source's top-level
-/// blocks) is always appended, as OG `merge-pages!` moves every block. A first
-/// merge cannot be told from a retry after a crash between the survivor write
-/// and the source trash without durable evidence, so such a retry appends the
-/// payload a second time: visible duplicates, never loss (Martin, 2026-10-05,
-/// option (a); the old "survivor already ends with it" skip silently dropped
-/// legitimate duplicate blocks on a first merge). Header joins stay idempotent
-/// by the equal-line rule.
+/// Realize the survivor from revision-guarded input bytes; no DTO serialization.
 fn merged_survivor(
     store: &Store,
     src: &PageId,
@@ -1440,24 +1437,29 @@ fn merged_survivor(
     // Parsed from the bytes whose revisions guard the write (A-V4b).
     let page = |id, text: &str| store.page_of(id, text.as_bytes()).map_err(store_error);
     let source = page(src, &src_text)?.doc;
-    let mut doc = page(dst, &dst_text)?.doc;
+    let doc = page(dst, &dst_text)?.doc;
     let format = store.config().file_name_format;
-    if let Some(renames) = renames {
-        merge_payload::rename_doc(&mut doc, renames, org, format);
+    let empty = HashMap::new();
+    let proposal = merge_payload::propose(
+        &doc,
+        &dst_text,
+        &source,
+        &src_text,
+        renames.map_or(&empty, |n| n.links),
+        renames.map_or(&empty, |n| n.queries),
+        org,
+        format,
+    )
+    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    if let Some(names) = renames {
+        names
+            .rewritten
+            .borrow_mut()
+            .extend(proposal.rewritten.iter().cloned());
     }
-    let (header, blocks) = merge_payload::payload(&doc, &source, renames, org, format);
-    if let Some(header) = header {
-        // Back where the survivor's header was: a header written as the
-        // first bullet stays that bullet (a pre-block above it would demote
-        // it to an ordinary block and drop its aliases).
-        match merge_payload::header_of(&doc).map(|(at, _)| at) {
-            Some(merge_payload::HeaderAt::FirstRoot) => doc.blocks[0].raw = header,
-            _ => doc.pre_block = Some(header),
-        }
-    }
-    doc.blocks.extend(blocks);
     Ok(Survivor {
-        doc,
+        old: dst_text,
+        proposal,
         src_rev,
         dst_rev,
     })
@@ -1474,7 +1476,7 @@ struct MergeNames<'a> {
     rewritten: &'a std::cell::RefCell<HashSet<(String, String)>>,
 }
 
-mod merge_payload;
+pub mod merge_payload;
 
 #[cfg(test)]
 #[path = "pages_snapshot_tests.rs"]

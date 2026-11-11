@@ -44,6 +44,7 @@ pub mod search_query;
 pub mod sync_diff;
 pub mod template;
 pub mod text_merge;
+pub mod text_trace;
 
 /// Re-export the lsdoc parser so the Tauri shell can name its AST types
 /// (`tine_core::lsdoc::ast::Block`) without depending on lsdoc directly.

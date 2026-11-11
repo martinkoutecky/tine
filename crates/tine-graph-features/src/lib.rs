@@ -155,6 +155,7 @@ fn why_error(why: Why) -> io::Error {
         Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, "concurrent graph write"),
         Why::Failed(error) => io::Error::new(error.kind, error.message),
         Why::Refused(refusal) => match refusal {
+            Refusal::TextRealization(error) => io::Error::new(io::ErrorKind::InvalidData, error),
             Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
                 io::Error::new(io::ErrorKind::InvalidInput, message)
             }

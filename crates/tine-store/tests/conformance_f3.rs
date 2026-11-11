@@ -375,8 +375,17 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                     expected.insert(
                         dest.clone(),
                         format!(
-                            "{}{bullet} kept-{seed}\n{bullet} source-{seed} [[{after}]]\n",
-                            aliases(&format!("Shared, Kept, {alias}"))
+                            "{}{bullet} kept-{seed}\n{}{bullet} source-{seed} [[{after}]]\n",
+                            aliases(&format!("Shared, Kept, {alias}")),
+                            if org {
+                                // The uppercase declaration key is protected
+                                // (Alias14's syntax whitelist is exact bytes).
+                                format!(
+                                    "* \n#+BEGIN_QUOTE\n#+ALIAS: {alias}, Shared\n#+END_QUOTE\n"
+                                )
+                            } else {
+                                "- \n".into()
+                            }
                         )
                         .into_bytes(),
                     );

@@ -1,0 +1,346 @@
+//! Ephemeral complete-text evidence (conceptual model §5.2, Alias14.Valid).
+//!
+//! A writer partitions its original files at parser-owned edit/placement
+//! boundaries, then places originals or explicit inserted syntax. `check`
+//! verifies coverage, multiplicity, scoped alias consumption and the complete
+//! rendered result in O(input + output bytes + pieces). No I/O or durable state.
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+};
+
+/// The fixed input classifier. Only native alias syntax and exact duplicate
+/// alias-name tokens can be consumed; ordinary text is always retained.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Role {
+    Opaque,
+    AliasKey,
+    AliasDelimiter,
+    AliasName,
+}
+
+/// One disjoint interval of an original physical file.
+#[derive(Clone, Debug)]
+pub struct Piece {
+    pub file: usize,
+    pub range: Range<usize>,
+    pub editable: bool,
+    pub role: Role,
+}
+
+/// A retained input piece or explicitly inserted serialization syntax.
+#[derive(Clone, Debug)]
+pub enum Placement {
+    Original(usize),
+    Insert(String),
+}
+
+/// A malformed writer proposal; rejected before any durable operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TraceError {
+    Partition,
+    Substitution,
+    Output,
+    Multiplicity,
+    Consumption,
+}
+
+impl std::fmt::Display for TraceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "complete-text certificate: {self:?}")
+    }
+}
+impl std::error::Error for TraceError {}
+
+/// Input ranges and candidate placements, kept only while preparing a write.
+#[derive(Clone, Debug, Default)]
+pub struct TextTrace {
+    pub inputs: Vec<String>,
+    pub pieces: Vec<Piece>,
+    pub output: Vec<Placement>,
+    pub consumed: Vec<usize>,
+    pub scope: HashSet<usize>,
+    /// The legal span finder's rendering under this candidate's substitution.
+    pub substitution: HashMap<usize, String>,
+    starts: HashMap<(usize, usize), usize>,
+}
+
+impl TextTrace {
+    /// Partition one file at the given structural boundaries and legal edits.
+    /// `cuts` are source ordered; edits must be disjoint, source ordered and
+    /// not cross a structural boundary. Every other byte is protected.
+    pub fn add_input(
+        &mut self,
+        text: &str,
+        edits: &[(Range<usize>, String)],
+        cuts: &[usize],
+    ) -> Result<usize, TraceError> {
+        let file = self.inputs.len();
+        if edits.iter().any(|(r, _)| r.is_empty())
+            || edits.windows(2).any(|w| w[0].0.end > w[1].0.start)
+        {
+            return Err(TraceError::Partition);
+        }
+        // A transient byte per input byte avoids sorting the partition's cuts:
+        // construction is linear even for a header with one token per byte.
+        let mut boundary = vec![false; text.len() + 1];
+        for at in cuts
+            .iter()
+            .copied()
+            .chain([0, text.len()])
+            .chain(edits.iter().flat_map(|(r, _)| [r.start, r.end]))
+        {
+            *boundary.get_mut(at).ok_or(TraceError::Partition)? = true;
+        }
+        let mut edit = 0;
+        let mut start = 0;
+        for end in (1..=text.len()).filter(|at| boundary[*at]) {
+            let range = start..end;
+            start = end;
+            if text.get(range.clone()).is_none() {
+                return Err(TraceError::Partition);
+            }
+            while edit < edits.len() && edits[edit].0.end <= range.start {
+                edit += 1;
+            }
+            let replacement = edits.get(edit).filter(|(r, _)| *r == range);
+            if edits
+                .get(edit)
+                .is_some_and(|(r, _)| r.start < range.end && r.end > range.start)
+                && replacement.is_none()
+            {
+                return Err(TraceError::Partition);
+            }
+            let id = self.pieces.len();
+            self.starts.insert((file, range.start), id);
+            self.pieces.push(Piece {
+                file,
+                range,
+                editable: replacement.is_some(),
+                role: Role::Opaque,
+            });
+            if let Some((_, to)) = replacement {
+                self.substitution.insert(id, to.clone());
+            }
+        }
+        self.inputs.push(text.to_owned());
+        Ok(file)
+    }
+
+    /// Source-ordered piece ids for an interval whose endpoints were cuts.
+    pub fn interval(&self, file: usize, range: Range<usize>) -> Result<Vec<usize>, TraceError> {
+        if range.is_empty() {
+            return Ok(Vec::new());
+        }
+        let start = *self
+            .starts
+            .get(&(file, range.start))
+            .ok_or(TraceError::Partition)?;
+        let mut end = start;
+        while self
+            .pieces
+            .get(end)
+            .is_some_and(|p| p.file == file && p.range.end <= range.end)
+        {
+            end += 1;
+        }
+        let ids: Vec<_> = (start..end).collect();
+        if ids
+            .first()
+            .is_none_or(|id| self.pieces[*id].range.start != range.start)
+            || ids
+                .last()
+                .is_none_or(|id| self.pieces[*id].range.end != range.end)
+        {
+            return Err(TraceError::Partition);
+        }
+        Ok(ids)
+    }
+
+    /// Original bytes of a piece, without applying a candidate substitution.
+    pub fn original(&self, id: usize) -> &str {
+        let p = &self.pieces[id];
+        &self.inputs[p.file][p.range.clone()]
+    }
+
+    fn rendered<'a>(
+        &'a self,
+        id: usize,
+        m: &'a HashMap<usize, String>,
+    ) -> Result<&'a str, TraceError> {
+        let p = self.pieces.get(id).ok_or(TraceError::Partition)?;
+        if p.editable {
+            m.get(&id)
+                .map(String::as_str)
+                .ok_or(TraceError::Substitution)
+        } else if m.contains_key(&id) {
+            Err(TraceError::Substitution)
+        } else {
+            Ok(self.original(id))
+        }
+    }
+
+    /// Render this proposal using the legal edit spans' substitution.
+    pub fn render(&self) -> Result<String, TraceError> {
+        let mut out = String::new();
+        for placement in &self.output {
+            match placement {
+                Placement::Original(id) => out.push_str(self.rendered(*id, &self.substitution)?),
+                Placement::Insert(s) => out.push_str(s),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Check `TraceValid` against the actual proposed output and substitution.
+    pub fn check(&self, output: &str, m: &HashMap<usize, String>) -> Result<(), TraceError> {
+        let mut offsets = vec![0; self.inputs.len()];
+        for p in &self.pieces {
+            let at = offsets.get_mut(p.file).ok_or(TraceError::Partition)?;
+            if p.range.start != *at
+                || p.range.is_empty()
+                || self.inputs[p.file].get(p.range.clone()).is_none()
+            {
+                return Err(TraceError::Partition);
+            }
+            *at = p.range.end;
+        }
+        if offsets
+            .iter()
+            .zip(&self.inputs)
+            .any(|(at, s)| *at != s.len())
+        {
+            return Err(TraceError::Partition);
+        }
+        let mut counts = vec![0u8; self.pieces.len()];
+        let mut at = 0;
+        let mut key = false;
+        let mut names = HashSet::new();
+        for placement in &self.output {
+            let text = match placement {
+                Placement::Insert(s) => s.as_str(),
+                Placement::Original(id) => {
+                    let count = counts.get_mut(*id).ok_or(TraceError::Partition)?;
+                    *count = count.saturating_add(1);
+                    let text = self.rendered(*id, m)?;
+                    match self.pieces[*id].role {
+                        Role::AliasKey => key |= alias_key(self.original(*id)),
+                        Role::AliasName => {
+                            names.insert(text);
+                        }
+                        _ => {}
+                    }
+                    text
+                }
+            };
+            if output.get(at..at + text.len()) != Some(text) {
+                return Err(TraceError::Output);
+            }
+            at += text.len();
+        }
+        if at != output.len() {
+            return Err(TraceError::Output);
+        }
+        for id in &self.consumed {
+            let p = self.pieces.get(*id).ok_or(TraceError::Consumption)?;
+            counts[*id] = counts[*id].saturating_add(1);
+            if !self.scope.contains(&p.file) {
+                return Err(TraceError::Consumption);
+            }
+            let allowed = match p.role {
+                Role::AliasKey => key && alias_key(self.original(*id)),
+                Role::AliasDelimiter => {
+                    key && matches!(self.original(*id), ", " | "," | "\n" | "\r\n")
+                }
+                Role::AliasName => names.contains(self.rendered(*id, m)?),
+                Role::Opaque => false,
+            };
+            if !allowed {
+                return Err(TraceError::Consumption);
+            }
+        }
+        if counts.iter().any(|n| *n != 1) {
+            return Err(TraceError::Multiplicity);
+        }
+        Ok(())
+    }
+}
+
+fn alias_key(s: &str) -> bool {
+    matches!(s, "alias:: " | "aliases:: " | "#+alias: " | "#+aliases: ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn trace() -> TextTrace {
+        let mut t = TextTrace::default();
+        t.add_input("before Old after", &[(7..10, "New".into())], &[])
+            .unwrap();
+        t.output = (0..t.pieces.len()).map(Placement::Original).collect();
+        t
+    }
+    #[test]
+    fn trace_valid_rejects_byte_loss_duplication_protected_edits_and_missing_substitution() {
+        let t = trace();
+        let s = t.render().unwrap();
+        assert_eq!(t.check(&s, &t.substitution), Ok(()));
+        assert!(t.check(&s[1..], &t.substitution).is_err());
+        let mut duplicate = t.clone();
+        duplicate.output.push(Placement::Original(0));
+        assert_eq!(
+            duplicate.check(&duplicate.render().unwrap(), &duplicate.substitution),
+            Err(TraceError::Multiplicity)
+        );
+        assert!(t
+            .check(&s.replace("before", "BEFORE"), &t.substitution)
+            .is_err());
+        assert_eq!(t.check(&s, &HashMap::new()), Err(TraceError::Substitution));
+        let mut changed = t.substitution.clone();
+        changed.insert(0, "BEFORE ".into());
+        assert_eq!(t.check(&s, &changed), Err(TraceError::Substitution));
+    }
+
+    #[test]
+    fn consumption_requires_scoped_native_syntax_and_an_identical_retained_name() {
+        let mut t = TextTrace::default();
+        for _ in 0..2 {
+            t.add_input("alias:: a\n", &[], &[8, 9]).unwrap();
+        }
+        for (id, p) in t.pieces.iter_mut().enumerate() {
+            p.role = match id % 3 {
+                0 => Role::AliasKey,
+                1 => Role::AliasName,
+                _ => Role::AliasDelimiter,
+            };
+        }
+        t.output = (0..3).map(Placement::Original).collect();
+        t.consumed = (3..6).collect();
+        t.scope.insert(1);
+        assert_eq!(t.check("alias:: a\n", &t.substitution), Ok(()));
+        let mut bad = t.clone();
+        bad.scope.clear();
+        assert_eq!(
+            bad.check("alias:: a\n", &bad.substitution),
+            Err(TraceError::Consumption)
+        );
+        let mut bad = t.clone();
+        bad.pieces[0].role = Role::Opaque;
+        assert_eq!(
+            bad.check("alias:: a\n", &bad.substitution),
+            Err(TraceError::Consumption)
+        );
+        let mut bad = t.clone();
+        bad.inputs[1] = "alias:: b\n".into();
+        assert_eq!(
+            bad.check("alias:: a\n", &bad.substitution),
+            Err(TraceError::Consumption)
+        );
+        let mut bad = t.clone();
+        bad.pieces[5].role = Role::Opaque;
+        assert_eq!(
+            bad.check("alias:: a\n", &bad.substitution),
+            Err(TraceError::Consumption)
+        );
+    }
+}

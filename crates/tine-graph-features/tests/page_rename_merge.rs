@@ -446,7 +446,7 @@ fn org_merge_keeps_the_source_directives() {
     assert_eq!(
         merged,
         "#+ALIAS: Kept, Former\n#+CATEGORY: home\n* survivor block\n\
-         * #+TITLE: Old\n#+CATEGORY: work\nfree text\n* source block\n"
+         * \n#+BEGIN_QUOTE\n#+TITLE: Old\n#+ALIAS: Former\n#+CATEGORY: work\nfree text\n#+END_QUOTE\n* source block\n"
     );
     let graph = store.whole_graph().unwrap();
     for name in ["New", "Former", "Kept"] {
@@ -476,7 +476,7 @@ fn plain_merge_unites_aliases_like_the_rename_merge() {
     pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
     assert_eq!(
         read(&root, "pages/dst.md"),
-        "alias:: Shared, Kept, Former\n\n- kept\n- moved\n"
+        "alias:: Shared, Kept, Former\n\n- kept\n- \n- moved\n"
     );
     drop(host);
     drop(store);

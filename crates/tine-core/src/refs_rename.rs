@@ -49,6 +49,71 @@ use crate::query::macro_text::{
 };
 use crate::reference_evidence::RewriteTarget;
 use crate::refs::{is_linkable_property_separator, page_key};
+use crate::text_trace::{Placement, TextTrace, TraceError};
+
+/// A covered site the span writer cannot faithfully realize. B3 decides
+/// admission; this writer reports the evidence without refusing the site.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Site {
+    pub range: Range<usize>,
+    pub reason: Unrealized,
+}
+
+/// Why a covered substitution did not have a faithful native spelling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unrealized {
+    HeadlineTag,
+    PropertyKey,
+    StoredQuery,
+    CrossPiece,
+    MacroLink,
+}
+
+/// One physical file's span rewrite and complete-text evidence, all ephemeral.
+#[derive(Clone, Debug)]
+pub struct RenameProposal {
+    pub text: String,
+    pub trace: TextTrace,
+    pub unrealized: Vec<Site>,
+    pub rewritten: HashSet<(String, String)>,
+}
+
+impl RenameProposal {
+    /// Rebind the own title through the reader's title-name span. All its key,
+    /// spacing and terminators remain protected, just as for reference edits.
+    pub fn rebind_title(&mut self, org: bool, name: &str) -> Result<(), TraceError> {
+        let original = &self.trace.inputs[0];
+        let format = if org {
+            crate::model::Format::Org
+        } else {
+            crate::model::Format::Md
+        };
+        let Some(range) = crate::model::title_name_span(original, format) else {
+            return Ok(());
+        };
+        let mut edits: Vec<_> = self
+            .trace
+            .pieces
+            .iter()
+            .enumerate()
+            .filter_map(|(id, p)| {
+                self.trace
+                    .substitution
+                    .get(&id)
+                    .map(|s| (p.range.clone(), s.clone()))
+            })
+            .collect();
+        let at = edits.partition_point(|(r, _)| r.start < range.start);
+        edits.insert(at, (range, name.into()));
+        let mut trace = TextTrace::default();
+        trace.add_input(original, &edits, &[])?;
+        trace.output = (0..trace.pieces.len()).map(Placement::Original).collect();
+        self.text = trace.render()?;
+        trace.check(&self.text, &trace.substitution)?;
+        self.trace = trace;
+        Ok(())
+    }
+}
 
 /// One rename, prepared once per text: old page key to new display name, and
 /// the property-key fold of each old name (a property key references the page
@@ -63,6 +128,7 @@ pub(crate) struct Renames<'a> {
     keys: HashMap<String, &'a str>,
     file_name_format: FileNameFormat,
     record: bool,
+    unrealized: std::cell::RefCell<Vec<Site>>,
 }
 
 impl<'a> Renames<'a> {
@@ -84,6 +150,7 @@ impl<'a> Renames<'a> {
             keys,
             file_name_format,
             record,
+            unrealized: Default::default(),
         }
     }
 
@@ -106,6 +173,10 @@ impl<'a> Renames<'a> {
             self.record
                 .then(|| Box::new((name.to_owned(), to.to_owned()))),
         )
+    }
+
+    fn miss(&self, range: Range<usize>, reason: Unrealized) {
+        self.unrealized.borrow_mut().push(Site { range, reason });
     }
 }
 
@@ -142,8 +213,57 @@ pub(crate) fn rewrite_page(
     )
 }
 
-/// Rewrite one block's raw text (a page DTO's block body, as the merge
-/// rewrites it).
+/// The same legal span finder as `rewrite_page`, carrying its partition and
+/// omitted covered sites. No additional block walk or I/O.
+pub(crate) fn proposal(
+    text: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+) -> Result<RenameProposal, TraceError> {
+    let lf = crate::doc::normalize_line_endings(text);
+    let edits = if renames.pages.is_empty() && renames.queries.is_none() {
+        Vec::new()
+    } else {
+        page_edits(&lf, is_org, renames)
+    };
+    let crlf = lf_offsets_of_crlf(text);
+    let original = |at: usize| at + crlf.partition_point(|lf_at| *lf_at < at);
+    let mut rewritten = HashSet::new();
+    let edits: Vec<_> = edits
+        .into_iter()
+        .map(|(range, to, name)| {
+            let range = original(range.start)..original(range.end);
+            if text[range.clone()] != to {
+                if let Some(name) = name {
+                    rewritten.insert(*name);
+                }
+            }
+            (range, to)
+        })
+        .collect();
+    let mut trace = TextTrace::default();
+    trace.add_input(text, &edits, &[])?;
+    trace.output = (0..trace.pieces.len()).map(Placement::Original).collect();
+    let text = trace.render()?;
+    trace.check(&text, &trace.substitution)?;
+    let unrealized = renames
+        .unrealized
+        .take()
+        .into_iter()
+        .map(|site| Site {
+            range: original(site.range.start)..original(site.range.end),
+            ..site
+        })
+        .collect();
+    Ok(RenameProposal {
+        text,
+        trace,
+        unrealized,
+        rewritten,
+    })
+}
+
+/// Rewrite one held block's raw text for rename inspection.
 pub(crate) fn rewrite_block(
     raw: &str,
     is_org: bool,
@@ -159,8 +279,7 @@ pub(crate) fn rewrite_block(
     )
 }
 
-/// Rewrite a page's pre-block text (its page properties; a page DTO's
-/// `pre_block`, as the merge rewrites it).
+/// Rewrite a held page's pre-block text for rename inspection.
 pub(crate) fn rewrite_pre_block(
     pre: &str,
     is_org: bool,
@@ -258,6 +377,7 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
         }
         let mut block = DocBlock::new(raw.as_str());
         block.set_org(is_org);
+        let misses = renames.unrealized.borrow().len();
         for (range, to, name) in block_edits(&raw, is_org, &block, renames) {
             let at = pieces.partition_point(|(start, _)| *start <= range.start) - 1;
             let (piece_start, page_start) = pieces[at];
@@ -265,7 +385,16 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
             if range.end <= piece_end {
                 let shift = page_start - piece_start;
                 edits.push((range.start + shift..range.end + shift, to, name));
+            } else {
+                renames.miss(range, Unrealized::CrossPiece);
             }
+        }
+        for site in &mut renames.unrealized.borrow_mut()[misses..] {
+            let mapped = |at| {
+                let (start, page) = pieces[pieces.partition_point(|(start, _)| *start <= at) - 1];
+                page + at - start
+            };
+            site.range = mapped(site.range.start)..mapped(site.range.end);
         }
     }
     settle(edits).collect()
@@ -279,11 +408,15 @@ fn pre_block_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> 
         let raw = &pre[range.clone()];
         let mut block = DocBlock::new(raw);
         block.set_org(is_org);
+        let misses = renames.unrealized.borrow().len();
         edits.extend(
             block_edits(raw, is_org, &block, renames)
                 .into_iter()
                 .map(|(r, to, name)| (r.start + range.start..r.end + range.start, to, name)),
         );
+        for site in &mut renames.unrealized.borrow_mut()[misses..] {
+            site.range = site.range.start + range.start..site.range.end + range.start;
+        }
     }
     edits
 }
@@ -332,12 +465,29 @@ fn property_edits(pre: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
         }
     }
     let block = crate::page_properties::property_projection(&raw, is_org);
-    block_edits(&raw, is_org, &block, renames)
+    let misses = renames.unrealized.borrow().len();
+    let edits = block_edits(&raw, is_org, &block, renames);
+    for site in &mut renames.unrealized.borrow_mut()[misses..] {
+        if let Some((start, _, at)) = pieces
+            .iter()
+            .find(|(start, end, _)| *start <= site.range.start && site.range.end <= *end)
+        {
+            site.range = site.range.start - start + at..site.range.end - start + at;
+        } else {
+            site.reason = Unrealized::CrossPiece;
+            site.range = 0..pre.len();
+        }
+    }
+    edits
         .into_iter()
         .filter_map(|(range, to, name)| {
-            let (start, _, at) = pieces
+            let Some((start, _, at)) = pieces
                 .iter()
-                .find(|(start, end, _)| *start <= range.start && range.end <= *end)?;
+                .find(|(start, end, _)| *start <= range.start && range.end <= *end)
+            else {
+                renames.miss(0..pre.len(), Unrealized::CrossPiece);
+                return None;
+            };
             Some((range.start - start + at..range.end - start + at, to, name))
         })
         .collect()
@@ -368,7 +518,12 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     .get(&property_key_norm(&page_key(&reference.name)))
                 {
                     if let Some(key) = property_key_spelling(to) {
+                        if key != *to {
+                            renames.miss(range.clone(), Unrealized::PropertyKey);
+                        }
                         edits.push(renames.edit(range, &reference.name, to, key));
+                    } else {
+                        renames.miss(range, Unrealized::PropertyKey);
                     }
                 }
             }
@@ -386,6 +541,8 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                 } else if headline_tag_ok(&to) {
                     // An Org headline tag `:name:`: the range is the name.
                     edits.push(renames.edit(range, &reference.name, &to, to.to_string()));
+                } else {
+                    renames.miss(range, Unrealized::HeadlineTag);
                 }
             }
             "explicit_link" => link_edits(raw, range, &reference.name, renames, &mut edits),
@@ -432,7 +589,13 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     } else {
                         link_edits(raw, reference.range, &reference.name, renames, &mut local);
                     }
-                    edits.extend(local.into_iter().filter(|(_, to, _)| !to.contains('}')));
+                    for edit in local {
+                        if edit.1.contains('}') {
+                            renames.miss(edit.0, Unrealized::MacroLink);
+                        } else {
+                            edits.push(edit);
+                        }
+                    }
                 }
             }
         }
@@ -623,6 +786,10 @@ fn query_edits(
             && recognizable_macro(&extent.name, &argument).is_ok()
         {
             edits.extend(local);
+        } else {
+            for (range, _, _) in local {
+                renames.miss(range, Unrealized::StoredQuery);
+            }
         }
     }
     edits
@@ -655,7 +822,7 @@ pub(crate) fn tag_for(to: &str) -> String {
 }
 
 /// A linkable property member: bare when it stays one member, else `[[to]]`.
-fn member_spelling(to: &str) -> String {
+pub(crate) fn member_spelling(to: &str) -> String {
     if to.contains(is_linkable_property_separator)
         || to.starts_with(['#', '"'])
         || to.contains("[[")
@@ -711,9 +878,121 @@ fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
 mod tests {
     //! Rename reads a property value for code once, however many query macros
     //! it holds (qs-leftovers-1109 round 2; PC-1, PC-3, PC-5).
-    use super::{HashSet, VALUE_PARSES};
+    use super::{HashMap, HashSet, VALUE_PARSES};
     use crate::config::FileNameFormat;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn certificates_keep_the_minimum_partition_and_linear_rewrite_budget() {
+        for n in [1, 64, 512] {
+            let text = "- [[Old]]\n".repeat(n);
+            let map = HashMap::from([("old".into(), "New".into())]);
+            let start = Instant::now();
+            let p = crate::refs::rename_proposal(
+                &text,
+                false,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert_eq!(p.text, "- [[New]]\n".repeat(n));
+            assert_eq!(p.trace.inputs.len(), 1);
+            assert_eq!(
+                p.trace.pieces.len(),
+                2 * n + 1,
+                "one edit and one intervening protected piece per site, plus the leading piece"
+            );
+            assert_eq!(p.trace.output.len(), p.trace.pieces.len());
+            assert_eq!(p.trace.substitution.len(), n);
+            assert!(start.elapsed()<Duration::from_secs(1),"PC-3: 512 references, including partition/render/check, keep the existing one-second rewrite budget");
+        }
+    }
+
+    #[test]
+    fn own_title_rebinding_certifies_only_the_name_span() {
+        for (text, want, org) in [
+            (
+                "TITLE::  Old  \r\n- body\r\n",
+                "TITLE::  New  \r\n- body\r\n",
+                false,
+            ),
+            (
+                "#+TITLE:  Old  \r\n* body\r\n",
+                "#+TITLE:  New  \r\n* body\r\n",
+                true,
+            ),
+        ] {
+            let format = if org {
+                crate::model::Format::Org
+            } else {
+                crate::model::Format::Md
+            };
+            assert_eq!(
+                crate::model::rebind_page_title(text, format, "Old", "New").as_deref(),
+                Some(want)
+            );
+            let mut p = crate::refs::rename_proposal(
+                text,
+                org,
+                &HashMap::new(),
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            p.rebind_title(org, "New").unwrap();
+            assert_eq!(p.text, want);
+            assert_eq!(p.trace.substitution.len(), 1);
+            let id = *p.trace.substitution.keys().next().unwrap();
+            assert_eq!(p.trace.original(id), "Old");
+        }
+    }
+
+    #[test]
+    fn proposal_reports_each_unrealized_covered_site() {
+        use super::Unrealized::*;
+        for (text, org, old, to, reason) in [
+            ("* heading :Old:\n", true, "Old", "two words", HeadlineTag),
+            ("- Old:: value\n", false, "Old", "Two Words", PropertyKey),
+            (
+                "- {{query (page [[Old]])}}\n",
+                false,
+                "Old",
+                "bad}name",
+                StoredQuery,
+            ),
+            (
+                "- {{renderer [[Old]]}}\n",
+                false,
+                "Old",
+                "bad}name",
+                MacroLink,
+            ),
+            (
+                "- {{query (page \"Old\n  name\")}}\n",
+                false,
+                "Old\nname",
+                "New",
+                CrossPiece,
+            ),
+        ] {
+            let map = HashMap::from([(crate::refs::page_key(old), to.to_owned())]);
+            let p = crate::refs::rename_proposal(
+                text,
+                org,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert!(
+                p.unrealized.iter().any(|s| s.reason == reason),
+                "{reason:?}: {:?}",
+                p.unrealized
+            );
+            p.trace.check(&p.text, &p.trace.substitution).unwrap();
+        }
+    }
 
     #[test]
     fn recording_applied_names_reuses_the_rewrite_walk_within_the_budget() {

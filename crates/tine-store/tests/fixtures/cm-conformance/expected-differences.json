@@ -771,24 +771,9 @@
     "r10-url-real-pages": "The \"launch walk\" lines are declared, not bugs (CM step 2 batch 3, A7): page_identity.rs `launch_listing_walk` names a file by its file name as a provisional name, replaced by the answerer (`name_from`) for every file the launch reads; an unreadable file keeps the file-name name, as `discover_page_name` does, and is recorded as a discovery failure."
   },
   "r13Boundaries": {
-    "G1": {
-      "batch": "B1",
-      "boundary": "Plain path claimant order; losing twins still contribute meaning in Tine.",
-      "status": "expected product difference"
-    },
     "G10": {
       "batch": "B4a",
       "boundary": "Favorite descendants lack full namespace substitution and the Favorites exclusion setting currently follows its renamed page.",
-      "status": "expected product difference"
-    },
-    "G11": {
-      "batch": "B2a",
-      "boundary": "Configured date-alias endpoints and canonical namespace consumers remain inconsistent; KD ordinary date-file identity is retained by the bridge.",
-      "status": "expected product difference"
-    },
-    "G2": {
-      "batch": "B2",
-      "boundary": "Empty or blank-block real pages still redirect to alias owners.",
       "status": "expected product difference"
     },
     "G3": {
@@ -813,7 +798,7 @@
     },
     "G7": {
       "batch": "B3a",
-      "boundary": "Complete legal spans, protected text placements with multiplicity, merge header promotion/leftovers, body origins and whole changed-file byte prediction are not certified by the descriptor engine. Unchanged bytes and ordered parser projections are compared.",
+      "boundary": "Production complete-text certificates, referrer bytes and block origins are checked. The r13 descriptor engine still concatenates header blocks and their occurrences instead of accepting the realized native alias field, combined header, leftovers and origins.",
       "status": "expected writer-realization gap"
     },
     "G8": {
@@ -1591,7 +1576,6 @@
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
       ],
       "r13-protected-equal-header: A -> B: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [
-        "G7/B3a: protected fragment \"same:: equal\" multiplicity: before 2, after 1",
         "G7/B3a: ordered file projection pages/B.md: model {\"aliases\":[\"X\"],\"blocks\":[{\"level\":1,\"occ\":[[\"propertyKey\",\"same\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]},{\"level\":1,\"occ\":[[\"propertyKey\",\"same\"],[\"linkableValue\",\"X\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"B\"}, Tine {\"aliases\":[\"X\"],\"blocks\":[{\"level\":1,\"occ\":[[\"propertyKey\",\"same\"],[\"linkableValue\",\"X\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"B\"}"
       ],
       "r13-query-image-conflict: A -> B: offers/automatic": [

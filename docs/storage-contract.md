@@ -1001,6 +1001,32 @@ flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
 
 Every page rename is planned as a `HostOp`, including one moved page.
+Merge realization (conceptual model §5.1–5.2) uses the original physical
+survivor and source bytes. Survivor header lines and both bodies retain their
+bytes and terminators outside legal name spans. Nonclashing source properties
+join the header; source titles, equal or differing property clashes, unknown
+lines and blank lines remain in one leftover block between the bodies. Org
+leftovers use a quote container so source directives cannot retitle the page
+in Logseq. Alias fields form one survivor-first union after substitution,
+deduplicated by exact rendered spelling. The reader's property member parser
+owns tokenization; wrappers, odd spacing and unknown remainders remain
+protected text.
+
+Every changed rename/merge file has an ephemeral `TextTrace`: a complete
+input partition, original/inserted output placements, the legal span
+substitution, and explicit scoped alias consumption. The checker verifies
+complete before/after coverage and retained-or-consumed multiplicity before
+the host admits any writes. Only native alias syntax with a retained native
+declaration witness, or an identical rendered alias-member token with a
+retained member witness, can be consumed. A failed certificate is a typed
+`TextRealization` refusal. Malformed imported text or an external edit whose
+layout cannot realize separate ordered bodies refuses the entire proposal;
+the original files remain available to edit or merge manually. Merge bytes
+use the existing prepared rewrite step under the revision guard, exact old
+byte comparison, and Org/conflict-marker firewalls. A merge never falls back
+to a reference-only rewrite when its prepared inputs differ. Certificates,
+origins and unrealized-site reports create no durable record or transport.
+
 Renames and confirmed merges rewrite bare `alias::` / `aliases::` members
 (Org `#+alias:` / `#+aliases:` too) through the same reference scanner and
 guarded save as links (D-20261105-CM13, deliberate OG difference). The
@@ -1625,8 +1651,11 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::preflight_names::Closed` | 1 | A graph is closed while a queued save or plan waits; refuse its old binding. |
 | `transaction.rs::preflight_names::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write or operation. |
 | `transaction.rs::plan::InvalidTarget` | 5 | A plugin or frontend defect passes a non-page effect, a read-only expectation or an unsupported shape to a page host planner, or imported oversized page bytes cannot be staged within the existing parse cap; refuse before publication and keep every source. A byte-preserving non-page-to-page move stages only the page destination; its source cleanup belongs in a separate guarded transaction (§3.1c C2, P3 re-review rescue correction). |
-| `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
-| `transaction.rs::rewrite_move::Undecodable` | 2 | Sync leaves a title-owned move source or its rewritten bytes invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
+| `transaction.rs::rewrite_proposal::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
+| `transaction.rs::rewrite_move::Undecodable` | 1 | Sync leaves a title-owned move source invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
+| `transaction.rs::reuse::TextRealization` | 3 | Malformed imported or externally edited text cannot match the merge's prepared baseline, input partition or complete output certificate; refuse before any page write or source deletion. |
+| `transaction.rs::rewrite_proposal::TextRealization` | 1 | A span rewrite of imported or externally edited text cannot certify complete input/output bytes and multiplicity; refuse the whole rename without writing a partial substitution. |
+| `transaction.rs::rewrite_move::TextRealization` | 1 | An own-title name edit on imported text cannot be combined with the reference spans into a valid complete-text partition; retain the source and refuse before moving it. |
 | `transaction.rs::refuse_read_only_org::ReadOnly` | 1 | An Org referrer is not round-trip editable (malformed imported Org); keep its bytes instead of rewriting it, whether preflight computes the rewrite or reuses one prepared by the rename planner (GH #623). |
 | `transaction.rs::prepare_steps::ReadOnly` | 1 | Malformed input (og-gh644 F3): an external editor, sync delivery or an import left a page whose bytes panic the parser while a transaction's preflight reads it (a moved page's own-title read, a referrer's rewrite). Refuse that transaction before any write, keep the file's bytes, and keep the writer lock usable for every other operation, instead of letting the panic unwind through the writer guard and poison it. |
 | `transaction.rs::rewrite_move::ReadOnly` | 1 | An imported Org page named by `#+TITLE:` or a `:title:` drawer is not round-trip editable; refuse the rename rather than rebind its title in bytes Tine cannot reproduce. |

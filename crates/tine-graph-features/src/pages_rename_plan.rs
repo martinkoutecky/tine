@@ -68,7 +68,7 @@ pub(super) struct RenamePlan {
     pub(super) skipped: Vec<PageId>,
     /// The new text of each referrer `pages` found changed, computed from
     /// its `reads` bytes; the host reuses it on equal bytes (GH #623).
-    pub(super) rewritten: HashMap<PageId, (String, HashSet<(String, String)>)>,
+    pub(super) rewritten: HashMap<PageId, refs::RenameProposal>,
 }
 
 impl RenamePlan {
@@ -154,22 +154,16 @@ impl RenamePlan {
             // changes it and it carries no VCS conflict markers.
             let syntax = Format::from_path(id.as_str().as_ref());
             let org = syntax == Format::Org;
-            let mut names = HashSet::new();
-            let rewritten = refs::rename_rewrite_with_queries(
-                &content,
-                org,
-                &self.map.0,
-                &self.map.1,
-                format,
-                Some(&mut names),
-            );
-            let changed = rewritten != content;
+            let rewritten =
+                refs::rename_proposal(&content, org, &self.lookup, &self.query_lookup, format)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let changed = rewritten.text != content;
             let marked =
                 !tine_core::concord_queue::vcs_conflict_markers(&content, syntax).is_empty();
             match (changed, marked) {
                 (true, false) => {
                     pages.push(id.clone());
-                    self.rewritten.insert(id.clone(), (rewritten, names));
+                    self.rewritten.insert(id.clone(), rewritten);
                 }
                 (true, true) => self.skipped.push(id.clone()),
                 _ => {}

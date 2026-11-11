@@ -1,5 +1,5 @@
 //! Namespace parents: the one answer to "which pages exist because a listed
-//! name lies under them" (conceptual model rule 1, SPEC §3.2, CM3-3; census
+//! name lies under them" (conceptual model rule 1, SPEC §1 and §2.2, CM3-3; census
 //! Q5 item 3, conformance S8). A name `n/y` makes `n` a page, whether the name
 //! is a file's page name or only a referenced name.
 //!
