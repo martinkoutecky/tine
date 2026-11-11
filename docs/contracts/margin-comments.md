@@ -194,8 +194,7 @@ revealing dates/closed cards writes nothing. Editing adds no timestamp bytes.
 ## Open-threads review and unread comments (DESIGN §12)
 
 **Review query.** **Review open comments on this page** and **Review open comments
-in the graph** (command palette; **Review open comments** in a page's actions
-menu) open a `query` item in the right sidebar. It stores only
+in the graph** (command palette) open a `query` item in the right sidebar. It stores only
 `{kind: "query", scope: "page"|"graph", page, pageKind, path?, author?, collapsed?}`
 in the existing sidebar lists; the query text is derived from it by
 `src/commentReviewQuery.ts` and never saved:

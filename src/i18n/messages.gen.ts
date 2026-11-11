@@ -342,8 +342,6 @@ export interface MessageArgs {
   "comment-resolved-count": { "count": string | number };
   "comment-review-author-label": {};
   "comment-review-author-placeholder": {};
-  "comment-review-open": {};
-  "comment-review-open-graph": {};
   "comment-review-position": { "count": string | number; "current": string | number };
   "comment-review-title-graph": {};
   "comment-review-title-page": { "page": string | number };

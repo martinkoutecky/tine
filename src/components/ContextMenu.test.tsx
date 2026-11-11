@@ -8,7 +8,7 @@ import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import type { RenameDone } from "../types";
 import { doc, setDoc } from "../document/model";
-import { closeContextMenu, closeExportModal, rightSidebar, setRightSidebar, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
+import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
 import { closeShareDialog, shareTarget } from "../shareState";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
@@ -85,18 +85,6 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       openPageContextMenu(10, 10, "P", "page", false);
       expect(action()).toBeNull();
     } finally { dispose(); persistCommentMarginHidden(false); }
-  });
-
-  it("the page actions menu opens the open-comments review for that page in the right sidebar", () => {
-    load(); setRightSidebar([]);
-    const dispose = mount(() => <ContextMenu />);
-    try {
-      openPageContextMenu(10, 10, "P", "page", true);
-      const action = document.querySelector<HTMLButtonElement>('[data-page-action-id="comment-review"]')!;
-      expect(action.textContent).toBe("Review open comments");
-      action.click();
-      expect(rightSidebar()).toMatchObject([{ kind: "query", scope: "page", page: "P", pageKind: "page" }]);
-    } finally { dispose(); setRightSidebar([]); }
   });
 
   it("offers a durable new-tab destination for writable and read-only blocks", () => {
@@ -554,7 +542,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
-      "comment-visibility", "comment-review",
+      "comment-visibility",
       "copy-as", "copy-page-ref", "copy-page-embed", "copy-link",
       "copy-export",
       "share",
@@ -722,7 +710,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
-      "open", "open-sidebar", "open-new-tab", "favorite-toggle", "comment-visibility", "comment-review",
+      "open", "open-sidebar", "open-new-tab", "favorite-toggle", "comment-visibility",
       "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
@@ -734,7 +722,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     setDoc("pages", 0, "kind", "journal");
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
-      "open", "open-sidebar", "open-new-tab", "favorite-toggle", "comment-visibility", "comment-review",
+      "open", "open-sidebar", "open-new-tab", "favorite-toggle", "comment-visibility",
       "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "set-page-icon",

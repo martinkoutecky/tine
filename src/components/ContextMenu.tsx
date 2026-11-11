@@ -1,6 +1,5 @@
 import { PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "../pageIconImage";
 import { toggleCommentMargin } from "../commentMargin";
-import { openCommentReviewInSidebar } from "../commentReviewQuery";
 import { commentMarginHidden } from "../commentMarginPref";
 import { markPageSeenNow, seenAvailable, seenIdentityOf } from "../seen/seenState";
 import { pageIconPropertyInUse, readPageIconProperty } from "../pageIconBatch";
@@ -908,7 +907,6 @@ function PageMenu(props: {
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     ...(props.fileActions ? [{ id: "comment-visibility", label: msg(commentMarginHidden() ? "comment-show" : "comment-hide"), run: toggleCommentMargin }] : []),
-    ...(props.fileActions ? [{ id: "comment-review", label: msg("comment-review-open"), run: () => openCommentReviewInSidebar("page", target()) }] : []),
     { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
       { id: "copy-page-ref", label: msg("context-menu-ui-copy-page-ref"), run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), msg("context-menu-ui-copied-page-ref")) },
       // GH #418: the page-level counterpart of "Copy block embed"; Logseq spells a page embed {{embed [[PAGE]]}}.
