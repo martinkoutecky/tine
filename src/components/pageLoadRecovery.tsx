@@ -18,10 +18,12 @@ export function pageOpenMismatch(r: Extract<Route, { kind: "page" }>, dto: PageR
 
 /** Whether a route opens a read under the read's identity instead of refusing it:
  * the same file in another case spelling, or the same file and name with the
- * store's kind (GH #863). The route loader and the recovery probe both ask this. */
-export function routeAdoptsRead(r: Extract<Route, { kind: "page" }>, dto: PageRead | null): boolean {
-  return !!(r.path && dto?.id && dto.id.toLowerCase() === r.path.toLowerCase()
-    && (dto.id !== r.path || (dto.name === r.name && dto.kind !== r.pageKind)));
+ * store's kind (GH #863). `path` is the file the route reads: its pinned path, or
+ * for a pathless route the loaded page's file. The route loader and the recovery
+ * probe both ask this. */
+export function routeAdoptsRead(r: Extract<Route, { kind: "page" }>, dto: PageRead | null, path = r.path): boolean {
+  return !!(path && dto?.id && dto.id.toLowerCase() === path.toLowerCase()
+    && (dto.id !== path || (dto.name === r.name && dto.kind !== r.pageKind)));
 }
 
 /** Record the comparisons that refused this read, without its identity operands. */
