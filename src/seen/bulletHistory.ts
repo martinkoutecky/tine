@@ -13,15 +13,19 @@ import "../styles/bulletHistory.css";
  * One page snapshot/IPC on mouse enter; no reads during render. A fallback
  * without a loaded current source says Unknown rather than dating a DTO copy. */
 export function createBulletHistory(id: () => string | null, help: () => string) {
-  const [changed, setChanged] = createSignal<BlockLastChanged | null>(null);
+  // Only the hover's conditional tooltip reads the date. Resting bullets keep
+  // just their hover signal; allocate the answer signal before showing it.
+  let changed: ReturnType<typeof createSignal<BlockLastChanged | null>> | undefined;
   const [visible, setVisible] = createSignal(false);
   let sequence = 0;
   onCleanup(() => sequence++);
   const enter = () => {
     if (touchPrimary()) return;
+    changed ??= createSignal<BlockLastChanged | null>(null);
+    const setChanged = changed[1];
+    setChanged(null);
     setVisible(true);
     const token = ++sequence;
-    setChanged(null);
     const sourceId = id();
     const source = sourceId ? node(sourceId) : null;
     const snapshot = source && seenPageSnapshot(source.page);
@@ -36,7 +40,7 @@ export function createBulletHistory(id: () => string | null, help: () => string)
     }, error => { if (owner()) reportUiFailure("block-history", error); });
   };
   const text = () => {
-    const date = changed();
+    const date = changed?.[0]();
     if (!date) return help();
     const info = date.kind === "committed" ? t("block-last-changed-date", { date: new Date(date.time * 1000).toLocaleString() })
       : date.kind === "uncommitted" ? t("block-last-changed-uncommitted")

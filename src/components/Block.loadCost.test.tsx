@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
-import { DEV, For, batch } from "solid-js";
+import { DEV, For, batch, createRoot } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { facetsOf, seedFacets } from "../render/facets";
@@ -8,7 +8,8 @@ import { setDoc, type Node } from "../document/model";
 import { bigPageBlocks } from "../mockScrollFixtures";
 import { CommentIndexContext, createCommentIndex } from "../commentIndex";
 import { resetNearObserverForTests } from "../lazyObserve";
-import { Block } from "./Block";
+import { Block, SurfaceContext } from "./Block";
+import { createBulletHistory } from "../seen/bulletHistory";
 
 const work = vi.hoisted(() => ({ ipc: 0 }));
 vi.mock("../backend", async importOriginal => {
@@ -26,9 +27,9 @@ afterEach(() => { resetStore(); resetNearObserverForTests(); vi.unstubAllGlobals
 
 // Count the complete shell, including compiled JSX and nested feature helpers.
 // Bodies remain outside the view: their existing near-parse test owns V's cost.
-function load(n: number) {
+function load(n: number, plain = false) {
   let serial = 0;
-  const blocks = bigPageBlocks(raw => ({ id: `cost-${serial++}`, raw, children: [], collapsed: false }), n);
+  const blocks = bigPageBlocks(raw => ({ id: `cost-${serial++}`, raw: plain ? "Plain leaf" : raw, children: [], collapsed: false }), n);
   const ids = blocks.map(b => b.id);
   for (const b of blocks) seedFacets(b.raw, "md", { ...facetsOf(b.raw, "md"), hasId: false });
   setDoc({ byId: Object.fromEntries(blocks.map(b => [b.id, { id: b.id, raw: b.raw, collapsed: false, children: [], page: "Big", parent: null } satisfies Node])),
@@ -79,18 +80,21 @@ it("bounds all per-row reactive work on a big-page open (REG-BIGLOAD-ROW-WORK)",
     (large[key as keyof typeof large] - small[key as keyof typeof small]) / 60]));
   const full = load(2000);
   console.log({ small, large, perRow, full });
-  expect(perRow.owners).toBeLessThanOrEqual(195);
-  expect(perRow.signals).toBeLessThanOrEqual(6);
+  expect(perRow.owners).toBeLessThanOrEqual(158);
+  expect(perRow.signals).toBeLessThanOrEqual(4);
   expect(large.observers).toBe(1);
   expect(perRow.observations).toBe(1);
   expect(perRow.elements).toBe(9);
-  expect(full.owners).toBeLessThanOrEqual(390009);
+  expect(full.owners).toBeLessThanOrEqual(316009);
   expect(full.elements).toBe(18000);
   expect(full.observers).toBe(1);
   expect(full.observations).toBe(2000);
+  const plainSmall = load(60, true), plainLarge = load(120, true);
+  expect((plainLarge.owners - plainSmall.owners) / 60).toBeLessThanOrEqual(158);
+  expect((plainLarge.signals - plainSmall.signals) / 60).toBeLessThanOrEqual(4);
 });
 
-it("starts and releases comment presentation when a leaf gains and loses children", () => {
+it.each(["main", "ref:cost", "embed:cost", "rs:cost"])("starts and releases comment presentation on %s when a leaf gains and loses children", surface => {
   const raw = "A passage to discuss";
   const parent: Node = { id: "parent", raw, page: "Big", parent: null, children: [], collapsed: false };
   const comment: Node = { id: "comment", raw: "A reply\ntine.quote:: passage", page: "Big", parent: "parent", children: [], collapsed: false };
@@ -99,7 +103,7 @@ it("starts and releases comment presentation when a leaf gains and loses childre
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => {
     const index = createCommentIndex(() => ["parent"]);
-    return <CommentIndexContext.Provider value={index}><Block id="parent" /></CommentIndexContext.Provider>;
+    return <SurfaceContext.Provider value={surface}><CommentIndexContext.Provider value={index}><Block id="parent" /></CommentIndexContext.Provider></SurfaceContext.Provider>;
   }, host);
   try {
     expect(host.querySelector(".comment-quote-anchor")).toBeNull();
@@ -114,10 +118,36 @@ it("starts and releases comment presentation when a leaf gains and loses childre
     const tints = () => [...row.classList].filter(name => name.startsWith("author-tint-"));
     setDoc("byId", "parent", "raw", `${raw}\ntine.author:: Someone`);
     expect(tints()).toHaveLength(1);
+    expect(host.querySelector(".author-mark-label")?.textContent).toBe("Someone");
     setDoc("byId", "parent", "raw", `${raw}\ntine.author:: Another writer`);
     expect(tints()).toHaveLength(1);
+    expect(host.querySelector(".author-mark-label")?.textContent).toBe("Another writer");
     setDoc("byId", "parent", "raw", raw);
     expect(tints()).toEqual([]);
     expect(row.classList.contains("authored")).toBe(false);
+    expect(host.querySelector(".author-mark")).toBeNull();
   } finally { dispose(); host.remove(); }
+});
+
+it("allocates the bullet history answer only on first hover", () => {
+  const hooks = DEV!.hooks, previous = hooks.afterCreateSignal;
+  let signals = 0;
+  hooks.afterCreateSignal = () => { signals++; };
+  try {
+    createRoot(dispose => {
+      try {
+        const history = createBulletHistory(() => null, () => "Bullet help");
+        expect(signals).toBe(1);
+        expect(history.visible()).toBe(false);
+        history.enter();
+        expect(signals).toBe(2);
+        expect(history.visible()).toBe(true);
+        expect(history.text()).toContain("Bullet help");
+        history.leave();
+        expect(history.visible()).toBe(false);
+        history.enter();
+        expect(signals).toBe(2);
+      } finally { dispose(); }
+    });
+  } finally { hooks.afterCreateSignal = previous; }
 });
