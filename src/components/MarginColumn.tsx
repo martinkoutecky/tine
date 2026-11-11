@@ -28,6 +28,7 @@ import { CommentGroup } from "./CommentGroup";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { threadResolved } from "../commentResolution";
 import { resolvedCommentAnchorTop } from "./resolvedCommentAnchor";
+import { useCommentReview } from "../commentReview";
 
 export interface MarginSurface {
   /** Comments are drawn in the margin (the outline carries `margin-active`). */
@@ -274,8 +275,9 @@ export function createMarginSurface(opts: {
     });
     function RowGroups(props: { parentId: string; row: HTMLElement; comments: Accessor<CommentChildren> }): JSX.Element {
       const showResolved = useResolvedComments();
+      const review = useCommentReview();
       // One surface order for the cards and the arrow keys (review finding 2).
-      const ordered = createMemo(() => groupCommentEntries(node(props.parentId)?.raw ?? "",
+      const ordered = createMemo(() => review?.groups(props.parentId) ?? groupCommentEntries(node(props.parentId)?.raw ?? "",
         props.comments().entries.filter(entry => showResolved() || !entry.resolved), opts.page()?.format ?? "md"));
       const groups = createMemo(() => new Map(ordered().map(ids => [ids[0], ids])));
       const order = createMemo(() => threadOrder(ordered()));
@@ -295,6 +297,11 @@ export function createMarginSurface(opts: {
     placement: { api, thread: null },
     Column: () => {
       const index = useContext(CommentIndexContext);
+      const review = useCommentReview();
+      onMount(() => {
+        const host = opts.outline()?.parentElement;
+        if (host && review) onCleanup(review.mount(host));
+      });
       createEffect(() => setHasComment(opts.eligible() && !commentMarginHidden() && !!index?.roots().length));
       return <Show when={active()}><ColumnView /></Show>;
     },

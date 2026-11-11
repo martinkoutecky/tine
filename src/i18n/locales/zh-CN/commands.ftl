@@ -307,3 +307,5 @@ command-seen-mark-page = 标记页面为已看
 command-seen-mark-graph = 标记整个图谱为已看
 command-seen-next-change = 下一处自上次查看以来的更改
 command-seen-previous-change = 上一处自上次查看以来的更改
+command-comment-next = 下一条评论
+command-comment-previous = 上一条评论
