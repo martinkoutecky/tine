@@ -345,6 +345,9 @@ mod tests {
         "elapsed",
         "cache_generation",
         "page_spot",
+        // GH #863: the target check, and a held page's wait for its owner's
+        // observation; their bodies are checked for content reads below.
+        "ready_page_writer",
         "Some",
     ];
 
@@ -413,10 +416,20 @@ mod tests {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let read = |file: &str| std::fs::read_to_string(src.join(file)).unwrap();
         let (store, page_read) = (read("store.rs"), read("store/page_read.rs"));
+        // Every body the read runs before the seam (GH #863 added the
+        // owner's observation; `page_spot` delegates to `page_spot_observed`).
+        let before = [
+            "fn page_spot(",
+            "fn page_spot_observed(",
+            "fn ready_page_writer(",
+            "fn held_observation_owed(",
+        ]
+        .map(|signature| body(&page_read, signature))
+        .join("\n");
         let found = bypasses(
             "store.rs `Store::page`",
             body(&store, "pub fn page(&self, id: &PageId)"),
-            body(&page_read, "fn page_spot("),
+            &before,
         );
         assert!(
             found.is_empty(),

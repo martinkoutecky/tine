@@ -542,6 +542,7 @@ export function PageView(): JSX.Element {
           let readSource: PageReadSource | null = null;
           const result = await readOwned(routeOwner, r.path
             ? backend().getPageByPath(r.path, source => { readSource = source; })
+                .catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
             : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;

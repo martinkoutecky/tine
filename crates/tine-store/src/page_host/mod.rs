@@ -342,6 +342,10 @@ enum Event {
         page: PageKey,
         bytes: Text,
     },
+    /// A disk read found the bytes the page already holds: nothing to
+    /// index, but that read is the owner's latest observation, so the
+    /// publication consumer aligns the watcher's stamp with it (A-H1).
+    Confirmed(PageKey),
     /// An operation whose caller stopped waiting (Uncertain) ended with its
     /// draft durably absent: it did not happen (PLAN-P2b-AB v2 Q2).
     OperationDropped(BTreeSet<PageKey>),
@@ -1128,34 +1132,40 @@ impl<F: HostIo> Host<F> {
             .any(|source| self.order.releases_to(source, key))
     }
 
+    #[cfg(test)]
     fn observe(&mut self, key: &str) -> Disposition {
+        self.observe_read(key).unwrap_or(Disposition::Refused)
+    }
+
+    /// Observe a held page, preserving a failed read for the waiting opener (A-H1).
+    fn observe_read(&mut self, key: &str) -> Result<Disposition, IoFailure> {
         if !self.alive || !self.pages.contains_key(key) {
-            return Disposition::Disabled;
+            return Ok(Disposition::Disabled);
         }
         let keys = BTreeSet::from([key.into()]);
         if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
-            return Disposition::Waiting;
+            return Ok(Disposition::Waiting);
         }
         self.with_locks(&keys, |host| {
-            let Ok(bytes) = host.fs.read_page(key) else {
-                return Disposition::Refused;
-            };
-            if host.adopt_read(key, bytes) {
+            let bytes = host.fs.read_page(key)?;
+            Ok(if host.adopt_read(key, bytes) {
                 Disposition::Applied
             } else {
                 Disposition::Disabled
-            }
+            })
         })
     }
 
     /// Apply a disk read of `key` to its page (SPEC read table); false when
-    /// the page is unchanged. A read that changes the page publishes its
+    /// the page is unchanged, which is a confirmation of its last
+    /// observation (`Event::Confirmed`). A read that changes the page publishes its
     /// bytes even when they equal the last observation: an own save may
     /// have moved the index past them since (V3, REVIEW-3a).
     fn adopt_read(&mut self, key: &str, bytes: Text) -> bool {
         let mut page = self.pages[key].clone();
         page.observe(bytes.clone(), self.next_version());
         if page == self.pages[key] {
+            self.events.push(Event::Confirmed(key.into()));
             return false;
         }
         if page.version == self.next_version() {

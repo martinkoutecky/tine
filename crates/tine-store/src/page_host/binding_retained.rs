@@ -60,7 +60,8 @@ pub(super) type HostState = State<ProductionIo, SystemClock>;
 
 /// The longest a host operation's caller waits for admission, then for its
 /// answer and every page's publication (Finding B, R1).
-pub const OPERATION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// A held page's read waits as long for its owner (`watch::OBSERVED_WAIT`).
+pub const OPERATION_WAIT: std::time::Duration = crate::watch::OBSERVED_WAIT;
 
 /// What a caller's admitted operation came to, by precedence: Superseded,
 /// Applied, Unwritten, Uncertain (STEP3-DESIGN option 2; plan v3 N6).

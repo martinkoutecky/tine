@@ -33,6 +33,7 @@ static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static OBSERVATION_READS: AtomicU64 = AtomicU64::new(0);
 static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
+static HELD_READ_FORWARDS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -174,6 +175,9 @@ pub struct Counts {
     /// (`Order::published`), answered pages examined while a caller waits for
     /// their witness (`settle`), and index publications (`Bridge::deliver`).
     pub host_publication_probes: u64,
+    /// Held pages' reads that asked their owner for an observation: the
+    /// file's stamp moved since its owner's last indexed one (A-H1).
+    pub held_read_forwards: u64,
     /// Page-host step work by primitive (M4, REVIEW-progress-plan R5), one
     /// count per element examined, rejected filter elements included:
     /// keys `Progress::reconcile` visits.
@@ -230,6 +234,7 @@ pub fn reset() {
         &WATCHER_STAMPS_BY_PATH,
         &OBSERVATION_READS,
         &HOST_PUBLICATION_PROBES,
+        &HELD_READ_FORWARDS,
         &HOST_RECONCILE_VISITS,
         &HOST_DRAFT_RECORD_VISITS,
         &HOST_CANDIDATE_VISITS,
@@ -276,6 +281,7 @@ pub fn snapshot() -> Counts {
         watcher_stamps_by_path: WATCHER_STAMPS_BY_PATH.load(Ordering::Relaxed),
         observation_reads: OBSERVATION_READS.load(Ordering::Relaxed),
         host_publication_probes: HOST_PUBLICATION_PROBES.load(Ordering::Relaxed),
+        held_read_forwards: HELD_READ_FORWARDS.load(Ordering::Relaxed),
         host_reconcile_visits: HOST_RECONCILE_VISITS.load(Ordering::Relaxed),
         host_draft_record_visits: HOST_DRAFT_RECORD_VISITS.load(Ordering::Relaxed),
         host_candidate_visits: HOST_CANDIDATE_VISITS.load(Ordering::Relaxed),
@@ -286,6 +292,10 @@ pub fn snapshot() -> Counts {
 
 pub(crate) fn host_publication_probes(count: usize) {
     HOST_PUBLICATION_PROBES.fetch_add(count as u64, Ordering::Relaxed);
+}
+
+pub(crate) fn held_read_forward() {
+    HELD_READ_FORWARDS.fetch_add(1, Ordering::Relaxed);
 }
 
 pub(crate) fn name_inventory_entries(count: usize) {
