@@ -79,11 +79,8 @@
   font-size: 12px;
 }
 @media (max-width: 640px) {
-  /* Git (ADR 0078 slice 3): policy select + interval wrap under the label on a phone. */
-  .settings-field-row:has(.settings-width-control),
-  .settings-field-row:has([data-git-policy]) {
-    flex-wrap: wrap;
-  }
+  /* Git (ADR 0078 slice 3): policy select + interval take the whole line under
+     the label on a phone (every settings row wraps, app.css). */
   .settings-field-row:has(.settings-width-control) .settings-field-control,
   .settings-field-row:has([data-git-policy]) .settings-field-control,
   .settings-width-control {

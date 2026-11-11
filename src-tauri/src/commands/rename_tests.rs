@@ -72,3 +72,38 @@ fn a_failed_config_write_after_the_files_moved_reaches_the_window_as_the_rename(
         config
     );
 }
+
+/// Card HVgII at the command boundary: a rename refused because config.edn is
+/// not UTF-8 reaches the window as the wire family `config-unreadable`, which
+/// the window words from its catalog, not as the bare read error ("invalid utf-8
+/// sequence of 1 bytes from index 35"). Nothing is renamed.
+#[test]
+fn a_rename_refused_for_an_unreadable_config_reaches_the_window_as_its_wire_family() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path();
+    std::fs::create_dir_all(dir.join("pages")).unwrap();
+    std::fs::create_dir_all(dir.join("logseq")).unwrap();
+    std::fs::write(
+        dir.join("logseq/config.edn"),
+        b"{:default-home {:page \"Start\"}} ;; \xff\xfe\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
+    let store = std::sync::Arc::new(tine_store::Store::open(dir, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let refused = window_answer(tine_graph_features::pages::rename_page_as(
+        &store,
+        &host,
+        "Start",
+        "Begin",
+        None,
+        tine_graph_features::pages::RenameChoice::Rename,
+        &[],
+    ))
+    .expect_err("a read-only graph refuses the rename");
+    assert!(refused.starts_with("config-unreadable: "), "{refused}");
+    assert!(dir.join("pages/Start.md").exists());
+    assert!(!dir.join("pages/Begin.md").exists());
+}

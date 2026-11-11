@@ -1392,6 +1392,9 @@ html[data-system-insets="native-viewport"] {
 
 .page-title-row {
   display: flex;
+  /* A phone under high interface zoom is narrower than the title and its
+     actions; wrap rather than scroll the page sideways (GH #926). */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -2012,99 +2015,7 @@ html[data-system-insets="native-viewport"] {
   overflow-y: auto;
   padding: 6px 20px 18px;
 }
-.settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-color);
-  font-size: 14px;
-}
-.settings-label {
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-.settings-value {
-  color: var(--text-primary);
-}
-.settings-value.mono {
-  font-family: var(--tine-mono-font, var(--ls-font-mono));
-  font-size: 12px;
-}
-.settings-hint {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-/* A setting laid out vertically: label + control on the top line, the
-   explanatory hint on its own full-width line below (so long hints wrap
-   cleanly instead of being crammed into the right column). Matches the
-   .settings-row border/padding so the two can be mixed within a tab. */
-.settings-field {
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border-color);
-}
-/* Option where Tine's behavior can diverge from Logseq. A left accent bar + the
-   note line make it scannable; the accent turns amber while it actually differs. */
-.og-field {
-  border-inline-start: 3px solid var(--border-color);
-  padding-inline-start: 10px;
-  margin-inline-start: -13px;
-}
-.og-field.og-diverges {
-  border-inline-start-color: #d9930a;
-}
-.og-badge {
-  margin-inline-start: 8px;
-  padding: 0 7px;
-  font-size: 0.72em;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  border-radius: 999px;
-  color: #8a5a00;
-  background: rgba(217, 147, 10, 0.16);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-.og-note {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.og-revert {
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  padding: 1px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.og-revert:hover {
-  background: var(--bg-tertiary);
-}
-.settings-field-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  font-size: 14px;
-}
-.settings-field-control {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-.settings-field-hint {
-  margin-top: 5px;
-  line-height: 1.5;
-  max-width: 62ch;
-}
+/* Settings row primitives live in settingsRows.css (imported right after this sheet). */
 /* The "today's sections live on page X" note under the Agenda window setting (GH #808). */
 .settings-sections-note {
   margin-top: 4px;
@@ -2282,10 +2193,14 @@ html[data-system-insets="native-viewport"] {
 /* Segmented two-option control (e.g. task workflow). */
 .settings-segment {
   display: inline-flex;
+  max-width: 100%;
   border: 1px solid var(--border-color);
   border-radius: 7px;
   overflow: hidden;
 }
+/* A segment that does not fit beside its label already has its own line; one
+   wider than the pane (a phone at high interface zoom) wraps its labels rather
+   than clipping its last option (GH #926). */
 .settings-segment button {
   background: none;
   border: none;
@@ -2294,7 +2209,6 @@ html[data-system-insets="native-viewport"] {
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
-  white-space: nowrap;
 }
 .settings-segment button:hover {
   background: rgba(0, 0, 0, 0.06);
@@ -2982,7 +2896,7 @@ html[data-system-insets="native-viewport"] {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--bg-primary);
-  min-width: 240px;
+  min-width: min(240px, 100%);
 }
 .spellcheck-dict {
   display: flex;
@@ -4143,7 +4057,7 @@ html[data-system-insets="native-viewport"] {
   background: var(--bg-primary);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 }
-@container editor (max-width: 260px) {
+@container editor (max-width: 16.25rem) {
   .sel-toolbar-secondary {
     display: none;
   }
@@ -7027,6 +6941,10 @@ img.emoji {
   color: var(--text-secondary);
   margin-bottom: 10px;
   display: flex;
+  /* At a phone's width under interface zoom the controls no longer fit beside
+     the title; wrapping keeps them on the page instead of scrolling it sideways
+     (GH #926). */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   -webkit-user-select: none;
