@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Creating, deleting or renaming a page, or changing its `title::`, now refreshes only the views and queries that depend on that page. Before, every open query and reference panel recomputed (D-20261102-PERF row 3, REG-PERF-PAGE-LIFECYCLE-PRECISE-SUMMARY, UI-PERF-PAGE-LIFECYCLE-READERS).
+- Startup loads less JavaScript: the optional CodeMirror editor loads only when enabled. An edit started before it finishes loading uses the classic editor for that activation (internal: UI-LAZY-CM6; D-20261110-LZ).
 - Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
 - `tine edit` saves a large page faster: it no longer parses the bytes it has just written a second time or reads their page name again, so each edit does one parse and one name read fewer (a 2 MiB page saves about 15 % faster). The written bytes, files, syncs and reply are unchanged (internal: REG-COST-BLOCK-EDIT-REPARSE; card DuDHQ).
 - `tine page current` reports the focused page name and Tine URL, plus the editing block's URL, with text and JSON output for scripts such as Hookmark integrations ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).

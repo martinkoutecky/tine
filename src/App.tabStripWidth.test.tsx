@@ -15,6 +15,8 @@ async function mount(platform: "android" | "ios" | "desktop", narrow: boolean) {
   const { initParser } = await import("./render/parse");
   await initParser();
   const { App } = await import("./App");
+  const { cm6EditorEnabled } = await import("./editor/cm6Setting");
+  if (cm6EditorEnabled()) await (await import("./components/EditorGate")).preloadCm6Editor();
   const host = document.body.appendChild(document.createElement("div"));
   const dispose = render(() => <App />, host);
   return { host, dispose };

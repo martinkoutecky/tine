@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { preloadCm6Editor } from "./EditorGate";
+beforeAll(preloadCm6Editor);
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 
@@ -65,6 +67,8 @@ it("the first editor opened while the stored choice is still being read gets the
   await flush();
   expect(cm6EditorEnabled()).toBe(true);
   expect(kinds(host)).toEqual({ cm6: true, textarea: false });
+  expect(maybeEditorIn(host)!.value()).toBe("hello");
+  expect(maybeEditorIn(host)!.selection()).toEqual([0, 0]);
 });
 
 it("opens at once with the current engine when nothing is being read", async () => {
