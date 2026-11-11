@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).
 - A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).
 
 - Find in a long Journals feed counts loaded matches once as days retire and reload; the total agrees with the loaded days and the omitted-day hint (internal: UI-L10-03-FIND-RETIRED-DAYS).
