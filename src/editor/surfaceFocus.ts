@@ -35,7 +35,7 @@ export function focusMountedEditor(
         const ref = editor();
         if (!ref.isConnected || editingId() !== id) return;
         const active = documentOf(ref).activeElement;
-        const taken = active?.matches('textarea.block-editor, [data-cm6-editor], [data-block-editor="pending"]');
+        const taken = active?.matches('textarea.block-editor, [data-cm6-editor]');
         if (!taken) {
           focus(again);
           clearFocusSurface(id);

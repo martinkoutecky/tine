@@ -279,11 +279,13 @@ function Capture() {
       applyTaskWorkflow(result.value);
     return result;
   };
+  createEffect(() => {
+    if (cm6EditorEnabled()) void preloadCm6Editor();
+  });
   const refreshPolicyThenResettleAndActivate = async () => {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
     const result = await readOwned(owner, Promise.all([initCm6EditorSetting(), initLinkDefault(), refreshCaptureConfig(owner)]));
     if (result.kind === "stale") return;
-    if (cm6EditorEnabled()) void preloadCm6Editor();
     // The editor opened at startup (before the stored CodeMirror choice was
     // read) or before a Settings change: end that session so the activation
     // below opens the editor kind the setting names.
@@ -631,6 +633,8 @@ function Capture() {
     void initSpellcheckSettings();
     void initRefCompletionSettings();
     void initPasteSettings();
+    // Resolve and preload the stored editor choice while the window is hidden.
+    void initCm6EditorSetting();
     seed();
     let stopConfig = () => {};
     onCleanup(() => stopConfig());

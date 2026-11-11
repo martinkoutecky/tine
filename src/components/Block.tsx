@@ -131,7 +131,7 @@ import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginM
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
-import { EditorGate, type PendingEditorInput } from "./EditorGate";
+import { EditorGate } from "./EditorGate";
 import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
@@ -467,10 +467,10 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
 
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   return <EditorGate {...props} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)}
-    classic={pendingInput => <EditorEngine {...props} pendingInput={pendingInput} />} />;
+    classic={() => <EditorEngine {...props} />} />;
 }
 
-function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession>; pendingInput?: PendingEditorInput }): JSX.Element {
+function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
   propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).
@@ -1022,11 +1022,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     });
     onCleanup(unregisterHistoryTarget);
     focusMountedEditor(props.id, surfaceKey, () => ref, focusNow);
-    props.pendingInput?.((text, target, kind) => {
-      if (!isElementTag(target, "textarea")) return;
-      target.setRangeText(text, target.selectionStart, target.selectionEnd, "end");
-      target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: kind === "type" ? "insertText" : kind === "paste" ? "insertFromPaste" : "insertCompositionText", data: text }));
-    }, ref);
     resizeNow();
     onCleanup(revealCaretSettled(ref, nearestScrollableY(ref)));
     // A split can change the editor's wrapping width after this mount-time

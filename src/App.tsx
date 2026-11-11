@@ -899,9 +899,10 @@ export function App(): JSX.Element {
   onMount(() => void initSpellcheckSettings());
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());
-  onMount(() => void initCm6EditorSetting().then(() => {
+  onMount(() => void initCm6EditorSetting());
+  createEffect(() => {
     if (cm6EditorEnabled()) void preloadCm6Editor();
-  }));
+  });
   onMount(initNoteLayoutSetting);
 
   // Android/iOS WebViews otherwise navigate raw target=_blank links in-app.
