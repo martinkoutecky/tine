@@ -1277,9 +1277,7 @@
       "r10-ref-source-alias-target: kb -> ML: {\"destination\":\"ML\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r10-ref-source-alias-target: kb -> ML: {\"destination\":\"o\",\"survivor\":null}": [
-        "G3/B4: ordered file projection journals/2026_10_26.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"tag\",\"o\"],[\"pageEmbed\",\"o\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"tag\",\"ML\"],[\"pageEmbed\",\"ML\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}"
-      ],
+      "r10-ref-source-alias-target: kb -> ML: {\"destination\":\"o\",\"survivor\":null}": [],
       "r10-ref-source-journal-risk: kb -> kc: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"kc\",\"survivor\":null}], Tine []",
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
@@ -1320,9 +1318,7 @@
         "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"},{\"destination\":\"ML\",\"survivor\":null}]"
       ],
       "r11-empty-alias-source: B -> ML: {\"destination\":\"ML\",\"survivor\":null}": [],
-      "r11-empty-alias-source: B -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [
-        "G3/B4: chosen substitution \"Machine Learning\", typed \"ML\"; native admission rejects {\"assembly\":false,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "r11-empty-alias-source: B -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [],
       "r11-empty-alias-target: ML notes -> ML: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"}]"
       ],
@@ -1349,11 +1345,7 @@
       "r12-alias-source-date: ML -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r12-alias-source-date: ML -> 2026-10-26: {\"destination\":\"owner\",\"survivor\":null}": [
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-10-26\"],[\"link\",\"owner\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"2026-10-26\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-10-26\"],[\"link\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"2026-10-26\"}}]}],\"name\":\"c\"}",
-        "G3/B4: ordered file projection pages/owner.md: model {\"aliases\":[\"2026-10-26\",\"owner\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"2026-10-26\"],[\"linkableValue\",\"owner\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}, Tine {\"aliases\":[\"2026-10-26\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"2026-10-26\"],[\"linkableValue\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}",
-        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"owner\"],[\"journal\",\"oct 26th, 2026\"]],[[\"page\",\"owner\"],[\"page\",\"owner\"]]], actual writer [[[\"page\",\"owner\"],[\"journal\",\"oct 26th, 2026\"]]]"
-      ],
+      "r12-alias-source-date: ML -> 2026-10-26: {\"destination\":\"owner\",\"survivor\":null}": [],
       "r12-alias-source-empty-target: ML -> AI: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"Artificial Intelligence\",\"survivor\":null}], Tine [{\"destination\":\"AI\",\"survivor\":null}]"
       ],
@@ -1374,10 +1366,7 @@
       "r12-alias-source-journal-target: ML -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r12-alias-source-journal-target: ML -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":null}": [
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Oct 26th, 2026\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Oct 26th, 2026\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Oct 26th, 2026\"}}]}],\"name\":\"c\"}",
-        "G3/B4: ordered file projection pages/owner.md: model {\"aliases\":[\"Oct 26th, 2026\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Oct 26th, 2026\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}, Tine {\"aliases\":[\"2026-10-26\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}"
-      ],
+      "r12-alias-source-journal-target: ML -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":null}": [],
       "r12-alias-source-journal: ML -> AI: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null}], Tine []",
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
@@ -1400,13 +1389,7 @@
       "r12-alias-source-other-owner: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r12-alias-source-other-owner: ML -> AI: {\"destination\":\"Artificial Intelligence\",\"survivor\":null}": [
-        "G3/B4: physical output paths: model [\"pages/Artificial Intelligence%2Fx.md\", \"pages/Artificial Intelligence.md\", \"pages/Machine Learning.md\", \"pages/c.md\"], Tine [\"pages/AI%2Fx.md\", \"pages/Artificial Intelligence.md\", \"pages/Machine Learning.md\", \"pages/c.md\"]",
-        "G3/B4: ordered file projection pages/Machine Learning.md: model {\"aliases\":[\"Artificial Intelligence\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Artificial Intelligence\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}, Tine {\"aliases\":[\"AI\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}",
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Artificial Intelligence\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence\"}}]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence/x\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"AI\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence\"}}]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"AI/x\"}}]}],\"name\":\"c\"}",
-        "G3/B4: computed after-meaning pages: model [[\"page\",\"artificial intelligence\"],[\"page\",\"artificial intelligence/x\"],[\"page\",\"machine learning\"],[\"page\",\"c\"]], actual writer [[\"page\",\"ai/x\"],[\"page\",\"artificial intelligence\"],[\"page\",\"machine learning\"],[\"page\",\"c\"]]",
-        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"artificial intelligence\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"artificial intelligence\"]]], actual writer [[[\"page\",\"artificial intelligence\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"ai\"]]]"
-      ],
+      "r12-alias-source-other-owner: ML -> AI: {\"destination\":\"Artificial Intelligence\",\"survivor\":null}": [],
       "r12-alias-source-own-child: ML -> ML/alias: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"ML/alias\",\"survivor\":null},{\"destination\":\"owner\",\"survivor\":null}], Tine []"
       ],
@@ -1450,11 +1433,7 @@
       "r12-alias-source-same-owner: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r12-alias-source-same-owner: ML -> AI: {\"destination\":\"Machine Learning\",\"survivor\":null}": [
-        "G3/B4: ordered file projection pages/Machine Learning.md: model {\"aliases\":[\"AI\",\"Machine Learning\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Machine Learning\"],[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}, Tine {\"aliases\":[\"AI\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"AI\"],[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}",
-        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Machine Learning\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"AI\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]}],\"name\":\"c\"}",
-        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"machine learning\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"machine learning\"]]], actual writer [[[\"page\",\"machine learning\"],[\"page\",\"ai\"]]]"
-      ],
+      "r12-alias-source-same-owner: ML -> AI: {\"destination\":\"Machine Learning\",\"survivor\":null}": [],
       "r12-alias-source-two-declarers: ML -> AI: offers/automatic": [],
       "r12-alias-source-two-declarers: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
       "r12-alias-source-two-empty-targets: ML -> AI: offers/automatic": [
@@ -1589,9 +1568,7 @@
       "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"2026-11-02\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [
-        "G3/B4: chosen substitution \"Nov 2nd, 2026\", typed \"2026-11-02\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [],
       "r13-rename-onto-date-title-free: Foo -> Nov 2nd, 2026: offers/automatic": [],
       "r13-rename-onto-date-title-free: Foo -> Nov 2nd, 2026: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":null}": [],
       "r13-rename-onto-date-title-journal: Foo -> Nov 2nd, 2026: offers/automatic": [
@@ -1606,9 +1583,7 @@
       "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"2026_11_02\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [
-        "G3/B4: chosen substitution \"Nov 2nd, 2026\", typed \"2026_11_02\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [],
       "r13-same-key-nested-org: Alpha -> ALPHA: offers/automatic": [],
       "r13-same-key-nested-org: Alpha -> ALPHA: {\"destination\":\"ALPHA\",\"survivor\":null}": [
         "G6/B3: physical output paths: model [\"pages/nested/physical.org\"], Tine [\"pages/nested/ALPHA.org\"]"
@@ -1638,9 +1613,7 @@
         "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"}], Tine [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"X\",\"survivor\":null}]",
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
       ],
-      "r13-unsafe-literal-safe-alternate: A -> X: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [
-        "G3/B4: chosen substitution \"B\", typed \"X\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
-      ],
+      "r13-unsafe-literal-safe-alternate: A -> X: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
       "r13-unsafe-literal-safe-alternate: A -> X: {\"destination\":\"X\",\"survivor\":null}": [
         "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":false,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
       ],
@@ -1673,9 +1646,7 @@
       "r6-onto-alias: a -> c: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"c\",\"survivor\":null},{\"destination\":\"b\",\"survivor\":\"pages/b.md\"}], Tine [{\"destination\":\"b\",\"survivor\":\"pages/b.md\"},{\"destination\":\"c\",\"survivor\":null}]"
       ],
-      "r6-onto-alias: a -> c: {\"destination\":\"b\",\"survivor\":\"pages/b.md\"}": [
-        "G3/B4: chosen substitution \"b\", typed \"c\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "r6-onto-alias: a -> c: {\"destination\":\"b\",\"survivor\":\"pages/b.md\"}": [],
       "r6-onto-alias: a -> c: {\"destination\":\"c\",\"survivor\":null}": [],
       "r6-onto-real-page: a -> b: offers/automatic": [
         "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
@@ -1707,16 +1678,12 @@
       "r9-merge-into-journal: meeting -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "r9-merge-into-journal: meeting -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [
-        "G3/B4: chosen substitution \"Oct 26th, 2026\", typed \"2026-10-26\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "r9-merge-into-journal: meeting -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [],
       "r9-merge-through-alias: ML notes -> ML: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"},{\"destination\":\"ML\",\"survivor\":null}]"
       ],
       "r9-merge-through-alias: ML notes -> ML: {\"destination\":\"ML\",\"survivor\":null}": [],
-      "r9-merge-through-alias: ML notes -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [
-        "G3/B4: chosen substitution \"Machine Learning\", typed \"ML\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "r9-merge-through-alias: ML notes -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [],
       "r9-own-child-alias: a -> a/x: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"a/x\",\"survivor\":null},{\"destination\":\"o\",\"survivor\":\"pages/o.md\"}], Tine []"
       ],
@@ -2021,9 +1988,7 @@
       "random-175: x -> n/y: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null},{\"destination\":\"n\",\"survivor\":\"pages/n.md\"}], Tine [{\"destination\":\"n\",\"survivor\":\"pages/n.md\"},{\"destination\":\"n/y\",\"survivor\":null}]"
       ],
-      "random-175: x -> n/y: {\"destination\":\"n\",\"survivor\":\"pages/n.md\"}": [
-        "G3/B4: chosen substitution \"n\", typed \"n/y\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
-      ],
+      "random-175: x -> n/y: {\"destination\":\"n\",\"survivor\":\"pages/n.md\"}": [],
       "random-175: x -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
       "random-176: n -> A: offers/automatic": [
         "G3/B4: offered identities: model [], Tine [{\"destination\":\"a\",\"survivor\":null}]"
@@ -2114,18 +2079,14 @@
       "random-197: B -> n/y: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null},{\"destination\":\"N/y\",\"survivor\":null}], Tine [{\"destination\":\"N/y\",\"survivor\":null}]"
       ],
-      "random-197: B -> n/y: {\"destination\":\"N/y\",\"survivor\":null}": [
-        "G3/B4: ordered file projection journals/2026_10_26.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"n\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"tag\",\"N/y\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"n\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"tag\",\"n/y\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}"
-      ],
+      "random-197: B -> n/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
       "random-197: B -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
       "random-198: n -> a: offers/automatic": [
         "G3/B4: offered identities: model [{\"destination\":\"a\",\"survivor\":\"pages/A.md\"},{\"destination\":\"A\",\"survivor\":\"pages/A.md\"}], Tine [{\"destination\":\"A\",\"survivor\":\"pages/A.md\"}]"
       ],
-      "random-198: n -> a: {\"destination\":\"A\",\"survivor\":\"pages/A.md\"}": [
-        "G3/B4: chosen substitution \"A\", typed \"a\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
-      ],
+      "random-198: n -> a: {\"destination\":\"A\",\"survivor\":\"pages/A.md\"}": [],
       "random-198: n -> a: {\"destination\":\"a\",\"survivor\":\"pages/A.md\"}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
@@ -2189,9 +2150,7 @@
       "random-32: n -> A: {\"destination\":\"A\",\"survivor\":\"pages/a.md\"}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "random-32: n -> A: {\"destination\":\"a\",\"survivor\":\"pages/a.md\"}": [
-        "G3/B4: chosen substitution \"a\", typed \"A\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
-      ],
+      "random-32: n -> A: {\"destination\":\"a\",\"survivor\":\"pages/a.md\"}": [],
       "random-33: a -> 2026-10-26: offers/automatic": [],
       "random-33: a -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
       "random-34: n -> Z: offers/automatic": [],
@@ -2352,9 +2311,7 @@
       "random-71: A -> N/y: {\"destination\":\"N/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "random-71: A -> N/y: {\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
-        "G3/B4: chosen substitution \"n/y\", typed \"N/y\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
-      ],
+      "random-71: A -> N/y: {\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}": [],
       "random-72: 2026-10-26 -> x: offers/automatic": [],
       "random-72: 2026-10-26 -> x: {\"destination\":\"x\",\"survivor\":null}": [],
       "random-73: N/y -> n/y: offers/automatic": [],
@@ -2403,9 +2360,7 @@
       "random-83: n/y -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
         "G3/B4: safe candidate cannot be selected through the original request"
       ],
-      "random-83: n/y -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [
-        "G3/B4: chosen substitution \"Oct 26th, 2026\", typed \"2026-10-26\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
-      ],
+      "random-83: n/y -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [],
       "random-84: B -> Z/w: offers/automatic": [],
       "random-84: B -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
       "random-85: N/y -> B: offers/automatic": [],

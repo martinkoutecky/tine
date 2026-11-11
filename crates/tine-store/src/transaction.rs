@@ -121,9 +121,9 @@ pub enum TrashIf {
 /// raw-text rewriter scans those regions too.
 ///
 /// The second list overrides the first for a query's page-name arguments
-/// only (`tine_core::refs::rename_rewrite_with_queries`): a merge through an
-/// alias writes the survivor's own name there (ruling (a) of D-20261103-CMA);
-/// empty for every other rename.
+/// only (`tine_core::refs::rename_rewrite_with_queries`). The page planner
+/// supplies the selected-member substitution in the first list and leaves
+/// overrides empty, so every site follows the same destination.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>, pub Vec<(String, String)>);
 

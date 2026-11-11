@@ -1067,8 +1067,12 @@ Renames and confirmed merges rewrite bare `alias::` / `aliases::` members
 (Org `#+alias:` / `#+aliases:` too) through the same reference scanner and
 guarded save as links (D-20261105-CM13, deliberate OG difference). The
 explicit-reference index includes declaring files even without another link.
-Namespace members follow the typed-name substitution; stored page-name query
-arguments naming a merged source use the selected survivor's own name.
+The selected member's identifying spelling supplies one substitution for
+aliases, links, tags, namespace files/titles and stored query arguments,
+including retained referrers and fileless sources (CM-B4, SPEC §5.3).
+Selecting Machine Learning through ML therefore sends B and B/x to
+Machine Learning and Machine Learning/x everywhere. Making ML its own page
+instead keeps ML as the destination spelling.
 Renaming an alias-only name rewrites every declarer without choosing a source
 owner, moving its contents, or creating a file for the alias (CM12). It has
 no OwnPage answer. A redirecting empty alias target selects its unique
@@ -1998,9 +2002,9 @@ The rename offer selects a real target file independently of content
 (R13-C4). An empty real target is filled through the existing guarded merge
 path; it never routes source content to another alias declarer. A fileless
 alias target retains the existing owner-choice flow pending the later r13
-candidate-planning batch. Both retain the declaring alias, map children
-and links to the typed name, and map stored queries to the chosen survivor's
-name. Rust's `RenameOffer::AliasOf` carries separate `merge` and `ownPage`
+candidate-planning batch. Both retain the declaring alias. A merge maps
+children, links, aliases and stored queries to the chosen survivor's spelling;
+the own-page answer uses the requested spelling. Rust's `RenameOffer::AliasOf` carries separate `merge` and `ownPage`
 permissions. A reference-only source has no OwnPage permission and its API
 submission is refused; an empty alias file source retains both choices.
 Cancel writes nothing. Alias-only source renaming remains unchanged pending

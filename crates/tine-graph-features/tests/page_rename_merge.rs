@@ -336,7 +336,7 @@ fn renaming_onto_an_alias_needs_the_merge_confirmation() {
         read(&root, "pages/Owner.md"),
         "alias:: New\n\n- owner body\n- old body\n"
     );
-    assert_eq!(read(&root, "pages/Ref.md"), "- [[New]]\n");
+    assert_eq!(read(&root, "pages/Ref.md"), "- [[Owner]]\n");
     assert!(!root.join("pages/Old.md").exists());
     drop(store);
     fs::remove_dir_all(root).unwrap();

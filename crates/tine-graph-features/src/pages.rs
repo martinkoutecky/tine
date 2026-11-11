@@ -1465,10 +1465,8 @@ fn merged_survivor(
     })
 }
 
-/// A merge's rename maps: `links` for every reference and namespace child
-/// (the typed name, ruling (b) of D-20261103-CMA), `queries` for a query's
-/// page-name arguments naming the source (the survivor's own name, ruling
-/// (a)); see [`refs::rename_rewrite_with_queries`].
+/// A merge's selected-member substitution and optional query overrides,
+/// passed to the shared reference encoder.
 #[derive(Clone, Copy)]
 struct MergeNames<'a> {
     links: &'a HashMap<String, String>,

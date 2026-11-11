@@ -431,12 +431,9 @@ fn accepted_native_merge_rows_and_adversarial_controls() {
                 "real native query anchors"
             );
         }
-        let b4 = matches!(name, "r11-empty-alias-source" | "random-198" | "random-83");
-        if b4 {
-            assert_eq!(
-                result["accepted"], false,
-                "B4 must remain explicitly nonconformant: {name}"
-            );
+        admit(bridge, &packet);
+        let mut chosen_control = Value::Null;
+        if matches!(name, "r11-empty-alias-source" | "random-198" | "random-83") {
             assert_eq!(
                 result["checks"]["rewrite"], true,
                 "independent chosen shadows: {name}: {}",
@@ -446,10 +443,6 @@ fn accepted_native_merge_rows_and_adversarial_controls() {
                 result["checks"]["queryImages"], true,
                 "B4 does not waive query identity"
             );
-            // savesCheck is bound to the independently executed chosen graph.
-            // Its retained referrers differ under B4; local codec truth must
-            // still hold on every actual output, and the corrected operation
-            // below must admit with no failed checks.
             assert_local_saves(&packet);
             let corrected_dir = tempfile::tempdir().unwrap();
             spec.write(corrected_dir.path());
@@ -490,6 +483,11 @@ fn accepted_native_merge_rows_and_adversarial_controls() {
                 supplied["queries"].clone(),
             );
             let correction = admit(bridge, &corrected_packet);
+            assert_eq!(
+                files, corrected_files,
+                "typed and chosen requests must produce the same graph: {name}"
+            );
+            chosen_control = correction.clone();
             if name == "r11-empty-alias-source" {
                 let edges = correction["checkedMeaning"]["typedAliasEdges"]
                     .as_array()
@@ -507,57 +505,55 @@ fn accepted_native_merge_rows_and_adversarial_controls() {
                     .collect();
                 assert_eq!(json!(actual), json!([0, 1, 2, 3, 4, 5, 6, 8]));
             }
-        } else {
-            admit(bridge, &packet);
-            let mut reversed_saves = packet.clone();
-            reversed_saves["saves"].as_array_mut().unwrap().reverse();
-            admit(bridge, &reversed_saves);
-            // Every native output goes through the literal guarded second-save
-            // path twice; the independent codec observations are also checked.
-            let host = crate::test_host(&store);
-            for (path, bytes) in &files {
-                let id = PageId::from(path.as_str());
-                for _ in 0..2 {
-                    let loaded = store.page(&id).unwrap();
-                    crate::test_host_writer::save_on(
-                        &host,
-                        &store,
-                        tine_store::EditKind::SaveBlock,
-                        &id,
-                        tine_store::SaveBase::Existing(loaded.rev),
-                        &loaded.doc,
-                    )
-                    .unwrap();
-                    assert_eq!(&fs::read_to_string(dir.path().join(path)).unwrap(), bytes);
-                }
-            }
-            if name == "random-198" || name == "random-4" {
-                let expected = if name == "random-198" {
-                    json!([0, 1, 2, 3, 4, 5, 6, 8])
-                } else {
-                    json!([1, 3])
-                };
-                let actual: Vec<_> = result["checkedMeaning"]["queries"][0]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|q| q["block"][1].clone())
-                    .collect();
-                assert_eq!(json!(actual), expected);
-            }
-            let mut missing = packet.clone();
-            missing["saves"] = json!([]);
-            let rejected = shared::run_bridge(bridge, &missing).unwrap();
-            assert_eq!(rejected["accepted"], false);
-            assert_eq!(rejected["checks"]["unchangedSaveClosure"], false);
-            let mut detached = packet.clone();
-            detached["saves"][0]["bytes"] = json!("detached bytes");
-            assert_eq!(
-                shared::run_bridge(bridge, &detached).unwrap()["checks"]["unchangedSaveClosure"],
-                false
-            );
         }
-        report.insert(name, json!({"classification": if b4 { "B4 chosen substitution" } else { "native admitted" }, "packet": packet, "result": result}));
+        let mut reversed_saves = packet.clone();
+        reversed_saves["saves"].as_array_mut().unwrap().reverse();
+        admit(bridge, &reversed_saves);
+        // Every native output goes through the literal guarded second-save
+        // path twice; the independent codec observations are also checked.
+        let host = crate::test_host(&store);
+        for (path, bytes) in &files {
+            let id = PageId::from(path.as_str());
+            for _ in 0..2 {
+                let loaded = store.page(&id).unwrap();
+                crate::test_host_writer::save_on(
+                    &host,
+                    &store,
+                    tine_store::EditKind::SaveBlock,
+                    &id,
+                    tine_store::SaveBase::Existing(loaded.rev),
+                    &loaded.doc,
+                )
+                .unwrap();
+                assert_eq!(&fs::read_to_string(dir.path().join(path)).unwrap(), bytes);
+            }
+        }
+        if name == "random-198" || name == "random-4" {
+            let expected = if name == "random-198" {
+                json!([0, 1, 2, 3, 4, 5, 6, 8])
+            } else {
+                json!([1, 3])
+            };
+            let actual: Vec<_> = result["checkedMeaning"]["queries"][0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|q| q["block"][1].clone())
+                .collect();
+            assert_eq!(json!(actual), expected);
+        }
+        let mut missing = packet.clone();
+        missing["saves"] = json!([]);
+        let rejected = shared::run_bridge(bridge, &missing).unwrap();
+        assert_eq!(rejected["accepted"], false);
+        assert_eq!(rejected["checks"]["unchangedSaveClosure"], false);
+        let mut detached = packet.clone();
+        detached["saves"][0]["bytes"] = json!("detached bytes");
+        assert_eq!(
+            shared::run_bridge(bridge, &detached).unwrap()["checks"]["unchangedSaveClosure"],
+            false
+        );
+        report.insert(name, json!({"classification": "native admitted", "packet": packet, "result": result, "chosenControl": chosen_control}));
     }
     if let Ok(dest) = std::env::var("CM_NATIVE_REPORT") {
         fs::write(dest, serde_json::to_string_pretty(&report).unwrap()).unwrap();

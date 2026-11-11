@@ -134,9 +134,7 @@ impl RenameProposal {
 pub(crate) struct Renames<'a> {
     pages: &'a HashMap<String, String>,
     /// A query's page-name arguments that name one of these keys take this
-    /// name instead of `pages`' (a merge through an alias: the survivor's own
-    /// name, ruling (a) of D-20261103-CMA, the model's `queryMap`); every
-    /// other query argument follows `pages`.
+    /// name instead of `pages`'; every other query argument follows `pages`.
     queries: Option<&'a HashMap<String, String>>,
     keys: HashMap<String, &'a str>,
     file_name_format: FileNameFormat,

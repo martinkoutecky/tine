@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Pages open with less work when checking whether a tag table is available (REG-TAG-TABLE-AVAILABILITY).
+- Page merges use the selected page's spelling consistently in aliases, links, namespace children and queries, including when selected through an alias or another date spelling (REG-CM-B4-CHOSEN-ALIAS, REG-CM-B4-CHOSEN-NAMESPACE, REG-CM-B4-CHOSEN-DATE).
 - Large pages defer author and comment controls until a row needs them, and bullet history state until the first hover (REG-BIGLOAD-ROW-WORK).
 - Opening the calendar now reads its content dots without rescanning pages or journal blocks (internal: REG-CALENDAR-CONTENT-DAYS-COST).
 - Settings → Appearance → Comments offers **In a popup**: hovering highlighted words opens their live, editable thread with the same delay and close rules as a page link's hover preview, at every width including Wide mode. A click on the words places the caret, touch tablets tap, a reply draft keeps the popover open, and phones keep the bottom sheet. **In the margin** stays the default; the choice uses a new device key, so an earlier On click choice returns to the default once (GH #891; UI-MC010-CLICK-DISPLAY).

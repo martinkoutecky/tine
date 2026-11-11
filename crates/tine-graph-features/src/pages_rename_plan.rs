@@ -51,7 +51,7 @@ pub(super) struct RenamePlan {
     pub(super) config: tine_store::ConfigState,
     pub(super) map: RenameMap,
     pub(super) lookup: HashMap<String, String>,
-    /// `map.1` keyed so: query arguments naming a merged page (ruling (a)).
+    /// Optional query overrides from `map.1`, keyed like `lookup`.
     pub(super) query_lookup: HashMap<String, String>,
     pub(super) moves: HashMap<PageId, FileId>,
     /// Planned identities (including a fileless primary), in `map.0` order.
@@ -507,6 +507,22 @@ pub(super) fn plan_rename(
     // and commit checks it is still the view's (B2).
     let config = store.config();
     let journal_format = config.config.journal_format();
+    // SPEC §5.3: the selected physical member defines the entire map.
+    // Keep `new` for checking that this member still holds the requested
+    // spelling. Descendants, referrers and reports use the selection too.
+    let selected = merge_into
+        .and_then(|into| {
+            let inventory = graph.inventory(tine_store::InventoryScope::File(&PageId::from(into)));
+            let entry = inventory.0.first()?;
+            if let Some(day) = entry.day.filter(|_| entry.is_journal) {
+                let day = tine_core::date::JournalDate::from_ordinal(day.0);
+                if journal_format.parse(&entry.name) != Some(day) {
+                    return Some(day.file_stem());
+                }
+            }
+            Some(entry.name.clone())
+        })
+        .unwrap_or_else(|| new.to_owned());
     let old_key = refs::normalize(old);
     // Only file-claimed names move: the full inventory's alias and
     // reference-only name discovery is not needed here (GH #623).
@@ -517,7 +533,7 @@ pub(super) fn plan_rename(
     validate_target(&source, expected_path)?;
     // One guard for every source and every answer, before target offers:
     // confirmation cannot bypass a stationary journal's reference protection.
-    let journals = graph.journal_rewrite_risks(old, new);
+    let journals = graph.journal_rewrite_risks(old, &selected);
     if !journals.is_empty() {
         return Err(RenameBlocked::JournalReferenceLoss { journals }.error());
     }
@@ -560,21 +576,22 @@ pub(super) fn plan_rename(
         let ids = physical(&entry.target);
         let primary = refs::normalize(&entry.name) == old_key;
         let new_name = if primary {
-            new.to_owned()
+            selected.clone()
         } else {
-            format!("{new}{}", namespace_suffix(&entry.name, &old_key))
+            format!("{selected}{}", namespace_suffix(&entry.name, &old_key))
         };
         validate_target(&ids, None)?;
         let id = ids[0].clone();
         // An alias names its owner's page, so it is taken like a file name;
         // a journal day is taken by its journal (M-Q7).
-        let (mut taken, alias_only) = match holder(&graph, &journal_format, &new_name) {
+        let requested = if primary { new } else { &new_name };
+        let (mut taken, alias_only) = match holder(&graph, &journal_format, requested) {
             Holder::Free => (Vec::new(), false),
             Holder::Files(files) => (files, false),
             Holder::Aliases(owners) => (owners, true),
         };
         if alias_only {
-            validate_target(&existing(graph.resolve(&new_name, false)), None)?;
+            validate_target(&existing(graph.resolve(requested, false)), None)?;
         }
         if !(primary && alias_only) {
             taken.retain(|claimant| *claimant != id);
@@ -704,7 +721,6 @@ pub(super) fn plan_rename(
     // change. Onto an existing page that repoints them, which is OG
     // `merge-pages!` of a page with no blocks, so it needs the confirmation.
     let mut ref_merge = false;
-    let mut ref_survivor = None;
     if !primary_is_file && old != new {
         // CM12 C6: alias-only sources have no file either. OwnPage would
         // pretend to create one while merely substituting a name.
@@ -734,7 +750,6 @@ pub(super) fn plan_rename(
             (_, []) => {}
             (RenameChoice::MergeInto(into), [owner]) if owner.as_str() == into => {
                 ref_merge = true;
-                ref_survivor = Some(owner.clone());
             }
             (RenameChoice::MergeInto(_), _) => {}
             (_, [owner]) => {
@@ -760,7 +775,7 @@ pub(super) fn plan_rename(
         }
         renamed.push(RenamedPage {
             from: old.to_owned(),
-            to: new.to_owned(),
+            to: selected,
             path: None,
         });
     }
@@ -770,21 +785,11 @@ pub(super) fn plan_rename(
             "the page to merge into no longer owns that name",
         ));
     }
-    // Ruling (a), D-20261103-CMA (`Rulings9.queryMap`): a stored query
-    // argument naming the merged page names the survivor by its own name;
-    // links and namespace children keep the typed name (ruling (b)).
-    let queries: Vec<(String, String)> = merge
-        .as_ref()
-        .map(|(_, dst)| dst)
-        .or(ref_survivor.as_ref())
-        .and_then(|survivor| name_of(&graph, survivor))
-        .map(|name| vec![(old.to_owned(), name)])
-        .unwrap_or_default();
     let pairs = renamed
         .iter()
         .map(|page| (page.from.clone(), page.to.clone()))
         .collect();
-    let map = RenameMap(pairs, queries);
+    let map = RenameMap(pairs, Vec::new());
     let keyed = |pairs: &[(String, String)]| -> HashMap<String, String> {
         pairs
             .iter()

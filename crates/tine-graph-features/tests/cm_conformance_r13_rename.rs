@@ -10,7 +10,7 @@ fn merge_proof(
     store: &Store,
     spec: &GraphSpec,
     old: &str,
-    new: &str,
+    _requested: &str,
     choice: &Choice,
 ) -> Option<(
     String,
@@ -29,9 +29,20 @@ fn merge_proof(
     let dst = &spec.files[path];
     let a = store.page_of(&source, src.as_bytes()).unwrap().doc;
     let b = store.page_of(&target, dst.as_bytes()).unwrap().doc;
-    let links = std::collections::HashMap::from([(tine_core::refs::page_key(old), new.to_owned())]);
-    let queries =
-        std::collections::HashMap::from([(tine_core::refs::page_key(old), b.name.clone())]);
+    // Independent reader spelling, rather than the planner's map or the
+    // typed alias. Ambiguous display labels cannot identify a journal day.
+    let mut selected = b.name.clone();
+    if path.starts_with("journals/") {
+        if let Some(day) = spec
+            .journal_format()
+            .parse(Path::new(path).file_stem()?.to_str()?)
+        {
+            if spec.journal_format().parse(&selected) != Some(day) {
+                selected = day.file_stem();
+            }
+        }
+    }
+    let links = std::collections::HashMap::from([(tine_core::refs::page_key(old), selected)]);
     Some((
         path.clone(),
         source.as_str().to_owned(),
@@ -41,7 +52,7 @@ fn merge_proof(
             &a,
             src,
             &links,
-            &queries,
+            &links,
             path.ends_with(".org"),
             spec.name_format(),
         ),
@@ -324,12 +335,8 @@ fn compare_outputs(
             evidence["nativeAdmission"] = result;
             return evidence;
         }
-        let b4 = chosen != requested && result["accepted"] == false;
-        if b4 {
-            assert_eq!(result["accepted"], false, "B4 rows stay nonconformant");
-            assert_eq!(result["checks"]["rewrite"], true);
-            assert_eq!(result["checks"]["queryImages"], true);
-            native::assert_local_saves(&packet);
+        native::admit(Path::new(&native_bridge), &packet);
+        if chosen != requested {
             let corrected_dir = tempfile::tempdir().unwrap();
             spec.write(corrected_dir.path());
             let corrected_store = Arc::new(
@@ -354,6 +361,11 @@ fn compare_outputs(
                 Some(&Choice::Merge(target.clone())),
             )
             .unwrap();
+            let corrected_files = read_graph(corrected_dir.path());
+            assert_eq!(
+                files, corrected_files,
+                "typed and selected requests must produce the same graph"
+            );
             let corrected = native::packet(
                 &corrected_store,
                 spec,
@@ -362,13 +374,10 @@ fn compare_outputs(
                 source,
                 target,
                 &corrected_proof,
-                &read_graph(corrected_dir.path()),
+                &corrected_files,
                 original_input["queries"].clone(),
             );
             evidence["chosenControl"] = native::admit(Path::new(&native_bridge), &corrected);
-            diffs.push(format!("G3/B4: chosen substitution {chosen:?}, typed {requested:?}; native admission rejects {}", result["checks"]));
-        } else {
-            native::admit(Path::new(&native_bridge), &packet);
         }
         // Favorites are outside native admission; keep their existing checks.
         diffs.extend(
@@ -422,9 +431,7 @@ fn compare_historical_outputs(
             .check(&files[path], &proof.trace.substitution)
             .expect("production TraceValid, against disk bytes");
     }
-    let links =
-        std::collections::HashMap::from([(tine_core::refs::page_key(old), requested.to_owned())]);
-    let queries = std::collections::HashMap::from([(
+    let links = std::collections::HashMap::from([(
         tine_core::refs::page_key(old),
         candidate["candidate"]["destination"]
             .as_str()
@@ -441,7 +448,7 @@ fn compare_historical_outputs(
         };
         let org = path.ends_with(".org");
         let mut proposal =
-            tine_core::refs::rename_proposal(before, org, &links, &queries, spec.name_format())
+            tine_core::refs::rename_proposal(before, org, &links, &links, spec.name_format())
                 .unwrap();
         if proposal.text != *after {
             let format = if org {

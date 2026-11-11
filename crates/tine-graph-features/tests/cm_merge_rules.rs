@@ -9,8 +9,8 @@
 //!   into its owner AND "make it its own page" (still an alias of the owner).
 //! - R10 / M-Q7: a journal day is the claimant of its day under every date
 //!   spelling, so a rename onto a day offers a merge into the journal.
-//! - R11 / ruling (a): a merge through an alias gives query arguments the
-//!   survivor's own name; links and child names keep the typed name (b).
+//! - B4 / accepted SPEC §5.3: a merge through an alias substitutes the
+//!   selected member's spelling in every site and namespace child.
 //! - R12 / M-Q6, CM-OWN-CHILD (D-20261103-CMA): no rename or merge onto a
 //!   used name inside the page's own namespace; a merely linked one is free.
 //! - R14: a case-only rename onto a file another page holds refuses with
@@ -450,7 +450,14 @@ fn fileless_alias_offer_rejects_own_page() {
             }),
         )
         .unwrap();
-        assert!(snapshot(&root)["pages/refs.md"].contains("[[ML]]"));
+        assert_eq!(
+            snapshot(&root)["pages/refs.md"],
+            if empty_target {
+                "- [[ML]]\n"
+            } else {
+                "- [[owner]]\n"
+            }
+        );
     }
     let (root, store) = fixture(
         "empty-source",
@@ -548,9 +555,8 @@ fn alias_only_name_offers_merge_and_own_page() {
     );
 }
 
-/// R11 / rulings (a)(b): the merge answer through the alias. Query arguments
-/// take the survivor's own name; links keep the typed name; children move to
-/// the typed name's namespace.
+/// B4: the merge answer through an alias uses the selected member in
+/// queries, links and namespace children.
 #[test]
 fn merge_through_alias_names_the_survivor_in_queries() {
     let _guard = crate::integration_lock();
@@ -568,11 +574,222 @@ fn merge_through_alias_names_the_survivor_in_queries() {
     let files = snapshot(&root);
     let q = &files["pages/q.md"];
     assert!(q.contains("(page \"Machine Learning\")"), "{q}");
-    assert!(q.contains("see [[ML]]"), "{q}");
-    assert!(q.contains("see [[ML/x]]"), "{q}");
+    assert!(q.contains("see [[Machine Learning]]"), "{q}");
+    assert!(q.contains("see [[Machine Learning/x]]"), "{q}");
     assert!(!files.contains_key("pages/ML notes.md"));
     assert!(files["pages/Machine Learning.md"].contains("- notes"));
-    assert!(matches!(resolve(&store, "ML/x"), Resolved::Existing { .. }));
+    assert!(matches!(
+        resolve(&store, "Machine Learning/x"),
+        Resolved::Existing { .. }
+    ));
+}
+
+// CM B4 / SPEC §5.3: the selected member supplies one substitution at
+// every site, including fileless sources and namespace query arguments.
+fn selected_spelling_oracle(label: &str, files: &BTreeMap<String, String>) {
+    if let Ok(output) = std::env::var("CM_MERGE_ORACLE") {
+        fs::write(
+            Path::new(&output).join(format!("selected-{label}.json")),
+            serde_json::to_string_pretty(files).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn selected_spelling_save(store: &Arc<Store>, root: &Path, files: &BTreeMap<String, String>) {
+    let host = crate::test_host(store);
+    for (path, bytes) in files {
+        let id = tine_core::model::PageId::from(path.as_str());
+        let page = store.page(&id).unwrap();
+        crate::test_host_writer::save_on(
+            &host,
+            store,
+            tine_store::EditKind::SaveBlock,
+            &id,
+            tine_store::SaveBase::Existing(page.rev),
+            &page.doc,
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), *bytes);
+    }
+}
+
+fn selected_spelling_at(site: &str) {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for fileless in [false, true] {
+            let ext = if org { "org" } else { "md" };
+            let (target, referrer, child, source) = if org {
+                (
+                    "#+alias: ML\n* target\n",
+                    "#+alias: B\n* [[B]] #B [[B/sub]] #B/sub\n* {{query (page \"B\")}}\n* {{query (page \"B/sub\")}}\n",
+                    "#+TITLE: B/sub\n* child\n",
+                    "* source [[B]]\n",
+                )
+            } else {
+                (
+                    "alias:: ML\n- target\n",
+                    "alias:: B\n- [[B]] #B [[B/sub]] #B/sub\n- {{query (page \"B\")}}\n- {{query (page \"B/sub\")}}\n",
+                    "title:: B/sub\n- child\n",
+                    "- source [[B]]\n",
+                )
+            };
+            let target_path = format!("pages/Machine Learning.{ext}");
+            let referrer_path = format!("pages/referrer.{ext}");
+            let child_path = format!("pages/child.{ext}");
+            let source_path = format!("pages/B.{ext}");
+            let mut files = vec![
+                (target_path.as_str(), target),
+                (referrer_path.as_str(), referrer),
+                (child_path.as_str(), child),
+            ];
+            if !fileless {
+                files.push((source_path.as_str(), source));
+            }
+            let (root, store) = fixture("selected-spelling", &files);
+            rename(&store, "B", "ML", RenameChoice::MergeInto(&target_path)).unwrap();
+            let files = snapshot(&root);
+            selected_spelling_oracle(&format!("{site}-{org}-{fileless}"), &files);
+            let text = &files[&referrer_path];
+            match site {
+                "aliases" => assert!(
+                    text.contains("alias: Machine Learning")
+                        || text.contains("alias:: Machine Learning"),
+                    "{text}"
+                ),
+                "links" => {
+                    for expected in [
+                        "[[Machine Learning]]",
+                        "#[[Machine Learning]]",
+                        "[[Machine Learning/sub]]",
+                        "#[[Machine Learning/sub]]",
+                    ] {
+                        assert!(text.contains(expected), "missing {expected}: {text}");
+                    }
+                }
+                "queries" => {
+                    for expected in [
+                        "(page \"Machine Learning\")",
+                        "(page \"Machine Learning/sub\")",
+                    ] {
+                        assert!(text.contains(expected), "missing {expected}: {text}");
+                    }
+                }
+                "namespace" => {
+                    let view = store.whole_graph().unwrap();
+                    let Resolved::Existing { id, .. } = view.resolve("Machine Learning/sub", false)
+                    else {
+                        panic!("the child must move under the selected member: {files:?}");
+                    };
+                    assert_eq!(store.page(&id).unwrap().doc.name, "Machine Learning/sub");
+                    assert!(!files.contains_key(&child_path));
+                }
+                _ => unreachable!(),
+            }
+            // The ordinary guarded save and a fresh reader must preserve
+            // every emitted file, including moved namespace titles.
+            selected_spelling_save(&store, &root, &files);
+            let fresh = Store::open(&root, Default::default()).unwrap().0;
+            assert!(matches!(
+                resolve(&fresh, "Machine Learning/sub"),
+                Resolved::Existing { .. }
+            ));
+        }
+    }
+}
+
+#[test]
+fn selected_spelling_in_aliases() {
+    selected_spelling_at("aliases");
+}
+
+#[test]
+fn selected_spelling_in_links_and_tags() {
+    selected_spelling_at("links");
+}
+
+#[test]
+fn selected_spelling_in_queries() {
+    selected_spelling_at("queries");
+}
+
+#[test]
+fn selected_spelling_in_namespace_files() {
+    selected_spelling_at("namespace");
+}
+
+#[test]
+fn selected_spelling_in_native_reference_sites() {
+    let _guard = crate::integration_lock();
+    for (ext, source, target, before, expected) in [
+        (
+            "md", "- source\n", "alias:: typed\n- target\n",
+            "alias:: B\n- block\n  B:: value\n  tags:: B\n- {{renderer [[B]]}}\n- {{embed [[B]]}}\n- `[[B]]` TODO [#B]\n",
+            "alias:: chosen\n- block\n  chosen:: value\n  tags:: chosen\n- {{renderer [[chosen]]}}\n- {{embed [[chosen]]}}\n- `[[B]]` TODO [#B]\n",
+        ),
+        (
+            "org", "* source\n", "#+alias: typed\n* target\n",
+            "#+alias: B\n* heading :B:\n:PROPERTIES:\n:B: value\n:tags: B\n:END:\n* [[B][label]] [[file:./pages/B.org][file label]]\n* {{renderer [[B]]}}\n* {{embed [[B]]}}\n",
+            "#+alias: chosen\n* heading :chosen:\n:PROPERTIES:\n:chosen: value\n:tags: chosen\n:END:\n* [[chosen][label]] [[file:./pages/chosen.org][file label]]\n* {{renderer [[chosen]]}}\n* {{embed [[chosen]]}}\n",
+        ),
+    ] {
+        let source_path = format!("pages/B.{ext}");
+        let target_path = format!("pages/chosen.{ext}");
+        let referrer_path = format!("pages/referrer.{ext}");
+        let (root, store) = fixture("selected-native-sites", &[
+            (&source_path, source), (&target_path, target), (&referrer_path, before),
+        ]);
+        rename(&store, "B", "typed", RenameChoice::MergeInto(&target_path)).unwrap();
+        let files = snapshot(&root);
+        selected_spelling_oracle(&format!("native-{ext}"), &files);
+        assert_eq!(files[&referrer_path], expected);
+        selected_spelling_save(&store, &root, &files);
+        let fresh = Store::open(&root, Default::default()).unwrap().0;
+        assert_eq!(fresh.page(&tine_core::model::PageId::from(referrer_path.as_str())).unwrap().doc.name, "referrer");
+    }
+}
+
+#[test]
+fn selected_spelling_identifies_a_day_with_an_ambiguous_label() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "selected-day",
+        &[
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"MM-dd\"}",
+            ),
+            ("pages/B.md", "- source\n"),
+            ("journals/2026_10_26.md", "alias:: PickedDay\n- 2026\n"),
+            ("journals/2027_10_26.md", "- 2027\n"),
+            (
+                "pages/referrer.md",
+                "alias:: B\n- [[B]]\n- {{query (page \"B\")}}\n",
+            ),
+        ],
+    );
+    rename(
+        &store,
+        "B",
+        "PickedDay",
+        RenameChoice::MergeInto("journals/2026_10_26.md"),
+    )
+    .unwrap();
+    let files = snapshot(&root);
+    selected_spelling_oracle("ambiguous-day", &files);
+    assert_eq!(
+        files["pages/referrer.md"],
+        "alias:: 2026_10_26\n- [[2026_10_26]]\n- {{query (page \"2026_10_26\")}}\n"
+    );
+    assert_eq!(files["journals/2027_10_26.md"], "- 2027\n");
+    selected_spelling_save(&store, &root, &files);
+    let fresh = Store::open(&root, Default::default()).unwrap().0;
+    for year in [2026, 2027] {
+        let id = tine_core::model::PageId::from(format!("journals/{year}_10_26.md").as_str());
+        let page = fresh.page(&id).unwrap();
+        assert_eq!(page.doc.name, "10-26");
+        assert_eq!(page.doc.blocks[0].raw, year.to_string());
+    }
 }
 
 /// R10 / M-Q7: a journal day is the claimant of `2026-10-26` (a date spelling
