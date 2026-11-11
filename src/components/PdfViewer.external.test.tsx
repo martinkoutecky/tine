@@ -9,6 +9,10 @@ import { loadLocale, showLocale } from "../i18n";
 import { PdfViewer } from "./PdfViewer";
 import { KeyedPdfViewer } from "./KeyedPdfViewer";
 import { pdfHighlightSessionCount } from "./pdfHighlightState";
+import { InlineText } from "../render/inline";
+import { initParser } from "../render/parse";
+import * as panes from "../panes";
+import { graphMeta, setGraphMeta } from "../graphSession";
 
 const getDocument = vi.hoisted(() => vi.fn());
 vi.mock("pdfjs-dist", () => ({ GlobalWorkerOptions: {}, getDocument }));
@@ -142,4 +146,39 @@ it("shows OS errors with the decoded path once", async () => {
     expect(message).toContain("/tmp/outside paper.pdf");
     expect(message).not.toContain(filename);
   } finally { dispose(); }
+});
+
+// GH #732 follow-up: a relative link reaches the same bounded native read as an
+// absolute one, so the native refusals show in the reader with the resolved path.
+it.each([
+  ["external-pdf-not-regular", "not a regular file"],
+  ["external-pdf-too-large", "larger than 256 MiB"],
+  ["external-pdf-not-pdf", "not a PDF"],
+])("a relative PDF link refused with %s shows its resolved path in the closable reader", async (token, text) => {
+  await initParser();
+  setGraphMeta({ ...graphMeta()!, root: "/home/user/graph" });
+  const open = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+  const api = backend(), original = api.readExternalPdf;
+  const read = vi.fn((url: string) => Promise.reject(`${token}: ${url}`));
+  api.readExternalPdf = read;
+  const source = document.createElement("div"); document.body.append(source);
+  const disposeSource = render(() => <InlineText text="![paper](file:../my papers/a.pdf)" format="md" />, source);
+  source.querySelector<HTMLAnchorElement>("a.pdf-link")!.click();
+  const [file, label, , , options] = open.mock.calls[0];
+  const owner = activatePdfOwnership("/synthetic/graph");
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PdfViewer filename={file} label={label} owner={owner} externalRead={options!.externalRead} />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector(".pdf-load-error")).not.toBeNull());
+    const message = host.querySelector(".pdf-load-error")!.textContent!;
+    expect(message).toContain(text);
+    expect(message).toContain("/home/user/my papers/a.pdf");
+    expect(message).not.toContain("file://");
+    expect(host.querySelector(".pdf-close-btn")).not.toBeNull();
+    expect(read).toHaveBeenCalledExactlyOnceWith("file:///home/user/my%20papers/a.pdf", api.graphBindingGeneration());
+    expect(getDocument).not.toHaveBeenCalled();
+  } finally {
+    dispose(); disposeSource(); setGraphMeta(null);
+    if (original) api.readExternalPdf = original; else delete api.readExternalPdf;
+  }
 });
