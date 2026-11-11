@@ -294,6 +294,11 @@ impl Snapshot {
         // from the cache instead of carrying the previous generation's.
         let name_set_changed =
             config_changed || rebuild || old.is_none() || !changed_names.is_empty();
+        // The files whose name came, left or moved, for the precise summary.
+        let named_paths: Vec<PathBuf> = changed_names
+            .iter()
+            .map(|(_, entry)| entry.path.clone())
+            .collect();
         let mut name_by_path = old
             .map(|old| Arc::clone(&old.name_by_path))
             .unwrap_or_default();
@@ -414,6 +419,10 @@ impl Snapshot {
         // invalidate, never stale).
         let mut edited_pages =
             (changed_paths.is_empty() && !config_changed && !rebuild).then(Vec::new);
+        // A publication that moved a page name (create, delete, rename) and
+        // nothing graph-wide: each changed path's page on both sides, for a
+        // precise summary instead of `full` (D-20261102-PERF row 3).
+        let mut page_changes = None;
         let evaluator = if let Some(old) = old.filter(|old| {
             old.cache_generation == cache_generation && !config_changed && !rebuild && !unnamed
         }) {
@@ -440,6 +449,33 @@ impl Snapshot {
                         && files
                             .iter()
                             .all(|(_, kind, _)| *kind == ChangeKind::Modified);
+                }
+            } else if let Some(old) = old.filter(|_| !config_changed && !rebuild && !unnamed) {
+                // The semantic paths add a twin the change promoted or demoted.
+                let mut paths = changed_paths.clone();
+                paths.extend(evaluator.semantic_changed_paths.iter().cloned());
+                paths.sort();
+                paths.dedup();
+                // A batch over the bound publishes `full` (the summary's same
+                // rule): decided first, so it reads no page (review F2).
+                if paths.len() <= super::change_summary::PRECISE_PATHS {
+                    let changes = evaluator.page_changes(&old.graph, &paths);
+                    // A named file that is the active page on neither side (a
+                    // losing twin) has no document to name its readers by:
+                    // `full`. One set, so the check is linear in the batch.
+                    let active: HashSet<&std::path::Path> = changes
+                        .iter()
+                        .flat_map(|(before, after)| [before, after].into_iter().flatten())
+                        .map(|(entry, _)| entry.path.as_path())
+                        .collect();
+                    page_changes = named_paths
+                        .iter()
+                        .all(|path| {
+                            #[cfg(feature = "test-faults")]
+                            crate::cost_counters::lifecycle_probe();
+                            active.contains(path.as_path())
+                        })
+                        .then_some(changes);
                 }
             }
             Arc::new(evaluator)
@@ -479,6 +515,7 @@ impl Snapshot {
             inventory,
             &moved,
             edited_pages.as_deref(),
+            page_changes.as_deref(),
             &targets.unlinked,
             &targets.queries,
         );

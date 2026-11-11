@@ -6,6 +6,8 @@ import type { PageDto } from "../types";
 import { createPage, CreatePageRefusal, flushPage, isConflicted, isSaving, markDirty } from "./host/wiring";
 import { loadSingle, resetStore } from "./workingSet";
 import { bindTestHost, type TestHost } from "./host/wiring.test.support";
+import { fullChangeKeyFlushCount } from "../changeKeys";
+import { pageInventoryRev } from "../graphSession";
 
 const dto = (name = "New"): PageDto => ({ name, kind: "page", title: name, pre_block: null, blocks: [] });
 
@@ -39,6 +41,19 @@ function answer({ id, key }: { id: number; key: string }, version: number, confl
   host.deliver({ key, answer: { id, version, took: true, outcome: { kind: "applied" } }, notice: { conflictReported: conflict },
     page: { version, conflict, risk: false, disk: conflict ? { kind: "file", rev: "external" } : null, text: { kind: "unchanged" } } });
 }
+
+describe("createPage refresh", () => {
+  // D-20261102-PERF row 3: a create publishes a precise change summary, which
+  // the host-mail data revision releases as for any save. The create itself
+  // no longer forces a full refresh of every mounted reader.
+  it("bumps the name inventory but forces no full refresh", async () => {
+    const full = fullChangeKeyFlushCount();
+    const inventory = pageInventoryRev();
+    await createPage("New", dto());
+    expect(pageInventoryRev()).toBeGreaterThan(inventory);
+    expect(fullChangeKeyFlushCount()).toBe(full);
+  });
+});
 
 describe("createPage refusal families", () => {
   it("rejects a host-refused create with the host's reason, never as a disk conflict", async () => {

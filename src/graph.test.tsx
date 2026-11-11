@@ -132,6 +132,7 @@ async function loadHarness(
     graphEpoch: () => 0,
     bumpDataRev: vi.fn(),
     bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
+    bumpPageInventoryRev: () => { events.push("bump-inventory"); },
   }));
   vi.doMock("./pdfOwnership", () => ({
     drainPdfWork,
@@ -751,13 +752,15 @@ describe("default journal template graph bind", () => {
     expect(waitForWarmCache).not.toHaveBeenCalled();
   });
 
-  it("resets the page index after a rename, before the epoch bump", async () => {
+  it("resets the page index after a rename, before the inventory bump", async () => {
     const { refreshAfterRename, events, resetPageIndex, resetAt } = await loadHarness(null);
 
     refreshAfterRename((page) => page.name === "Old" ? { name: "New", pageKind: page.pageKind } : null);
     expect(resetPageIndex).toHaveBeenCalledTimes(1);
     expect(resetAt).toEqual([0]);
-    expect(events).toEqual(["bump-epoch"]);
+    // D-20261102-PERF row 3: no display-epoch bump, which reran every mounted
+    // reader; the rename's precise publication summary refreshes the rest.
+    expect(events).toEqual(["bump-inventory"]);
   });
 
   it("invalidates stale loads on bind; the visible-journal request materializes the template", async () => {

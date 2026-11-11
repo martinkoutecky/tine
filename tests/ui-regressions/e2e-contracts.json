@@ -298,6 +298,13 @@
       "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a links query skipping unrelated saves after the pause: the memo conservatively invalidates links on every edit."],
       "stability":"burn-in"
     },
+    "scripts/e2e-page-lifecycle-summary.mjs": {
+      "setup": "Uses the shared account-home fixture; asserts a held app lease after the graph opens. One unrelated outside write gives the window its first (by design full) publication before counting. Each step settles by completion, not a fixed wait: its recorded IPC calls answer, an outside write rewrites a sentinel page that a third query on the target shows, and the step counts only after that text renders and the reruns drain, so every publication of the step has been delivered and flushed first. IPC calls and graph-changed summaries are recorded as artifacts.",
+      "contracts": [{"class":"core-operation","userOutcome":"With a page shown in the right sidebar, renaming a page that links to it from its title and then deleting it from the page menu updates the sidebar's linked references and its dependent query; an unrelated query on that page does not rerun; the target page file is unchanged.","blocking":true,"authority":"D-20261102-PERF row 3; precise page-lifecycle change summary in docs/storage-contract.md"}],
+      "acceptableVariations": ["Publication and rendering latency, IPC batching, machine load, and how many times the dependent query reruns."],
+      "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a native fail-before control: the counter tests in crates/tine-store/tests/page_lifecycle_summary.rs give that."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-linux-inline-preedit.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A Linux textarea shows real inline Hangul composition, commits each word once, supports Backspace and page completion during composition, and preserves the neighbouring block on disk.","blocking":false,"authority":"UI-LINUX-INLINE-PREEDIT; Linux inline-preedit lane 2026-10-25; GH #575 is only a possible related fix"}],
       "acceptableVariations": ["IME event ordering, commit-on-Escape engine policy, candidate styling, caret geometry and save latency may vary. IBus Hangul may commit before forwarding an ordinary Enter that splits the block."],
