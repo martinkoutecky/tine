@@ -163,6 +163,8 @@ export interface MessageArgs {
   "command-comment-next": {};
   "command-comment-on-selection": {};
   "command-comment-previous": {};
+  "command-comment-review": {};
+  "command-comment-review-graph": {};
   "command-editor-backward-kill-word": {};
   "command-editor-backward-word": {};
   "command-editor-bold": {};
@@ -301,6 +303,8 @@ export interface MessageArgs {
   "commands-undo-redo-mode": { "mode": string | number };
   "comment-author-you": {};
   "comment-below": { "count": string | number };
+  "comment-below-changed": { "changed": string | number; "count": string | number };
+  "comment-below-changed-expand": { "changed": string | number; "count": string | number };
   "comment-below-expand": { "count": string | number };
   "comment-block-cannot-take": {};
   "comment-block-changed": {};
@@ -336,7 +340,13 @@ export interface MessageArgs {
   "comment-reply-placeholder": {};
   "comment-resolve": {};
   "comment-resolved-count": { "count": string | number };
+  "comment-review-author-label": {};
+  "comment-review-author-placeholder": {};
+  "comment-review-open": {};
+  "comment-review-open-graph": {};
   "comment-review-position": { "count": string | number; "current": string | number };
+  "comment-review-title-graph": {};
+  "comment-review-title-page": { "page": string | number };
   "comment-select-first": {};
   "comment-send": {};
   "comment-show": {};

@@ -1325,7 +1325,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
         <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
       </div>
       </MarginContext.Provider>
-      <margin.Column /></CommentResolutionScope>
+      <SeenRows seen={seen}><margin.Column /></SeenRows></CommentResolutionScope>
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>

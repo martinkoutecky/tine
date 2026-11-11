@@ -36,6 +36,8 @@ export interface CommentIndex {
    * thread is the block's own entry). 0 when `id` is itself in a thread, since
    * nothing below a comment is a root. O(roots × depth). */
   openBelow(id: string): number;
+  /** The same roots as `openBelow`, in file order (the unread count reads their threads). */
+  openRootsBelow(id: string): readonly string[];
 }
 
 interface Watcher { notify: () => void; value: Accessor<CommentChildren>; dispose: () => void; leases: number }
@@ -137,6 +139,21 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
     return ++generation;
   });
 
+  /** Open thread roots strictly below `id`'s direct children, in file order. O(roots × depth). */
+  const openRootsBelow = (id: string): readonly string[] => {
+    scan(); revision();
+    return untrack(() => {
+      const roots: string[] = [];
+      for (const root of rootList) {
+        if (root.resolved) continue;
+        const parent = docNode(root.id)?.parent ?? null;
+        if (parent === id) continue;
+        for (let at = parent; at !== null; at = docNode(at)?.parent ?? null) if (at === id) { roots.push(root.id); break; }
+      }
+      return roots;
+    });
+  };
+
   return {
     covers,
     childrenOf(parentId) {
@@ -161,19 +178,8 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
     },
     roots: () => { scan(); revision(); return rootList; },
     parents: () => { scan(); return rootParents; },
-    openBelow(id) {
-      scan(); revision();
-      return untrack(() => {
-        let count = 0;
-        for (const root of rootList) {
-          if (root.resolved) continue;
-          const parent = docNode(root.id)?.parent ?? null;
-          if (parent === id) continue;
-          for (let at = parent; at !== null; at = docNode(at)?.parent ?? null) if (at === id) { count++; break; }
-        }
-        return count;
-      });
-    },
+    openBelow: id => openRootsBelow(id).length,
+    openRootsBelow,
   };
 }
 

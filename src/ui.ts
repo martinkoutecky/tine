@@ -34,6 +34,8 @@ export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePre
 export type { ThemePreference } from "./themePreference";
 import { theme, setAppearancePreference } from "./themePreference";
 import { isHTMLElementNode, onEachWindow, windowOf } from "./windowRealm";
+import { sameSidebarQuery, sidebarQueryKey, validSidebarQuery, type SidebarQuery } from "./sidebarQuery";
+export type { SidebarQuery };
 
 export { workflow, setWorkflow, applyTaskWorkflow, changeWorkflow } from "./taskWorkflow";
 
@@ -920,7 +922,7 @@ export interface SidebarBlock {
   blockPos?: number[];
   collapsed?: boolean;
 }
-export type SidebarItem = SidebarPage | SidebarBlock;
+export type SidebarItem = SidebarPage | SidebarBlock | SidebarQuery;
 
 export interface HistorySidebarContext {
   open: boolean;
@@ -931,6 +933,7 @@ export interface HistorySidebarContext {
  * array index, it survives closing a neighbor and page renames are re-keyed by
  * renamePageInNavigation. */
 export function sidebarItemKey(item: SidebarItem): string {
+  if (item.kind === "query") return sidebarQueryKey(item);
   return item.kind === "page"
     ? `page:${item.pageKind}:${item.name}`
     : `block:${item.uuid}`;
@@ -947,6 +950,7 @@ function sameSidebarItems(left: readonly SidebarItem[], right: readonly SidebarI
     if (item.kind === "page" && other.kind === "page") {
       return item.name === other.name && item.pageKind === other.pageKind && item.path === other.path;
     }
+    if (item.kind === "query") return other.kind === "query" && sameSidebarQuery(item, other);
     return item.kind === "block" && other.kind === "block"
       && item.uuid === other.uuid && item.page === other.page && item.pageKind === other.pageKind
       && item.path === other.path && sameBlockPos(item.blockPos, other.blockPos);
@@ -969,6 +973,7 @@ function validSidebarItem(i: unknown): i is SidebarItem {
     return typeof o.uuid === "string" && typeof o.page === "string"
       && (o.blockPos === undefined || parseBlockPos(o.blockPos) !== null);
   }
+  if (o.kind === "query") return validSidebarQuery(o);
   return false;
 }
 export function parseStoredSidebarItems(raw: string | null): SidebarItem[] {

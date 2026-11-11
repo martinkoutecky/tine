@@ -130,3 +130,15 @@
 @media (prefers-reduced-motion: reduce) {
   .seen-removed.block-flash { animation: none; background: color-mix(in srgb, var(--seen-changed-color) 25%, transparent); }
 }
+
+/* A margin-comment card with a message changed since the user last looked (DESIGN §12): the same
+   bar in the card's inline-start edge, so a folded thread ("N replies") still shows it. */
+.ls-block.comment-seen-changed {
+  box-shadow: inset 3px 0 0 var(--seen-changed-color);
+}
+[dir="rtl"] .ls-block.comment-seen-changed {
+  box-shadow: inset -3px 0 0 var(--seen-changed-color);
+}
+.comment-below-chip.comment-below-changed {
+  border-color: var(--seen-changed-color);
+}

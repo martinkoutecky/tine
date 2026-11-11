@@ -22,8 +22,17 @@ comment-reopen = 重新打开
 comment-resolved-count = { NUMBER($count, useGrouping: 0) } 个已解决
 comment-below = 下方 { NUMBER($count, useGrouping: 0) } 个
 comment-below-expand = 展开以显示下方 { NUMBER($count, useGrouping: 0) } 个评论讨论串
+comment-below-changed = 下方 { NUMBER($count, useGrouping: 0) } 个，其中 { NUMBER($changed, useGrouping: 0) } 个有更改
+comment-below-changed-expand = 展开以显示下方 { NUMBER($count, useGrouping: 0) } 个评论讨论串，其中 { NUMBER($changed, useGrouping: 0) } 个自上次查看以来有更改
 comment-show = 显示评论
 comment-hide = 隐藏评论
+# $page (string): the page the review is limited to.
+comment-review-title-page = “{ $page }”上的未解决评论
+comment-review-title-graph = 整个图谱中的未解决评论
+comment-review-author-label = 作者
+comment-review-author-placeholder = 任何作者
+comment-review-open = 查看未解决的评论
+comment-review-open-graph = 查看整个图谱中未解决的评论
 comment-reply-placeholder = 回复…
 comment-delete = 删除评论及其回复
 comment-select-first = 请先在块中选中文字，再选择“评论所选内容”（或在编辑时按 Ctrl+R）

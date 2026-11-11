@@ -190,3 +190,54 @@ also needs its first property drawer (19 bytes), for 49 bytes total; a root or
 signed reply already has a drawer. These byte deltas are independent of page
 size; the existing save still rewrites the whole affected file. Displaying or
 revealing dates/closed cards writes nothing. Editing adds no timestamp bytes.
+
+## Open-threads review and unread comments (DESIGN §12)
+
+**Review query.** **Review open comments on this page** and **Review open comments
+in the graph** (command palette; **Review open comments** in a page's actions
+menu) open a `query` item in the right sidebar. It stores only
+`{kind: "query", scope: "page"|"graph", page, pageKind, path?, author?, collapsed?}`
+in the existing sidebar lists; the query text is derived from it by
+`src/commentReviewQuery.ts` and never saved:
+
+```
+(and (property tine.quote) (not (property tine.resolved true))
+     [(page "Name")] [(property tine.author "Ada")])
+```
+
+The item mounts `QueryMacro` without a block, as `TodaySections` does, so its
+results are the ordinary live, editable blocks of the one query engine. There is
+no second comment index, no regex or line scan and no bespoke panel. Resolved
+threads and replies (no `tine.quote`) are not listed; an author filter is one
+exact `tine.author` value (a free-text field; empty clears it). Two items never
+share a slot: one per page and one for the graph, keyed `query:<pageKind>:<page>`
+and `query:graph`, so reopening promotes and keeps the author. A collapsed item
+mounts and runs nothing. With no page route the page command falls back to the
+graph scope.
+
+**Cost.** The query rides the indexed property path: `tine.*` keys are in the
+key-to-pages table, so the candidate pages are the pages that hold `tine.quote`
+(all of them for the graph; the one named page for page scope), independent of
+how many comment-free pages the graph has. Pinned by
+`open_threads_review_lists_open_roots_and_visits_only_pages_with_comments` in
+`crates/tine-store/src/query/exec_key_tests.rs` (candidate pages (2, 1) at 30 and
+at 120 comment-free pages, and the narrowed answer equals a full scan) and by
+`crates/tine-store/tests/fixtures/comment-review-queries.json`, the query text
+shared with the frontend test. The sidebar item adds no write path and no file.
+
+**Restore.** `rightSidebarItems` (app-data session and the `logseq-claude.rightSidebarItems`
+copy) now may hold `query` items; both pass `validSidebarItem`, which drops any
+kind it does not know and any malformed item without throwing, so a build from
+before this change restores the other items and silently loses the review item,
+and this build does the same for a kind from a newer one.
+
+**Unread.** A comment is unread when its message changed *since you last looked*:
+the existing `src/seen` mark (ADR 0079), from the page's one `getPageChanges`
+read. A comment card draws the same change bar as an ordinary row when any message
+block of its thread is marked (`src/seen/threads.ts`, an O(thread) walk with no
+IPC), and a collapsed block's **N below** chip reads **N below, M changed** with
+the change colour when M of its open threads contain a mark. The margin column
+shares the page's seen context. Git graphs only: with `available: false` (no git,
+no history) no mark or changed count appears. **Mark page seen** clears the bars as
+for every block; there is no second unread record, no new file and no per-row IPC.
+Nothing in the graph changes.

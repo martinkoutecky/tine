@@ -464,7 +464,10 @@ function pinnedPages(includeFeed = true): Set<string> {
   for (const r of paneRouteProvider()) {
     if (r.kind === "page") pin.add(r.name);
   }
-  for (const it of rightSidebar()) pin.add(it.kind === "page" ? it.name : it.page);
+  for (const it of rightSidebar()) {
+    const name = it.kind === "page" ? it.name : it.page;
+    if (name) pin.add(name); // a graph-scoped review query names no page
+  }
   // Input the host has not answered, a conflict, or a transfer in progress:
   // evicting the page would drop that input.
   for (const name of unsettledPages()) pin.add(name);

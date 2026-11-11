@@ -1,4 +1,5 @@
 // MC9: page review commands keep the passage visible in margin and popup display.
+// MC12 (DESIGN §12): "Review open comments" opens a live right-sidebar query (page, graph, author filter) whose results edit in place.
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -29,6 +30,9 @@ const messageFile = path.join(graph, "pages/Messages.md");
 const messageBody = "- A passage\n  - First message\n    tine.quote:: passage\n    tine.date:: 2026-11-07T13:37Z\n    - Evidence\n      - Nested evidence\n    - Second message\n      tine.date:: 2026-11-07T13:38Z\n      - Reply evidence\n  - Another thread\n    tine.quote:: A\n    tine.date:: 2026-11-07T13:39Z\n";
 fs.writeFileSync(messageFile, messageBody);
 fs.writeFileSync(path.join(graph, "pages/Other page.md"), "- Another page\n");
+const triageFile = path.join(graph, "pages/Triage.md");
+const triageBody = "- Alpha passage text\n  - Ada question\n    tine.quote:: Alpha\n    tine.author:: Ada\n    tine.date:: 2026-11-07T13:40Z\n  - Closed question\n    tine.quote:: passage\n    tine.resolved:: true\n    tine.date:: 2026-11-07T13:41Z\n- Beta passage text\n  - Grace note\n    tine.quote:: Beta\n    tine.author:: Grace\n    tine.date:: 2026-11-07T13:42Z\n";
+fs.writeFileSync(triageFile, triageBody);
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" });
@@ -147,6 +151,40 @@ try {
   await browser.waitUntil(() => fs.readFileSync(messageFile, "utf8") === messageBody, { timeout: 5000, timeoutMsg: "One undo restores both thread roots and their exact bytes" });
   proof.outcomes.push({ messageOutlines: true, storedMessageAndThreadFolds: true, collapseAllOneUndo: true, openingWritesNothing: true });
   execFileSync("import", ["-window", "root", path.join(out, "messages.png")], { timeout: 10000 });
+  stage = "open-threads review query in the right sidebar";
+  const reviewText = scope => browser.execute(scope => document.querySelector(`.rs-query-item[data-comment-review="${scope}"]`)?.textContent ?? null, scope);
+  const reviewHas = async (scope, present, absent = []) => {
+    const text = await reviewText(scope);
+    return text !== null && present.every(p => text.includes(p)) && absent.every(a => !text.includes(a));
+  };
+  await openPageByName(browser, "Triage");
+  await command("Review open comments on this page");
+  await browser.waitUntil(() => reviewHas("page", ["Open comments on Triage", "Ada question", "Grace note"], ["Closed question", "Thread 1"]),
+    { timeout: 15000, timeoutMsg: "The page review lists this page's open threads, not the resolved one or another page's" });
+  await command("Review open comments in the graph");
+  await browser.waitUntil(() => reviewHas("graph", ["Ada question", "Grace note", "Thread 1"], ["Closed question"]),
+    { timeout: 15000, timeoutMsg: "The graph review lists open threads from every page and still omits resolved ones" });
+  const author = await browser.$('.rs-query-item[data-comment-review="graph"] input[data-comment-review-author]');
+  await author.setValue("Grace"); await keys("Enter");
+  await browser.waitUntil(() => reviewHas("graph", ["Grace note"], ["Ada question", "Thread 1", "Closed question"]),
+    { timeout: 15000, timeoutMsg: "The author filter keeps only that author's open threads" });
+  await author.clearValue(); await author.setValue("Ada"); await keys("Enter");
+  await browser.waitUntil(() => reviewHas("graph", ["Ada question"], ["Grace note", "Thread 1"]), { timeout: 15000 });
+  proof.outcomes.push({ reviewQuery: { page: true, graph: true, resolvedExcluded: true, authorFilter: true } });
+  // A result is a live block: click its text, append words, and the page file changes in place.
+  await browser.execute(() => {
+    const el = [...document.querySelectorAll('.rs-query-item[data-comment-review="graph"] .block-content')].find(e => e.textContent.includes("Ada question"));
+    for (const type of ["mousedown", "mouseup", "click"]) el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+  });
+  await browser.waitUntil(() => browser.execute(() => !!document.querySelector('.rs-query-item .cm-content, .rs-query-item textarea')), { timeout: 10000, timeoutMsg: "A result opens an editor in the sidebar" });
+  await keys("End"); await browser.keys([..." edited"]); await browser.releaseActions(); await keys("Escape");
+  await browser.waitUntil(() => fs.readFileSync(triageFile, "utf8") === triageBody.replace("Ada question", "Ada question edited"),
+    { timeout: 15000, timeoutMsg: "Editing a review result rewrites only that comment's text in its page file" });
+  proof.outcomes.push({ reviewQuery: { resultEditedInPlace: true } });
+  execFileSync("import", ["-window", "root", path.join(out, "review-wide.png")], { timeout: 10000 });
+  await browser.setWindowSize(420, 900); await delay(1000);
+  execFileSync("import", ["-window", "root", path.join(out, "review-phone.png")], { timeout: 10000 });
+  await browser.setWindowSize(1800, 1000);
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS: routed page review in margin and popup display. Artifacts: ${out}`);
 } catch (error) {

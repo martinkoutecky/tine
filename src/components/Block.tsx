@@ -70,7 +70,7 @@ import { openJournalDatePicker } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
-import { SeenRemoved, useSeenRow } from "../seen/SeenHeader";
+import { SeenRemoved, useSeenRow, useSeenThread } from "../seen/SeenHeader";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { workflow, zoomInto, openContextMenu, openDatePicker, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
@@ -215,6 +215,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const viewCollapseSurface = () => viewFoldSurface(props.id, collapseSurface);
   const bulletOpen = useContext(BulletOpenContext);
   const seenRow = useSeenRow(props.id);
+  const seenThread = useSeenThread();
   const editing = () => {
     if (!isEditingId(props.id)) return false;
     const owner = editingOwner();
@@ -303,6 +304,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
             ...commentClasses(),
+            // The card of a thread with a message changed since the user last looked (DESIGN §12),
+            // also while the thread is folded to "N replies" and its message rows are not drawn.
+            "comment-seen-changed": !!commentClasses()["comment-card"] && seenThread(props.id),
             ...rowDecorationClasses(thread),
           },
         };

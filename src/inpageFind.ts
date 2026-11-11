@@ -359,6 +359,8 @@ function findScopes(): { id: string; roots: readonly string[]; format: Format }[
     if (item.collapsed) continue;
     const id = `sidebar:${sidebarItemKey(item)}`;
     if (!findScopeElement(id)) continue;
+    // A review query shows result rows, not an outline: it opts them in by surface id, like Search.
+    if (item.kind === "query") { scopes.push({ id, roots: [], format: "md" }); continue; }
     const page = pageByName(item.kind === "page" ? item.name : item.page);
     if (!page || (item.path && page.id !== item.path)) continue;
     const root = item.kind === "block" ? resolveBlockRef(item, { navigation: true }) : null;
