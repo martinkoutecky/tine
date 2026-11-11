@@ -2562,6 +2562,8 @@ export interface MessageArgs {
   "settings-prose-show-tine-in-the-system-tray": {};
   "settings-prose-start-minimized-to-tray": {};
   "settings-prose-when-a-page-you-are-not-editing-changes-on-disk": {};
+  "settings-reference-previews": {};
+  "settings-reference-previews-hint": {};
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };

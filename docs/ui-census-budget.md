@@ -57,6 +57,10 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-10, D-20261110-TT / GH #824: `settings.editor.advanced` 13→14 on Beta/development
+  (12→13 without the Beta-only CM6 switch) for the explicitly decided **Reference previews**
+  switch, Logseq's `:ui/enable-tooltip?`, beside the hover delay (which stays). It sits in
+  Advanced, not Basic; the open count is unchanged.
 - 2026-11-10, GH #918 (D-20261109-SG, card G-WTQ): `commands.registry` 149→150 for the
   explicitly requested bindable **Remove author** command (`editor/remove-author`, no default
   key). It runs the block context menu's own Remove author and is offered in the palette only
