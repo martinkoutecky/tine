@@ -86,7 +86,7 @@ export function commentAndEdit(parentId: string, editorText: string, start: numb
       if (group) {
         endEdit("page-navigation");
         revealCommentMargin();
-        focusCommentReply(group.at(-1)!, surface);
+        focusCommentReply(group.at(-1)!, surface, false, true);
         return group.at(-1)!;
       }
     }

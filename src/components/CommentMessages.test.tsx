@@ -13,6 +13,7 @@ import { installKeybindings } from "../keybindings";
 import { setDoc } from "../document/model";
 import { setCm6EditorEnabled } from "../editor/cm6Setting";
 import { preloadCm6Editor } from "./EditorGate";
+import { focusCommentReply } from "../commentReplyFocus";
 
 let disposeKeys: (() => void) | undefined;
 beforeAll(async () => {
@@ -136,5 +137,41 @@ it("uses ordinary view folds to expand a read-only thread without changing its f
     host.querySelector<HTMLButtonElement>(":scope > .ls-block > .comment-header .comment-collapse")!.click();
     expect(host.querySelector('[data-block-id="rb"]')).toBeNull();
     expect(node("c")!.raw).toBe(raw);
+  } finally { dispose(); }
+});
+
+// Review hold e52bca429 (F1, F2): folding a thread must not drop its composer's state,
+// and focus requests must still reach a folded thread.
+const settle = () => new Promise(r => setTimeout(r, 0));
+const draftOf = (host: HTMLElement) => host.querySelector<HTMLTextAreaElement>('textarea.comment-reply-draft[data-reply-root="c"]');
+it("keeps an unsent reply draft across folding and expanding the thread", async () => {
+  const { host, dispose } = mount();
+  try {
+    const input = draftOf(host)!;
+    input.value = "half-written reply"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    setCollapsed("c", true); await settle();
+    expect(draftOf(host)).toBeNull();
+    setCollapsed("c", false); await settle();
+    expect(draftOf(host)!.value).toBe("half-written reply");
+  } finally { dispose(); }
+});
+it("an explicit reply request on a folded thread expands it and focuses the reply box", async () => {
+  const { host, dispose } = mount();
+  try {
+    setCollapsed("c", true); await settle();
+    focusCommentReply("c", null, false, true); await settle(); await settle();
+    expect(node("c")!.collapsed).toBe(false);
+    expect(document.activeElement).toBe(draftOf(host));
+  } finally { dispose(); }
+});
+it("review navigation to a folded thread focuses its card and leaves it folded", async () => {
+  const { host, dispose } = mount();
+  try {
+    setCollapsed("c", true); await settle();
+    const raw = node("c")!.raw;
+    focusCommentReply("c", null, true); await settle(); await settle();
+    expect(node("c")!.collapsed).toBe(true);
+    expect(node("c")!.raw).toBe(raw);
+    expect(document.activeElement).toBe(host.querySelector('[data-block-id="c"]'));
   } finally { dispose(); }
 });
