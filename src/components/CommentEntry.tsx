@@ -202,7 +202,11 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
       const target = event.target as HTMLElement;
       const block = target.closest<HTMLElement>("[data-block-id]")?.dataset.blockId;
       const id = target.closest<HTMLElement>("[data-reply-root]")?.dataset.replyRoot ?? (block && threadRootOf(block)) ?? selectedId();
-      if (id) review?.focus(id);
+      if (id) {
+        const current = opened();
+        if (current && groupOf().get(id) === index() && current.id !== id) setTarget({ ...current, id });
+        review?.focus(id);
+      }
     }}
     onTouchStart={event => { const first = event.touches[0]; touch = first && !(event.target as Element).closest("textarea,[contenteditable=true]") ? { x: first.clientX, y: first.clientY } : undefined; }}
     onTouchEnd={event => {

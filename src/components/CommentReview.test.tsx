@@ -6,6 +6,8 @@ import { Block } from "./Block";
 import { initParser, blockRegions } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
 import { node, pageByName, resetStore, setRaw } from "../document";
+import { backend } from "../backend";
+import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
 import { createCommentIndex } from "../commentIndex";
 import { setDoc } from "../document/model";
 import { bindTestHost } from "../document/host/wiring.test.support";
@@ -16,7 +18,7 @@ import type { BlockDto } from "../types";
 
 let dispose: (() => void) | undefined;
 beforeAll(async () => { await initParser(); if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList; });
-beforeEach(async () => { await bindTestHost(); persistCommentMarginHidden(false); });
+beforeEach(async () => { answerOpensFromDocument(await bindTestHost()); persistCommentMarginHidden(false); });
 afterEach(() => { endEdit("page-navigation"); dispose?.(); resetStore(); changeCommentsInPopup(false); document.body.replaceChildren(); vi.restoreAllMocks(); });
 const b = (id: string, raw: string, children: BlockDto[] = [], collapsed = false): BlockDto => ({ id, raw, children, collapsed,
   properties: blockRegions(raw, "md").properties.filter(p => p.primary).map(p => [p.key, p.value]) });
@@ -34,6 +36,67 @@ function mount(width: number, popup: boolean, blocks?: BlockDto[]) {
   return pane;
 }
 const focused = () => (document.activeElement as HTMLElement)?.dataset.replyRoot;
+it("counts backend requests and scrolls for first, later and collapsed-target steps", async () => {
+  mount(1400, true, [b("p", "Parent", [b("q", "Child", [b("child", "Child thread\ntine.quote:: Child")]),
+    b("own", "Own thread\ntine.quote:: Parent"), b("tie", "Second thread\ntine.quote:: Parent")], true)]);
+  // Instrument every backend method, so an added read or write cannot evade
+  // a hand-maintained list of the calls navigation currently makes.
+  const api = backend() as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const spies = Object.keys(api).filter(key => key !== "graphBindingGeneration" && typeof api[key] === "function")
+    .map(key => ({ key, spy: vi.spyOn(api, key) }));
+  const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  for (const [id, requests] of [["own", []], ["tie", []], ["child", ["pageOpen", "pageSubmit", "pageWait", "pageClose"]]] as const) {
+    spies.forEach(({ spy }) => spy.mockClear()); scroll.mockClear();
+    stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe(id));
+    if (id === "child") await vi.waitFor(() => expect(spies.find(({ key }) => key === "pageClose")!.spy).toHaveBeenCalledOnce());
+    expect(spies.flatMap(({ key, spy }) => spy.mock.calls.map(() => key)).sort()).toEqual([...requests].sort());
+    expect(scroll).toHaveBeenCalledTimes(1);
+  }
+});
+
+it.each([[1400, false], [800, false], [1400, true], [390, false]] as const)("reveals the shared passage for either thread at width %s, popup %s", async (width, popup) => {
+  const pane = mount(width, popup);
+  const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  for (const id of ["first", "tie"]) {
+    stepPageComment(1);
+    await vi.waitFor(() => expect(focused()).toBe(id));
+    const revealed = scroll.mock.instances.at(-1) as unknown as HTMLElement;
+    expect(revealed.textContent).toBe("first");
+    expect(pane.contains(revealed)).toBe(true);
+  }
+});
+
+it("reveals a resolved passage without a painted highlight", async () => {
+  const pane = mount(1400, true);
+  pane.style.overflowY = "auto";
+  vi.spyOn(pane, "getBoundingClientRect").mockReturnValue({ top: 100, height: 600 } as DOMRect);
+  vi.spyOn(Range.prototype, "getClientRects").mockImplementation(() => [{ top: 1100, height: 20 }] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  pane.querySelector<HTMLButtonElement>(".comment-resolved-toggle")!.click();
+  for (const id of ["first", "tie", "closed"]) {
+    stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe(id));
+  }
+  const passageTop = 1100 - pane.scrollTop;
+  expect(passageTop).toBeGreaterThanOrEqual(100);
+  expect(passageTop + 20).toBeLessThanOrEqual(700);
+});
+
+it.each([[800, false], [1400, true], [390, false]] as const)("popup controls follow focus within a passage at width %s, popup %s", async (width, popup) => {
+  mount(width, popup);
+  stepPageComment(1); await vi.waitFor(() => expect(focused()).toBe("first"));
+  document.querySelector<HTMLElement>('[data-reply-root="tie"]')!.focus();
+  const toolbar = document.querySelector(".comment-popup-toolbar")!;
+  expect(toolbar.textContent).toContain("2 of 4");
+  expect(toolbar.querySelector<HTMLButtonElement>(".comment-prev-thread")!.disabled).toBe(false);
+  toolbar.querySelector<HTMLButtonElement>(".comment-next-thread")!.click();
+  await vi.waitFor(() => expect(focused()).toBe("last"));
+  document.querySelector<HTMLButtonElement>(".comment-prev-thread")!.click();
+  await vi.waitFor(() => expect(focused()).toBe("tie"));
+  document.querySelector<HTMLElement>('[data-reply-root="first"]')!.focus();
+  expect(document.querySelector(".comment-popup-toolbar")!.textContent).toContain("1 of 4");
+  expect(document.querySelector<HTMLButtonElement>(".comment-prev-thread")!.disabled).toBe(true);
+});
+
 it.each([[1400, false, ".margin-column"], [800, false, ".comment-thread-popup"], [1400, true, ".comment-thread-popup"], [390, false, ".comment-bottom-sheet"]] as const)("reviews in margin order at width %s, popup %s", async (width, popup, target) => {
   const pane = mount(width, popup);
   const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});

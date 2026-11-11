@@ -19,7 +19,11 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph,
 for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(out, dir));
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
 const ids = [1, 2, 3].map(i => `09000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
-const body = ids.map((id, i) => `- Passage ${i + 1} worth reviewing\n  - Thread ${i + 1}\n    id:: ${id}\n    tine.quote:: Passage ${i + 1}\n${Array.from({ length: 18 }, (_, n) => `- Context ${i + 1} paragraph ${n}\n`).join("")}`).join("");
+// A shared passage near the start of a block taller than the viewport: centering
+// the whole block when reviewing its second thread would hide the passage.
+const body = `- Passage 1 worth reviewing\n${Array.from({ length: 90 }, (_, n) => `  Context paragraph ${n} within the same tall block.\n`).join("")}` +
+  ids.slice(0, 2).map((id, i) => `  - Thread ${i + 1}\n    id:: ${id}\n    tine.quote:: Passage 1\n`).join("") +
+  `- Passage 3 worth reviewing\n  - Thread 3\n    id:: ${ids[2]}\n    tine.quote:: Passage 3\n`;
 const file = path.join(graph, "pages/Review.md"); fs.writeFileSync(file, body);
 fs.writeFileSync(path.join(graph, "pages/Other page.md"), "- Another page\n");
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
@@ -41,14 +45,28 @@ async function command(label) {
   const search = await browser.$(".switcher-input"); await search.waitForExist(); await search.setValue(label);
   await browser.waitUntil(() => browser.execute(label => [...document.querySelectorAll(".switcher-row")].some(el => el.textContent.includes(label)), label),
     { timeout: 5000, timeoutMsg: `Palette must offer ${label}` });
+  await browser.execute(() => {
+    window.__mc9StepMs = null;
+    const measure = event => {
+      if (event.key !== "Enter") return;
+      document.removeEventListener("keydown", measure, true);
+      const start = performance.now();
+      requestAnimationFrame(() => { window.__mc9StepMs = performance.now() - start; });
+    };
+    document.addEventListener("keydown", measure, true);
+  });
   await keys("Enter"); await browser.$(".switcher").waitForExist({ reverse: true });
+  await browser.waitUntil(() => browser.execute(() => window.__mc9StepMs !== null));
+  const ms = await browser.execute(() => window.__mc9StepMs);
+  assert.ok(ms < 500, `Review step must not block the UI for 500 ms: ${ms}`);
+  proof.outcomes.push({ command: label, ms });
 }
 async function assertThread(id, display) {
   await browser.waitUntil(() => browser.execute((id, display) => {
     const active = document.activeElement;
     const card = active?.closest(".comment-card");
     if (card?.dataset.blockRef !== id || !active.closest(display === "margin" ? ".margin-column" : ".comment-thread-popup")) return false;
-    const parent = [...document.querySelectorAll(".page-blocks .comment-quote-anchor")].find(el => el.dataset.commentId === card.dataset.blockId);
+    const parent = [...document.querySelectorAll(".page-blocks .comment-quote-anchor")].find(el => el.textContent === (id.endsWith("3") ? "Passage 3" : "Passage 1"));
     if (!parent) return false;
     const r = parent.getBoundingClientRect(), pane = parent.closest(".main-content").getBoundingClientRect();
     return r.top >= pane.top && r.bottom <= Math.min(pane.bottom, innerHeight);
@@ -69,6 +87,10 @@ try {
   for (const display of ["margin", "popup"]) {
     stage = `${display}: routed page`;
     await openPageByName(browser, "Review");
+    assert.ok(await browser.execute(() => {
+      const row = document.querySelector(".page-blocks .block-main");
+      return row && row.getBoundingClientRect().height > row.closest(".main-content").getBoundingClientRect().height;
+    }), "The shared passage fixture must be taller than its viewport");
     if (display === "popup") {
       await browser.$('button[title^="Settings"]').click();
       await browser.$(".settings-search-input").setValue("Comments");

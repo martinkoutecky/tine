@@ -15,6 +15,8 @@ import { revealOutlineBlock } from "./outlineViewport";
 import { activeDocument } from "./windowRealm";
 import { focusedPaneId } from "./panes";
 import { clearOnBindingInvalidated } from "./binding";
+import { resolvedCommentAnchorTop } from "./components/resolvedCommentAnchor";
+import { scrollContainer } from "./scrollContainer";
 
 export interface CommentReview {
   groups(parent: string): readonly string[][];
@@ -62,8 +64,16 @@ export function createCommentReview(index: CommentIndex, shown: Accessor<boolean
       setCurrent(id);
       const entry = rows.get(parent), row = entry?.row;
       if (!row) return;
-      const anchor = [...row?.querySelectorAll<HTMLElement>(".comment-quote-anchor[data-comment-id]") ?? []].find(el => el.dataset.commentId === id) ?? row;
-      anchor?.scrollIntoView({ block: "center" });
+      const group = new Set(review.groups(parent).find(ids => ids.includes(id)));
+      const anchor = [...row.querySelectorAll<HTMLElement>(".comment-quote-anchor[data-comment-id]")].find(el => group.has(el.dataset.commentId!));
+      if (anchor) anchor.scrollIntoView({ block: "center" });
+      else {
+        const top = resolvedCommentAnchorTop(id, parent, row), scroller = scrollContainer(row);
+        if (top !== null && scroller) {
+          const bounds = scroller.getBoundingClientRect();
+          scroller.scrollTop += top - bounds.top - bounds.height / 2;
+        } else row.scrollIntoView({ block: "center" });
+      }
       focusCommentReply(id, entry.surface, true);
     },
   };
