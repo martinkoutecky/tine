@@ -35,7 +35,13 @@ pub(super) fn hash_revision(path: &Path) -> std::io::Result<FileRev> {
 /// permission refusal does not become an untyped hash failure.
 pub(super) fn hash_settled(path: &Path, value: &mut Stamp) -> std::io::Result<bool> {
     let mut moved = false;
-    for _ in 0..3 {
+    for _attempt in 0..3 {
+        #[cfg(feature = "test-faults")]
+        let _cause = (_attempt > 0).then(|| {
+            crate::cost_counters::watcher_read_cause(
+                crate::cost_counters::WatcherReadCause::MetadataRetry,
+            )
+        });
         let revision = hash_revision(path);
         let Some(fresh) = stamp_metadata(path) else {
             return Err(std::io::Error::new(
