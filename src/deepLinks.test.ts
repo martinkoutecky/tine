@@ -4,6 +4,7 @@ import { parseTineLink, parseAppRoute, pageLink, graphLink, blockLink } from "./
 const id = "11111111-1111-4111-8111-111111111111";
 describe("GH #181 external Tine addresses", () => {
   it("round-trips graph, Unicode and slash-containing page names, and page-free block ids", () => {
+    expect(parseAppRoute(pageLink("日本 / A?#%"))).toEqual({ route: "page", page: "日本 / A?#%" });
     expect(parseTineLink(graphLink(id))).toEqual({ graph: id });
     expect(parseTineLink(pageLink("日本 / A?#%", id))).toEqual({ graph: id, page: "日本 / A?#%" });
     expect(parseTineLink(pageLink("..", id))).toEqual({ graph: id, page: ".." });

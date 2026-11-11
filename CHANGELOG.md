@@ -8,11 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Settings → Editor → Advanced has a **Reference previews** switch, Logseq's `:ui/enable-tooltip?` in the graph's `config.edn` (on when absent). Off, page links, tags and block references open no preview on mouse hover, and on a touch screen holding a page link or tag opens its page menu again instead of a preview. The **Hover preview delay** stays as it is (GH #824).
+
 ### Changed
 
 - Creating, deleting or renaming a page, or changing its `title::`, now refreshes only the views and queries that depend on that page. Before, every open query and reference panel recomputed (D-20261102-PERF row 3, REG-PERF-PAGE-LIFECYCLE-PRECISE-SUMMARY, UI-PERF-PAGE-LIFECYCLE-READERS).
 - Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).
 - `tine edit` saves a large page faster: it no longer parses the bytes it has just written a second time or reads their page name again, so each edit does one parse and one name read fewer (a 2 MiB page saves about 15 % faster). The written bytes, files, syncs and reply are unchanged (internal: REG-COST-BLOCK-EDIT-REPARSE; card DuDHQ).
+- `tine page current` reports the focused page name and Tine URL, plus the editing block's URL, with text and JSON output for scripts such as Hookmark integrations ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - iOS: Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).
 - `tine page rename --json` reports each page the rename moved in `report.renamed`: its old name, its new name and the file it moved from (`null` for a page with no file, such as a namespace child that exists only through links). The app's tabs, Recent and sidebar follow exactly that list ([CLI output contract](docs/contracts/cli-output.md), `page.rename`).
 - Changing the text inside an existing `[[link]]` now searches the whole link text, not only the part before the caret, so the link's own page is the first suggestion, in both editors. Typing a new link works as before. This differs from Logseq, which searches only up to the caret (GH #888).
@@ -169,6 +174,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Added
 
 - **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
+- **Settings → Appearance → Advanced → Show Workspaces** hides saved-workspace controls on desktop and mobile while keeping existing workspaces for when you turn it on again (#927).
 - Hover a block's bullet to see when its text last changed in git. Uncommitted edits, unavailable dates and the history limit are shown explicitly, without storing timestamp properties (GH #831).
 - Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
 - Commands can have several hotkeys in Settings → Keyboard shortcuts: keep the default and add alternatives, remove individual bindings, and see conflicts. OG `config.edn` shortcut vectors use every binding (GH #878).

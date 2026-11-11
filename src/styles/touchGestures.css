@@ -71,9 +71,10 @@
 
 /* Block swipe (GH #501, src/blockSwipe.ts): the row owns horizontal pans, the
    page keeps vertical scrolling and pinch. Rows that contain their own
-   sideways scroller (code, tables, sheets, math) keep full native panning instead:
-   touch-action intersects down the tree, so a pan-y ancestor would freeze the
-   inner scroller. The swipe's own disabled zones already skip those targets. */
+   sideways scroller (code, tables, sheets, math) keep full native panning.
+   These exemptions remain pending supported iOS/WebKit gesture verification;
+   an ancestor's computed touch-action alone does not prove scrolling is blocked.
+   The swipe's own disabled zones already skip the scroller targets. */
 html[data-touch-gestures] .block-main:not(:has(.code-block, .md-table-wrap, .sheet-scroll, .math)) {
   touch-action: pan-y pinch-zoom;
 }

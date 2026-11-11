@@ -66,6 +66,7 @@ import { dragOpeningMobileDrawer, settleMobileDrawer } from "./mobileDrawerMotio
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, subscribeOwnerFlush, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
+import { subscribeCurrentPage } from "./currentPage";
 import { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 export { installQuickCaptureReceiver } from "./quickCaptureReceiver";
 import { backend, isTauri } from "./backend";
@@ -81,7 +82,7 @@ import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initPasteSettings } from "./pasteSettings";
 import { initHoverPreviewSettings } from "./hoverPreviewSettings";
-import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
+import { initNavSettings, mobileNavigationAtBottom, showWorkspaces } from "./navSettings";
 import { initCommentIdentity } from "./commentIdentity";
 import { initCommentNamePrompt, probeGraphGit } from "./commentNamePrompt";
 import { initLocalFileSettings } from "./localFileSettings";
@@ -887,6 +888,7 @@ export function App(): JSX.Element {
     onCleanup(subscribeWatcherFreshness());
     onCleanup(subscribeAssetChanges());
     onCleanup(subscribeOwnerFlush());
+    onCleanup(subscribeCurrentPage());
     installReloadOnFocus();
     void initConflictPolicy();
   });
@@ -1187,9 +1189,11 @@ export function App(): JSX.Element {
           }}
         >
           <div class="left-sidebar-scroll">
-            <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar data-tauri-drag-region={!osDrawsWindowControls() && !mobileDrawerMode() ? "" : undefined}>
-              <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
-            </div>
+            <Show when={showWorkspaces() && !isPublishedExport()}>
+              <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar data-tauri-drag-region={!osDrawsWindowControls() && !mobileDrawerMode() ? "" : undefined}>
+                <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary>
+              </div>
+            </Show>
             <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>
             </Show>
             <FailureBoundary region="The sidebar">
@@ -1229,7 +1233,7 @@ export function App(): JSX.Element {
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
-          <Show when={!sidebarOpen() && !isPublishedExport()}>
+          <Show when={showWorkspaces() && !sidebarOpen() && !isPublishedExport()}>
             <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact /></FailureBoundary>
           </Show>
           {/* The tab strip shows whenever the top bar has room for it, on any
