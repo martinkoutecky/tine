@@ -25,6 +25,14 @@ export function refusedPageOpen(stage: "route" | "probe", r: Extract<Route, { ki
   return true;
 }
 
+/** Whether a route opens a read under the read's identity instead of refusing it:
+ * the same file in another case spelling, or the same file and name with the
+ * store's kind (GH #863). The route loader and the recovery probe both ask this. */
+export function routeAdoptsRead(r: Extract<Route, { kind: "page" }>, dto: PageRead | null): boolean {
+  return !!(r.path && dto?.id && dto.id.toLowerCase() === r.path.toLowerCase()
+    && (dto.id !== r.path || (dto.name === r.name && dto.kind !== r.pageKind)));
+}
+
 /** The refusal a routed page shows in place of its content when it could not be opened. */
 export function PageLoadError(props: { error: string }): JSX.Element {
   return (
@@ -92,7 +100,7 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
           const result = await readOwned(owner, backend().getPageByPath(path, value => { source = value; }));
           if (result.kind === "stale") return;
           const dto = result.value;
-          if (refusal === "unreadable" || !refusedPageOpen("probe", r, dto, source, seen)) {
+          if (refusal === "unreadable" || routeAdoptsRead(r, dto) || !refusedPageOpen("probe", r, dto, source, seen)) {
             retry();
             return;
           }
