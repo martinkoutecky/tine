@@ -9,13 +9,16 @@
 //! would send for an outside edit: a window that only displays the page (not
 //! held by the host, so it gets no page mail) reloads it. Unset under `tine
 //! serve`, which has no window.
+//! `page.current` also uses this link: the frontend answers from its existing
+//! focused-window/pane route; the owner keeps only the pending question.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::time::Duration;
 
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tauri::Emitter;
 use tine_core::model::PageKind;
 
@@ -155,6 +158,76 @@ const FLUSH_WAIT: Duration = Duration::from_secs(5);
 /// window's previous binding can never match a newer link's request.
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
+/// The frontend's focused route, read once without consulting the Store.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub(crate) enum CurrentPage {
+    CurrentPage {
+        name: String,
+        url: String,
+        block_url: Option<String>,
+    },
+    NoCurrentPage {
+        reason: NoCurrentPage,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum NoCurrentPage {
+    NoOwnerEndpoint,
+    NoFocusedWindow,
+    NotPage,
+    Journals,
+}
+
+impl CurrentPage {
+    pub(crate) fn absent() -> Self {
+        Self::NoCurrentPage {
+            reason: NoCurrentPage::NoFocusedWindow,
+        }
+    }
+
+    pub(crate) fn payload(self) -> Value {
+        let mut value = serde_json::to_value(self).expect("current page contains only strings");
+        value["schema"] = json!(super::wire::SCHEMA);
+        value
+    }
+}
+
+/// Pending frontend questions belong to this graph binding; timeout removes
+/// them and late answers cannot satisfy later requests. No route cache or I/O.
+#[derive(Default)]
+struct CurrentPageRequests(Mutex<HashMap<u64, mpsc::SyncSender<CurrentPage>>>);
+
+impl CurrentPageRequests {
+    fn ask_current_page(
+        &self,
+        send: impl FnOnce(u64) -> Result<(), tauri::Error>,
+    ) -> Result<Value, super::wire::ErrorBody> {
+        let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
+        let (answer, answered) = mpsc::sync_channel(1);
+        self.0.lock().unwrap().insert(id, answer);
+        let result = send(id)
+            .ok()
+            .and_then(|()| answered.recv_timeout(FLUSH_WAIT).ok());
+        self.0.lock().unwrap().remove(&id);
+        result.map(CurrentPage::payload).ok_or_else(|| {
+            super::wire::ErrorBody::new(
+                "busy",
+                "the focused Tine window did not answer the page request",
+                false,
+            )
+        })
+    }
+
+    fn deliver_current_page(&self, id: u64, page: CurrentPage) {
+        if let Some(answer) = self.0.lock().unwrap().remove(&id) {
+            let _ = answer.try_send(page);
+        }
+    }
+}
+
 /// What the window answered to a flush request.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Flushed {
@@ -173,6 +246,7 @@ pub(crate) struct WindowLink {
     store: std::sync::Weak<tine_store::Store>,
     publications: Mutex<ReloadPublications>,
     waiting: Mutex<HashMap<u64, mpsc::SyncSender<bool>>>,
+    current: CurrentPageRequests,
 }
 
 impl WindowLink {
@@ -189,6 +263,7 @@ impl WindowLink {
             store,
             publications: Mutex::new(ReloadPublications::default()),
             waiting: Mutex::new(HashMap::new()),
+            current: CurrentPageRequests::default(),
         }
     }
 
@@ -231,6 +306,26 @@ impl WindowLink {
         }
         if let Some(answer) = self.waiting.lock().unwrap().remove(&id) {
             let _ = answer.try_send(saved);
+        }
+    }
+
+    /// One frontend route question on the admitted owner's request thread.
+    /// The frontend owns workspace-window and pane focus. O(answer bytes), no
+    /// graph I/O. Unresponsive or retired bindings answer busy within 5 s.
+    pub(crate) fn current_page(&self) -> Result<Value, super::wire::ErrorBody> {
+        self.current.ask_current_page(|id| {
+            self.app.emit_to(
+                self.label.as_str(),
+                "owner-current-page-request",
+                json!({"id": id, "binding_generation": self.binding_generation}),
+            )
+        })
+    }
+
+    /// Accept only the graph binding that received the question.
+    pub(crate) fn answer_current_page(&self, id: u64, page: CurrentPage, binding_generation: u64) {
+        if binding_generation == self.binding_generation {
+            self.current.deliver_current_page(id, page);
         }
     }
 
@@ -307,5 +402,62 @@ impl WindowLink {
                 "binding_generation":self.binding_generation,
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod current_page_tests {
+    use super::*;
+
+    #[test]
+    fn current_page_delivery_failure_is_busy_and_releases_the_request() {
+        let requests = CurrentPageRequests::default();
+        let result =
+            requests.ask_current_page(|_| Err(std::io::Error::other("window gone").into()));
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "busy");
+        assert!(error.message.contains("window did not answer"));
+        assert!(requests.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn current_page_question_answers_page_block_and_absence_once() {
+        for page in [
+            CurrentPage::CurrentPage {
+                name: "日本 / Notes".into(),
+                url: "tine://page/Notes".into(),
+                block_url: None,
+            },
+            CurrentPage::CurrentPage {
+                name: "Notes".into(),
+                url: "tine://page/Notes".into(),
+                block_url: Some("tine://block/92500000-0000-4000-8000-000000000001".into()),
+            },
+            CurrentPage::NoCurrentPage {
+                reason: NoCurrentPage::NotPage,
+            },
+            CurrentPage::NoCurrentPage {
+                reason: NoCurrentPage::NoFocusedWindow,
+            },
+        ] {
+            let expected = serde_json::to_value(&page).unwrap();
+            let requests = CurrentPageRequests::default();
+            let questions = std::cell::Cell::new(0);
+            let started = std::time::Instant::now();
+            let payload = requests
+                .ask_current_page(|id| {
+                    questions.set(questions.get() + 1);
+                    requests.deliver_current_page(id, page);
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(questions.get(), 1);
+            assert!(started.elapsed() < Duration::from_secs(1));
+            assert!(requests.0.lock().unwrap().is_empty());
+            assert_eq!(payload["schema"], super::super::wire::SCHEMA);
+            for (key, value) in expected.as_object().unwrap() {
+                assert_eq!(&payload[key], value);
+            }
+        }
     }
 }

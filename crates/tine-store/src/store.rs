@@ -94,6 +94,10 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 pub struct Store {
     #[cfg(test)]
     pub(crate) marker_copy_pause: Mutex<Option<TestPause>>,
+    /// Tests: a held page's read waits this long for its owner instead of
+    /// `OPERATION_WAIT` (A-H1).
+    #[cfg(test)]
+    pub(crate) held_read_wait: Mutex<Option<std::time::Duration>>,
     pub(crate) graph: Arc<Graph>,
     pub(crate) writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
@@ -925,6 +929,7 @@ impl Store {
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
             marker_copy_pause: Mutex::new(None),
+            held_read_wait: Mutex::new(None),
         }
     }
 
@@ -1277,6 +1282,8 @@ impl Store {
                 faults: Mutex::new(std::collections::HashSet::new()),
                 #[cfg(test)]
                 marker_copy_pause: Mutex::new(None),
+                #[cfg(test)]
+                held_read_wait: Mutex::new(None),
             },
             meta,
             config,
@@ -1984,9 +1991,26 @@ impl Store {
     /// same bytes, and the load or launch diff takes the file in, so a page
     /// opens in parse time whatever the graph is doing. Target parse costs
     /// O(bytes + blocks); publication adds O(P) metadata. Reads write no
-    /// page bytes. A page a page host holds answers the bytes the host last
-    /// indexed and publishes nothing (A-V4): a write parses the bytes its
-    /// revision guards with [`Store::page_of`] instead.
+    /// page bytes. A page a page host holds (A-H1, A-V4) is read through its
+    /// owner, the page's only index writer: the read reads no bytes of the
+    /// file and installs nothing from it. It compares the file's stamp, from
+    /// the metadata the target check already reads, with the stamp of the
+    /// owner's last indexed observation, by the watcher's Stamps-depth rule
+    /// (time, size, identity, change time; a racy, missing or retry stamp
+    /// never matches). On a match it answers the bytes the owner last
+    /// published, and no file on both sides answers `NotFound`, a fresh
+    /// absence. On a mismatch it hands the key to the owner as a watcher
+    /// notification does, releases the writer and waits at most
+    /// `OPERATION_WAIT` for that observation to be indexed, found unchanged
+    /// or fail, then answers the owner's published bytes; a failed
+    /// observation answers its read error, never `NotFound`. At the bound,
+    /// or once the host has ended, it reads again without asking. Before the
+    /// owner's first publication it parses the file without publishing it.
+    /// An unchanged held page costs one map lookup over today's read; a
+    /// changed one, or one whose stamp no owner read confirmed since an own
+    /// save or a same-bytes replacement, the owner's one read, after which
+    /// it is unchanged. Never on the page host driver's thread. A write
+    /// parses the bytes its revision guards with [`Store::page_of`] instead.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             if self.is_closed() {
@@ -2000,15 +2024,7 @@ impl Store {
             let doc = self.parse_page(&path, &entry, false)?;
             return self.page_read(id, doc, PageReadSource::Disk);
         }
-        let waiting = Instant::now();
-        let _writer = self.writer.lock().unwrap();
-        self.graph.diag.page_writer_wait(waiting.elapsed());
-        let before_generation = self.graph.cache_generation();
-        if self.is_closed() {
-            return Err(StoreError::Closed);
-        }
-        let (id, path) = self.page_spot(id)?;
-        // A held page is answered before its file is read (A-H1).
+        let (_writer, before_generation, id, path) = self.ready_page_writer(id)?;
         if let Some((doc, source)) = self.held_page(&path)? {
             return self.page_read(id, doc, source);
         }
@@ -2039,7 +2055,14 @@ impl Store {
     /// Once ready, the published index resolves the name; an alias reads its
     /// first owner. After a failed initial parse, the file-name listing
     /// answers. A closed store returns `StoreError::Closed`. A resolved file
-    /// that has disappeared reads as `None`. It writes no page bytes.
+    /// that has disappeared reads as `None`. It writes no page bytes. A
+    /// journal day the index has no file for first looks for one delivered
+    /// unobserved under another accepted name (GH #863): a bounded number of
+    /// stats, and a hit is read and published (a held one through its owner,
+    /// as `page` reads it) before the name resolves again; its read error.
+    /// A hit that still resolves absent and whose canonical title CM leaves
+    /// unclaimed (an owner before its first publication, an unreadable file)
+    /// answers with its own read or read error, never an empty day.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
@@ -2049,10 +2072,24 @@ impl Store {
                 return Ok(read);
             }
         }
-        let resolved = match self.whole_graph() {
-            Ok(view) => view.resolve(name, kind == PageKind::Journal),
-            Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
-            Err(LoadError::Closed) => return Err(StoreError::Closed),
+        let journal = kind == PageKind::Journal;
+        let mut looked = false;
+        let mut day = None;
+        let (view, resolved) = loop {
+            let view = match self.whole_graph() {
+                Ok(view) => view,
+                Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
+                Err(LoadError::Closed) => return Err(StoreError::Closed),
+            };
+            let resolved = view.resolve(name, journal);
+            if journal && !looked && matches!(resolved, Resolved::Absent { .. }) {
+                looked = true;
+                day = self.reconcile_unindexed_day(name, &view)?;
+                if day.is_some() {
+                    continue;
+                }
+            }
+            break (view, resolved);
         };
         // `resolve` builds an alias only with at least one owner.
         let id = match resolved {
@@ -2061,8 +2098,11 @@ impl Store {
                 Some(id) => id,
                 None => return Ok(None),
             },
-            Resolved::Absent { .. } => return Ok(None),
+            Resolved::Absent { .. } => {
+                return day.map_or(Ok(None), |day| self.unindexed_day_read(day, &view))
+            }
         };
+        drop(view);
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
             Err(StoreError::NotFound(_)) => Ok(None),

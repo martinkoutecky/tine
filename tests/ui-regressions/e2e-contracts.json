@@ -22,6 +22,12 @@
       "nonRequirements": ["No authorship inheritance, new format, release burn-in, Windows/macOS/iOS/Android certification; no exact palette, font or screenshot matching."],
       "stability":"burn-in"
     },
+    "scripts/e2e-cli-page-current.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A script obtains the focused page name and URL, the editing block URL, and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; discussion 925"}],
+      "acceptableVariations": ["URL encoding follows the shared link producer; CLI prose may vary while JSON fields and exit codes follow the contract."],
+      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, graph-qualified page bookmarks, and other platform runtime certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-shift-click-selection.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Shift-click from the editing caret to another block selects the complete range and closes the editor on a routed page, sidebar and journal; cutting the range includes the last block's collapsed children and Undo restores them.","blocking":false,"authority":"GH #924; UI-GH924-SHIFT-CLICK-BLOCK-RANGE"}],
       "acceptableVariations": ["Theme, layout, exact click column and save latency may vary."],
@@ -57,7 +63,7 @@
       "quarantineReason":"A5 loses two oxygen atoms with the original unconstrained math CSS as well as the candidate. Screen-only containment prevents additional scrollport clipping, but fitting grouped math to small physical paper needs a product decision. The assertion remains intact."
     },
     "scripts/e2e-math-overflow.mjs": {
-      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Inline and display equations have reachable starts and ends within narrow routed main, split, sidebar, embed, query, hover preview and phone-width panes; ordinary KaTeX breaks and short inline baselines survive. With Android gestures enabled, ancestors permit native horizontal panning of overflowing formulas.","blocking":false,"authority":"GH #915; UI-GH915-MATH-REACHABLE"}],
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Inline and display equations have reachable starts and ends within narrow routed main, split, sidebar, embed, query, hover preview and phone-width panes; ordinary KaTeX breaks and short inline baselines survive. Chromium compositor touch pans scroll inline/display formulas in production component rows and movable board cards, cancelling card dragging; code/table/sheet scrollers also pan with and without row exemptions.","blocking":false,"authority":"GH #915; UI-GH915-MATH-REACHABLE"}],
       "acceptableVariations": ["Formula-local scrolling or line breaks, scrollbar appearance, fonts and pane geometry may vary."],
       "nonRequirements": ["No TeX rewriting, exact pixels, print pagination, Windows/macOS/iOS/Android device certification or release acceptance. Formula-local scrolling deliberately goes beyond OG's unconstrained KaTeX."],
       "stability":"burn-in"
@@ -180,7 +186,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-beta-win-863-809.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Toolbar Journals > today's existing journal title opens the file on its own route without changing bytes. ONLY=863-created, 863-created-blur and 863-created-unreferenced also create the file by typing into the virtual feed day; ONLY=863-external and 863-external-alternate create it externally while the editor is active and the watcher defers refresh; 863-external-alternate-blur then leaves the editor; 863-custom uses a matching custom filename format. ONLY=863-sync-gap clicks today's title while a synthetic sync replacement briefly removes its physical file, then restores it through the real poll watcher. The refused route must open automatically without another click or graph switch. ONLY=863-page-sync-gap checks the same recovery for an ordinary physical page reached with Back; SYNC_SAME_BYTES=1 restores unchanged bytes without requiring a content-change publication. Each title must open the file that now exists without writing another file. Ctrl+K > search page > right-click result > Open in new window renders that page in a usable window, saves an edit there, and leaves main responsive with the edit visible.","blocking":false,"authority":"GH #863; GH #809 comment 2; UI-GH863-JOURNAL-PHYSICAL-OPEN; UI-GH863-PINNED-ROUTE-RECOVERY; UI-GH809-SEARCH-NEW-WINDOW"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Toolbar Journals > today's existing journal title opens the file on its own route without changing bytes. ONLY=863-created, 863-created-blur and 863-created-unreferenced also create the file by typing into the virtual feed day; ONLY=863-external and 863-external-alternate create it externally while the editor is active and the watcher defers refresh; 863-external-alternate-blur then leaves the editor; ONLY=863-external-sync and 863-external-alternate-sync deliver a fileless day by a backdated Syncthing-style temp-file rename; 863-custom uses a matching custom filename format. ONLY=863-sync-gap clicks today's title while a synthetic sync replacement briefly removes its physical file, then restores it through the real poll watcher. The refused route must open automatically without another click or graph switch. ONLY=863-page-sync-gap checks the same recovery for an ordinary physical page reached with Back; SYNC_SAME_BYTES=1 restores unchanged bytes without requiring a content-change publication. Each title must open the file that now exists without writing another file. Ctrl+K > search page > right-click result > Open in new window renders that page in a usable window, saves an edit there, and leaves main responsive with the edit visible.","blocking":false,"authority":"GH #863; GH #809 comment 2; UI-GH863-JOURNAL-PHYSICAL-OPEN; UI-GH863-PINNED-ROUTE-RECOVERY; UI-GH809-SEARCH-NEW-WINDOW"}],
       "acceptableVariations": ["Window geometry, native decoration, timing and date may vary. The contextmenu event is dispatched to the visible result row; platform drivers supply keyboard and editor input."],
       "nonRequirements": ["No private graph, Windows certification from a Linux result, exact pixels, fixed timing performance or release burn-in. The #863 lifecycle reproduction establishes a shared virtual-target defect; the affected Windows graph and #809's root cause remain unverified."],
       "stability":"burn-in"
@@ -316,6 +322,13 @@
       "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}],
       "acceptableVariations": ["Publication and rendering latency, IPC batching and machine load; exact 1.5-second boundaries are covered with fake timers."],
       "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a links query skipping unrelated saves after the pause: the memo conservatively invalidates links on every edit."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-page-lifecycle-summary.mjs": {
+      "setup": "Uses the shared account-home fixture; asserts a held app lease after the graph opens. One unrelated outside write gives the window its first (by design full) publication before counting. Each step settles by completion, not a fixed wait: its recorded IPC calls answer, an outside write rewrites a sentinel page that a third query on the target shows, and the step counts only after that text renders and the reruns drain, so every publication of the step has been delivered and flushed first. IPC calls and graph-changed summaries are recorded as artifacts.",
+      "contracts": [{"class":"core-operation","userOutcome":"With a page shown in the right sidebar, renaming a page that links to it from its title and then deleting it from the page menu updates the sidebar's linked references and its dependent query; an unrelated query on that page does not rerun; the target page file is unchanged.","blocking":true,"authority":"D-20261102-PERF row 3; precise page-lifecycle change summary in docs/storage-contract.md"}],
+      "acceptableVariations": ["Publication and rendering latency, IPC batching, machine load, and how many times the dependent query reruns."],
+      "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a native fail-before control: the counter tests in crates/tine-store/tests/page_lifecycle_summary.rs give that."],
       "stability":"burn-in"
     },
     "scripts/e2e-linux-inline-preedit.mjs": {
@@ -567,7 +580,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-census-settings.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry. Show Workspaces in Settings hides saved-workspace controls and the creation command on desktop and mobile, then restores the same workspaces.","blocking":true}],
       "acceptableVariations":["Form placement, styling and persistence latency may vary while the same workspace creation flow remains available."],
       "nonRequirements":["Exact pixels, a specific generated workspace ID, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

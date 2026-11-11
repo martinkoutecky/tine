@@ -1,6 +1,7 @@
 import { msg, t } from "../i18n";
 import { isRtlContext } from "./textDirection";
 import { createPeekBridge } from "./peekBridge";
+import { previewsEnabled } from "../hoverPreviewSettings";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
@@ -328,10 +329,13 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // Hover peek (GH #40): after a short dwell, fetch the target page and show its
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
-  const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
+  // The graph's `:ui/enable-tooltip?` switch (GH #824) is the one other condition: off,
+  // nothing arms or fetches, on hover or by long press.
+  const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()) || !previewsEnabled());
   // GH #655: native mobile holds open the shared page preview. Reuse the
   // deliberate-hold recognizer and its compatibility-click ownership; desktop
-  // right-click and touch on desktop still use the page context menu.
+  // right-click and touch on desktop still use the page context menu, and so
+  // does a hold on a reference that does not preview (GH #824: switch off).
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
   const [previewPage, setPreviewPage] = createSignal<string>();
@@ -379,8 +383,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (touchPrimary() && isLongPressContextMenu(e)) peek.hold();
-          else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
+          if (touchPrimary() && isLongPressContextMenu(e) && peek.hold()) return;
+          if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
         <Show when={icon()}>
@@ -1235,7 +1239,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // targetRaw below) and a failed lookup has not established that. Undefined
   // keeps a loaded reactive node winning and otherwise shows the short id.
   const grp = () => readOr(grpResource, undefined, "block reference target");
-  const peek = createPeekBridge(() => insidePeek);
+  const peek = createPeekBridge(() => insidePeek || !previewsEnabled());
   // GH #231's deliberate hold opens this reference's menu on touch, where it is
   // the route to Edit link / Remove reference (GH #417).
   const longPress = createLongPress(() => anchorEl);

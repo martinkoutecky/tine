@@ -12,9 +12,13 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { mathOverflowEquations as equations } from "./lib/math-overflow-fixture.mjs";
+import { checkMathTouch } from "./lib/math-touch-pan.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const artifacts = path.join(root, "target/artifacts/fix-beta-math-wrap-915");
+await checkMathTouch(root);
+// Explicit component-only mode for hosts without a native application binary.
+if (process.argv.includes("--touch-only")) process.exit(0);
+const artifacts = path.join(root, "target/artifacts/math-touch-pan");
 fs.mkdirSync(artifacts, { recursive: true });
 const out = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(out, "graph");
@@ -83,11 +87,6 @@ async function check(scope, name) {
       // An equivalent implementation may wrap or scroll any formula-local box.
       const scrollers = [element, ...element.querySelectorAll("*")].filter(el =>
         el.scrollWidth > el.clientWidth && ["auto", "scroll"].includes(getComputedStyle(el).overflowX));
-      const blockedPans = [];
-      if (scrollers.length) for (let ancestor = scrollers[0]; ancestor; ancestor = ancestor.parentElement) {
-        const action = getComputedStyle(ancestor).touchAction;
-        if (action === "none" || (action.includes("pan-y") && !action.includes("pan-x"))) blockedPans.push(action);
-      }
       scrollers.forEach(el => { el.scrollLeft = el.scrollWidth; });
       const bases = [...element.querySelectorAll(".katex-html > .base")];
       const last = bases.at(-1).getBoundingClientRect();
@@ -98,7 +97,7 @@ async function check(scope, name) {
       return { display: element.classList.contains("math-display"), endReachable,
         startReachable: start.left >= left - 1 && start.left < right,
         scroll: scrollers.map(el => ({ client: el.clientWidth, width: el.scrollWidth })),
-        blockedPans, width: first.width, paneWidth: pane.width, visibleWidth: right - left };
+        width: first.width, paneWidth: pane.width, visibleWidth: right - left };
     });
     const chain = math.find(element => tex(element).startsWith("a + b"));
     const tops = [...chain.querySelectorAll(".katex-html > .base")].map(el => el.getBoundingClientRect().top);
@@ -182,8 +181,6 @@ try {
   assert.ok(proof.outcomes.every(item => item.rows.length === 6 && item.rows.every(row => row.startReachable && row.endReachable)),
     "Every formula's start and end must be reachable inside its pane");
   assert.ok(proof.outcomes.every(item => Math.abs(item.baselineDelta) <= 1), "Short math retains its baseline");
-  assert.ok(proof.outcomes.every(item => item.rows.every(row => row.blockedPans.length === 0)),
-    "Touch users can pan oversized equations without a pan-y ancestor blocking horizontal scroll");
   assert.ok(proof.outcomes.some(item => item.chainWrapped), "KaTeX's ordinary operator breaks remain available");
   assert.equal(fs.readFileSync(path.join(graph, "pages/Math reachability.md"), "utf8"), source);
   fixture.verify();

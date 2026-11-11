@@ -80,6 +80,53 @@ Kind `status`.
 | `version` | string | always | no | the owner's Tine version |
 | `state` | string | always | no | `serving`; `busy` (stopped admitting, not yet stopping); or the stop's progress text (`stopping`, or `retrying: <reason>` while a stop waits to write a crash draft). Treat any other value as progress text |
 
+### `page.current`
+
+`tine page current` asks the selected graph's running owner for the active pane
+of its most recently focused window, whether or not Tine has OS focus (the
+asking script's app usually does). Graph selection follows `page show` (`--graph`, `TINE_GRAPH`,
+or the working directory). It never starts `serve`. Like `page show`, it uses
+the endpoint's ordinary admission gate and can return `busy` during handover.
+
+Kind `current-page` exits 0. Text prints the name, page URL, then the block URL
+when present, each on its own line. JSON carries the same fields. Only the
+block in edit mode with focus inside its occurrence in that pane supplies `block_url`; selection alone
+does not. In Journals, that editor identifies the displayed journal day, including
+when it edits a block embedded from another page. Without one,
+Journals is a view rather than a page. Zoomed page routes still identify the page.
+All Pages, search, PDF and other non-page panes have no current page.
+
+Kind `no-current-page` is an ordinary answer on stdout, exiting 3. Text includes
+its reason: `no-owner-endpoint` (no endpoint for the selected graph),
+`no-focused-window` (a headless owner: no graph window), `not-page`, or `journals`.
+A frontend that fails to answer within 5 seconds
+returns `busy` on stderr; it is not reported as an absent page.
+
+Links use the existing current-graph `tine://page/NAME` route and block URL
+producer. Page URLs open in the active graph; they are not graph UUID bookmarks.
+Block URLs use the existing block identity, including runtime UUIDs; no `id::`
+is created, so an ID-less block link may stop resolving after structural edits.
+Newly inserted blocks with only a transient key have `block_url: null` until
+they have a linkable UUID.
+For durable graph-qualified bookmarks use Copy Tine link in the app.
+
+The operation's lower bound and implementation are one owner request/reply and
+one frontend question/answer, O(name + URL bytes), zero graph reads, writes,
+stats, fsyncs or renders after ordinary CLI endpoint discovery. There is no
+cached route: the frontend reads its existing focused-window/pane state once.
+The existing owner hello exchange remains part of connection setup: including
+it, a successful invocation has two owner socket round trips and one frontend
+question/answer. Only one owner verb is sent.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"current-page"` or `"no-current-page"` |
+| `name` | string | optional | no | current page's displayed name; present on `current-page` |
+| `url` | string | optional | no | current-graph page URL; present on `current-page` |
+| `block_url` | string or null | optional | no | focused editor's block URL; present on `current-page`, null without an editor |
+| `reason` | string | optional | yes | why there is no page; present on `no-current-page` |
+
 ### `page.show` / `journal`
 
 `tine page show NAME`. The page as the page host sees it: a held page's buffer (unsaved text
@@ -656,7 +703,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 |---|---|---|
 | `not-found` | 3 | the page, block or journal day does not exist |
 | `ambiguous` | 3 | a name matched several pages (a read: an alias of several pages; a write: also a name several files claim), or a write's `id::` UUID is on several pages (nothing is written) |
-| `busy` | 4 | the owner is yielding or stopping; not admitted. Reads retry for 30 s first |
+| `busy` | 4 | the owner is yielding or stopping, or `page.current`'s frontend did not answer; not admitted. Reads retry for 30 s first |
 | `unknown-verb` | 2 | the owner does not know the verb (an older Tine) |
 | `bad-args` | 2 | arguments invalid for the verb; also a query that does not parse |
 | `frame-too-large` | 2 | the request line was over the cap |

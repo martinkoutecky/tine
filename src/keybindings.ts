@@ -7,6 +7,7 @@ import { ensureSeenAvailability, markGraphSeenNow, markPageSeenNow, seenAvailabl
 import { seenStepAvailable, stepSeenChange } from "./seen/stepper";
 import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
+import { showWorkspaces } from "./navSettings";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
 import { isMobilePlatform } from "./nativeChrome";
@@ -145,6 +146,8 @@ export type ShortcutScope = "global" | "editor" | "select";
 interface CommandDef {
   /** Keep bindable commands in Shortcuts while omitting them from launchers. */
   paletteHidden?: boolean;
+  /** A hidden feature omits its command from launchers and shortcut settings. */
+  hidden?: () => boolean;
   id: string;
   binding: string;
   /** Human label for the palette and the Settings reference: a catalog message
@@ -469,7 +472,7 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-help", binding: "shift+?", label: msg("command-ui-toggle-help"), scope: "global", run: toggleHelpPopup },
   // Saved-workspace management belongs to the main window; secondary workspace
   // windows have no switcher or saved-layout registry controls.
-  { id: "workspace/new", binding: "", label: msg("command-workspace-new"), scope: "global", available: () => activeWindowId() === MAIN_WINDOW_ID, run: openWorkspaceCreation },
+  { id: "workspace/new", binding: "", label: msg("command-workspace-new"), scope: "global", hidden: () => !showWorkspaces(), available: () => activeWindowId() === MAIN_WINDOW_ID, run: openWorkspaceCreation },
   // Carry the Settings-configured number of days.
   { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
@@ -896,7 +899,7 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
 export function paletteCommands(
   focusedPluginBlock: OwnedPluginBlockSnapshot | null = pluginFocusedBlock() ?? null
 ): { id: string; label: string; english: string; binding: string; run: () => void }[] {
-  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && !c.paletteHidden && c.id !== "go/search" && (!c.available || c.available()))
+  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && !c.paletteHidden && !c.hidden?.() && c.id !== "go/search" && (!c.available || c.available()))
     .map((c) => ({
       id: c.id,
       label: render(c.label),
@@ -920,7 +923,7 @@ export function paletteCommands(
 
 export function runGlobalCommand(id: string): boolean {
   const cmd = COMMANDS.find((c) => c.id === id && c.scope === "global" && c.run);
-  if (!cmd?.run) return false;
+  if (!cmd?.run || cmd.hidden?.()) return false;
   cmd.run();
   return true;
 }
@@ -930,7 +933,7 @@ export function runGlobalCommand(id: string): boolean {
  *  config.edn and the user's local overrides. Call from a reactive consumer:
  *  `label` is in the active UI language, `english` is for search. */
 export function commandDefaults(): { id: string; label: string; english: string; binding: string; alias?: string; scope: ShortcutScope }[] {
-  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: render(c.label), english: renderEnglish(c.label), binding: c.binding, alias: c.alias, scope: shortcutScope(c) }));
+  return [...COMMANDS, ...pluginCommandDefs()].filter(c => !c.hidden?.()).map((c) => ({ id: c.id, label: render(c.label), english: renderEnglish(c.label), binding: c.binding, alias: c.alias, scope: shortcutScope(c) }));
 }
 
 /** Turn a keyboard event into a binding string like "mod+shift+down". Returns
@@ -1233,6 +1236,8 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     seqTimer = setTimeout(resetSeq, 800);
 
     for (const cmd of commands) {
+      // A hidden command keeps no live shortcut: Settings and conflict checks omit it (#927).
+      if (cmd.hidden?.()) continue;
       const cs = cmd.chords;
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);

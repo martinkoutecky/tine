@@ -66,6 +66,10 @@ impl Diag {
 pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, ErrorBody> {
     let args = &request.args;
     match request.verb.as_str() {
+        "page.current" => slot.window.get().map_or_else(
+            || Ok(super::window::CurrentPage::absent().payload()),
+            |window| window.current_page(),
+        ),
         "page.show" => {
             let PageArgs { name } = parse(args)?;
             let graph = whole_graph(slot)?;

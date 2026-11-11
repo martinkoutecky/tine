@@ -14,7 +14,9 @@ import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = process.env.MARGIN_BASELINE === "1";
 // E2E_MARGIN_POLISH_OUT overrides where the run (graph, XDG dirs, shots) lives.
-const OUT = process.env.E2E_MARGIN_POLISH_OUT || path.join(ROOT, "artifacts/margin-polish", process.env.MARGIN_RUN || (BASELINE ? "baseline" : "candidate"));
+const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/margin-polish"));
+fs.mkdirSync(artifacts, { recursive: true });
+const OUT = process.env.E2E_MARGIN_POLISH_OUT || fs.mkdtempSync(path.join(artifacts, BASELINE ? "baseline-" : "candidate-"));
 const GRAPH = path.join(OUT, "graph");
 const PAGE = "Margin Polish";
 const FILE = path.join(GRAPH, "pages", `${PAGE}.md`);

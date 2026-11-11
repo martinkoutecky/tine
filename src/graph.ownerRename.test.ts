@@ -1,10 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import "./graph";
 import { backend } from "./backend";
 import { paneRouter, resetPaneLayoutToSingle } from "./panes";
-import { applyOwnerPageRename, renamePageOnDisk } from "./document/graphRewrite";
+import { refreshAfterRename } from "./graph";
+import { applyOwnerPageRename, followRename, renamePageOnDisk } from "./document/graphRewrite";
+import { graphEpoch, pageInventoryRev } from "./graphSession";
+import { fullChangeKeyFlushCount } from "./changeKeys";
 import { setDoc } from "./document/model";
 import { resetStore } from "./document/workingSet";
 import { recentPages, rightSidebar, setRecentPages, setRightSidebar } from "./ui";
@@ -51,6 +53,19 @@ it("follows a fileless source using the owner's null-path notification", async (
   });
   await cliRename("Ghost", "NewGhost", null, { outcome: "renamed", touched: [], renamed: [renamed("Ghost", "NewGhost", null)] });
   expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "NewGhost" });
+});
+
+// D-20261102-PERF row 3: the rename's publication carries a precise change
+// summary (both names, the moved page's blocks, the rewritten referrers;
+// `crates/tine-store/tests/page_lifecycle_summary.rs`). A display-epoch bump
+// here re-subscribed every mounted query and reference panel; only the page
+// index is refetched now.
+it("refreshes the page index but no other reader after a rename", () => {
+  const [epoch, inventory, full] = [graphEpoch(), pageInventoryRev(), fullChangeKeyFlushCount()];
+  refreshAfterRename(followRename(oldToNew.renamed));
+  expect(pageInventoryRev()).toBeGreaterThan(inventory);
+  expect(graphEpoch()).toBe(epoch);
+  expect(fullChangeKeyFlushCount()).toBe(full);
 });
 
 // small-1109c r2: renaming `Foo` into a free name inside its own namespace

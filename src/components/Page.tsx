@@ -548,7 +548,7 @@ export function PageView(): JSX.Element {
           const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
           let readSource: PageReadSource | null = null;
           const result = await readOwned(routeOwner, r.path
-            ? backend().getPageByPath(r.path, source => { readSource = source; })
+            ? backend().getPageByPath(r.path, source => { readSource = source; }).catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
             : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;
@@ -1123,7 +1123,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section">
+    <div class="page-section" data-page-name={props.page.name}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>

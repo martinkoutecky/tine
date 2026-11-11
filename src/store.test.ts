@@ -25,7 +25,7 @@ import { bindTestHost, submittedPages } from "./document/host/wiring.test.suppor
 import { installDiskHost } from "./diskHost.test.support";
 import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
 import { pageInventoryRev, setGraphMeta } from "./graphSession";
-import { dataRev } from "./dataRevision";
+import { fullChangeKeyFlushCount } from "./changeKeys";
 import { toasts, setToasts } from "./toasts";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto, PageRead } from "./types";
@@ -2631,13 +2631,16 @@ describe("save engine (persistence)", () => {
     expect(pageByName("Test")).toBeUndefined();
   });
 
-  it("bumps dataRev on delete so live queries drop the deleted page's rows", async () => {
+  it("leaves live readers to the delete's precise publication summary, with no full refresh", async () => {
     load([blk("x")]);
-    const before = dataRev();
-    // Necessity: without the bumpDataRev() in deletePage, open {{query}} panels keep
-    // their stale cached result and the deleted page's rows linger.
+    const [full, inventory] = [fullChangeKeyFlushCount(), pageInventoryRev()];
+    // D-20261102-PERF row 3: the delete's publication names the mounted
+    // queries that showed the page (the store's change summary, proven by
+    // `page_lifecycle_summary.rs`); a forced full refresh would rerun every
+    // other reader too. The name inventory still moves at once.
     expect(await deletePage("Test", "page")).toBe(true);
-    expect(dataRev()).toBeGreaterThan(before);
+    expect(fullChangeKeyFlushCount()).toBe(full);
+    expect(pageInventoryRev()).toBeGreaterThan(inventory);
   });
 });
 

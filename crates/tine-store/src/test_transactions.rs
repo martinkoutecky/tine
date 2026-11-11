@@ -55,6 +55,8 @@ mod linkable_page_property_refs;
 mod loading_own_save;
 #[path = "../tests/og_create_unreadable_owner.rs"]
 mod og_create_unreadable_owner;
+#[path = "../tests/page_lifecycle_summary.rs"]
+mod page_lifecycle_summary;
 #[path = "../tests/store_read.rs"]
 mod store_read;
 #[path = "../tests/store_save.rs"]
