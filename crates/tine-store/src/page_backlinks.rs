@@ -237,6 +237,29 @@ mod tests {
         assert!(!store.whole_graph().unwrap().graph.day_support_built());
     }
 
+    #[test]
+    fn a_property_key_page_lists_the_block_whose_key_folds_to_another_title() {
+        // `done-at::` folds to `Done At`; opening `done-at` has no exact
+        // membership panel and must still list the block (review r1).
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        std::fs::write(root.path().join("pages/Done At.md"), "- done at\n").unwrap();
+        std::fs::write(
+            root.path().join("pages/Source.md"),
+            "- task\n  done-at:: today\n",
+        )
+        .unwrap();
+        let store = Arc::new(
+            crate::Store::open(root.path(), Default::default())
+                .unwrap()
+                .0,
+        );
+        store.stop_watcher_for_tests();
+        let view = store.whole_graph().unwrap();
+        let groups = view.backlinks("done-at").unwrap();
+        assert_eq!(groups.iter().map(|g| g.blocks.len()).sum::<usize>(), 1);
+    }
+
     fn assert_membership_fresh(store: &crate::Store) {
         let view = store.whole_graph().unwrap();
         assert_eq!(

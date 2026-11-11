@@ -970,6 +970,9 @@ fn collect_reference_occurrences_bounded(
     let membership =
         (kind == ReferenceKind::Explicit).then(|| graph.scan_all_backlink_memberships());
     let panel = membership.and_then(|answer| answer.selection(names_norm, self_page));
+    // A spelling with no exact panel (a property key folding to another title)
+    // takes the parser-evidence path rather than an empty selection.
+    let membership = membership.filter(|_| panel.is_some());
     let candidate_pages = if membership.is_some() {
         graph.explicit_panel_candidate_pages(panel)
     } else {
