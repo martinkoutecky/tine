@@ -25,6 +25,9 @@ const body = `- Passage 1 worth reviewing\n${Array.from({ length: 90 }, (_, n) =
   ids.slice(0, 2).map((id, i) => `  - Thread ${i + 1}\n    id:: ${id}\n    tine.quote:: Passage 1\n`).join("") +
   `- Passage 3 worth reviewing\n  - Thread 3\n    id:: ${ids[2]}\n    tine.quote:: Passage 3\n`;
 const file = path.join(graph, "pages/Review.md"); fs.writeFileSync(file, body);
+const messageFile = path.join(graph, "pages/Messages.md");
+const messageBody = "- A passage\n  - First message\n    tine.quote:: passage\n    tine.date:: 2026-11-07T13:37Z\n    - Evidence\n      - Nested evidence\n    - Second message\n      tine.date:: 2026-11-07T13:38Z\n      - Reply evidence\n  - Another thread\n    tine.quote:: A\n    tine.date:: 2026-11-07T13:39Z\n";
+fs.writeFileSync(messageFile, messageBody);
 fs.writeFileSync(path.join(graph, "pages/Other page.md"), "- Another page\n");
 const fixture = accountHomeFixture(out, out, { ...process.env, TINE_GRAPH: graph, HOME: path.join(out, "home"),
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), XDG_STATE_HOME: path.join(out, "state"),
@@ -93,6 +96,7 @@ try {
     }), "The shared passage fixture must be taller than its viewport");
     if (display === "popup") {
       await browser.$('button[title^="Settings"]').click();
+      await browser.$(".settings-search-input").waitForExist();
       await browser.$(".settings-search-input").setValue("Comments");
       await browser.$('[data-setting-target="settings-comments-display"]').click();
       await browser.$('[data-setting-id="settings-comments-display"] select').selectByAttribute("value", "popup");
@@ -113,6 +117,36 @@ try {
     // A fresh scope resets the review cursor for the next display.
     await openPageByName(browser, "Other page");
   }
+  stage = "message outlines and stored collapse";
+  await openPageByName(browser, "Messages");
+  await command("Next comment");
+  await command("Next comment"); // the earlier single-word passage belongs to the other thread
+  const first = await browser.$(".comment-card"); await first.waitForExist();
+  assert.equal((await first.$$(".comment-header")).length, 2, "Body bullets are not separate messages");
+  assert.equal((await first.$$(".bullet-container")).length, 3, "Message bodies keep ordinary bullets");
+  assert.equal(fs.readFileSync(messageFile, "utf8"), messageBody, "Opening dated threads preserves bytes");
+  const folds = await first.$$(".comment-collapse"); await folds[1].click();
+  const bodyVisible = text => browser.execute(text => [...document.querySelectorAll(".block-content")].some(el => el.textContent.trim() === text), text);
+  await browser.waitUntil(async () => !await bodyVisible("Reply evidence"), { timeout: 5000 });
+  await browser.waitUntil(() => fs.readFileSync(messageFile, "utf8").includes("collapsed:: true"), { timeout: 5000 });
+  await (await first.$$(".comment-collapse"))[1].click();
+  await browser.waitUntil(() => bodyVisible("Reply evidence"), { timeout: 5000 });
+  await first.$(":scope > .comment-header .comment-collapse").click();
+  await first.$("button=1 reply").waitForExist();
+  await first.$("button=1 reply").click();
+  await browser.waitUntil(() => bodyVisible("Nested evidence"), { timeout: 5000 });
+  await browser.execute(() => {
+    const handle = document.querySelector(".comment-card > .comment-header .comment-handle");
+    const rect = handle.getBoundingClientRect();
+    handle.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: rect.left, clientY: rect.top }));
+  });
+  await browser.$("div=Collapse all comments on this block").waitForExist();
+  await browser.$("div=Collapse all comments on this block").click();
+  await browser.waitUntil(() => (fs.readFileSync(messageFile, "utf8").match(/collapsed:: true/g) ?? []).length === 2, { timeout: 5000 });
+  await keys("Control", "z");
+  await browser.waitUntil(() => fs.readFileSync(messageFile, "utf8") === messageBody, { timeout: 5000, timeoutMsg: "One undo restores both thread roots and their exact bytes" });
+  proof.outcomes.push({ messageOutlines: true, storedMessageAndThreadFolds: true, collapseAllOneUndo: true, openingWritesNothing: true });
+  execFileSync("import", ["-window", "root", path.join(out, "messages.png")], { timeout: 10000 });
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS: routed page review in margin and popup display. Artifacts: ${out}`);
 } catch (error) {

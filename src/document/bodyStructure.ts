@@ -1,7 +1,7 @@
 // DESIGN §1 / GH #891: editor behavior, with no change to the stored outline.
 // Keep this boundary below both editors, touch controls, drag and outline paste.
 import { doc, pageByName } from "./model";
-import { threadRootOf } from "./commentThreads";
+import { bodyScopeOf, threadRootOf } from "./commentThreads";
 import type { OutlineChange, OutlineVerb } from "./kernel";
 
 /** The candidate parent for Tab, omitting annotations between siblings. */
@@ -10,7 +10,7 @@ export function previousBodySibling(id: string): string | null {
   if (!n) return null;
   const siblings = n.parent === null ? pageByName(n.page)?.roots ?? [] : doc.byId[n.parent].children;
   let at = siblings.indexOf(id) - 1;
-  while (at >= 0 && threadRootOf(siblings[at]) !== null) at--;
+  while (at >= 0 && bodyScopeOf(siblings[at]) !== bodyScopeOf(id)) at--;
   return at >= 0 ? siblings[at] : null;
 }
 
@@ -20,14 +20,15 @@ export function previousBodySibling(id: string): string | null {
 export function bodyStructureVerb(verb: OutlineVerb): OutlineVerb | null {
   switch (verb.verb) {
     case "split": {
-      if (threadRootOf(verb.key) !== null) return null;
+      const owner = bodyScopeOf(verb.key);
+      if (owner === undefined) return null;
       const n = doc.byId[verb.key];
-      return { ...verb, children_visible: verb.children_visible && !!n?.children.some(id => threadRootOf(id) === null) };
+      return { ...verb, children_visible: verb.children_visible && !!n?.children.some(id => bodyScopeOf(id) === owner) };
     }
     case "merge":
-      return threadRootOf(verb.survivor) === null && threadRootOf(verb.absorbed) === null ? verb : null;
+      return bodyScopeOf(verb.survivor) !== undefined && bodyScopeOf(verb.survivor) === bodyScopeOf(verb.absorbed) ? verb : null;
     case "indent": {
-      if (verb.keys.some(id => threadRootOf(id) !== null)) return null;
+      if (verb.keys.some(id => bodyScopeOf(id) === undefined || bodyScopeOf(id) !== bodyScopeOf(verb.keys[0]))) return null;
       const n = doc.byId[verb.keys[0]];
       if (!n) return verb;
       const siblings = n.parent === null ? pageByName(n.page)?.roots ?? [] : doc.byId[n.parent].children;
@@ -38,12 +39,18 @@ export function bodyStructureVerb(verb: OutlineVerb): OutlineVerb | null {
       return { verb: "move_to", keys: verb.keys, to: { at: "last_child", key: parent } };
     }
     case "outdent": {
-      if (verb.keys.some(id => threadRootOf(id) !== null)) return null;
+      const owner = bodyScopeOf(verb.keys[0]);
+      if (verb.keys.some(id => bodyScopeOf(id) === undefined || bodyScopeOf(id) !== owner) || doc.byId[verb.keys[0]]?.parent === owner) return null;
       const parent = doc.byId[verb.keys[0]]?.parent;
-      const retain = parent ? doc.byId[parent].children.filter(id => threadRootOf(id) !== null) : [];
+      const retain = parent ? doc.byId[parent].children.filter(id => bodyScopeOf(id) !== owner) : [];
       return retain.length ? { ...verb, retain } : verb;
     }
     case "move_to": {
+      const owner = bodyScopeOf(verb.keys[0]);
+      if (owner) {
+        const target = verb.to.at === "slot" ? verb.to.parent : verb.to.key;
+        return verb.keys.every(id => bodyScopeOf(id) === owner) && target && (bodyScopeOf(target) === owner || target === owner && (verb.to.at === "last_child" || verb.to.at === "slot")) ? verb : null;
+      }
       // A selected descendant travels with its selected body ancestor, but a
       // comment captured on its own is never a drag source.
       const roots = new Set(verb.keys);
@@ -58,10 +65,10 @@ export function bodyStructureVerb(verb: OutlineVerb): OutlineVerb | null {
       return verb;
     }
     case "move_up_down":
-      return verb.keys.some(id => threadRootOf(id) !== null) ? null : verb;
+      return verb.keys.some(id => bodyScopeOf(id) === undefined || bodyScopeOf(id) !== bodyScopeOf(verb.keys[0])) ? null : verb;
     case "insert_outline": {
       const target = verb.place.at === "slot" ? verb.place.parent : verb.place.key;
-      return target && threadRootOf(target) !== null ? null : verb;
+      return target && bodyScopeOf(target) === undefined ? null : verb;
     }
     default:
       return verb;
@@ -72,6 +79,8 @@ export function bodyStructureVerb(verb: OutlineVerb): OutlineVerb | null {
  * sibling/parent-edge rule. A body nudge cannot enter an annotation either. */
 export function bodyStructureChangeAllowed(verb: OutlineVerb, change: OutlineChange): boolean {
   if (verb.verb !== "move_up_down") return true;
+  const owner = bodyScopeOf(verb.keys[0]);
+  if (owner) return change.pages.every(page => page.upserts.every(block => block.children.every(id => !verb.keys.includes(id) || block.key === owner || bodyScopeOf(block.key) === owner)));
   return change.pages.every(page => page.upserts.every(block => threadRootOf(block.key) === null
     || block.children.every(id => doc.byId[id]?.parent === block.key || threadRootOf(id) !== null)));
 }

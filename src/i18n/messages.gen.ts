@@ -305,7 +305,10 @@ export interface MessageArgs {
   "comment-block-cannot-take": {};
   "comment-block-changed": {};
   "comment-close-threads": {};
+  "comment-collapse": {};
+  "comment-collapse-all": {};
   "comment-delete": {};
+  "comment-expand": {};
   "comment-hide": {};
   "comment-margin-count": { "count": number };
   "comment-margin-draft-pending": {};
@@ -328,6 +331,7 @@ export interface MessageArgs {
   "comment-quote-changed": {};
   "comment-remove-author": {};
   "comment-reopen": {};
+  "comment-replies": { "count": number };
   "comment-reply": {};
   "comment-reply-placeholder": {};
   "comment-resolve": {};

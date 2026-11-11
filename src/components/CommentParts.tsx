@@ -68,14 +68,14 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
 
 /** Every response starts with the same author handle and top-right actions;
  * quotes are context above this row and the body always starts below it. */
-export function CommentHeader(props: { id: string; author: string | null }): JSX.Element {
+export function CommentHeader(props: { id: string; author: string | null; folded: boolean; toggleFold: () => void }): JSX.Element {
   const date = () => commentDateOf(facetsOf(docNode(props.id)?.raw ?? "", formatForBlock(props.id)).properties);
   return <div class="comment-header">
     <AuthorChip author={props.author} handleOf={props.id} />
     <Show when={date()}>{date => <time class="comment-date" dateTime={date()} title={new Intl.DateTimeFormat(activeLocale(), { dateStyle: "long", timeStyle: "short" }).format(new Date(date()))}>
       {new Intl.DateTimeFormat(activeLocale(), { dateStyle: "short", timeStyle: "short" }).format(new Date(date()))}
     </time>}</Show>
-    <CommentActions id={props.id} />
+    <CommentActions id={props.id} folded={props.folded} toggleFold={props.toggleFold} />
   </div>;
 }
 
@@ -122,9 +122,12 @@ function tintClasses(author: string | null): Record<string, boolean> {
 }
 
 /** Delete shares the first line but consumes its gesture without placing a caret. */
-export function CommentActions(props: { id: string }): JSX.Element {
-  return <Show when={blockWritable(props.id)}>
-    <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+export function CommentActions(props: { id: string; folded: boolean; toggleFold: () => void }): JSX.Element {
+  return <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+      <Show when={docNode(props.id)?.children.length}>
+        <button type="button" class="comment-collapse" onClick={e => { e.stopPropagation(); props.toggleFold(); }}>{t(props.folded ? "comment-expand" : "comment-collapse")}</button>
+      </Show>
+      <Show when={blockWritable(props.id)}>
       <Show when={threadRootOf(props.id) === props.id}>
         <button type="button" class="comment-resolve" onMouseDown={e => e.preventDefault()} onClick={e => {
           e.stopPropagation(); setThreadResolved(props.id, !threadResolved(props.id));
@@ -134,13 +137,13 @@ export function CommentActions(props: { id: string }): JSX.Element {
         e.stopPropagation();
         deleteComment(props.id);
       }}>×</button>
-    </div>
-  </Show>;
+      </Show>
+    </div>;
 }
 
 /** No document node exists while composing: abandoning an empty draft costs
  * zero writes. Once submitted it is an ordinary editable child block. */
-export function CommentComposer(props: { id: string; surface: string; card?: () => HTMLElement | null | undefined }): JSX.Element {
+export function CommentComposer(props: { id: string; surface: string; card?: () => HTMLElement | null | undefined; collapsed?: () => boolean; expand?: () => void }): JSX.Element {
   const { draft, setDraft, expanded, setExpanded } = commentDraftState(props.id, props.surface);
   // Hiding the margin would unmount this textarea and its unsent text.
   onCleanup(registerReplyDraft(() => draft(), props.id));
@@ -150,7 +153,11 @@ export function CommentComposer(props: { id: string; surface: string; card?: () 
   onMount(() => createEffect(() => {
     const held = replyFocusRequest();
     if (!held || held.id !== props.id || held.surface !== null && held.surface !== props.surface) return;
-    const writable = blockWritable(props.id);
+    // A folded thread keeps this composer (and its draft) mounted but hides the box:
+    // an explicit reply expands the fold, and this effect reruns once it is open.
+    const folded = props.collapsed?.() ?? false;
+    if (folded && held.reveal && blockWritable(props.id) && props.expand) { props.expand(); return; }
+    const writable = blockWritable(props.id) && !folded;
     if (writable) setExpanded(true);
     // Let the expanded class render and the old editor finish unmounting.
     queueMicrotask(() => {
@@ -169,7 +176,7 @@ export function CommentComposer(props: { id: string; surface: string; card?: () 
   // The first reply of a person with no name asks for one first (tine#841); the
   // draft stays in the composer while the dialog is open.
   const submit = () => { if (draft().trim()) runWithCommentName(() => { if (submitReply(props.id, draft())) cancel(); }); };
-  return <Show when={blockWritable(props.id)}>
+  return <Show when={blockWritable(props.id) && !props.collapsed?.()}>
     <div class="comment-composer" classList={{ expanded: expanded() }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       <textarea ref={input} class="comment-reply-draft" data-reply-root={props.id} rows={expanded() ? 3 : 1}
         placeholder={t("comment-reply-placeholder")} aria-label={t("comment-reply-placeholder")}

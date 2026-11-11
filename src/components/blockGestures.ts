@@ -30,7 +30,7 @@ import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
 import { rowHostOf, rowPositionOf } from "./block/embedRowHost";
-import { threadRootOf } from "../document";
+import { bodyScopeOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
@@ -47,7 +47,8 @@ export function bulletDragMoved(): boolean {
 export { dragId, dropInd };
 
 export function beginDrag(id: string, e: MouseEvent) {
-  if (threadRootOf(id) !== null) return;
+  const bodyScope = bodyScopeOf(id);
+  if (bodyScope === undefined) return;
   const binding = captureBinding(), startX = e.clientX;
   const startY = e.clientY;
   // The drag's own window: listeners and hit tests follow the pointer's document.
@@ -62,7 +63,7 @@ export function beginDrag(id: string, e: MouseEvent) {
   const track = (x: number, y: number) => {
     const el = (doc.elementFromPoint(x, y) as HTMLElement | null)?.closest(".ls-block") as HTMLElement | null;
     const tid = el?.dataset.blockId;
-    if (tid && threadRootOf(tid) === null) {
+    if (tid && bodyScopeOf(tid) === bodyScope) {
       const main = el!.querySelector(".block-main")!.getBoundingClientRect();
       const position = blockDropPosition(x, y, el!.getBoundingClientRect(), main, isRtlContext(el!));
       // A whole-block embed's root row sits where its host does: a drop beside

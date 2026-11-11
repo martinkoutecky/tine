@@ -55,3 +55,7 @@ comment-prev-thread = 上一处
 comment-next-thread = 下一处
 comment-close-threads = 关闭评论
 comment-review-position = 第 { $current } 条评论，共 { $count } 条
+comment-collapse = 折叠
+comment-expand = 展开
+comment-collapse-all = 折叠此块的所有评论
+comment-replies = { $count } 条回复

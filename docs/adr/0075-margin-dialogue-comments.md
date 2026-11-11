@@ -1,5 +1,15 @@
 # 0075. Margin dialogue: a comment is an ordinary child block with `quote::`
 
+Amendment D-20261108-MC5/MC6: a root with `tine.date` marks a thread whose
+dated blocks are messages and whose undated descendants are ordinary editable
+body outlines inside those messages. The existing block renderer supplies the
+tree, including in hover previews. Undated threads retain their flat display
+and are never migrated: old nesting cannot distinguish a reply from its body.
+Writers date only message roots. Folding uses Logseq's `collapsed:: true`,
+shared on disk and undone through the existing property path; all thread roots
+on one passage fold in a single undo. This reuses the existing date and fold
+properties rather than adding a marker, container, viewer-only fold or writer.
+
 Amendment D-20261107-MC3 §§4,9 (0.10): resolution is `tine.resolved:: true`
 on the root only, removed by Reopen or a new reply; it is never a task marker.
 Resolved cards are hidden by default, revealed greyed by a per-page count, and

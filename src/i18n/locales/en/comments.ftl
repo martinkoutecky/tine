@@ -56,3 +56,10 @@ comment-prev-thread = Previous passage
 comment-next-thread = Next passage
 comment-close-threads = Close comments
 comment-review-position = Comment { $current } of { $count }
+comment-collapse = Collapse
+comment-expand = Expand
+comment-collapse-all = Collapse all comments on this block
+comment-replies = { $count ->
+    [one] { $count } reply
+   *[other] { $count } replies
+    }

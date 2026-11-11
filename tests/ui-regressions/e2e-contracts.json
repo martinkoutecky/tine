@@ -4,7 +4,7 @@
   "scenarios": {
     "scripts/e2e-comment-review.mjs": {
       "setup":"Synthetic routed page with three distant threads; scratch HOME/XDG and account-home shim, Linux native WebKit at wide width.",
-      "contracts":[{"class":"stateful-ux","userOutcome":"Palette Next comment and Previous comment walk page threads in margin order, focus each live thread and keep its anchor in view. In a popup setting uses the same steps and visible controls across blocks. Review preserves graph bytes.","blocking":false,"authority":"D-20261109-MC9; GH #891 c13; UI-MC9-REVIEW"}],
+      "contracts":[{"class":"stateful-ux","userOutcome":"Palette Next comment and Previous comment walk page threads in margin order, focus each live thread and keep its anchor in view. In a popup setting uses the same steps and visible controls across blocks. Review preserves graph bytes.","blocking":false,"authority":"D-20261109-MC9; GH #891 c13; UI-MC9-REVIEW"},{"class":"stateful-ux","userOutcome":"Dated messages contain ordinary body bullets. Opening leaves files unchanged; message and thread folds persist through collapsed:: true, and collapsing all passage threads is restored byte-for-byte by one undo.","blocking":false,"authority":"D-20261108-MC5/MC6; UI-MC5-MESSAGES; UI-MC5-COLLAPSE; GH #891"}],
       "acceptableVariations":["Card and popup geometry, typography and theme may vary while the selected passage stays in view."],
       "nonRequirements":["No Windows/macOS/iOS/Android runtime certification or release burn-in."],
       "stability":"burn-in"

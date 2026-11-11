@@ -1,6 +1,6 @@
 # Margin comment interaction
 
-Authority: D-20261107-MC3, design §§4–7 and 9; D-20261108-MC4, MC7, MC8; internal IDs
+Authority: D-20261107-MC3, design §§2,4–7 and 9; D-20261108-MC4, MC5, MC6, MC7, MC8; internal IDs
 UI-MC010-KEYBOARD, UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE,
 UI-MC010-DATES, UI-MC010-MEDIUM, UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY; GH #891 review
 findings 1 and 2.
@@ -151,11 +151,36 @@ open-thread chip; closed roots never contribute markers or highlights. Secondary
 Show/Hide comments also removes the resolved entry and any open compact view.
 
 New comments and replies carry `tine.date:: 2026-11-07T13:37Z`: UTC, minute
-precision, written once at creation from `appNow("instant")` (without the local
-calendar's zone-skew correction). Edits retain it byte for byte. A quiet
+precision, written once at creation. The window uses `appNow("instant")`
+(without the local calendar's zone-skew correction); the CLI uses the UTC
+system clock. Edits retain it byte for byte. A quiet
 localized date appears in each message header; missing or invalid dates show
 nothing. Dates never change file order or passage grouping. Ordinary blocks
 receive no date. All `tine.*` rows stay hidden in comment and reply editors.
+
+A root carrying `tine.date` opts its thread into message outlines: dated blocks
+are messages, in file pre-order, and undated descendants form the nearest
+ancestor message's ordinary editable bullet tree. The shared `Block` renderer
+supplies bullets, nesting, references and editing, as in hover previews. Only
+messages have comment headers and actions. Dates mark messages by property
+presence; an invalid date still marks a message but displays no date. Threads
+whose root has no date retain the flat legacy presentation, including replies
+with dates. Opening either shape never rewrites it. Reply and in-thread Comment
+date only their newly created message; CLI `add --under` inside a thread dates
+the inserted fragment's roots, preserving its undated body descendants.
+
+`collapsed:: true` (Org `:collapsed: true`) folds a thread root to its quote,
+first displayed message line and **N replies**, or folds a message's body tree.
+Expand restores it. Collapse controls use the ordinary property writer and
+undo. The block menu, also reachable from a comment's author handle in the
+margin, offers **Collapse all comments on this block**: it folds all thread
+roots on that passage in one document transaction and undo step. Folds travel
+with the graph and are read by Logseq. Collapsed bodies mount no hidden rows.
+The root's message enumeration is O(thread blocks), with zero I/O or IPC;
+ordinary rows retain their existing owner and render budgets.
+Arrow navigation uses that message order, visiting each message's visible body
+before the next message, even when a reply is nested by hand under a body block.
+Folding a body does not hide an independent dated message in the flat thread.
 
 These properties use the ordinary Markdown property / Org drawer writer and
 the existing whole-file guarded save, with no new file or transport. With LF

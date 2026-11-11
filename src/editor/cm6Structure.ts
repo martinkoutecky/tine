@@ -7,7 +7,7 @@ import {
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
-  bodyNeighbor, threadRootOf, type PendingEdit,
+  bodyNeighbor, type PendingEdit,
 } from "../document";
 import { captureEditIntent, editingId, endEdit, startEditing, type EditorSelection as CaretSelection } from "../editorController";
 import { navigateJournalDown } from "./journalNavigation";
@@ -19,6 +19,7 @@ import { msg } from "../i18n";
 import { autoPairing, documentMode, docModeEnterForNewBlock } from "../ui";
 import { backspacePairEdit } from "./autopair";
 import { commentKey } from "./commentKeys";
+import { bodyScopeOf } from "../document";
 import { detectMacro } from "../components/Rendered";
 import { listLineAt } from "../components/blockParts";
 import { type CollapseSurfaceApi } from "../components/Block";
@@ -253,7 +254,7 @@ export function cm6Structure(ctx: StructureContext) {
       && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return false;
     if (plain && e.key === "Escape") { selectBlock(position().id, position().scope); return true; }
     if (plain && s.empty && e.key === "Backspace") {
-      if (ctx.code() && raw === "" && !node(ctx.id).children.length && threadRootOf(ctx.id) === null) {
+      if (ctx.code() && raw === "" && !node(ctx.id).children.length && bodyScopeOf(ctx.id) !== undefined) {
         const n = node(ctx.id);
         const adjacent = [bodyNeighbor(ctx.id, -1, structuralScope), bodyNeighbor(ctx.id, 1, structuralScope)].find(id => id && node(id)?.page === n.page);
         if (adjacent) { deleteBlock(ctx.id); startEditing(adjacent, 0, null, editSurface()); }
@@ -272,7 +273,7 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && s.empty && e.key === "Backspace" && s.head === 0) {
-      if (ctx.code() || ctx.calc() || threadRootOf(ctx.id) !== null) return true;
+      if (ctx.code() || ctx.calc() || bodyScopeOf(ctx.id) === undefined) return true;
       if (calcSource(raw) !== null) return false;
       if (removeOwnNumberedList(ctx.id)) {
         v.dispatch({ selection: { anchor: 0 } });
@@ -285,7 +286,7 @@ export function cm6Structure(ctx: StructureContext) {
       }
     }
     if (plain && s.empty && e.key === "Delete" && s.head === raw.length) {
-      if (ctx.code() || ctx.calc() || threadRootOf(ctx.id) !== null) return true;
+      if (ctx.code() || ctx.calc() || bodyScopeOf(ctx.id) === undefined) return true;
       if (calcSource(raw) !== null) return false;
       const next = bodyNeighbor(ctx.id, 1, structuralScope), nextRaw = next ? node(next)?.raw ?? "" : "";
       if (next && !isAnnotationBlock(nextRaw, ctx.format) && calcSource(nextRaw) === null && mergeWithNext(ctx.id, structuralScope, editSurface())) {

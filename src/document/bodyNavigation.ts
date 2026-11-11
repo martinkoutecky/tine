@@ -1,8 +1,11 @@
 import { visibleNeighbor, type OutlineScope } from "./tree";
-import { threadRootOf } from "./commentThreads";
+import { doc } from "./model";
+import { bodyScopeOf } from "./commentThreads";
 
-/** Body outline order omits whole annotation threads, independent of whether
- * they are drawn inline, in a margin, hidden, or on a secondary surface. */
+/** Main-body order omits whole threads on every surface. A message body's
+ * merge/navigation order stays inside that message's visible outline. */
 export function bodyNeighbor(id: string, direction: -1 | 1, scope: OutlineScope | null = null): string | null {
-  return visibleNeighbor(id, direction, scope, at => threadRootOf(at) === null);
+  const owner = bodyScopeOf(id);
+  if (owner) scope = { ...scope, roots: doc.byId[owner].children };
+  return owner === undefined ? null : visibleNeighbor(id, direction, scope, at => bodyScopeOf(at) === owner);
 }
