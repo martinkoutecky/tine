@@ -556,12 +556,12 @@ export function PageView(): JSX.Element {
           // volume, and a route can guess the wrong kind (GH #863: whether a file
           // is a journal day is the store's answer for its path). Adopt the file's
           // spelling and kind in tabs, Recent, and the route before loading it.
-          if (routeAdoptsRead(r, dto) && r.path && dto?.id) {
-            const from = { name: r.name, pageKind: r.pageKind, path: r.path };
+          if (dto?.id && routeAdoptsRead(r, dto, r.path ?? loadedPath)) {
+            const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
             renamePageInNavigation(from, to);
             followChangedIdentity(from, to);
-            router.rewritePageTarget(from, to);
+            if (r.path) router.rewritePageTarget(from, to); else rewritePageTargetAcrossPanes(from, to);
             return;
           }
           if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name

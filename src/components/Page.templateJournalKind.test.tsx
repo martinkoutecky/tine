@@ -88,3 +88,18 @@ it("a route that guessed the wrong kind for a file opens it as the file's kind",
     expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: file.name, pageKind: "journal", path });
   } finally { dispose(); }
 });
+
+it("a pathless route that remembered a loaded journal as a page opens it as a journal", async () => {
+  const path = "journals/2026_01_03.md";
+  const file: PageRead = { name: "2026-01-03", kind: "journal", title: "2026-01-03", id: path, rev: "disk-revision",
+    pre_block: null, blocks: [{ id: "held-root", raw: "Held day body", collapsed: false, children: [] }] };
+  loadFeed([file]);
+  vi.spyOn(backend(), "getPageByPath").mockImplementation(async p => p === path ? file : null);
+  mainPaneRouter.openPageTarget({ name: file.name, pageKind: "page" });
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <PageView />, root);
+  try {
+    await vi.waitFor(() => expect(root.textContent).toContain("Held day body"));
+    expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: file.name, pageKind: "journal", path });
+  } finally { dispose(); }
+});
