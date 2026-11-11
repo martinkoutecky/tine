@@ -280,3 +280,41 @@ fn tag_availability_promotes_active_twins_and_publishes_only_membership_changes(
     check(&held, &[("Old", true), ("New", false)]);
     store.close();
 }
+
+#[test]
+fn spelling_patch_collects_each_document_once_however_many_references_it_holds() {
+    let mut counts = Vec::new();
+    for refs in [100, 200] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        let body: String = (0..refs).map(|n| format!("- [[T{n}]]\n")).collect();
+        write(root.path(), "pages/A.md", &body);
+        write(root.path(), "pages/B.md", "- [[T0]] [[T1]]\n");
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let held = store.whole_graph().unwrap();
+        let mut pages = (*held.graph.pages).clone();
+        let slot = *pages.positions.get("pages/A.md").unwrap();
+        let entry = pages.get(slot).unwrap().0.clone();
+        let edited = format!("{body}- [[Extra]]\n");
+        pages.set(slot, (entry, Arc::new(tine_core::doc::parse(&edited))));
+        crate::model::referenced_names::take_document_collections();
+        let patched = ReadSnapshot::capture_rows(
+            Arc::new(pages),
+            2,
+            Arc::clone(&held.graph.observed_mtimes),
+            Arc::clone(&held.graph.completion_name_keys),
+            held.graph.config.clone(),
+            Arc::clone(&held.graph.list),
+            Some(&held.graph),
+            &["pages/A.md".into()],
+        );
+        counts.push(crate::model::referenced_names::take_document_collections());
+        assert!(patched.tag_table_available("Extra"));
+        assert!(patched.tag_table_available("T199") == (refs == 200));
+        store.close();
+    }
+    // One edit collects its changed page before and after, plus each other
+    // least referrer at most once: independent of the page's reference count.
+    assert_eq!(counts[0], counts[1], "collections per edit: {counts:?}");
+    assert!(counts[0] <= 3, "collections per edit: {counts:?}");
+}

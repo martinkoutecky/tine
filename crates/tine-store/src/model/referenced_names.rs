@@ -232,6 +232,19 @@ impl ReferencedNameTable {
 #[cfg(test)]
 thread_local! {
     static NAME_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DOCUMENT_COLLECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Every whole-document name collection the spelling owner performs.
+fn collect(doc: &Document, config: &tine_core::config::Config) -> Vec<String> {
+    #[cfg(test)]
+    DOCUMENT_COLLECTIONS.with(|count| count.set(count.get() + 1));
+    super::collect_document_referenced_names(doc, config)
+}
+
+#[cfg(test)]
+pub(crate) fn take_document_collections() -> usize {
+    DOCUMENT_COLLECTIONS.with(|count| count.replace(0))
 }
 
 #[cfg(test)]
@@ -304,14 +317,37 @@ impl ReadSnapshot {
                 let names = |graph: &Self, path: &String| {
                     let slot = *graph.pages.positions.get(path)?;
                     let (_, doc) = graph.pages.get(slot)?;
-                    let mut names = super::collect_document_referenced_names(doc, graph.config());
-                    names.sort_unstable();
-                    Some((slot, names))
+                    Some((slot, collect(doc, graph.config())))
                 };
-                let changes: Vec<_> = paths
+                // Each page's own first spelling per key, in document order:
+                // seeded from the changed pages already collected, and filled
+                // at most once for any other least referrer (one collection
+                // per page, not per dirty key).
+                let first_spellings = |names: &[String]| {
+                    let mut first = std::collections::HashMap::new();
+                    for name in names {
+                        first
+                            .entry(tine_core::refs::page_key(name))
+                            .or_insert_with(|| name.clone());
+                    }
+                    first
+                };
+                let mut changes: Vec<_> = paths
                     .iter()
                     .map(|path| (names(old, path), names(self, path)))
                     .collect();
+                let spellings = std::cell::RefCell::new(
+                    changes
+                        .iter()
+                        .filter_map(|(_, after)| after.as_ref())
+                        .map(|(slot, names)| (*slot, first_spellings(names)))
+                        .collect::<std::collections::HashMap<_, _>>(),
+                );
+                for (before, after) in &mut changes {
+                    for (_, names) in before.iter_mut().chain(after.iter_mut()) {
+                        names.sort_unstable();
+                    }
+                }
                 ReferencedNameTable::patched_with_spelling(
                     table,
                     changes.iter().map(|(before, after)| {
@@ -325,19 +361,20 @@ impl ReadSnapshot {
                         )
                     }),
                     |slot, key| {
-                        let (_, doc) = self.pages.get(slot)?;
-                        super::collect_document_referenced_names(doc, self.config())
-                            .into_iter()
-                            .find(|name| tine_core::refs::page_key(name) == key)
+                        let mut spellings = spellings.borrow_mut();
+                        if !spellings.contains_key(&slot) {
+                            let (_, doc) = self.pages.get(slot)?;
+                            spellings.insert(slot, first_spellings(&collect(doc, self.config())));
+                        }
+                        spellings.get(&slot)?.get(key).cloned()
                     },
                 )
             } else {
-                ReferencedNameTable::from_rows(self.pages.slots().map(|(slot, (_, doc))| {
-                    (
-                        slot,
-                        super::collect_document_referenced_names(doc, self.config()),
-                    )
-                }))
+                ReferencedNameTable::from_rows(
+                    self.pages
+                        .slots()
+                        .map(|(slot, (_, doc))| (slot, collect(doc, self.config()))),
+                )
             }
         });
     }
