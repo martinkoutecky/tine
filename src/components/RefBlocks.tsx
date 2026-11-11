@@ -28,6 +28,7 @@ import { isElementNode } from "../windowRealm";
 import { CalGlyph } from "./blockParts";
 import { blockDirAttr } from "../render/textDirection";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
+import { storedAuthorOf } from "../comments";
 import { annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { visibleBody } from "../render/block";
@@ -206,6 +207,7 @@ function RefBlock(props: {
       dir={noteLayoutDirAttr()}
       data-block-id={props.block.id}
       data-block-ref={blockDtoExternalId(props.block)}
+      data-author={storedAuthorOf(facets().properties) ?? undefined}
       classList={{ "page-property-reference": !!props.block.page_property, collapsed: folded() }}
     >
       <div class="block-main" classList={{ [`bullet-h${headingLevel()}`]: headingLevel() != null }}>
