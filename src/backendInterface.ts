@@ -318,6 +318,8 @@ export interface Backend {
   setTimetrackingEnabled(enabled: boolean): Promise<void>;
   /** Persist `:ui/show-brackets?` (default on when absent). */
   setShowBrackets(enabled: boolean): Promise<void>;
+  /** Persist `:ui/enable-tooltip?` (previews on when absent). */
+  setEnableTooltip(enabled: boolean): Promise<void>;
   /** Persist document-mode Enter's structural escape hatch to config.edn. */
   setDocModeEnterForNewBlock(enabled: boolean): Promise<void>;
   /** Persist `:editor/logical-outdenting?` (default off when absent). */

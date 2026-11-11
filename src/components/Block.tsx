@@ -10,7 +10,7 @@ import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
-import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, untrack, onMount, onCleanup, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { editorCompletions, propertyNameInputCaret } from "../editor/editorCompletions";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardPayload, normalizeClipboardText, peekClipboardPayload, readClipboardText } from "../clipboard";
@@ -131,13 +131,13 @@ import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginM
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
-import { Cm6BlockEditor } from "./Cm6BlockEditor";
+import { EditorGate } from "./EditorGate";
+import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
 import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
-import { cm6EditorEnabled, cm6EditorLoading } from "../editor/cm6Setting";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
 
 // (The rendered-property hidden predicate is render/block.ts isRenderHiddenProp,
@@ -465,25 +465,12 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
 
-/** The longest an editor waits for the stored editor choice before it mounts with
- * the current value; a backend that never answers must not stop all editing. */
-const CM6_SETTING_WAIT_MS = 5000;
-
-/** The editor engine is chosen once, as an editor mounts. While the stored
- * choice is still being read, wait for it (a block clicked right after launch on
- * a big graph, or while another window's change is being re-read), so the first
- * edit gets the engine Settings shows. Already mounted editors are never swapped. */
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
-  if (!untrack(cm6EditorLoading)) return <EditorEngine {...props} />;
-  const [ready, setReady] = createSignal(false);
-  const timer = setTimeout(() => setReady(true), CM6_SETTING_WAIT_MS);
-  onCleanup(() => clearTimeout(timer));
-  createEffect(() => { if (!cm6EditorLoading()) setReady(true); });
-  return <Show when={ready()}><EditorEngine {...props} /></Show>;
+  return <EditorGate {...props} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)}
+    classic={() => <EditorEngine {...props} />} />;
 }
 
 function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
-  if (cm6EditorEnabled()) return <Cm6BlockEditor id={props.id} surface={useContext(SurfaceContext)} scope={useContext(OutlineScopeContext)} propertySession={props.propertySession} />;
   const propertySession = props.propertySession ?? propertyEditorSession();
   propertySession.begin();
   // Non-null only inside the quick-capture window (see CaptureCtx).

@@ -331,6 +331,11 @@ struct RenameOptions {
 
 #[derive(Debug, Subcommand)]
 enum PageAction {
+    /// Show the focused page name and Tine links without changing notes.
+    Current {
+        #[command(flatten)]
+        read: ReadArgs,
+    },
     /// Create an empty page; refuse an existing page or alias.
     Create {
         name: String,
@@ -714,6 +719,9 @@ fn read_command(command: Command) -> i32 {
     match command {
         Command::Status(args) => read_verb(args.target(), "owner.status", json!(null)),
         Command::Page {
+            action: PageAction::Current { read },
+        } => read_verb(read.target(), "page.current", json!(null)),
+        Command::Page {
             action: PageAction::Show { name, read: args },
         } => read_verb(args.target(), "page.show", json!({ "name": name })),
         Command::Block {
@@ -964,6 +972,13 @@ mod tests {
         assert!(!edit_author_is_a_flag([
             "tine", "add", "--page", "P", "--author", "Ada", "x"
         ]));
+    }
+
+    #[test]
+    fn page_current_parses_without_a_page_name() {
+        Cli::try_parse_from(["tine", "page", "current"]).unwrap();
+        Cli::try_parse_from(["tine", "page", "current", "--graph", "/g", "--json"]).unwrap();
+        assert!(Cli::try_parse_from(["tine", "page", "current", "extra"]).is_err());
     }
 
     #[test]
@@ -1384,6 +1399,10 @@ mod tests {
             ("tine-serve.1", include_str!("../../docs/tine-serve.1")),
             ("tine-status.1", include_str!("../../docs/tine-status.1")),
             ("tine-page.1", include_str!("../../docs/tine-page.1")),
+            (
+                "tine-page-current.1",
+                include_str!("../../docs/tine-page-current.1"),
+            ),
             (
                 "tine-page-create.1",
                 include_str!("../../docs/tine-page-create.1"),

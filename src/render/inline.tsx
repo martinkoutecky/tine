@@ -1,6 +1,6 @@
 import { msg, t } from "../i18n";
 import { isRtlContext } from "./textDirection";
-import { hoverPreviewDelayMs } from "../hoverPreviewSettings";
+import { hoverPreviewDelayMs, previewsEnabled } from "../hoverPreviewSettings";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
@@ -284,8 +284,13 @@ function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefine
 const PEEK_CLOSE_MS = 100;
 const PEEK_BLOCK_CAP = 50;
 
-function createPeekBridge(disabled: () => boolean) {
-  const [open, setOpen] = createSignal(false);
+// `blocked`: this reference never previews (inside a preview, a Guide page). The
+// graph's `:ui/enable-tooltip?` switch (GH #824) is the one other condition: off,
+// nothing arms or fetches, on hover or by long press.
+function createPeekBridge(blocked: () => boolean) {
+  const disabled = () => blocked() || !previewsEnabled();
+  const [shown, setOpen] = createSignal(false);
+  const open = () => shown() && !disabled();
   let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
@@ -338,16 +343,21 @@ function createPeekBridge(disabled: () => boolean) {
     clearClose();
     setOpen(false);
   };
+  // Disabling retires the preview, its hold and its timers, so enabling again opens nothing by itself.
+  createEffect(() => { if (disabled()) dismiss(); });
   onCleanup(() => {
     clearOpen();
     clearClose();
   });
+  /** Open the preview for a deliberate touch hold; false when this reference
+   *  does not preview, so the caller gives the hold its context menu. */
   const hold = () => {
-    if (disabled()) return;
+    if (disabled()) return false;
     clearOpen();
     clearClose();
     touchOpen = true;
     setOpen(true);
+    return true;
   };
   return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold, setHeld };
 }
@@ -402,7 +412,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
   // GH #655: native mobile holds open the shared page preview. Reuse the
   // deliberate-hold recognizer and its compatibility-click ownership; desktop
-  // right-click and touch on desktop still use the page context menu.
+  // right-click and touch on desktop still use the page context menu, and so
+  // does a hold on a reference that does not preview (GH #824: switch off).
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
   const [previewPage, setPreviewPage] = createSignal<string>();
@@ -450,8 +461,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (touchPrimary() && isLongPressContextMenu(e)) peek.hold();
-          else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
+          if (touchPrimary() && isLongPressContextMenu(e) && peek.hold()) return;
+          if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
         <Show when={icon()}>

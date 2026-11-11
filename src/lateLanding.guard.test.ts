@@ -122,7 +122,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   // The page host's writes: each takes or drops page text, a delete, or makes a save due.
   "pageSubmit", "pageMove", "pageDiscard", "pageClose", "pageDelete", "pageSaveNow",
   "setGuideAnnounced", "renamePage", "followPageIdentity", "publishQuery", "publishLive", "setFavorites",
-  "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setDocModeEnterForNewBlock",
+  "setPreferredWorkflow", "setDefaultHome", "setTimetrackingEnabled", "setShowBrackets", "setEnableTooltip", "setDocModeEnterForNewBlock",
   "setLogicalOutdenting", "setPreferredFormat", "setJournalTitleFormat", "setDefaultJournalTemplate",
   "setStartOfWeek", "editAssetExternal", "editCustomCss", "editGlobalCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",

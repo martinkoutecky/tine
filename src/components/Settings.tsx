@@ -35,10 +35,10 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
-import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds } from "../hoverPreviewSettings";
+import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds, previewsEnabled, changePreviewsEnabled } from "../hoverPreviewSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
 import { cm6EditorAvailable, cm6EditorEnabled, setCm6EditorEnabled } from "../editor/cm6Setting";
@@ -636,6 +636,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+      <Field setting={settings["settings-show-workspaces"]}>
+        <Toggle on={showWorkspaces()} onClick={() => setShowWorkspaces(!showWorkspaces())} />
+      </Field>
       <Field
         setting={settings["settings-ui-right-to-left-note-layout"]}
 
@@ -794,6 +797,9 @@ function EditorTab(props: { search: string }): JSX.Element {
       </Show>
 
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
+        <Field setting={settings["settings-reference-previews"]}>
+          <Toggle on={previewsEnabled()} onClick={() => changePreviewsEnabled(!previewsEnabled())} />
+        </Field>
         <Field setting={settings["settings-hover-preview-delay"]}>
           <input
             type="number" min="0" step="any"

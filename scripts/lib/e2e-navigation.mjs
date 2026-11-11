@@ -14,14 +14,27 @@ const nfc = (value) => (value ?? "").trim().normalize("NFC");
 
 /** Use the same visible Journals navigation action as a user. */
 export async function openJournals(browser) {
-  const clicked = await browser.execute(() => {
+  const execute = callback => browser.evaluate ? browser.evaluate(callback) : browser.execute(callback);
+  await execute(() => {
+    if (!document.querySelector(".nav-item")) document.querySelector('.icon-btn[title^="Toggle sidebar"]')?.click();
+  });
+  const navigationReady = () => [...document.querySelectorAll(".nav-item")]
+    .some(element => element.textContent?.trim() === "Journals");
+  if (browser.waitForFunction) await browser.waitForFunction(navigationReady, null, { timeout: 15_000 });
+  else await browser.waitUntil(() => execute(navigationReady), { timeout: 15_000, interval: 100 });
+  const click = () => {
     const item = [...document.querySelectorAll(".nav-item")]
       .find((element) => element.textContent?.trim() === "Journals");
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
-  });
+  };
+  const clicked = await execute(click);
   if (!clicked) throw new Error("Journals navigation item is absent");
+  if (browser.waitForFunction) {
+    await browser.waitForFunction(() => document.querySelectorAll(".page-section").length > 0, null, { timeout: 15_000 });
+    return;
+  }
   await browser.waitUntil(async () => (await browser.$$(".page-section")).length > 0, {
     timeout: 15_000, interval: 100, timeoutMsg: "Journals page did not render",
   });

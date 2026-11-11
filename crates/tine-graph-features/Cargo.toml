@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+doctest = false
+
 [features]
 # Test helpers over tine-store's test-faults surface (for example
 # `pages::rename_page_expected`); never enabled by a production build.

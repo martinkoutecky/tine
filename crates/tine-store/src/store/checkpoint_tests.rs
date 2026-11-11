@@ -755,6 +755,10 @@ fn a_served_checkpoint_is_readable_before_ready_and_destructive_reads_wait() {
     let rev = waiter.join().unwrap().unwrap();
     assert!(rev > view.rev());
     assert!(matches!(store.is_graph_ready(), Ok(true)));
+    let launch = store.diagnostics()["launch"].clone();
+    assert_eq!(launch["status"], "ready");
+    assert!(launch["readyMs"].is_number());
+    assert!(launch["publishMs"].is_number());
 }
 
 fn rewrite_header(cp: &Path, edit: impl FnOnce(&mut Header)) {
@@ -1313,7 +1317,7 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 42] = [
+    let cases: [(&str, String, bool); 43] = [
         (
             "default_journal_queries",
             format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
@@ -1485,6 +1489,11 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         (
             "show_brackets",
             format!("{BASE} :ui/show-brackets? false"),
+            false,
+        ),
+        (
+            "enable_tooltip",
+            format!("{BASE} :ui/enable-tooltip? false"),
             false,
         ),
         (
