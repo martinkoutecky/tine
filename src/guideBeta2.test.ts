@@ -5,7 +5,8 @@ const guide = (page: string) => readFileSync(`crates/tine-guide/src/templates/${
 
 it("the PDF Guide explains desktop outside-file opens and their read-only boundary (GH #732)", () => {
   for (const detail of ["![label](file:///absolute/path/paper.pdf)", "[[file:///absolute/path/paper.pdf][label]]",
-    "**read-only**", "without copying", "select/copy text", "iOS and Android", "open the original link again", "256 MiB"]) {
+    "**read-only**", "without copying", "select/copy text", "iOS and Android", "open the original link again", "256 MiB",
+    "![label](../papers/paper.pdf)", "[[file:../papers/paper.pdf][label]]", "from your graph folder"]) {
     expect(guide("pdf")).toContain(detail);
   }
 });
