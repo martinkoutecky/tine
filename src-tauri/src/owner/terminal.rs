@@ -107,7 +107,13 @@ pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
 /// Run one write verb. Only `busy` (the owner yielding, never admitted) and
 /// an owner that cannot be reached yet are asked again; a connection lost
 /// after the request was sent is `uncertain` (PROTOCOL §2.3), never resent.
-pub(crate) fn write_verb(target: Target, verb: &str, args: Value) -> i32 {
+pub(crate) fn write_verb(target: Target, verb: &str, mut args: Value) -> i32 {
+    // Carry the client's environment to an already-running owner. Keep explicit
+    // values intact so the owner reports a refusal through its normal path.
+    if args.get("author").is_some_and(Value::is_null) {
+        args["author"] =
+            serde_json::json!(super::write::author_name(None).expect("default author"));
+    }
     let root = match graph_root(target.graph) {
         Ok(root) => root,
         Err(message) => {

@@ -30,6 +30,28 @@ pub(crate) const REPLY_HANDLES: usize = 200;
 
 const BASE32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
+/// The name a CLI write stamps on blocks or commits: explicit name, then
+/// TINE_AUTHOR, then `agent`. Explicit blanks refuse; blank environment values
+/// count as unset. O(name bytes), with no graph reads, writes, stats or IPC.
+pub(crate) fn author_name(explicit: Option<&str>) -> Result<String, String> {
+    if let Some(name) = explicit {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(
+                "--author needs a name; `tine prop remove BLOCK tine.author` removes one".into(),
+            );
+        }
+        return Ok(name.into());
+    }
+    Ok(std::env::var("TINE_AUTHOR")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("agent")
+        .into())
+}
+
 /// A block's fingerprint (design §2): 6 lowercase base32 characters (30
 /// bits) of FNV-1a 64 over its editor text, which collapsing or a lazy
 /// `id::` does not change.
@@ -998,26 +1020,18 @@ pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 config.logbook.with_second_support,
                 now_parts(),
             );
-            block.raw =
-                match author_property.as_deref().map(str::trim) {
-                    None => transitioned,
-                    // Malformed input: an empty name would write `tine.author:: ` over
-                    // the real one, and removal has its own verb.
-                    Some("") => return Err(kernel_refused(
-                        page,
-                        "--author needs a name; `tine prop remove BLOCK tine.author` removes one"
-                            .into(),
-                    )),
-                    Some(name) => tine_core::block_regions::edit(
-                        &transitioned,
-                        org,
-                        tine_core::block_regions::Edit::Property {
-                            key: tine_core::tine_keys::AUTHOR.into(),
-                            value: Some(name.into()),
-                        },
-                    )
-                    .map_err(|e| kernel_refused(page, e))?,
-                };
+            block.raw = match author_property.as_deref() {
+                None => transitioned,
+                Some(name) => tine_core::block_regions::edit(
+                    &transitioned,
+                    org,
+                    tine_core::block_regions::Edit::Property {
+                        key: tine_core::tine_keys::AUTHOR.into(),
+                        value: Some(author_name(Some(name)).map_err(|e| kernel_refused(page, e))?),
+                    },
+                )
+                .map_err(|e| kernel_refused(page, e))?,
+            };
             Ok(Planned {
                 doc: next,
                 changed: vec![path],
@@ -1037,6 +1051,15 @@ pub(crate) fn prop_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
     } = super::verbs::parse(args)?;
     let handle = parse_handle(&text)?;
     let page = handle_page(slot, &handle)?;
+    let value = if key.eq_ignore_ascii_case(tine_core::tine_keys::AUTHOR) {
+        value
+            .as_deref()
+            .map(|name| author_name(Some(name)))
+            .transpose()
+            .map_err(|e| kernel_refused(&page, e))?
+    } else {
+        value
+    };
     write_page(
         slot,
         &page,

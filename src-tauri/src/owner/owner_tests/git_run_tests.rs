@@ -79,6 +79,42 @@ fn reason(detail: &Value) -> &str {
 }
 
 #[test]
+fn gh930_run_authors_trim_and_blank_revert_preserves_files_and_head() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    verb(
+        &slot,
+        "block.add",
+        json!({"page":"a", "content":"- attributed", "run":run, "author":"  Ada  "}),
+    )
+    .unwrap();
+    assert_eq!(head(&repo).author().name().unwrap(), "Ada");
+    let before = disk(&graph, "pages/a.md");
+    let oid = head(&repo).id();
+    for author in ["", " \t"] {
+        let (code, detail) = error_code(verb(
+            &slot,
+            "run.revert",
+            json!({"run":run, "author":author}),
+        ));
+        assert_eq!(code, "refused");
+        assert_eq!(detail["reason"], "kernel");
+        assert_eq!(disk(&graph, "pages/a.md"), before);
+        assert_eq!(head(&repo).id(), oid);
+    }
+    verb(
+        &slot,
+        "run.revert",
+        json!({"run":run, "author":"  Grace  "}),
+    )
+    .unwrap();
+    assert_eq!(head(&repo).author().name().unwrap(), "Grace");
+    assert!(!disk(&graph, "pages/a.md").contains("attributed"));
+}
+
+#[test]
 fn page_creation_lazy_id_and_page_deletion_commit_their_run_changes() {
     let graph = Graph::new();
     let slot = graph.slot();

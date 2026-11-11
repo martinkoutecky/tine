@@ -254,7 +254,7 @@ or is killed while its write stands in line does not cancel it: the write can la
 - **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
   (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
   page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
-  `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
+  `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. Names are trimmed for both block attribution and run commits. An explicit blank `--author` is refused; blank or whitespace-only `TINE_AUTHOR` counts as unset. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
 - **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
   built-ins including SRS keys, graph-configured hidden keys, editor-hidden `tine.author::`, and visible ones such as

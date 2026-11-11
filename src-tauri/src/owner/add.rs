@@ -78,11 +78,8 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         let day = journal_day(slot, args.journal.as_deref().filter(|d| !d.is_empty()))?;
         journal_write_page(slot, &graph, day)?
     };
-    let author = args
-        .author
-        .clone()
-        .or_else(|| std::env::var("TINE_AUTHOR").ok())
-        .unwrap_or_else(|| "agent".into());
+    let author = super::write::author_name(args.author.as_deref())
+        .map_err(|e| refused("kernel", Some(&page), e))?;
     write_page_with_create(
         slot,
         &page,
