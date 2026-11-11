@@ -4,6 +4,7 @@
 //! values remain separate external reference identities.
 
 mod active_pages;
+mod backlink_membership;
 mod checkpoint_state;
 mod collapse_only;
 mod completion_rank;
@@ -593,6 +594,7 @@ pub(crate) struct ReadSnapshot {
     alias_relation: std::sync::OnceLock<Arc<crate::query::AliasRelation>>,
     /// TQL's lazy link table; any edit invalidates it. Never persisted.
     link_graph: std::sync::OnceLock<Arc<crate::query::link_graph::LinkGraph>>,
+    backlink_membership: std::sync::OnceLock<backlink_membership::BacklinkMembership>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
@@ -1020,6 +1022,7 @@ impl ReadSnapshot {
             real_page_names,
             alias_relation: std::sync::OnceLock::new(),
             link_graph: std::sync::OnceLock::new(),
+            backlink_membership: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
             public_block_ref_counts: std::sync::OnceLock::new(),
@@ -1124,6 +1127,9 @@ impl ReadSnapshot {
         }
         #[cfg(feature = "test-faults")]
         crate::cost_counters::snapshot_elapsed(capture_started.elapsed());
+        if let Some(old) = old {
+            snapshot.carry_backlink_memberships(old, changed_paths);
+        }
         snapshot
     }
 
@@ -1461,13 +1467,6 @@ impl ReadSnapshot {
     pub(crate) fn config(&self) -> &Config {
         &self.config
     }
-    pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
-        Some(Arc::clone(&self.real_page_names))
-    }
-    /// The real-name table ranked by the claimant order (OW-1).
-    pub(crate) fn real_page_owners(&self) -> crate::query::RealPageOwners {
-        crate::query::RealPageOwners::new(Arc::clone(&self.real_page_names))
-    }
     /// Journal entries are named by the configured date title (page_identity's
     /// listed_entry). Probe only claimants of that name, not every journal.
     pub(crate) fn reference_journal_name(
@@ -1621,9 +1620,6 @@ impl ReadSnapshot {
             .into_iter()
             .map(|(_, alias, owner, path)| (alias, owner, path))
             .collect()
-    }
-    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
-        Arc::clone(&self.observed_mtimes)
     }
     /// The pages that may hold a block whose id (runtime or persisted) is
     /// `uuid` ignoring ASCII case and surrounding whitespace, in page order:

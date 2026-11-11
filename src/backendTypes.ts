@@ -339,6 +339,10 @@ export interface GraphAnswersChange {
    *  older host). */
   inventoryDelta?: PageInventoryDelta;
   blockRefCounts: Record<string, number>;
+  /** Final metric rows; null removes a row. A null count delta means a cold
+   *  seed raced publication and must read a current snapshot. */
+  pageModified?: [string, number | null][];
+  pageBacklinkCounts?: [string, number | null][] | null;
   /** Absent with older hosts and synthetic legacy notifications. */
   summary?: ChangeSummary;
 }

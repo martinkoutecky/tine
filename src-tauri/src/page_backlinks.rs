@@ -3,12 +3,15 @@
 
 use crate::state::GraphContext;
 
-/// Separate graph-wide count read; All pages reads it on open and after the
-/// graph is quiet (HK3), one read in flight: `(owner files by path,
-/// reference-only pages by name)` (`WholeGraph::page_backlink_counts`).
+/// Initial count snapshot: owner files by path, reference-only pages by name,
+/// and publication revision. Later answers arrive in publication deltas.
 #[tauri::command]
 pub(crate) async fn page_backlink_counts(
     state: GraphContext<'_>,
-) -> Result<(Vec<(String, usize)>, Vec<(String, usize)>), String> {
-    crate::commands::off_ui_graph_read(&state, |view| Ok(view.page_backlink_counts())).await
+) -> Result<(Vec<(String, usize)>, Vec<(String, usize)>, String), String> {
+    crate::commands::off_ui_graph_read(&state, |view| {
+        let (files, references) = view.page_backlink_counts();
+        Ok((files, references, String::from(view.rev())))
+    })
+    .await
 }

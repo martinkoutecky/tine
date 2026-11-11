@@ -519,7 +519,8 @@ impl Snapshot {
             &targets.unlinked,
             &targets.queries,
         );
-        snapshot.answers = (inventory, counts, summary, delta);
+        let metrics = snapshot.metric_changes(old, &changed_paths, &moved);
+        snapshot.answers = (inventory, counts, summary, delta, metrics);
         snapshot
     }
 }

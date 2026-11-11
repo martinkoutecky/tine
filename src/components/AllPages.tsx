@@ -1,14 +1,11 @@
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
-import { backend } from "../backend";
+import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { t } from "../i18n";
-import { graphOwner, latestOwner, readOwned } from "../owned";
-import { changed } from "../changeKeys";
+import { useAllPagesMetrics } from "../allPagesMetrics";
 import type { PaneRouter } from "../router";
 import type { PageEntry } from "../types";
 import { allPages, pageListLabels } from "../pages";
 import { entityOpening, installPageIndex, referenceOnlyPages } from "../pageIndex";
 import { hidden_from_all_pages } from "../render/wasm/lsdoc_wasm";
-import { createQuietRun } from "../querySubscription";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { openRouteInOtherPane } from "../panes";
 import { pageIcon } from "../pageIconBatch";
@@ -20,14 +17,12 @@ import {
   arrangeAllPages,
   formatPageDay,
   formatUpdated,
-  backlinkCountsByRow,
   listablePages,
   nextSort,
   visibleRange,
   type AllPagesRow,
   type AllPagesSort,
   type AllPagesSortKey,
-  type ModifiedTimes,
 } from "../allPagesList";
 
 // The full All Pages view (GH #335). OG: frontend/components/page.cljs `all-pages`
@@ -36,7 +31,7 @@ import {
 // index (`pageIndex.ts`); the Updated column is ONE `page_modified` read when the
 // view opens (times the store already holds), never a call per row. Only the
 // visible slice is in the DOM, so 10k+ pages cost what one screenful costs.
-// Backlink counts use a separate read on open and after the graph is quiet (HK3). Created and bulk deletion are
+// Metrics are shared across panes and patched by publications. Created and bulk deletion are
 // not offered here: file creation time is not reliable across platforms.
 
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
@@ -59,11 +54,8 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const [sort, setSort] = createSignal<AllPagesSort>(DEFAULT_SORT);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewport, setViewport] = createSignal(640);
-  const [modified, setModified] = createSignal<ModifiedTimes>(new Map());
-  const [backlinks, setBacklinks] = createSignal<ReadonlyMap<string, number>>(new Map());
+  const { modified, backlinks } = useAllPagesMetrics();
   let scroller: HTMLDivElement | undefined;
-  let alive = true;
-  onCleanup(() => { alive = false; });
 
   // Files less `hiddenFromAllPages`, then the reference-only pages, which OG
   // lists too (D-20261102-CM4 CM-REFONLY; built-ins hidden by
@@ -82,46 +74,6 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const range = createMemo(() => visibleRange(scrollTop(), viewport(), ALL_PAGES_ROW_HEIGHT, rows().length));
   const slice = createMemo(() => rows().slice(range().start, range().end));
 
-  const metricsScope = {};
-  // Counts are a graph-wide read: on open, then after each published change
-  // once the graph is quiet, on the idle rule graph-wide queries use (HK3,
-  // `createQuietRun`), never while typing. One read in flight; a change
-  // during it asks for one more quiet read.
-  let countPending = false;
-  let countInFlight = false;
-  const readCounts = () => {
-    if (!alive || countInFlight || !countPending) return;
-    countPending = false;
-    countInFlight = true;
-    const owner = graphOwner(() => alive);
-    void readOwned(owner, backend().pageBacklinkCounts()).then(result => {
-      if (result.kind !== "current") return;
-      setBacklinks(backlinkCountsByRow(result.value));
-    }).catch(() => {
-      // Missing counts leave dashes; updated times stay independently available.
-    }).finally(() => {
-      countInFlight = false;
-      if (countPending) requestCounts();
-    });
-  };
-  const requestCounts = createQuietRun(readCounts);
-  // This requested whole-graph table exposes modified times for every page.
-  createEffect(on(() => changed("publication"), () => {
-    countPending = true;
-    requestCounts();
-    // One read per open or graph revision, never per row or presentation edit.
-    void (async () => {
-      try {
-        const owner = latestOwner(metricsScope, "metrics", graphOwner(() => alive));
-        const result = await readOwned(owner, backend().pageModified());
-        if (result.kind === "current") {
-          setModified(new Map(result.value.modified));
-        }
-      } catch {
-        // No times: Updated shows dashes and the list still works.
-      }
-    })();
-  }));
   onMount(() => {
     const measure = () => { if (scroller?.isConnected) setViewport(scroller.clientHeight || 640); };
     measure();

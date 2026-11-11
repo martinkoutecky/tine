@@ -144,17 +144,13 @@ day answers to.
 **Counts.** All pages shows, per page, the number of blocks the page's
 unfiltered Linked References panel lists: a block once however many of the
 page's names it uses, never a block of the page's own panel or of the Favorites
-arrangement page (`WholeGraph::page_backlink_counts`). A counter of its own
-computes it (`query::page_counts`), as the link table does: every listed page
-is registered under each name the panel's resolver gives it (its alias group,
-the group's journal-date spellings); one forward walk collects every block's
-distinct reference targets by the panel's rule; a target no listed page answers
-to opens a page without a file, registered the same way; then each block counts
-once for every panel one of its targets reaches. A target is never folded
-forward to a single panel: one name can belong to several panels (an alias
-member, a chain, two declarers, a date spelling). It and the panel's own walk
-(`backlinks_bounded`) are two drivers of one rule, an I-12 exception kept equal
-by the conformance harness; it retires with one forward target map (D3). A
+arrangement page (`WholeGraph::page_backlink_counts`). The snapshot membership
+owner supplies both panel selection and cardinalities. Every listed page is
+registered under the names its panel resolver gives it. Parser-owned reference
+evidence contributes one source/block membership per reached panel, deduplicated
+across names. Source arrays and reverse panel leaves share immutable snapshots;
+publications replace changed contributions and registrations. A target can reach
+several panels (alias members, chains, multiple declarers, date spellings). A
 block embed (`{{embed ((uuid))}}`) names no page: no panel lists it, so it is
 no page without a file either.
 
@@ -184,15 +180,15 @@ unless the block also links the page; this is a declared difference.
   realistic 10k graph: 13,904 nodes, 94,121 links, about 2.3 MiB retained
   (before CM step 2 batch 5 dropped the 3,259 block-embed uuid names, so
   about 10,645 nodes now, by subtraction). A later snapshot builds its own.
-- **All pages counts** are not read from this table: the counter
-  (`query::page_counts`) is a separate walk per read, O(P + B + R + T) for T
-  distinct targets (one resolve each), whose fold table is local to the call
-  and dropped with it; nothing is kept per snapshot (D-10). All pages reads it
-  on the HK3 quiet signal (`createQuietRun`, at most one read in flight): on
-  the realistic 10k graph a read takes about 100 ms (103 ms median of 3 under
-  load; the walker it replaces about 85 ms), the same on a new snapshot after
-  an idle edit, and the reply is about 330 KB of JSON for 10,000 files and 635
-  fileless pages (CM step 2 batch 5 receipt).
+- **All pages metrics** use the Linked References membership owner, separate
+  from this page-to-page link table. One lazy frontend owner per graph shares
+  timestamp/count seeds across panes. Seeds carry publication revisions; newer
+  in-flight deltas replay after the seed, and graph switches retire old reads.
+  Later publications carry changed timestamp and final count rows (null removes
+  a row). A body edit contributes one timestamp and no changed counts, with no
+  metric IPC or graph recount. Identity changes update reached registrations and
+  sources; reference-policy/date-format changes rebuild derived memberships in
+  memory. No membership state is persisted or added to the checkpoint format.
 - **`near`** is breadth-first search over that table, one search per
   direction, never recursion: O(seeds + pages reached + links followed). The seed
   condition is evaluated once per page.
