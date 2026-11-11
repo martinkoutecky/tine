@@ -59,7 +59,8 @@ describe("file links resolve from the graph folder (GH #457)", () => {
     ["[abs](/home/me/report.odt)", "/home/me/report.odt", "md"],
     ["[drive](D:\\Users\\me\\report.odt)", "D:/Users/me/report.odt", "md"],
     ["[abs](/home/me/paper.pdf)", "/home/me/paper.pdf", "md"],
-    ["![paper](../files/paper.pdf)", "/home/user/files/paper.pdf", "md"],
+    // An embedded `![..](../x.pdf)` opens the read-only reader (externalPdfLink.test.tsx); a plain link stays here.
+    ["[paper](../files/paper.pdf)", "/home/user/files/paper.pdf", "md"],
     ["[script](../scripts/run.sh)", "/home/user/scripts/run.sh", "md"],
   ] as const) {
     it(`opens ${raw} outside the graph with the file: posture`, () => {

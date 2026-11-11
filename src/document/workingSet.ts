@@ -11,7 +11,7 @@ import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
 import { readOwned, type Owner, bindingOwner } from "../owned";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
-import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
+import { bumpPageInventoryRev } from "../graphSession";
 import { type Route } from "../routeTypes";
 import { type PageTarget } from "../routeTypes";
 import { captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext, startEditing } from "../editorController";
@@ -277,7 +277,7 @@ export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string):
   return renderEnglish(message);
 }
 
-/** Load a page into the working set if it isn't already there (used by
+/** Load a page into the working set, or replace a clean loaded copy whose revision changed (used by
  *  satellite surfaces — sidebar / query results / embeds — so they render the
  *  same live, editable nodes as the main view). Idempotent: never clobbers an
  *  already-loaded page's in-progress edits. Returns null when the slot now holds
@@ -287,11 +287,10 @@ export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string):
 export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusal | null {
   const existing = doc.pages.find((p) => p.name === dto.name);
   if (existing && (existing.id ?? "") === (dto.id ?? "")) {
-    // Same-content hydration still carries new disk authority (master
-    // ba80a151e9a2): after a Concord resolution the winner can be open with an
-    // older baseline, and the next ordinary edit would look like a new
-    // conflict. Only a clean page whose content equals the DTO adopts its rev.
-    if (dto.rev !== undefined && reloadDisposition(dto.name) === "reload" && pageContentMatches(dto, existing)) setBaseRev(dto.name, dto.rev);
+    // Same file does not mean same content: a merge can publish while this
+    // window holds only a loaded copy. Reuse the feed's guarded replacement
+    // and deferred replay; unchanged revisions need no body comparison.
+    if (dto.rev !== undefined && dto.rev !== baseRevFor(dto.name)) return upsertUnlessDirty(dto);
     return null;
   }
   // A path-pinned route may intentionally load a duplicate-day stray with the
@@ -409,9 +408,10 @@ export async function deletePage(
   }
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
-  // A page delete changes every live query / backlink result. Nudge dataRev so
-  // open {{query}} panels re-run and drop the deleted page's rows.
-  bumpDataRev();
+  // The delete's publication carries a precise change summary (its page, its
+  // blocks, the names it linked and the mounted queries it touched; full when
+  // aliases regroup), which releases those readers like any publication
+  // (D-20261102-PERF row 3). Only the name inventory is bumped here.
   bumpPageInventoryRev();
   return true;
 }

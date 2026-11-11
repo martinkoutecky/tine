@@ -4,6 +4,12 @@ Backend facets belong to loaded document nodes. Removing or replacing an owner
 releases its seed; identical text shared by loaded nodes retains one entry until
 the final owner leaves. A loaded page of any size keeps every shipped facet.
 
+Admitting a fresh read of an already loaded file compares its revision with the
+installed baseline. A changed revision replaces clean content through the shared
+reload gate, including after a duplicate-journal merge. Unsent input, host custody
+and component drafts keep their existing protections; held reads replay when safe.
+An unchanged revision keeps the loaded nodes without comparing the page body.
+
 Historical parse results have an 8 MiB aggregate charge, an 8,000 entry cap, and
 a 1 MiB single-entry admission limit. Charge includes UTF-16 source plus a
 conservative estimate of the serialized AST and regions (eight bytes per JSON

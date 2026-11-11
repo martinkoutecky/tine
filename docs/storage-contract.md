@@ -167,8 +167,12 @@ page's publication changes. While the exact path remains missing, silent reads
 probe it after 3 seconds, then double the delay after each completed probe
 (6, 12, 24, 48, then at most 60 seconds). A publication resets this backoff.
 A byte-identical replacement or a missed OS event need not publish a content
-change (GH #863). Probes preserve the visible refusal and only trigger the full
-loader when path, name and kind match. Each probe finishes before the next
+change (GH #863); every read, the probe's included, observes the file fresh,
+through its owner when held (A-H1), so the first read after a missed event
+opens the file. A file that exists but cannot be read is shown as that read
+error and retried the same way, never as missing. Probes preserve the visible
+refusal and only trigger the full loader when path, name and kind match (an
+unreadable file's first probe that reads it triggers it). Each probe finishes before the next
 delay starts; no graph scan, repeated toast or flight event is added. Opening
 the page, leaving the route/graph or retiring the surface cancels the retry.
 Every load retains the same path and identity checks; a same-name sibling is
@@ -799,15 +803,51 @@ build installs decide authority inside the installing critical section
 transition lands after it. A snapshot removal is named by its path
 and the previous snapshot's name, with no file read. A launch checkpoint's
 rows carry no owner provenance: while any page is held, the whole
-checkpoint is declined and the launch builds. `page()` answers the bytes the
-owner last published before reading anything of the file (or, before its
-first publication, parses the file without publishing it). A write computed
+checkpoint is declined and the launch builds. `page()` of a held page reads
+no bytes of the file and installs nothing from it. It compares the file's
+stamp, taken from the metadata its target check already reads, with the
+stamp of the owner's last indexed observation, using the watcher's
+Stamps-depth rule (time, size, identity, change time; a racy, missing or
+retry stamp never matches; `watch::reconcile::unchanged`). On a match it
+answers the bytes the owner last published; no file on both sides answers
+`NotFound`, which is then a fresh absence. On a mismatch it hands the key to
+the owner as a watcher notification does, due now even past a failed
+observation's backoff, releases the writer, and waits at most `OPERATION_WAIT`
+for that observation to be indexed, found unchanged, or fail. It then answers
+the owner's published bytes. An observation that finds the bytes the owner
+holds makes its read's stamp the owner's observation (`Event::Confirmed`,
+`watch::note_confirmed`), so after an own save or a same-bytes replacement one
+owner read settles the stamp and later reads ask no one. A failed observation
+answers its read error, never `NotFound`. At the bound, or once the host has
+ended, it reads again without asking. Before the owner's first publication it
+parses the file without publishing it. `page()` is never called on the host
+driver's thread (a debug assertion). A journal day the index has no file for,
+whose canonical title CM's real-name owner leaves unclaimed, first stats
+the day's other accepted file names (its spellings at every numeric width
+the parser reads, `JournalFormat::accepted_stems`, at most
+`WIDTH_RENDERINGS_MAX` width renderings per pattern, times the graph-text
+extensions) and reads a file the watcher has not observed before
+resolving the name again: an unheld one through the watcher's exact-path
+reconcile, a held one through its owner as `page()` reads it, whose read error
+is the answer (GH #863). If the name still resolves absent (an owner before
+its first publication, a file the watcher could not read, also on a later
+lookup), and CM still leaves its canonical title unclaimed, that file's own
+read or read error is the answer, and so is a stat error other than
+not-found: never an empty day. So a creating save finds
+a day delivered unobserved instead of making a duplicate. A journal masked
+by an ordinary file stays absent through this probe. A write computed
 from a page parses the bytes whose revision guards it (`Store::read` then
 `Store::page_of`; A-V4b), never `page()`. With no host running nothing is
 held and every path reads the file. Proof:
 `crates/tine-store/src/page_host/binding_tests.rs`
 `v4_a_read_or_rebuild_never_indexes_a_held_page` and
 `a_consumer_publication_names_the_bytes_it_publishes`,
+`crates/tine-store/src/page_host/binding_path_tests.rs` (GH #863: a missed
+delivery, removal, unsaved input, two surfaces, own saves, twins, a failed
+observation, racy stamps, the bound, the driver thread, an unindexed day),
+`crates/tine-store/tests/held_open_cost.rs` (I-25: an unchanged held open reads
+no file and asks no owner, also after one owner read confirmed an own save or a
+same-bytes replacement),
 `crates/tine-store/src/model/derived_tests.rs`,
 `crates/tine-store/src/model/entry_identity_tests.rs`,
 `crates/tine-store/src/model/held_index.rs` (the `review2_*` tests and the
@@ -1611,6 +1651,7 @@ by I-9's typed failure paths.
 | `root_identity::recover_orphan_drafts`, desktop owner claim (L9-01) | Concurrent honest instances or in-process retiring hosts still hold the source or target draft namespace. Desktop recovery requires the current lease and takes the old key's existing owner lock, refusing contention or lock errors. All five targets exclude bound registry slots and HostRetirement entries for both namespaces, exempting only the current target under its saved-stop barrier; iOS relocation skips while either namespace is held. Mobile sandboxing supplies cross-process exclusion only. Recovery stops the current host before renaming into an empty census. Windows open contention uses the existing app-owner error with no handover endpoint. Proof: `old_graph_id_uses_the_same_owner_lock_as_the_host`, `adoption_requires_an_empty_target_and_moves_the_whole_census`, `host_retirement.rs::l9_retiring_source_refuses_draft_recovery`, `l9_recovery_and_relocation_exclude_both_bound_and_retiring_namespaces`, five-target guards and `owner/lock.rs` exclusion tests. |
 | `tine-store::directory_durability::DirectoryCreation` (REG-M2-DIRCREATE-BOUND; M2-1/M2-2) | A sync client, file manager, disconnected/remounted volume or concurrent honest instance moves/replaces the graph root or a directory parent after planning. Before every path-based mkdir, recheck the original graph binding using its existing platform policy and the actual parent's canonical containment. Detected root detachment fails as `GraphRootMoved`; an outside parent or inspection error fails as I/O, keeping input in host/device-draft custody. The planned replacement root and outside symlink target stay untouched in the M2 regressions on identity-checking test filesystems. Retryable path-based sync debt is retained; no directory handles persist. Android's vanish-only root policy cannot detect same-path replacement. Initial capture, final check-to-create and parent rename/check-to-sync residuals remain explicit above and in A-ROOT-BOUND/A-PATH-IDENTITY. Proof: `conformance_environment_tests.rs::m2_finding_c1_replaced_root_between_directory_plan_and_finish`, `m2_finding_c2_symlink_between_directory_plan_and_finish`, the `directory_durability.rs` dircreate tests, and `binding_root_tests.rs` permission/Discard/Close regressions. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
+| `src::components::Page` pinned-route refusal (GH #863) | Sync delivery (a temporary file renamed onto the page, carrying its source's modification time), an external editor's rename, a missed or late OS notification, a same-name twin. A path-pinned route opens only the file it names. It refuses ("no longer available at that path") only when a fresh read of that path (A-H1) finds no file, or a different path, name or kind. It keeps the route, retries on the page's publication and probes. A sibling is never substituted. A file that exists but cannot be read (a disk error, a Windows sharing violation) shows that error and is retried the same way. Proof: `crates/tine-store/src/page_host/binding_path_tests.rs`, `src/components/Page.pathRecovery.test.tsx`. |
 | `tine-store::model::configured_hidden` scope (og T2, master `hidden_parse_failed_closed`) | A torn or hand-broken `config.edn` (sync-service delivery, an external-editor race or crash) leaves `:hidden` malformed or over its limits (unterminated vector, bad string escape, over 256 entries or 64 KiB, nesting over 32): graph-text scope hides all graph text instead of reading "nothing hidden", which would list, index, snapshot and export text the owner excluded. Recovery is fixing `config.edn`; the watcher's config reload restores the scope. A snapshot taken meanwhile holds no graph text and records `hidden_parse_failed_closed`, so its restore retires none (proof `crates/tine-store/tests/store_read.rs` `malformed_hidden_value_hides_all_graph_text`, `src-tauri/src/backup/restore.rs` `failed_closed_hidden_snapshot_records_scope_and_retires_nothing`). A missing `:hidden`, or a non-vector value, hides nothing (OG). |
 | `tine-store::page_host` request answers (step 3b, `Refusal`) | A submit or Discard for a page the host does not hold (`NotHeld`; a frontend or plugin defect, or a request from an earlier window state): refuse and change nothing. A Discard whose disk read fails (`ReadFailed`, SPEC-s2 §4.11 "discard failed"; a disk error), including the read of a running rename's source that the Discard would revert: refuse whole, change neither page, keep the rename's order (proof `crates/tine-store/src/page_host/command_tests.rs` `an_answer_that_did_not_take_its_request_names_why`, `a_discard_whose_partner_source_read_fails_changes_nothing`). A move whose versions are no longer current (`Stale`; newer input in this window raced it): refuse both pages. A move whose receiver draft cannot be written (`DraftFailed`; a full disk or an app-data disk error): refuse and change nothing. |
 | `tine-store::page_host` operations (step 3b P2b, `ApplyRefusal`, `PageOperation`) | An operation's draft cannot be written (a full disk or an app-data disk error): the rename, merge move or deletion answers `DraftFailed`, nothing changed on disk or in memory, no order is installed and no reply slot is left (proof `binding_order_tests.rs` `a_rename_whose_draft_fails_changes_nothing`). An operation over a running rename's pages is `Waiting` or `Busy` (above, "Rename order"). A page the rename would rewrite has unsaved input (`Unsaved`; an honest edit in this window races it) or cannot be rewritten (`Unwritable`; malformed imported Org or non-UTF-8 bytes): refuse before anything changes. |
@@ -1947,9 +1988,49 @@ page; this can over-invalidate an unrelated edit within that source, but keeps
 ancestor edits live without a graph walk or a second Markdown parser.
 
 Initial publication, rebuild, a change of a build-relevant config setting
-(`checkpoint::config_key`), alias change, create/rename/delete,
-unavailable old/new pages, unreadable-inventory changes, more than 32 edited
-pages, or a day change since the previous publication set `full`. Any other
+(`checkpoint::config_key`), alias change, a named file that is active on
+neither side (a losing case twin), unavailable old/new pages,
+unreadable-inventory changes, more than 32 edited pages, or a day change since
+the previous publication set `full`. A publication that moves a page name
+(create, delete, rename, a `title::` change, a twin promoted or demoted) is
+precise (D-20261102-PERF row 3): `ReadSnapshot::page_changes` reads both sides
+of each changed path only, and the summary treats each side as an edit from or
+to the empty document, so it names that page's own blocks, references, tags,
+properties and templates, the moved key in `pages`, and, in `linksTo`,
+`textTo` and `tagsTo`, the moved name's reference-invalidation spellings in the
+old and new graph (namespace ancestors, journal-day spellings). A moved
+journal or date-spelling name sets `days` and `journals` and renews plans
+whose reference classes have a day or that name (`Plan::reference_classes_reshaped_by`);
+a moved name with an alias neighbour on either side stays `full`. Pages
+without a file that the publication brings or removes are edits too, of the
+empty document under their fileless entry (the row a page query evaluates): a
+namespace child brings its parent and its last child removes it, a page's
+references bring reference-only pages, and a file taking or leaving a name
+removes or brings that name's fileless row. The candidates are the changed
+pages' names and references and the namespace prefixes of both, each looked up
+on both sides by `ReadSnapshot::resident_reference_only_page` (the
+`reference_only_pages` rule for one name). It reads only the resident name
+table and day support; when either side has not built them, every mounted
+reader that can list a fileless page (a page-anchored query, a search) is named
+instead. Queries are named by the usual `touches_edit` rule on those synthetic
+edits. The `full` bound (more than 32 changed paths) is decided before any of
+this reads a page, and the preparation is linear in the batch (one active-path
+set). Unrelated mounted queries do not rerun: proof
+`crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario,
+fileless parents and reference-only pages on create, rename and delete, a
+counter at N = 8 and 64, and a batch-work counter at 8, 16, 40 and 400 files)
+and steps 60–62 of the random reader oracle in
+`crates/tine-store/tests/change_summary.rs`. The frontend create, delete and rename
+paths no longer add a full refresh of their own: create and delete no longer
+call `bumpDataRev()` with no summary, and the rename refresh
+(`refreshAfterRename` in `src/graph.ts`) no longer bumps `graphEpoch`, which
+re-subscribed every mounted query and reference panel. Each bumps only
+`pageInventoryRev` (the page index) and leaves readers to the publication
+summary. Their frontend results change (`beginResultsChange`) still gates
+adoption of and actions on shown answers, but a mounted `{{query}}` reruns only
+on its own `query:<id>` key: as in the Query workspace (GH #907), the macro
+passes its subscription as the membership resource's `scopedRevision` and
+re-adopts an unchanged answer (`src/components/Macro.tsx`). Any other
 config change (favorites, templates, display settings) rebuilds no name or
 index and publishes no reader key: settings readers follow `graphMeta`
 (`docs/contracts/config-live-reload.md`). An own

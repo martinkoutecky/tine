@@ -292,6 +292,9 @@ mod journal_guide_tests {
     #[test]
     fn workspace_windows_are_documented() {
         let context = include_str!("templates/keep-context-visible.md");
+        assert!(context.contains("**Show Workspaces** in **Settings → Appearance → Advanced**"));
+        assert!(context.contains("hiding them does not delete them"));
+        assert!(context.contains("This preference belongs to this device"));
         for detail in [
             "## Open a page in its own window",
             "**Open in new window**",
@@ -413,6 +416,10 @@ mod journal_guide_tests {
             "**Hover preview delay**",
             "seconds (default **1**)",
             "Touch long-press keeps its own delay",
+            // GH #824 / D-20261110-TT: Logseq's `:ui/enable-tooltip?` as a Settings switch.
+            "**Reference previews**",
+            "never open a preview, and on a touch screen holding a page link or tag opens its menu instead",
+            "`:ui/enable-tooltip?` in `config.edn`, as in Logseq",
             "It stops at 600 pixels or half the window, whichever is taller",
             "shows code blocks, callouts, quotes and folds the way the page does",
             "Its arrow folds or unfolds the source block",
@@ -1164,6 +1171,18 @@ mod rename_guide_tests {
                 text.contains(behavior),
                 "missing journal behavior: {behavior}"
             );
+        }
+    }
+
+    #[test]
+    fn mobile_guide_says_what_a_long_press_does_with_previews_off() {
+        // GH #824: switching Reference previews off gives the hold its menu back.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        for detail in [
+            "**Long-press a page reference or tag to preview its page**",
+            "With **Reference previews** switched off (Settings → **Editor** → **Advanced**), holding a page reference or tag opens its menu instead, as a desktop right-click does",
+        ] {
+            assert!(mobile.contains(detail), "missing mobile preview guidance: {detail}");
         }
     }
 
@@ -2272,6 +2291,9 @@ mod og_20d_guide_tests {
             "tine export static GRAPH",
             "tine export live GRAPH",
             "tine doctor GRAPH",
+            "tine page current",
+            "no-current-page",
+            "block_url",
             "--output PARENT",
             "absolute path",
             "refuses to replace",

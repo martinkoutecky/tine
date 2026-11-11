@@ -47,15 +47,19 @@ const url = pathToFileURL(outside).href;
 fs.writeFileSync(outside, syntheticPdf());
 const wrong = path.join(out, "wrong.pdf"); fs.writeFileSync(wrong, "This is not a PDF.");
 const missing = path.join(out, "missing.pdf");
+// GH #732: the same outside PDF, named relative to the graph folder (the file-link resolver's root).
+const relative = `../${encodeURIComponent(path.basename(outside))}`;
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
 fs.writeFileSync(path.join(graph, "pages/Outside PDFs.md"), [
   `- ![Outside paper](${url})`,
   `- [System viewer](${url})`,
   `- ![Wrong file](${pathToFileURL(wrong).href})`,
   `- ![Missing file](${pathToFileURL(missing).href})`,
+  `- ![Relative paper](${relative})`,
+  `- ![Relative file paper](file:${relative})`,
   "",
 ].join("\n"));
-fs.writeFileSync(path.join(graph, "pages/Org outside.org"), `* [[${url}][Org outside paper]]\n`);
+fs.writeFileSync(path.join(graph, "pages/Org outside.org"), `* [[${url}][Org outside paper]]\n* [[file:${relative}][Org relative paper]]\n`);
 
 const fixture = accountHomeFixture(out, out, { ...process.env, HOME: path.join(out, "home"), TINE_GRAPH: graph,
   XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"),
@@ -168,7 +172,20 @@ try {
   await openPageByName(browser, "Org outside");
   await clickLink("Org outside paper"); await waitReady(); screenshot("org-reader");
   await browser.$(".pdf-close-btn").click();
+  stage = "relative Org link opens the same outside PDF";
+  await clickLink("Org relative paper"); await waitReady(); screenshot("org-relative-reader");
+  await browser.$(".pdf-close-btn").click();
   await openPageByName(browser, "Outside PDFs");
+  for (const label of ["Relative paper", "Relative file paper"]) {
+    stage = `relative Markdown link opens the same outside PDF: ${label}`;
+    await browser.waitUntil(() => browser.execute((name, file) => [...document.querySelectorAll("a.pdf-link")]
+      .some(link => link.textContent.includes(name) && link.title === file), label, outside),
+    { timeout: 10000, timeoutMsg: `${label} should be a reader link titled with the resolved file ${outside}` });
+    await clickLink(label); await waitReady();
+    if (label === "Relative paper") screenshot("markdown-relative-reader");
+    evidence.push({ stage, resolved: outside });
+    await browser.$(".pdf-close-btn").click();
+  }
   for (const [label, expectedPath] of [["Wrong file", wrong], ["Missing file", missing]]) {
     stage = `reader error: ${label}`;
     await clickLink(label);

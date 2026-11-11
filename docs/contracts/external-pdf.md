@@ -5,8 +5,21 @@ renderer and Org `[[file:///absolute/path.pdf][label]]` renderer open the PDF in
 ordinary companion-pane reader. This follows OG 6e7afa8eb `block.cljs`
 `show-link?` / `media-link`. Plain Markdown links keep the system opener. iOS and
 Android keep their existing outside-link behavior and cannot call this reader.
-Relative `file:` URLs and parent-relative outside links retain existing behavior;
-their built-in-viewer semantics need a separate product decision.
+
+A relative file link to a PDF opens the same reader from the same Markdown `!` or
+Org position: `file:../x.pdf`, `../x.pdf`, `..\x.pdf`, `docs/x.pdf`, `./x.pdf` and
+`file:x.pdf`. It resolves with the one file-link resolver (`relativeFileLink.ts`,
+GH #457: from the graph root, authored `..` steps kept, lexical, no filesystem
+probe), and the reader receives the resulting absolute `file://` URL
+(`relativePdfFileUrl` in `externalPdfPath.ts`), so every rule below applies to it
+unchanged. Spellings of one file share one reader tab. These keep their existing
+opener: an `assets/` link and a bare `x.pdf` (the graph-asset reader, with
+annotations), any path that resolves into the graph's `assets/` (so
+`file:assets/x.pdf` keeps the file opener), a plain Markdown link, an absolute path
+without `file://`, any non-PDF link, a link with `#`/`?` after the name, and a link
+on a graph whose root is unknown. OG 6e7afa8eb resolves a relative PDF under the graph's `assets/` after
+stripping leading dots (`resolve-asset-real-path-url`) and has no graph-root form;
+Tine keeps its #457 graph-root rule, so `../x.pdf` names the file above the graph.
 
 Rendering a link performs no file read, prefetch or thumbnail. Only clicking the
 host renderer's link supplies a one-use, binding-scoped reader source for its new
@@ -54,5 +67,6 @@ source. A plugin can propose graph text through its existing explicit edit
 capability; only a later user click on Tine's rendered link opens that file.
 
 Proof lives in `externalPdfPath.test.ts`, `externalPdfLink.test.tsx`,
+`externalPdfLink.mobile.test.tsx`, `relativeFileLink.test.tsx`,
 `PdfViewer.external.test.tsx`, `external_pdf_tests.rs`, `externalPdfBoundary.test.ts`, the unchanged
 `plugins/capabilityBoundary.test.ts`, and `scripts/e2e-external-pdf.mjs`.

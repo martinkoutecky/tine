@@ -286,6 +286,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         macros: _,
         enable_timetracking: _,
         show_brackets: _,
+        enable_tooltip: _,
         enable_journals: _,
         doc_mode_enter_for_new_block: _,
         logical_outdenting: _,
@@ -645,7 +646,8 @@ impl ChangeFeed {
         };
         // The first publication carries every answer, as a cold one does.
         let (inventory, delta, counts, moved) = snapshot.answer_changes(None, &[], true);
-        let summary = snapshot.change_summary(None, &[], true, inventory, &moved, None, &[], &[]);
+        let summary =
+            snapshot.change_summary(None, &[], true, inventory, &moved, None, None, &[], &[]);
         snapshot.answers = (inventory, counts, summary, delta);
         let change = Change {
             graph_rev: snapshot.rev,

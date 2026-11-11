@@ -632,6 +632,11 @@ within a column; merged cells are still v2+.
   references on or off, from Appearance settings or with `Mod+C Mod+B`. The choice
   is saved to your graph's `logseq/config.edn` as `:ui/show-brackets?`, matching
   Logseq's default (on).
+- **Reference previews** — Settings → Editor → Advanced switches the page, tag and
+  block-reference previews on or off. It is saved to your graph's `logseq/config.edn`
+  as `:ui/enable-tooltip?` (Logseq's own key; on when absent). Off: no hover preview
+  opens, and on a touch screen holding a page link or tag opens its menu again. The
+  separate **Hover preview delay** stays.
 - **Help improve Tine** (Settings tab) — runs Tine's parser (lsdoc) against
   Logseq's own parser (mldoc) over your graph, locally, and reports any place they
   disagree plus a parse-speed comparison. Every divergence snippet is **anonymized**
