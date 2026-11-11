@@ -207,6 +207,12 @@ function MountedRendering(props: { coverage?: QuoteCoverage }): JSX.Element {
  * `children()` draws; a block with no children (`when` false) has none to mark
  * and draws it plainly, as does a hidden margin (GH #845). */
 export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; comments?: Accessor<CommentChildren>; coverage?: QuoteCoverage; children: () => JSX.Element }): JSX.Element {
+  return <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
+    <QuotedRendering {...props} />
+  </Show>;
+}
+
+function QuotedRendering(props: Parameters<typeof QuoteHighlightProvider>[0]): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
   // the parent's text runs. The block's own comment producer is shared.
   const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format, props.comments);
@@ -214,12 +220,12 @@ export function QuoteHighlightProvider(props: { parentId: string; format: Format
   // The renderer reports what it marks; the entry point reads that (`QuoteCoverage`).
   const coverage = props.coverage;
   return (
-    <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
+    <>
       <MountedRendering coverage={coverage} />
       <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges, drew: coverage?.drew }}>
         {props.children()}
       </QuoteHighlightContext.Provider>
-    </Show>
+    </>
   );
 }
 

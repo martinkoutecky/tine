@@ -218,9 +218,10 @@ it.each([0, 1].flatMap(comments => [16, 64, 256].map(n => ({ comments, n }))))(
     const memoEvaluations = Math.max(...sites.map(([, stat]) => stat.runs));
     console.log(JSON.stringify({ measurement: "structural edit", comments, n, indexRuns, memoEvaluations, downstreamRuns: commentViews.runs,
       totalRuns: m.runs, ms: m.ms, sites: sites.map(([site, stat]) => [site, stat.runs]) }));
-    // Only the new row initializes a downstream comment view. The remaining
-    // per-group work is one list-comparison memo, never an ancestry re-pick.
-    expect(commentViews.runs).toBe(1);
-    expect(memoEvaluations).toBe(n + comments + 1);
-    expect(indexRuns - memoEvaluations).toBe(6);
+    // A leaf owns no comment reader. The first child initializes its parent's
+    // view; an existing parent reuses its view. No other leaf subscribes to
+    // the rescan, so this budget is constant even at 256 groups.
+    expect(commentViews.runs).toBe(comments ? 0 : 1);
+    expect(memoEvaluations).toBe(1);
+    expect(indexRuns - memoEvaluations).toBe(comments ? 1 : 4);
 });
