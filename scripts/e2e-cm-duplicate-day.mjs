@@ -50,6 +50,9 @@ const rows = () => browser.execute(() => [...document.querySelectorAll(".setting
   merge: [...row.querySelectorAll("button")].some((button) => (button.textContent ?? "").trim() === "Merge"),
 })));
 
+/** Whether the main view's page shows `text`. */
+const dayShows = (text) => browser.execute((wanted) => (document.querySelector(".main-content .page-blocks")?.textContent ?? "").includes(wanted), text);
+
 /** Native click on the Merge button of the row for `file`. */
 async function clickMerge(file) {
   const point = await browser.execute((wanted) => {
@@ -72,6 +75,13 @@ try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
+
+  // The day is on screen (viewed, not edited) while Settings merges into it.
+  await openPageByName(browser, TITLE);
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === TITLE && await dayShows("only in iso"), {
+    timeout: 15_000, interval: 150, timeoutMsg: `the day ${TITLE} did not open on ${OPENED}`,
+  });
+  proof.steps.push(`${TITLE} is open on screen, showing ${OPENED}'s blocks`);
 
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForExist({ timeout: 5000 });
@@ -101,6 +111,15 @@ try {
   });
   await browser.keys("Escape");
   await browser.$(".settings-modal").waitForExist({ timeout: 5000, reverse: true });
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === TITLE
+    && await dayShows("only in iso") && await dayShows("only in underscore"), {
+    timeout: 15_000, interval: 150, timeoutMsg: `the open day ${TITLE} still shows the pre-merge blocks after Merge`,
+  });
+  proof.steps.push(`the day already on screen shows both files' blocks after Merge, without navigating`);
+
+  // Reopening it (admission into a fresh view) shows the merged day too.
+  await openPageByName(browser, "Notes");
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Notes", { timeout: 15_000, interval: 150 });
   await openPageByName(browser, TITLE);
   await browser.waitUntil(async () => {
     if ((await currentPageTitle(browser)) !== TITLE) return false;
@@ -110,6 +129,7 @@ try {
     });
   }, { timeout: 15_000, interval: 150, timeoutMsg: `the day ${TITLE} does not show both files' blocks after Merge` });
   proof.steps.push(`opening ${TITLE} shows both files' blocks`);
+  await saveJourneyScreenshot(browser, path.join(ARTIFACT, "merged-day.png"));
   console.log(JSON.stringify(proof));
 } catch (error) {
   proof.error = String(error);

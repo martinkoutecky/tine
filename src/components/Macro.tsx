@@ -80,7 +80,7 @@ export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPER
 import { QueryLegacyTable } from "./QueryLegacyTable";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
-import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -386,7 +386,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     // The answer day reruns a day-relative query, collapsed or not, once the
     // date has moved past the shown answer's (card hB3Lv8); like a save, it
     // keeps that answer on screen until the new one lands.
-    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${answerDay.day()}\0${collapsed() ? "collapsed" : `${subscription.revision()}\0${resultsEpoch()}`}`;
+    // The query's publication key (`subscription.revision`) owns reruns; the
+    // results epoch gates adoption only (`scopedRevision` below), so a page
+    // create, delete or rename elsewhere does not rerun an unrelated query
+    // (D-20261102-PERF row 3), as for the Query workspace (GH #907).
+    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${answerDay.day()}\0${collapsed() ? "collapsed" : subscription.revision()}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
@@ -458,7 +462,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       asOfDay: result.as_of_day ?? null,
       both,
     };
-  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true, subscription.revision);
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true, subscription.revision, subscription);
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();

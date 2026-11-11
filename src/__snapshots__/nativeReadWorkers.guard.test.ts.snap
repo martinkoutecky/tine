@@ -38,6 +38,7 @@ exports[`L7s4-03 native read dispatch > requires review for every new synchronou
   "load_session",
   "load_workspaces",
   "local_clock",
+  "owner_current_page_answer",
   "owner_flush_answer",
   "quick_share_connect_cancel",
   "quick_share_connect_status",

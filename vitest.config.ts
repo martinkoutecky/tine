@@ -26,7 +26,7 @@ export default defineConfig({
     // Builds and drives the native tine-store peer: its own mandatory gate,
     // `npm run test:storage-conformance` (vitest.storage.config.ts), after Rust tests.
     exclude: [...configDefaults.exclude, "src/document/host/nativeConformance.test.ts"],
-    setupFiles: ["./src/testSetup.parser.ts"],
+    setupFiles: ["./src/testSetup.waitFor.ts", "./src/testSetup.parser.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {

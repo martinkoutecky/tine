@@ -75,7 +75,7 @@ import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
 import { fileLinkTarget, fileUrlTitle } from "./relativeFileLink";
-import { externalPdfPath } from "./externalPdfPath";
+import { externalPdfPath, relativePdfFileUrl } from "./externalPdfPath";
 import { ExternalPdfLink } from "./ExternalPdfLink";
 import { PdfAssetLink, pdfFilenameFromDest } from "./PdfAssetLink";
 import { RelativeFileLink } from "./RelativeFileLinkView";
@@ -522,10 +522,13 @@ function renderLink(
   const fileTarget = assetTarget === null ? fileLinkTarget(dest) : null;
   if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
   // OG 6e7afa8eb block.cljs show-link?/media-link: Markdown requires !, Org media does not.
-  const outsidePath = externalPdfPath(dest);
-  if (outsidePath.kind === "pdf" && (s.image || format === "org") && !isMobilePlatform && !isQuickShareViewer()) {
+  // GH #732: a relative file link reads as the absolute file: URL its resolver names.
+  const readerGate = (s.image || format === "org") && !isMobilePlatform && !isQuickShareViewer();
+  const readerDest = (readerGate && fileTarget && relativePdfFileUrl(dest, fileTarget, graphMeta()?.root ?? "")) || dest;
+  const outsidePath = externalPdfPath(readerDest);
+  if (outsidePath.kind === "pdf" && readerGate) {
     const label = s.label?.length ? astText(s.label) : outsidePath.path.split("/").pop()!;
-    return <ExternalPdfLink dest={dest} path={outsidePath.path} label={label} spanAttrs={spanAttrs} />;
+    return <ExternalPdfLink dest={readerDest} path={outsidePath.path} label={label} spanAttrs={spanAttrs} />;
   }
   const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
   if (s.image) {

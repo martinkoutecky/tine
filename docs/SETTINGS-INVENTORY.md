@@ -15,6 +15,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 
 | Setting ID | Catalog key / package label | Label | Level |
 |---|---|---|---|
+| `settings-show-workspaces` | `settings-show-workspaces` | Show Workspaces | Advanced |
 | `theme.gallery.default` | `themes-default` | Default | Basic |
 | `settings-ui-interface-size` | `settings-ui-interface-size` | Interface size | Basic |
 | `settings-mobile-navigation-label` | `settings-mobile-navigation-label` | Navigation buttons at the bottom | Basic |

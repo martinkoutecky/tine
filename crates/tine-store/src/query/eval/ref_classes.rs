@@ -154,6 +154,16 @@ impl RefClasses {
         }
     }
 
+    /// Whether a page named by one of `keys` (page keys of names that spell a
+    /// journal day) appearing or leaving can change a class: one holds a day,
+    /// or names one of them (an ordinary page named like a date keeps its own
+    /// name only, `holds`). O(operands * keys).
+    pub(crate) fn reshaped_by(&self, keys: &[String]) -> bool {
+        self.by_key
+            .values()
+            .any(|class| class.has_days() || keys.iter().any(|key| class.keys.contains(key)))
+    }
+
     /// The class of operand `name`; `None` when it was not collected.
     pub(crate) fn class(&self, name: &str) -> Option<&RefClass> {
         if self.by_key.is_empty() {
@@ -177,6 +187,14 @@ impl RefClasses {
             )
         })
     }
+}
+
+/// Whether `filter` has a reference operand, whose class (the alias group and
+/// journal days, see [`RefClasses::build`]) is read from page names.
+pub(crate) fn has_reference_operands(filter: &Filter) -> bool {
+    let mut operands = Vec::new();
+    collect(filter, false, &mut operands);
+    !operands.is_empty()
 }
 
 /// The text operands of `name = …` element tests under a reference relation.
