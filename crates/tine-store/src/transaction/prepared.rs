@@ -47,9 +47,8 @@ impl PagePlan<'_> {
     }
 }
 
-/// One page file's reference rewrite, computed by the shared rewriter
-/// (`tine_core::refs::rename_rewrite`) from the bytes the caller read and
-/// passed to [`PagePlan::rewrite_refs`]. It never leaves the transaction:
+/// One page file's reference rewrite or certified merge survivor, prepared
+/// from the bytes the caller read. It never leaves the transaction:
 /// callers only learn whether the rewrite changes the file.
 ///
 /// Freshness: preflight still stages the file under the base-revision guard
@@ -58,7 +57,8 @@ impl PagePlan<'_> {
 /// collision-resistant) and the configured filename format is unchanged; the
 /// rename map is the step's own, since both are built in the same call. The rewrite is a pure function of those
 /// inputs and the path, so reuse gives exactly the bytes preflight would
-/// compute; any difference falls back to recomputing, never to a refusal.
+/// compute. Reference rewrites recompute on a mismatch; strict merge survivors
+/// refuse because recomputing references alone cannot reproduce the merge.
 /// The read-only Org and VCS-marker refusals still run in preflight on the
 /// staged bytes.
 #[derive(Clone, Debug)]
@@ -75,8 +75,7 @@ impl PreparedRewrite {
     pub(super) fn is_merge(&self) -> bool {
         self.strict
     }
-    /// The rewrite of `old`, the text the caller read for `file`; `new` is
-    /// `rename_rewrite(old)` under `name_format`.
+    /// Prepared output for the caller's `old` bytes and filename format.
     pub(super) fn new(
         file: FileId,
         old: String,
@@ -96,8 +95,9 @@ impl PreparedRewrite {
     }
 
     /// The prepared bytes when `file`'s staged `old` bytes and the filename
-    /// format still match what this rewrite was prepared from; `None` asks
-    /// preflight to recompute. O(file bytes) comparison, no parse.
+    /// format still match what this rewrite was prepared from. On mismatch,
+    /// reference rewrites return `None` for recomputation; merges refuse.
+    /// O(file bytes) comparison, no parse.
     pub(super) fn reuse(
         &self,
         file: &FileId,

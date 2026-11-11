@@ -55,6 +55,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page merges accept retained aliases with duplicate wrapped, tag or unusually spaced members, and source property headers with children, preserving protected text and child depth (REG-CM-MERGE-RETAINED-ALIAS-DUPLICATES, REG-CM-MERGE-SOURCE-HEADER-CHILDREN).
 - Merging pages keeps equal clashing header properties, blank header lines, original body layout and mixed line endings (REG-CM-MERGE-COMPLETE-TEXT).
 - Merging Org pages keeps the survivor's title in Logseq by containing leftover source directives as body text (REG-CM-ORG-MERGE-DIRECTIVE-TITLE).
 - Saving an empty merge survivor again keeps the old source title as block text and preserves the survivor's name (REG-CM-MERGE-SAVE-CLOSURE).

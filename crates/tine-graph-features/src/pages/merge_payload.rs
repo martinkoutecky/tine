@@ -343,6 +343,8 @@ impl Writer {
         line: &Line,
         additions: &[Vec<Placement>],
         prefix: bool,
+        rebuild: bool,
+        org: bool,
     ) -> Result<(), TraceError> {
         let a = line.alias.as_ref().unwrap();
         let start = if prefix {
@@ -357,7 +359,10 @@ impl Writer {
             usize::from(raw.ends_with('\n'))
         };
         let end = line.content.end - ending;
-        if a.plain {
+        if rebuild {
+            self.original(file, start..line.content.start)?;
+            self.insert(if org { "#+alias: " } else { "alias:: " });
+        } else if a.plain {
             let key = a.key.as_ref().unwrap();
             self.original(file, start..key.end)?;
             let mut previous = key.end;
@@ -378,7 +383,7 @@ impl Writer {
             self.original(file, start..end)?;
         }
         for (n, items) in additions.iter().enumerate() {
-            if n > 0 || !a.names.is_empty() {
+            if n > 0 || (!rebuild && !a.names.is_empty()) {
                 self.insert(", ");
             }
             for p in items {
@@ -388,7 +393,11 @@ impl Writer {
                 }
             }
         }
-        self.original(file, end..line.content.end)?;
+        if rebuild {
+            self.insert("\n");
+        } else {
+            self.original(file, end..line.content.end)?;
+        }
         Ok(())
     }
 }
@@ -479,13 +488,16 @@ pub fn propose(
     };
     let mut expected_aliases = Vec::new();
     let mut seen = HashSet::new();
+    let mut rebuild_retained = false;
     for file in 0..2 {
-        for line in &headers[file].lines {
+        for (n, line) in headers[file].lines.iter().enumerate() {
             if let Some(a) = &line.alias {
                 for (_, range) in &a.names {
                     let name = w.value(file, range.clone())?;
                     if seen.insert(name.clone()) {
                         expected_aliases.push(name);
+                    } else if retained == Some((file, n)) && !a.plain {
+                        rebuild_retained = true;
                     }
                 }
             }
@@ -514,7 +526,7 @@ pub fn propose(
         .filter_map(|l| l.property.as_ref().map(|p| p.0.clone()))
         .collect();
     let mut active_names = HashSet::new();
-    if let Some((file, n)) = retained {
+    if let Some((file, n)) = retained.filter(|_| !rebuild_retained) {
         for (_, range) in &headers[file].lines[n].alias.as_ref().unwrap().names {
             let mut text = String::new();
             for id in w.trace.interval(file, range.clone())? {
@@ -538,17 +550,23 @@ pub fn propose(
                 if retained == Some((file, n)) {
                     if file == 1 {
                         promoted.push(n);
-                        if line.range.start < line.content.start {
+                        if !rebuild_retained && line.range.start < line.content.start {
                             moved.push((file, line.range.start..line.content.start));
                         }
                     }
-                    continue;
+                    if !rebuild_retained {
+                        continue;
+                    }
                 }
                 if a.movable {
-                    if line.range.start < line.content.start {
+                    if line.range.start < line.content.start
+                        && !(file == 0 && retained == Some((file, n)))
+                    {
                         moved.push((file, line.range.start..line.content.start));
                     }
-                    let mut protected_duplicate = false;
+                    // A rebuilt retained field leaves its protected spacing
+                    // and duplicate wrappers with their original property owner.
+                    let mut protected_duplicate = retained == Some((file, n));
                     let mut consumed = HashSet::new();
                     let mut relocated = HashSet::new();
                     for ((_, name), token) in a.names.iter().zip(&a.tokens) {
@@ -624,7 +642,14 @@ pub fn propose(
             continue;
         }
         if retained == Some((0, n)) {
-            w.field(0, line, &alias_additions, !normalize_target)?;
+            w.field(
+                0,
+                line,
+                &alias_additions,
+                !normalize_target,
+                rebuild_retained,
+                org,
+            )?;
         } else {
             w.original(
                 0,
@@ -644,7 +669,7 @@ pub fn propose(
             w.insert(if org { "" } else { "  " });
         }
         if retained == Some((1, n)) {
-            w.field(1, line, &alias_additions, false)?;
+            w.field(1, line, &alias_additions, false, rebuild_retained, org)?;
         } else {
             w.original(1, line.content.clone())?;
         }
@@ -737,14 +762,11 @@ pub fn propose(
     if actual_aliases != expected_aliases || (!expected_aliases.is_empty() && fields.len() != 1) {
         return Err(RealizationError::AliasField);
     }
-    let source_body: Vec<&BlockDto> = if headers[1].first_root {
-        source.blocks[0]
-            .children
-            .iter()
-            .chain(source.blocks[1..].iter())
-            .collect()
+    let source_body = &source.blocks[usize::from(headers[1].first_root)..];
+    let source_header_children = if headers[1].first_root {
+        source.blocks[0].children.as_slice()
     } else {
-        source.blocks.iter().collect()
+        &[]
     };
     // Compare the two reader representations directly, carrying the block
     // count into origins. No body text/tree clones or materialized paths.
@@ -767,20 +789,26 @@ pub fn propose(
     let target_roots = target.blocks.len() - usize::from(normalize_target) + target_prose;
     let source_start = target_roots + usize::from(leftover);
     let count = source_start + source_prose + source_body.len();
-    if roots.len() != count || (leftover && !roots[target_roots].children.is_empty()) {
+    if roots.len() != count || (!leftover && !source_header_children.is_empty()) {
         return Err(RealizationError::BodyLaw);
     }
+    let source_child_count = same_shape(
+        source_header_children,
+        if leftover {
+            &roots[target_roots].children
+        } else {
+            &[]
+        },
+    )
+    .ok_or(RealizationError::BodyLaw)?;
     let target_body_count = same_shape(
         &target.blocks[usize::from(normalize_target)..],
         &roots[target_prose..target_roots],
     )
     .ok_or(RealizationError::BodyLaw)?
         - skip;
-    let source_body_count = same_shape(
-        source_body.iter().copied(),
-        &roots[source_start + source_prose..],
-    )
-    .ok_or(RealizationError::BodyLaw)?;
+    let source_body_count = same_shape(source_body, &roots[source_start + source_prose..])
+        .ok_or(RealizationError::BodyLaw)?;
     if org && leftover {
         let mut original = String::new();
         let alias_ranges: HashSet<_> = headers
@@ -858,11 +886,15 @@ pub fn propose(
             }
         }
         origins.push(origin);
+        origins.extend((0..source_child_count).map(|j| vec![Origin::Source(source_header + j)]));
     }
     if source_prose > 0 {
         origins.push(vec![Origin::Source(usize::from(headers[1].properties))]);
     }
-    origins.extend((0..source_body_count).map(|j| vec![Origin::Source(source_header + j)]));
+    origins.extend(
+        (0..source_body_count)
+            .map(|j| vec![Origin::Source(source_header + source_child_count + j)]),
+    );
     Ok(MergeProposal {
         text: w.text,
         trace: w.trace,

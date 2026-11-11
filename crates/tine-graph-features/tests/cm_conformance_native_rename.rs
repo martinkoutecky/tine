@@ -566,6 +566,87 @@ fn accepted_native_merge_rows_and_adversarial_controls() {
 }
 
 #[test]
+fn native_valid_merges_with_duplicate_members_and_header_children() {
+    let _guard = crate::integration_lock();
+    let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
+        assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
+        return;
+    };
+    for org in [false, true] {
+        let (ext, key, bullet) = if org {
+            ("org", "#+alias: ", "*")
+        } else {
+            ("md", "alias:: ", "-")
+        };
+        let source_path = format!("pages/src.{ext}");
+        let target_path = format!("pages/dst.{ext}");
+        let mut cases = Vec::new();
+        for members in [
+            "a,  a",
+            "[[a]], [[a]]",
+            "#a, #a",
+            "#[[a]], #[[a]]",
+            "[[a]], a, #a, [[b]], [[a]]",
+            "[[a]], [[A]], [[a]]",
+        ] {
+            for retained_target in [false, true] {
+                let alias = format!("{key}{members}\n");
+                cases.push((
+                    format!(
+                        "{}{bullet} source\n",
+                        if retained_target { "" } else { &alias }
+                    ),
+                    format!(
+                        "{}{bullet} target\n",
+                        if retained_target { &alias } else { "" }
+                    ),
+                ));
+            }
+        }
+        cases.push(if org {
+            (
+                "#+alias: Former\n* child\n** deep\n* sibling\n* source\n".into(),
+                "#+alias: Kept\n* target\n".into(),
+            )
+        } else {
+            (
+                "- alias:: Former\n  - child\n    - deep\n  - sibling\n- source\n".into(),
+                "alias:: Kept\n- target\n".into(),
+            )
+        });
+        for (source, target) in cases {
+            let mut spec = GraphSpec::default();
+            spec.name = "valid-merge".into();
+            spec.files =
+                BTreeMap::from([(source_path.clone(), source), (target_path.clone(), target)]);
+            let dir = tempfile::tempdir().unwrap();
+            spec.write(dir.path());
+            let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+            let choice = Choice::Merge(target_path.clone());
+            let proof = merge_proof(&store, &spec, "src", "dst", &choice)
+                .unwrap()
+                .2
+                .unwrap();
+            execute(&store, "src", "dst", Some(&choice)).unwrap();
+            let files = read_graph(dir.path());
+            let p = packet(
+                &store,
+                &spec,
+                "src",
+                "dst",
+                &source_path,
+                &target_path,
+                &proof,
+                &files,
+                json!([]),
+            );
+            assert_local_saves(&p);
+            admit(Path::new(&bridge), &p);
+        }
+    }
+}
+
+#[test]
 fn native_split_query_and_guarded_title_controls() {
     let _guard = crate::integration_lock();
     let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {

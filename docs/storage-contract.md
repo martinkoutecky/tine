@@ -1014,6 +1014,8 @@ promote the old source title, including after earlier body roots are removed.
 During merge, a childless first-root survivor header is realized as a native
 preamble, with its protected outline prefix and any nonauthoritative title
 retained in the leftover. Headers with children retain their body parent.
+Source first-root header children remain beneath the inert leftover at their
+original depth, before the remaining source roots, with their ordered origins.
 Ordinary first-property page authoring retains its existing
 promotion rule. This does not decide edits exposing a different, unguarded
 property-only body (Q-SAVEAUTHOR), or closure under Logseq's own saves. Org
@@ -1025,7 +1027,10 @@ protected text.
 When alias fields combine, complete parser-owned member tokens move into the
 active field; their names are original pieces rather than inserted copies.
 Protected duplicate wrapped members retain their property owner in the inert
-leftover. Preamble prose is already a separate visible body row in the reader.
+leftover. Member selection also applies within the retained declaration:
+duplicate encoded members and protected spacing relocate with their original
+property owner; a native alias key assembles the active selected members.
+Preamble prose is already a separate visible body row in the reader.
 The merger materializes it as an outline row, keeping target prose before target
 outline bodies and source prose after the leftover and before source outline
 bodies. Each such row has its single original body identity and query images;

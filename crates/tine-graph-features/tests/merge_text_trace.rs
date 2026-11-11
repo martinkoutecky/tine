@@ -3,6 +3,220 @@ use std::{fs, sync::Arc};
 use tine_graph_features::pages;
 use tine_store::Store;
 
+// Exercise the user operation first, then inspect its provenance and ordinary
+// save closure independently against the same original inputs.
+fn valid_merge(
+    src: &str,
+    dst: &str,
+    org: bool,
+    check: impl Fn(&tine_core::model::PageDto, &pages::merge_payload::MergeProposal),
+) -> Result<(), String> {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    let ext = if org { "org" } else { "md" };
+    let source = format!("pages/src.{ext}");
+    let target = format!("pages/dst.{ext}");
+    fs::write(dir.path().join(&source), src).unwrap();
+    fs::write(dir.path().join(&target), dst).unwrap();
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let src_id = tine_core::model::PageId::from(source.as_str());
+    let dst_id = tine_core::model::PageId::from(target.as_str());
+    let before_src = store.page(&src_id).unwrap().doc;
+    let before_dst = store.page(&dst_id).unwrap().doc;
+    if let Err(error) = pages::merge_pages(&store, &host, &source, &target) {
+        assert_eq!(fs::read_to_string(dir.path().join(&source)).unwrap(), src);
+        assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), dst);
+        return Err(format!(
+            "org={org}, source={src:?}, target={dst:?}: {error}"
+        ));
+    }
+    assert!(!dir.path().join(&source).exists());
+    let bytes = fs::read_to_string(dir.path().join(&target)).unwrap();
+    let proof = pages::merge_payload::propose(
+        &before_dst,
+        dst,
+        &before_src,
+        src,
+        &Default::default(),
+        &Default::default(),
+        org,
+        store.config().file_name_format,
+    )
+    .unwrap();
+    assert_eq!(bytes, proof.text);
+    proof
+        .trace
+        .check(&bytes, &proof.trace.substitution)
+        .unwrap();
+    for _ in 0..2 {
+        let loaded = store.page(&dst_id).unwrap();
+        check(&loaded.doc, &proof);
+        crate::test_host_writer::save_on(
+            &host,
+            &store,
+            tine_store::EditKind::SaveBlock,
+            &dst_id,
+            tine_store::SaveBase::Existing(loaded.rev),
+            &loaded.doc,
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), bytes);
+    }
+    if let Ok(output) = std::env::var("CM_MERGE_ORACLE") {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (src, dst, org).hash(&mut hash);
+        let doc = store.page(&dst_id).unwrap().doc;
+        fs::write(std::path::Path::new(&output).join(format!("valid-{}.json", hash.finish())),
+            serde_json::to_vec(&serde_json::json!({"source":src,"target":dst,"text":bytes,"org":org,"document":doc})).unwrap()).unwrap();
+    }
+    drop(host);
+    drop(store);
+    let reopened = Store::open(dir.path(), Default::default()).unwrap().0;
+    check(&reopened.page(&dst_id).unwrap().doc, &proof);
+    Ok(())
+}
+
+#[test]
+fn valid_merge_deduplicates_retained_alias_members() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        let (key, bullet) = if org {
+            ("#+alias: ", "*")
+        } else {
+            ("alias:: ", "-")
+        };
+        for (members, expected) in [
+            ("a, a", vec!["a"]),
+            ("a,  a", vec!["a"]),
+            ("[[a]], [[a]]", vec!["a"]),
+            ("#a, #a", vec!["a"]),
+            ("#[[a]], #[[a]]", vec!["a"]),
+            ("[[a]], a, #a, [[b]], [[a]]", vec!["a", "b"]),
+            ("[[a]], [[A]], [[a]]", vec!["a", "A"]),
+        ] {
+            for retained_target in [false, true] {
+                for ending in ["\n", "\r\n"] {
+                    let alias = format!("{key}{members}\n");
+                    let src = format!(
+                        "{}{bullet} source\n",
+                        if retained_target { "" } else { &alias }
+                    )
+                    .replace('\n', ending);
+                    let dst = format!(
+                        "{}{bullet} target\n",
+                        if retained_target { &alias } else { "" }
+                    )
+                    .replace('\n', ending);
+                    if let Err(error) = valid_merge(&src, &dst, org, |doc, _| {
+                        let header = tine_core::page_header::page_header_text(
+                            doc.pre_block.as_deref(),
+                            doc.blocks.first().map(|b| b.raw.as_str()),
+                        )
+                        .unwrap();
+                        let names: Vec<_> =
+                            tine_core::page_header::page_property_lines(header, org)
+                                .into_iter()
+                                .filter(|(k, _)| tine_core::page_header::is_alias_key(k))
+                                .flat_map(|(_, value)| {
+                                    tine_core::property_refs::linkable_names(&value, org)
+                                })
+                                .collect();
+                        assert_eq!(names, expected);
+                    }) {
+                        failures.push(error);
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} valid merges refused:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn valid_merge_keeps_source_header_children_under_leftover() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        for nested in [false, true] {
+            for ending in ["\n", "\r\n"] {
+                let (src, dst, children) = if org {
+                    // Org page properties live in the preamble; their first
+                    // heading and its children are ordinary source body.
+                    (
+                        format!(
+                            "#+alias: Former\n* child\n{}* sibling\n* source\n",
+                            if nested { "** deep\n" } else { "" }
+                        ),
+                        "#+alias: Kept\n* target\n",
+                        "",
+                    )
+                } else {
+                    (
+                        format!(
+                            "- alias:: Former\n  - child\n{}  - sibling\n- source\n",
+                            if nested { "    - deep\n" } else { "" }
+                        ),
+                        "alias:: Kept\n- target\n",
+                        "  - child\n",
+                    )
+                };
+                let src = src.replace('\n', ending);
+                let dst = dst.replace('\n', ending);
+                if let Err(error) = valid_merge(&src, &dst, org, |doc, proof| {
+                    use pages::merge_payload::Origin;
+                    let trim = |s: &str| s.trim_end_matches('\r').to_owned();
+                    assert_eq!(trim(&doc.blocks[0].raw), "target");
+                    let at = if org { 1 } else { 2 };
+                    let rows = if org {
+                        &doc.blocks[at..at + 2]
+                    } else {
+                        &doc.blocks[1].children[..]
+                    };
+                    assert_eq!(rows.len(), 2);
+                    assert_eq!(trim(&rows[0].raw), "child");
+                    assert_eq!(trim(&rows[1].raw), "sibling");
+                    assert_eq!(rows[0].children.len(), usize::from(nested));
+                    if nested {
+                        assert_eq!(trim(&rows[0].children[0].raw), "deep");
+                    }
+                    assert_eq!(trim(&doc.blocks.last().unwrap().raw), "source");
+                    if !org {
+                        assert!(proof.text.contains(&children.replace('\n', ending)));
+                        let first = proof
+                            .origins
+                            .iter()
+                            .position(|o| o.contains(&Origin::Leftover))
+                            .unwrap();
+                        for j in 0..2 + usize::from(nested) {
+                            assert_eq!(proof.origins[first + 1 + j], vec![Origin::Source(1 + j)]);
+                        }
+                        assert_eq!(
+                            proof.origins.last().unwrap(),
+                            &vec![Origin::Source(3 + usize::from(nested))]
+                        );
+                    }
+                }) {
+                    failures.push(error);
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} valid merges refused:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn preamble_prose_keeps_its_body_row_through_merge_and_saves() {
     let _guard = crate::integration_lock();
