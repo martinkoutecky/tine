@@ -2562,6 +2562,8 @@ export interface MessageArgs {
   "settings-prose-show-tine-in-the-system-tray": {};
   "settings-prose-start-minimized-to-tray": {};
   "settings-prose-when-a-page-you-are-not-editing-changes-on-disk": {};
+  "settings-reference-previews": {};
+  "settings-reference-previews-hint": {};
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };
@@ -3177,6 +3179,7 @@ export interface MessageArgs {
   "ui-failure-conflict-inventory": {};
   "ui-failure-css-draft": {};
   "ui-failure-custom-css": {};
+  "ui-failure-editor-load": {};
   "ui-failure-export-preview": {};
   "ui-failure-external-link": {};
   "ui-failure-graph-verification": {};

@@ -549,6 +549,9 @@ class TauriBackend implements Backend {
   setShowBrackets(enabled: boolean) {
     return this.call<void>("set_show_brackets", { enabled });
   }
+  setEnableTooltip(enabled: boolean) {
+    return this.call<void>("set_enable_tooltip", { enabled });
+  }
   setDocModeEnterForNewBlock(enabled: boolean) {
     return this.call<void>("set_doc_mode_enter_for_new_block", { enabled });
   }

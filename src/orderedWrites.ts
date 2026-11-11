@@ -12,7 +12,7 @@
  *  src-tauri/src/load_wait_guard_tests.rs (checked there). */
 export const ORDERED_COMMANDS: ReadonlySet<string> = new Set([
   "page_open", "page_submit", "page_move", "page_discard", "page_close", "save_workspaces",
-  "set_preferred_workflow", "set_timetracking_enabled", "set_show_brackets",
+  "set_preferred_workflow", "set_timetracking_enabled", "set_show_brackets", "set_enable_tooltip",
   "set_doc_mode_enter_for_new_block", "set_logical_outdenting", "set_guide_announced",
   "set_default_journal_template", "set_start_of_week", "set_preferred_format", "set_journal_title_format",
   "set_favorites", "set_default_home", "import_asset", "import_native_capture", "capture_import_asset", "capture_save_asset", "empty_asset_trash",
