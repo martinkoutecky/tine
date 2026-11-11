@@ -2,7 +2,8 @@
 // ONLY=863 or ONLY=809 runs one report, so a native freeze cannot hide the other.
 // #863 lifecycle cases: 863-created, 863-created-blur,
 // 863-created-unreferenced, 863-external, 863-external-alternate,
-// 863-external-alternate-blur, 863-custom, 863-sync-gap and 863-page-sync-gap.
+// 863-external-alternate-blur, 863-external-sync, 863-external-alternate-sync,
+// 863-custom, 863-sync-gap and 863-page-sync-gap.
 // Each starts a fresh fixture.
 // Fixture data only. A passing Linux run does not establish a Windows fix.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -31,6 +32,7 @@ const issues = process.env.ONLY ? process.env.ONLY.split(",") : ["863", "809"];
 const journalCase = issues.find(issue => issue.startsWith("863")) ?? "863";
 const creates = journalCase.startsWith("863-created");
 const external = journalCase.startsWith("863-external");
+const syncDelivery = external && journalCase.endsWith("-sync");
 const custom = journalCase === "863-custom";
 const syncGap = journalCase.endsWith("sync-gap");
 const ordinaryGap = journalCase === "863-page-sync-gap";
@@ -181,7 +183,14 @@ try {
         if (journalCase.startsWith("863-external-alternate")) openedFile = path.join(graph, `journals/${day}.md`);
         expectedBody = "GH863 externally created journal";
         expectedBytes = `- ${expectedBody}\n`;
-        fs.writeFileSync(openedFile, expectedBytes);
+        if (syncDelivery) {
+          const temp = path.join(path.dirname(openedFile), `.syncthing.${path.basename(openedFile)}.tmp`);
+          fs.writeFileSync(temp, expectedBytes);
+          const past = new Date(Date.now() - 86_400_000);
+          fs.utimesSync(temp, past, past);
+          fs.renameSync(temp, openedFile);
+          step("863-sync-delivery", { openedFile, modified: fs.statSync(openedFile).mtime.toISOString() });
+        } else fs.writeFileSync(openedFile, expectedBytes);
         await browser.waitUntil(async () =>
           (await diagnostics()).sessions.current.filter(event => event.event === "watcher.batch").length > before,
         { timeout: 15_000, interval: 500, timeoutMsg: "External journal creation was not observed by the watcher" });

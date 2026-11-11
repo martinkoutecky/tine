@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Find in a long Journals feed counts loaded matches once as days retire and reload; the total agrees with the loaded days and the omitted-day hint (internal: UI-L10-03-FIND-RETIRED-DAYS).
+- Opening a journal or page now checks for a sync delivery its watcher missed before answering from held content. Journals delivered under another accepted filename are found without creating a duplicate day; unreadable files show their read error and recover when readable again (GH #863).
 - CLI writes trim author names and refuse an empty `--author`; blank `TINE_AUTHOR` uses the default `agent` instead of creating an empty author property (GH #930).
 
 ## [0.9.0-beta.10] - 2026-11-10

@@ -220,12 +220,20 @@ impl PageHost {
         // A watcher read of a held page (§5): the driver owes the host an
         // observation of it, taken under its path lock once the page is idle.
         let shared = Arc::downgrade(&driver.shared);
-        let forward: crate::watch::Forward = Box::new(move |keys| {
+        // A held page's read waits on `done` (A-H1): told after the
+        // delivery of the step that observed the key. Its observation is
+        // due now, past a failed one's backoff: the read waits for it.
+        let forward: crate::watch::Forward = Box::new(move |keys, done| {
             if let Some(shared) = shared.upgrade() {
                 // A notice: the watcher calls this holding the writer.
-                shared.notify(|state| {
+                shared.notify(move |state| {
                     for key in keys {
-                        state.observe.entry(key).or_default().forwarded = true;
+                        let owed = state.observe.entry(key.clone()).or_default();
+                        owed.forwarded = true;
+                        if let Some(done) = &done {
+                            owed.due = 0;
+                            state.observed.entry(key).or_default().push(done.clone());
+                        }
                     }
                 });
             }

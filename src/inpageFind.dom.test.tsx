@@ -6,6 +6,7 @@ import {
   closeInPageFind,
   inPageFindBlockElement,
   inPageFindMatches,
+  scopedInPageFindMatchesForQuery,
   openInPageFind,
   setInPageFindQuery,
   inPageFindActiveIndex, stepInPageFind, revealInPageFindMatch, refreshInPageFindHighlights,
@@ -136,6 +137,13 @@ describe("in-page find DOM scoping", () => {
     stepInPageFind(1); expect(inPageFindActiveIndex()).toBe(0);
     stepInPageFind(-1); expect(inPageFindActiveIndex()).toBe(2);
     expect(host.querySelector(".inpage-find-count")?.textContent).toBe("3 / 3");
+    const surface = document.createElement("div");
+    surface.dataset.inpageFindSurface = "main-query-row";
+    surface.textContent = "needle";
+    document.querySelector('[data-pane-id="main"]')!.append(surface);
+    expect(scopedInPageFindMatchesForQuery("needle").map(m => m.blockId))
+      .toEqual(["Main", "surface:main-query-row", "Split", "Side"]);
+    surface.remove();
     setRightSidebarItemCollapsed(0, true);
     expect(inPageFindMatches().map((m) => m.blockId)).toEqual(["Main", "Split"]);
     setRightSidebarItemCollapsed(0, false);

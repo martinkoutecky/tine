@@ -278,3 +278,45 @@ it("keeps a missing physical path pinned when only a same-name sibling exists", 
     expect(mainPaneRouter.route()).toMatchObject({ path: "pages/Twin.md" });
   } finally { dispose(); }
 });
+
+it("shows an unreadable pinned file's read error, never as missing, and opens it on the later publication (GH #863)", async () => {
+  const page: PageRead = { name: "Locked", title: "Locked", kind: "page", id: "pages/Locked.md", rev: "readable",
+    pre_block: null, blocks: [{ id: "locked", raw: "Readable once the lock is released", children: [], collapsed: false }] };
+  const read = vi.spyOn(backend(), "getPageByPath")
+    .mockRejectedValue(new Error("The process cannot access the file because it is being used by another process."));
+  mainPaneRouter.replaceActiveRoute({ kind: "page", name: page.name, pageKind: "page", path: page.id });
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  const dispose = render(() => <PageView />, root);
+  try {
+    await vi.waitFor(() => expect(root.textContent).toContain("being used by another process"));
+    expect(root.textContent).not.toContain("no longer available at that path");
+    read.mockResolvedValue(page);
+    await applyGraphChange({ name: page.name, kind: "page", path: page.id!, created: false, removed: false });
+    await vi.waitFor(() => expect(root.textContent).toContain("Readable once the lock is released"));
+    expect(root.textContent).not.toContain("being used by another process");
+  } finally { dispose(); }
+});
+
+it("probes an unreadable pinned file and opens it once it reads, with no publication (GH #863)", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const page: PageRead = { name: "Locked", title: "Locked", kind: "page", id: "pages/Locked.md", rev: "readable",
+    pre_block: null, blocks: [{ id: "locked", raw: "Readable once the lock is released", children: [], collapsed: false }] };
+  const read = vi.spyOn(backend(), "getPageByPath").mockRejectedValue(new Error("Input/output error (os error 5)"));
+  mainPaneRouter.replaceActiveRoute({ kind: "page", name: page.name, pageKind: "page", path: page.id });
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  const dispose = render(() => <PageView />, root);
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(root.textContent).toContain("os error 5");
+    expect(root.textContent).not.toContain("no longer available at that path");
+    // A probe that still fails keeps the error and backs off.
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(root.textContent).toContain("os error 5");
+    read.mockResolvedValue(page);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(root.textContent).toContain("Readable once the lock is released");
+  } finally { dispose(); }
+});

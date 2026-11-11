@@ -36,7 +36,8 @@ impl Sink for Bridge {
         }
         let indexes = !delivery.claimed.is_empty()
             || !delivery.publications.is_empty()
-            || !delivery.evicted.is_empty();
+            || !delivery.evicted.is_empty()
+            || !delivery.confirmed.is_empty();
         // All or nothing: a delivery whose writer is held comes back whole.
         let writer = match indexes {
             false => None,
@@ -70,6 +71,14 @@ impl Sink for Bridge {
                 for (key, _) in delivery.evicted {
                     if owner(&key) == Owner::Watcher {
                         store.watch.release_hold(&key);
+                    }
+                }
+                // After the publications: a confirmed read aligns the stamp
+                // of the bytes they indexed (A-H1).
+                for (spelling, stamp) in delivery.confirmed {
+                    if !store.is_closed() {
+                        let raced = store.watch.note_confirmed(FileId::from(spelling), stamp);
+                        store.watch.reconcile_raced(&raced);
                     }
                 }
                 store.publish_retired();

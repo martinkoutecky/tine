@@ -96,6 +96,8 @@ const PREVIEW_MAX_BYTES: usize = RESULT_BRIDGE_MAX_BYTES - 4 * 1024;
 pub struct Store {
     #[cfg(test)]
     pub(crate) marker_copy_pause: Mutex<Option<TestPause>>,
+    #[cfg(test)]
+    pub(crate) held_read_wait: Mutex<Option<std::time::Duration>>,
     pub(crate) graph: Arc<Graph>,
     pub(crate) writer: Arc<Mutex<()>>,
     load: Arc<LoadState>,
@@ -960,6 +962,7 @@ impl Store {
             watch,
             faults: Mutex::new(std::collections::HashSet::new()),
             marker_copy_pause: Mutex::new(None),
+            held_read_wait: Mutex::new(None),
         }
     }
 
@@ -1311,6 +1314,8 @@ impl Store {
                 faults: Mutex::new(std::collections::HashSet::new()),
                 #[cfg(test)]
                 marker_copy_pause: Mutex::new(None),
+                #[cfg(test)]
+                held_read_wait: Mutex::new(None),
             },
             meta,
             config,
@@ -1958,32 +1963,22 @@ impl Store {
         Ok(listing)
     }
 
-    /// Read one physical page. `NotFound` alone means absence and permits an
-    /// empty editable page; unsafe, parse, size, I/O and closed-store errors
-    /// must surface as failures. From Ready on, every call holds the writer
-    /// lock, even a miss. A new external file publishes `Origin::External`/`Created`; a changed
-    /// known file publishes `Modified`. Equal bytes do not publish again.
-    /// A readable duplicate-day stray is returned but never published or
-    /// added to graph-wide answers. Missing files do not wait for initial
-    /// parsing; present files remain directly readable after a failed initial
-    /// parse, with publication deferred until successful `refresh()`.
-    /// An accessible path below an unreadable directory is read directly.
-    /// Observed edits may wait for parsing, another writer, restore or site
-    /// publication. Case aliases return the file's actual disk spelling.
-    /// Canonicality is answered from the published name index while it
-    /// describes the current cache generation, so a read opens no other file
-    /// (GH #623 BR3: rebuilding the live name index read every page preamble
-    /// under the writer, ~2.8 s on Windows, and queued every other open
-    /// behind it); a journal, or a stale publication, still asks the live
-    /// index. Before Ready (initial parse, or a launch checkpoint served
-    /// while the launch diff runs) a read takes no writer and publishes
-    /// nothing: it parses the file directly, the revision comes from the
-    /// same bytes, and the load or launch diff takes the file in, so a page
-    /// opens in parse time whatever the graph is doing. Target parse costs
-    /// O(bytes + blocks); publication adds O(P) metadata. Reads write no
-    /// page bytes. A page a page host holds answers the bytes the host last
-    /// indexed and publishes nothing (A-V4): a write parses the bytes its
-    /// revision guards with [`Store::page_of`] instead.
+    /// Read one physical page; only NotFound permits an empty editable page.
+    /// Ready takes the writer even for misses. Changed/new external files
+    /// publish Modified/Created; equal bytes and duplicate-day strays do not.
+    /// Before Ready, parses directly without the writer or publication;
+    /// missing files never wait. Failed-load publication waits for refresh.
+    /// Case aliases return disk spelling; accessible files remain readable
+    /// below unreadable directories. Current name indices decide canonicality.
+    /// Held pages use their sole index writer, the owner (A-H1/A-V4). Existing
+    /// target metadata supplies the stamp; the watcher's Stamps rule compares
+    /// it with the indexed observation (racy/retry stamps never match).
+    /// Mismatches forward to the owner and wait without the writer at most
+    /// OPERATION_WAIT, then answer indexed bytes; errors remain read errors.
+    /// Before first publication, parses unpublished. Never on the driver thread.
+    /// Cost O(bytes + blocks), plus O(P) publication metadata; unchanged held
+    /// opens add one lookup, changed/unconfirmed bytes one owner read. Writes
+    /// no page bytes; write computations use guarded bytes with [`Self::page_of`].
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             if self.is_closed() {
@@ -1997,15 +1992,7 @@ impl Store {
             let doc = self.parse_page(&path, &entry, false)?;
             return self.page_read(id, doc, PageReadSource::Disk);
         }
-        let waiting = Instant::now();
-        let _writer = self.writer.lock().unwrap();
-        self.graph.diag.page_writer_wait(waiting.elapsed());
-        let before_generation = self.graph.cache_generation();
-        if self.is_closed() {
-            return Err(StoreError::Closed);
-        }
-        let (id, path) = self.page_spot(id)?;
-        // A held page is answered before its file is read (A-H1).
+        let (_writer, before_generation, id, path) = self.ready_page_writer(id)?;
         if let Some((doc, source)) = self.held_page(&path)? {
             return self.page_read(id, doc, source);
         }
@@ -2024,19 +2011,14 @@ impl Store {
         Ok(read)
     }
 
-    /// Resolve a page name (or alias) and read its current file: the one
-    /// page-by-name door (GH #623). Cost O(index lookup + page bytes).
-    ///
-    /// Before the graph is ready, a name some file claims opens from that
-    /// file without waiting for the index (the file-name listing below):
-    /// claimant order ranks a file named for the page above any `title::`
-    /// claimant: the page the index would pick. An alias or an unclaimed page waits
-    /// for the graph, never absent early; an unclaimed journal day does not (no aliases)
-    /// unless a launch checkpoint is served (`first_view_pending`).
-    /// Once ready, the published index resolves the name; an alias reads its
-    /// first owner. After a failed initial parse, the file-name listing
-    /// answers. A closed store returns `StoreError::Closed`. A resolved file
-    /// that has disappeared reads as `None`. It writes no page bytes.
+    /// Resolve a name/alias and read its file (GH #623): O(lookup + page bytes).
+    /// Before Ready or after a failed parse, uses filename-before-title
+    /// claimants; aliases/unclaimed names wait (except fileless journal days
+    /// without a checkpoint). Ready uses the index; aliases read their first
+    /// owner. Missing files answer None; closed stores Closed. Writes no bytes.
+    /// Absent days probe bounded accepted filenames for missed delivery,
+    /// reconcile hits through their owner/watcher, then resolve again (GH #863).
+    /// A still-unindexed hit answers its own read or error, never an empty day.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
@@ -2046,10 +2028,26 @@ impl Store {
                 return Ok(read);
             }
         }
-        let resolved = match self.whole_graph() {
-            Ok(view) => view.resolve(name, kind == PageKind::Journal),
-            Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
-            Err(LoadError::Closed) => return Err(StoreError::Closed),
+        let journal = kind == PageKind::Journal;
+        let mut looked = false;
+        let mut day = None;
+        let resolved = loop {
+            let resolved = match self.whole_graph() {
+                Ok(view) => view.resolve(name, journal),
+                Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
+                Err(LoadError::Closed) => return Err(StoreError::Closed),
+            };
+            // D3 (GH #863): an absent day may have arrived unobserved under
+            // another accepted name; once the watcher took it in, the index
+            // resolves it.
+            if journal && !looked && matches!(resolved, Resolved::Absent { .. }) {
+                looked = true;
+                day = self.reconcile_unindexed_day(name)?;
+                if day.is_some() {
+                    continue;
+                }
+            }
+            break resolved;
         };
         // `resolve` builds an alias only with at least one owner.
         let id = match resolved {
@@ -2058,7 +2056,9 @@ impl Store {
                 Some(id) => id,
                 None => return Ok(None),
             },
-            Resolved::Absent { .. } => return Ok(None),
+            Resolved::Absent { .. } => {
+                return day.map_or(Ok(None), |day| self.unindexed_day_read(day))
+            }
         };
         match self.page(&id) {
             Ok(read) => Ok(Some(read)),
