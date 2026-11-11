@@ -129,6 +129,7 @@ fn no_test_spawns_current_exe_itself() {
 /// between them, so no target compiles without it.
 #[test]
 fn own_test_binary_names_all_five_targets() {
+    let _integration_guard = crate::integration_lock();
     let source = include_str!("../src/test_binary.rs");
     for cfg in [
         "#[cfg(any(target_os = \"linux\", target_os = \"android\"))]\npub fn own_test_binary()",
