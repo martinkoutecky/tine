@@ -273,6 +273,24 @@ pub(crate) async fn tagged_pages(
     .await
 }
 
+/// Exact tag-table existence: one boolean, no parsing or block-row projection.
+/// Uses the same snapshot binding and cancellation boundary as query_run.
+#[tauri::command]
+pub(crate) async fn tag_table_available(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<bool, String> {
+    on_graph(&state, move |graph, cancel| {
+        match graph.query_ir(IrRequest::TagTableAvailable { name: &name }, cancel) {
+            Ok(Some(IrAnswer::Available(available))) => Ok(available),
+            Ok(None) => Err(QUERY_CANCELLED.into()),
+            Ok(_) => Err("tag-table-available: unexpected answer".into()),
+            Err(error) => Err(error.to_string()),
+        }
+    })
+    .await
+}
+
 /// SPEC §7.1 `query_explain_empty` (N19): why the query returned nothing — one
 /// row per root conjunct with its count alone and without it (one row, with no
 /// `without` count, for a non-`And` root; none for a non-executable query).

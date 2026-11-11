@@ -52,20 +52,15 @@ impl ReadSnapshot {
                     .as_ref()
                     .filter(|(owner, _, _)| *owner == before.name)
                     .map(|(_, id, raw)| (id.as_str(), raw.as_str()));
-                if baseline.is_some() {
-                    collect_document_referenced_names_with_baseline(old_doc, baseline, &old.config)
-                        == collect_document_referenced_names_with_baseline(
-                            doc,
-                            baseline,
-                            &self.config,
-                        )
-                } else {
-                    // A built pool already built this per-page projection;
-                    // capture inherited it by changed-path deltas. Other
-                    // pages' body blocks must not be walked once per session.
-                    old.referenced_name_index().get(&before.path)
-                        == self.referenced_name_index().get(&after.path)
-                }
+                let names = |doc: &Document, config: &Config| {
+                    // The resident spelling table need not populate the optional
+                    // per-page cache. Carry already has these changed documents;
+                    // compare their parser-owned names without building a cache.
+                    collect_document_referenced_names_with_baseline(doc, baseline, config)
+                        .into_iter()
+                        .collect::<std::collections::BTreeSet<_>>()
+                };
+                names(old_doc, &old.config) == names(doc, &self.config)
             })
         });
         self.completion_rank = next;

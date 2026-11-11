@@ -64,4 +64,4 @@ export function referenceRevision(key: Accessor<string>) {
   return { remember, revision };
 }
 
-export const referenceKey = (kind: "links" | "text" | "tags" | "tagTable", name: string) => `${kind}:${pageIdentityKey(name)}`;
+export const referenceKey = (kind: "links" | "text" | "tags" | "tagTable" | "tagTableMembership", name: string) => `${kind}:${pageIdentityKey(name)}`;

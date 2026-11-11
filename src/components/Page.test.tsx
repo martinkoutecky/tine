@@ -928,6 +928,7 @@ describe("tag-page table", () => {
         ],
       },
     ];
+    vi.spyOn(backend(), "tagTableAvailable").mockResolvedValue(true);
     vi.spyOn(backend(), "parseQuery").mockResolvedValue({
       query: { anchor: "block", filter: { kind: "true" }, source: { kind: "og", original: '(tag "Tag")', og_options: "" } },
       view: {},
@@ -982,12 +983,14 @@ describe("tag-page table", () => {
     try {
       const parse = vi.spyOn(backend(), "parseQuery");
       const run = vi.spyOn(backend(), "queryRun");
+      const availability = vi.spyOn(backend(), "tagTableAvailable");
       const { root, dispose } = mount(() => <TagTableToggle page={page("Tag", "page", [])} />);
       await new Promise((resolve) => setTimeout(resolve, 50));
       await tick();
       expect(root.querySelector(".tag-table-toggle")).toBeNull();
       expect(parse).not.toHaveBeenCalled();
       expect(run).not.toHaveBeenCalled();
+      expect(availability).not.toHaveBeenCalled();
       dispose();
     } finally {
       meta.remove();
