@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).
+
 - Find in a long Journals feed counts loaded matches once as days retire and reload; the total agrees with the loaded days and the omitted-day hint (internal: UI-L10-03-FIND-RETIRED-DAYS).
 
 ## [0.9.0-beta.10] - 2026-11-10

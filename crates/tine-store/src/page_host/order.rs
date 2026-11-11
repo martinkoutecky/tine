@@ -95,6 +95,9 @@ pub(super) struct Order {
     replies: BTreeMap<ReplyId, Slot>,
     next: u64,
     gates: Vec<Gates>,
+    /// Applied moves' receivers, by source, until the source's actual
+    /// eviction. Separate from disk ordering: cleanup can outlive its witnesses.
+    release_receivers: BTreeMap<PageKey, PageKey>,
     publication_pending: BTreeMap<ReplyId, PublicationWatch>,
     publication_versions: BTreeMap<PageKey, (u64, Arc<PublicationWatch>)>,
 }
@@ -200,7 +203,25 @@ impl Order {
     /// Install a rename's order at its terminal. No chaining: its pages
     /// touch no other running order (`touches`).
     pub fn install(&mut self, gates: Option<Gates>) {
+        if let Some(gates) = &gates {
+            for (dst, src) in &gates.moves {
+                // A later move back into an old source replaces that
+                // handoff; do not retain a cycle between reused keys.
+                self.release_receivers.remove(dst);
+                self.release_receivers.insert(src.clone(), dst.clone());
+            }
+        }
         self.gates.extend(gates);
+    }
+
+    pub fn releases_to(&self, source: &str, receiver: &str) -> bool {
+        self.release_receivers
+            .get(source)
+            .is_some_and(|dst| dst == receiver)
+    }
+
+    pub fn released(&mut self, key: &str) {
+        self.release_receivers.remove(key);
     }
 
     /// Whether `key`'s save waits for another page's witness.
@@ -296,6 +317,7 @@ impl Order {
     /// stopped or relaunched host.
     pub fn stop(&mut self) {
         self.gates.clear();
+        self.release_receivers.clear();
         self.publication_pending.clear();
         self.publication_versions.clear();
     }

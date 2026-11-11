@@ -1113,9 +1113,19 @@ impl<F: HostIo> Host<F> {
     }
 
     fn close_clean(&mut self, key: &str) {
-        if self.pages.get(key).is_some_and(Page::clean) {
+        if self.pages.get(key).is_some_and(Page::clean) && !self.release_blocked(key) {
             self.set_page(key, None);
         }
+    }
+
+    /// Returning a folded receiver first would make it Unknown under B1
+    /// while its absent source is still owned. Keep the actual page, so
+    /// external observation continues even if the source's cleanup stalls.
+    fn release_blocked(&self, key: &str) -> bool {
+        self.fs
+            .folded_keys(key)
+            .iter()
+            .any(|source| self.order.releases_to(source, key))
     }
 
     fn observe(&mut self, key: &str) -> Disposition {

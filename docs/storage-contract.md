@@ -617,6 +617,21 @@ and a released page's file unless its installed row is the revision the
 watcher last observed there, unchanged since; a change the watcher observed
 while the page was held always rereads (GH #623: a rename releases every
 referrer).
+After a rename completes, its receiver stays resolvable throughout the host's
+handoff (`REG-RENAME-READ-AFTER-WRITE`). An applied move's receiver whose leaf
+folds to its source's leaf stays held and published until that source is
+evicted. Close and automatic cleanup both respect this order. The source's
+eviction reaches the bridge in the same or an earlier delivery, so returning
+the receiver never creates an unknown collision with its absent source.
+The retained receiver remains a live host page: forwarded external edits,
+including a genuine deletion, still publish normally. If the source stays
+open or its cleanup keeps failing or stalls, the receiver stays host-owned
+and observed for that lifetime; no timeout hands it back into an unknown
+identity. The relation ends at source eviction or host stop, with no retained
+orphan key after cleanup completes. Eviction checks use the existing folded-leaf
+bucket, not a scan of registered keys; the move relation is process-local.
+B1 and (G) are unchanged. The live proof is
+`page_host::binding::tests::rename::a_completed_move_stays_visible_when_the_receiver_closes_first`.
 A disk disappearance never removes a held page's row; an owner's absent
 publication does. One identity
 rule (`Graph::identify`: the canonical existing parent, `Outside` when it

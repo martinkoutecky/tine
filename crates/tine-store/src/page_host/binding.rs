@@ -740,6 +740,7 @@ impl Book {
             .filter(|key| {
                 work(Work::Book, 2 + host.queue.len() + pending.len());
                 !host.pages.contains_key(*key)
+                    && !host.release_blocked(key)
                     && !host.busy(key)
                     && !host.vehicle_debt.contains(*key)
                     && !(host.applying.iter().chain(&host.queue))

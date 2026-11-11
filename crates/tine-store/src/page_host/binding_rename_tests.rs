@@ -3,6 +3,144 @@
 use super::super::retained::RenameRefusal;
 use super::*;
 
+/// REG-RENAME-READ-AFTER-WRITE: keep the source open to force the receiver's
+/// Close/cleanup to finish first. All ownership transitions run through the
+/// real host and bridge; the test never releases a watcher hold itself.
+#[test]
+fn a_completed_move_stays_visible_when_the_receiver_closes_first() {
+    for watch in [crate::WatchMode::Notify, crate::WatchMode::Poll] {
+        for (source, target) in [
+            ("a", "Renamed"),
+            ("ns___child", "Moved___child"),
+            ("a", "A"),
+            ("ns___child", "NS___child"),
+        ] {
+            let from = format!("pages/{source}.md");
+            let to = format!("pages/{target}.md");
+            let live = Live::watching(&[(&from, "- body\n")], watch);
+            let src = live.root.join(&from);
+            let dst = live.root.join(&to);
+            if dst.exists() {
+                // Folding volumes use one key and the spelling wrapper;
+                // their native spelling tests cover that separate path.
+                live.host.stop();
+                continue;
+            }
+            let (source_key, _) = live.open(&from);
+            let receiver_key = to.clone();
+            assert_eq!(
+                rename(
+                    &live,
+                    &PageId::from(from.clone()),
+                    &PageId::from(to.clone()),
+                    &[],
+                    &map(&source.replace("___", "/"), &target.replace("___", "/")),
+                ),
+                Ok((vec![], vec![])),
+                "{watch:?}: {from} -> {to}"
+            );
+            let target_name = live.store.graph.entry_for_path(&dst).unwrap().name;
+            // Wait for real cleanup, then explicitly deliver the receiver's
+            // Close. The source's subscription fixes the adverse schedule.
+            let drained = || {
+                live.host
+                    .driver
+                    .shared
+                    .read(|state| {
+                        let host = &state.progress.host;
+                        host.job.is_none()
+                            && host.worker.is_none()
+                            && host.drafts.is_empty()
+                            && host.queue.is_empty()
+                            && host.applying.is_none()
+                    })
+                    .unwrap()
+            };
+            let wait = || {
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !drained() {
+                    assert!(Instant::now() < deadline, "{from} -> {to}: cleanup stalled");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            };
+            wait();
+            live.close(&receiver_key);
+            wait();
+            // A later driver step can run only after the Close's delivery
+            // has reached the bridge, including a deferred writer delivery.
+            let polls = live.host.driver.shared.read(|state| state.polls).unwrap();
+            live.host.driver.shared.call(|_| ()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while live.host.driver.shared.read(|state| state.polls).unwrap() == polls {
+                assert!(Instant::now() < deadline, "Close delivery did not finish");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let visible = || {
+                matches!(live.store.whole_graph().unwrap().resolve(&target_name, false),
+                crate::Resolved::Existing { id, .. } if id.as_str() == to)
+            };
+            assert!(
+                visible(),
+                "{watch:?}: {from} -> {to}: completed receiver hidden"
+            );
+            assert!(dst.exists() && !src.exists());
+            {
+                let _writer = live.store.writer.lock().unwrap();
+                // A late removal notification is reconciled against the
+                // completed operation, never allowed to erase its receiver.
+                live.store
+                    .watch
+                    .reconcile_raced(&std::collections::HashSet::from([src]));
+            }
+            assert!(visible(), "a late source event hid the receiver");
+            // A retained receiver must still be an observed page, rather
+            // than an orphan index row: real external edits and deletion
+            // reach the host through either watcher mode while source stays open.
+            fs::write(&dst, "- external edit\n").unwrap();
+            live.until_indexed(&to, "- external edit\n");
+            fs::remove_file(&dst).unwrap();
+            assert!(live
+                .store
+                .watcher_drained_for_tests(Duration::from_secs(20)));
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while visible() {
+                assert!(Instant::now() < deadline, "external deletion was hidden");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            fs::write(&dst, "- restored\n").unwrap();
+            live.until_indexed(&to, "- restored\n");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !visible() {
+                assert!(
+                    Instant::now() < deadline,
+                    "{from} -> {to}: external restoration hidden"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            {
+                // Eviction collection alone is not the handoff: delay its
+                // bridge delivery with the real writer, keeping the new
+                // name resolvable until that delivery can finish.
+                let _writer = live.store.writer.lock().unwrap();
+                live.close(&source_key);
+                wait();
+                assert!(visible(), "a deferred source handoff hid the receiver");
+            }
+            assert!(
+                live.host.quiesce_for_tests(Duration::from_secs(20)),
+                "paired keys leaked"
+            );
+            assert!(visible(), "source handoff hid the receiver");
+            fs::remove_file(&dst).unwrap();
+            assert!(live
+                .store
+                .watcher_drained_for_tests(Duration::from_secs(20)));
+            assert!(!visible(), "external deletion after handoff was hidden");
+            live.host.stop();
+        }
+    }
+}
+
 #[test]
 fn rename_cost_is_independent_of_registered_keys() {
     let cost = |registered: usize| {

@@ -1084,14 +1084,27 @@ fn deliver<F: HostIo, C: Clock>(
         let state = shared.state.lock().unwrap();
         state.book.owner(key, &state.progress.host)
     };
+    let evicted: Vec<_> = delivery
+        .evicted
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
     let results = match sink.deliver(delivery, &owner, wait) {
         Ok(results) => results,
         Err(delivery) => return Some(delivery),
     };
-    if !results.is_empty() {
+    if !results.is_empty() || !evicted.is_empty() {
         // Collect again: an eviction or a notice may now be due.
         let mut state = shared.state.lock().unwrap();
         let now = state.progress.clock.now_ms();
+        for key in evicted {
+            // End the handoff only after the bridge returned the source
+            // to the watcher. Admission may have reclaimed it while this
+            // delivery waited for the writer; then its receiver stays held.
+            if state.book.owner(&key, &state.progress.host) == Owner::Watcher {
+                state.progress.host.order.released(&key);
+            }
+        }
         for (publication, indexing) in &results {
             if matches!(indexing, Indexing::Indexed) {
                 if let Some((version, _)) = &publication.own {

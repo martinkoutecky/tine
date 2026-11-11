@@ -565,6 +565,18 @@ impl HostIo for ProductionIo {
         self.spellings.spell(key, spelling);
     }
 
+    fn folded_keys(&self, key: &str) -> Vec<String> {
+        let spelling = self.spellings.spelling(key);
+        let Some(leaf) = Path::new(&spelling).file_name() else {
+            return Vec::new();
+        };
+        self.spellings
+            .candidates(&crate::model::entry_identity::fold_leaf(leaf), |_| true)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+
     fn graph_launch(&mut self, pages: &std::collections::BTreeSet<String>) {
         // Every existing ancestor up to the graph root: an interrupted nested
         // page-directory creation leaves entries no later leaf sync covers.

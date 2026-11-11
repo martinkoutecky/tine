@@ -104,6 +104,11 @@ pub(super) trait HostIo {
     /// Registration, or the alias spelling move (Q4), names the directory
     /// entry `spelling`. Adapter memory only: a new binding re-registers.
     fn spell(&mut self, key: &str, spelling: &str);
+    /// Registered keys in this spelling's folded-leaf bucket, by lookup.
+    /// The abstract model has no spelling collisions; production shares B1's table.
+    fn folded_keys(&self, _key: &str) -> Vec<String> {
+        Vec::new()
+    }
     /// Best effort only; it is not a publication or promise.
     fn graph_launch(&mut self, _pages: &std::collections::BTreeSet<String>) {}
     /// Release only this save's unpublished temporary vehicle at completion.

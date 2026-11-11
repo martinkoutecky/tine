@@ -178,6 +178,47 @@ fn rename_refuses_existing_destination_and_preserves_both_pages() {
     );
 }
 
+fn rename_then_delete(old: &str, new: &str, namespace: bool) {
+    let graph = Graph::new();
+    if namespace {
+        seed(&graph, &[("pages/ns.md", "- [[ns/child]]\n")]);
+    }
+    let slot = graph.slot();
+    verb(&slot, "page.show", json!({"name":old})).unwrap();
+    let renamed = verb(&slot, "page.rename", json!({"old":old,"new":new})).unwrap();
+    assert_eq!(renamed["report"]["outcome"], "renamed");
+    let mut names = vec![new.to_owned()];
+    if namespace {
+        names.push(format!("{new}/child"));
+    }
+    for name in names {
+        assert!(
+            matches!(
+                graph.store.whole_graph().unwrap().resolve(&name, false),
+                tine_store::Resolved::Existing { .. }
+            ),
+            "completed rename lost {name}"
+        );
+        let deleted = verb(&slot, "page.delete", json!({"name":name,"yes":true})).unwrap();
+        assert_eq!(deleted["name"], name);
+    }
+}
+
+#[test]
+fn non_case_rename_then_delete() {
+    rename_then_delete("a", "Renamed", false);
+}
+
+#[test]
+fn namespace_rename_then_delete() {
+    rename_then_delete("ns", "Moved", true);
+}
+
+#[test]
+fn case_namespace_rename_then_delete() {
+    rename_then_delete("ns", "NS", true);
+}
+
 fn seed(graph: &Graph, files: &[(&str, &str)]) {
     for (file, text) in files {
         std::fs::write(graph.root.join(file), text).unwrap();
