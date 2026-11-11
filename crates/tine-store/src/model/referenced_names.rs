@@ -5,14 +5,12 @@
 //! page in slot order wins, each page's own first spelling), kept across
 //! generations by per-page deltas instead of a walk per call.
 //!
-//! In memory only, never persisted or checkpointed: built on first use from
-//! the per-page referenced-name index (O(P + R) for R page-level names, no
-//! parse) and inherited by every later generation, which patches only the
-//! pages a publication changed: O(changed pages x their names x log V), plus
-//! for each changed key a copy of its referrer list (8 bytes per referring
-//! page) and, when its least referrer left, one lookup of the new least
-//! referrer's spelling. Resident cost: one tree node per distinct name
-//! (measured in the og-perf-names receipt).
+//! In memory only, never persisted or checkpointed: captured from parsed
+//! pages before publication (O(P + R log R), no file I/O). The optional
+//! per-page source cache stays lazy. Every later generation patches only the
+//! pages a publication changed: O(changed names x (log V + log referrers))
+//! and, when its least referrer left, one lookup of the new least referrer's
+//! spelling. Referrer sets share persistent tree nodes across generations.
 use super::persistent::{Map as SharedMap, Pages};
 use super::{
     collect_document_referenced_names_with_baseline, Document, PageEntry, ReadSnapshot,
@@ -21,26 +19,27 @@ use super::{
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The referrers of one page key.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct KeyReferrers {
     /// Spelling the least referring slot uses.
     pub(crate) spelling: String,
     /// Referring page slots, ascending, never empty.
-    slots: Vec<usize>,
+    slots: SharedMap<usize, ()>,
 }
 
 impl KeyReferrers {
     pub(crate) fn least_slot(&self) -> usize {
-        self.slots[0]
+        *self.slots.first().expect("nonempty referrer set").0
     }
-    pub(crate) fn slots(&self) -> &[usize] {
-        &self.slots
+    pub(crate) fn slots(&self) -> impl Iterator<Item = usize> + '_ {
+        self.slots.iter().map(|(slot, _)| *slot)
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct ReferencedNameTable {
     keys: SharedMap<String, KeyReferrers>,
+    changed_spellings: Vec<String>,
 }
 
 /// The spelling page `slot` uses for `key`, read from the per-page index.
@@ -59,23 +58,58 @@ pub(super) fn slot_spelling(
 }
 
 impl ReferencedNameTable {
-    /// The table of every page in `pages`. O(P + R log R).
+    /// Carry row roots without copying the preceding transition's evidence.
+    /// O(1), including after a publication that changed many spellings.
+    pub(super) fn unchanged(&self) -> Self {
+        Self {
+            keys: self.keys.clone(),
+            changed_spellings: Vec::new(),
+        }
+    }
+    /// Full-scan oracle through the optional per-page cache. O(P + R log R).
+    #[cfg(test)]
     pub(super) fn build(pages: &Pages, index: &SnapshotPageDerivedIndex) -> Self {
-        let mut keys: BTreeMap<String, KeyReferrers> = BTreeMap::new();
-        for (slot, (entry, _)) in pages.slots() {
+        Self::from_rows(
+            pages
+                .slots()
+                .map(|(slot, (entry, _))| (slot, index.get(&entry.path).into_iter().flatten())),
+        )
+    }
+
+    pub(super) fn from_rows<I, N>(rows: I) -> Self
+    where
+        I: IntoIterator<Item = (usize, N)>,
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        let mut keys: BTreeMap<String, (String, Vec<usize>)> = BTreeMap::new();
+        for (slot, names) in rows {
             #[cfg(test)]
             probe(1);
-            for name in index.get(&entry.path).into_iter().flatten() {
+            for name in names {
+                let name = name.as_ref();
                 keys.entry(tine_core::refs::page_key(name))
-                    .and_modify(|referrers| referrers.slots.push(slot))
-                    .or_insert_with(|| KeyReferrers {
-                        spelling: name.clone(),
-                        slots: vec![slot],
-                    });
+                    .and_modify(|(_, slots)| slots.push(slot))
+                    .or_insert_with(|| (name.to_owned(), vec![slot]));
             }
         }
         Self {
-            keys: SharedMap::from_sorted_unique(keys.into_iter().collect()),
+            changed_spellings: Vec::new(),
+            keys: SharedMap::from_sorted_unique(
+                keys.into_iter()
+                    .map(|(key, (spelling, slots))| {
+                        (
+                            key,
+                            KeyReferrers {
+                                spelling,
+                                slots: SharedMap::from_sorted_unique(
+                                    slots.into_iter().map(|slot| (slot, ())).collect(),
+                                ),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -91,8 +125,23 @@ impl ReferencedNameTable {
         pages: &Pages,
         index: &SnapshotPageDerivedIndex,
     ) -> Self {
-        let mut next = old.clone();
-        let changes: Vec<_> = changes.into_iter().collect();
+        Self::patched_with_spelling(old, changes, |slot, key| {
+            slot_spelling(pages, index, slot, key)
+        })
+    }
+
+    fn patched_with_spelling<'a>(
+        old: &Self,
+        changes: impl IntoIterator<
+            Item = (Option<(usize, &'a [String])>, Option<(usize, &'a [String])>),
+        >,
+        spelling: impl Fn(usize, &str) -> Option<String>,
+    ) -> Self {
+        let mut next = old.unchanged();
+        let changes: Vec<_> = changes
+            .into_iter()
+            .filter(|(before, after)| before != after)
+            .collect();
         let mut dirty = BTreeSet::new();
         // Removals first, then additions, then each touched key's spelling
         // from its final least referrer: a page that both leaves and joins a
@@ -109,12 +158,10 @@ impl ReferencedNameTable {
                     continue;
                 };
                 let mut referrers = referrers.clone();
-                if let Ok(at) = referrers.slots.binary_search(slot) {
-                    referrers.slots.remove(at);
-                }
+                referrers.slots.remove(slot);
                 if referrers.slots.is_empty() {
                     next.keys.remove(&key);
-                    dirty.remove(&key);
+                    dirty.insert(key);
                 } else {
                     next.keys.insert(key.clone(), referrers);
                     dirty.insert(key);
@@ -129,29 +176,39 @@ impl ReferencedNameTable {
                 let key = tine_core::refs::page_key(name);
                 let mut referrers = next.keys.get(&key).cloned().unwrap_or(KeyReferrers {
                     spelling: name.clone(),
-                    slots: Vec::new(),
+                    slots: SharedMap::new(),
                 });
-                if let Err(at) = referrers.slots.binary_search(slot) {
-                    referrers.slots.insert(at, *slot);
-                }
+                referrers.slots.insert(*slot, ());
                 next.keys.insert(key.clone(), referrers);
                 dirty.insert(key);
             }
         }
         for key in dirty {
             let Some(referrers) = next.keys.get(&key) else {
+                next.changed_spellings.push(key);
                 continue;
             };
             let least = referrers.least_slot();
-            if let Some(spelling) = slot_spelling(pages, index, least, &key) {
+            if let Some(spelling) = spelling(least, &key) {
                 if spelling != referrers.spelling {
                     let mut referrers = referrers.clone();
                     referrers.spelling = spelling;
-                    next.keys.insert(key, referrers);
+                    next.keys.insert(key.clone(), referrers);
                 }
+            }
+            if old.keys.get(&key).map(|row| row.spelling.as_str())
+                != next.keys.get(&key).map(|row| row.spelling.as_str())
+            {
+                next.changed_spellings.push(key);
             }
         }
         next
+    }
+
+    /// This capture's changed first spellings, including additions/removals.
+    /// Borrowed O(1) evidence for derived date membership; no graph walk.
+    pub(super) fn changed_spellings(&self) -> &[String] {
+        &self.changed_spellings
     }
 
     pub(crate) fn get(&self, key: &str) -> Option<&KeyReferrers> {
@@ -175,11 +232,28 @@ impl ReferencedNameTable {
 #[cfg(test)]
 thread_local! {
     static NAME_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DOCUMENT_COLLECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Every whole-document name collection the spelling owner performs.
+fn collect(doc: &Document, config: &tine_core::config::Config) -> Vec<String> {
+    #[cfg(test)]
+    DOCUMENT_COLLECTIONS.with(|count| count.set(count.get() + 1));
+    super::collect_document_referenced_names(doc, config)
+}
+
+#[cfg(test)]
+pub(crate) fn take_document_collections() -> usize {
+    DOCUMENT_COLLECTIONS.with(|count| count.replace(0))
 }
 
 #[cfg(test)]
 pub(crate) fn name_lookups() -> usize {
     NAME_LOOKUPS.with(std::cell::Cell::get)
+}
+
+fn reference_spelling<'a>(key: &'a str, authored: Option<&'a KeyReferrers>) -> &'a str {
+    authored.map_or(key, |row| row.spelling.as_str())
 }
 
 /// Authored spellings for explicit keys, retaining a folded key when no
@@ -218,16 +292,116 @@ pub(crate) fn explicit_reference_spellings(graph: &ReadSnapshot) -> impl Iterato
         {
             spellings.next();
         }
-        spellings
-            .peek()
-            .filter(|(name, _)| name.as_str() == key)
-            .map_or(key, |(_, name)| name.spelling.as_str())
+        reference_spelling(
+            key,
+            spellings
+                .peek()
+                .filter(|(name, _)| name.as_str() == key)
+                .map(|(_, row)| *row),
+        )
     })
 }
 
 /// The table and its readers (moved beside the table to keep `model.rs`
 /// within its size ratchet).
 impl ReadSnapshot {
+    /// Build or patch the existing in-memory spelling table directly from the
+    /// changed parsed pages. Its optional checkpointed per-page cache stays lazy.
+    pub(super) fn warm_path_reference_spellings(&self, old: Option<&Self>, paths: &[String]) {
+        self.referenced_name_table.get_or_init(|| {
+            let old = old
+                .filter(|old| !paths.is_empty() || std::sync::Arc::ptr_eq(&old.pages, &self.pages));
+            if let Some((old, table)) =
+                old.and_then(|old| old.referenced_name_table_built().map(|table| (old, table)))
+            {
+                let names = |graph: &Self, path: &String| {
+                    let slot = *graph.pages.positions.get(path)?;
+                    let (_, doc) = graph.pages.get(slot)?;
+                    Some((slot, collect(doc, graph.config())))
+                };
+                // Each page's own first spelling per key, in document order:
+                // seeded from the changed pages already collected, and filled
+                // at most once for any other least referrer (one collection
+                // per page, not per dirty key).
+                let first_spellings = |names: &[String]| {
+                    let mut first = std::collections::HashMap::new();
+                    for name in names {
+                        first
+                            .entry(tine_core::refs::page_key(name))
+                            .or_insert_with(|| name.clone());
+                    }
+                    first
+                };
+                let mut changes: Vec<_> = paths
+                    .iter()
+                    .map(|path| (names(old, path), names(self, path)))
+                    .collect();
+                let spellings = std::cell::RefCell::new(
+                    changes
+                        .iter()
+                        .filter_map(|(_, after)| after.as_ref())
+                        .map(|(slot, names)| (*slot, first_spellings(names)))
+                        .collect::<std::collections::HashMap<_, _>>(),
+                );
+                for (before, after) in &mut changes {
+                    for (_, names) in before.iter_mut().chain(after.iter_mut()) {
+                        names.sort_unstable();
+                    }
+                }
+                ReferencedNameTable::patched_with_spelling(
+                    table,
+                    changes.iter().map(|(before, after)| {
+                        (
+                            before
+                                .as_ref()
+                                .map(|(slot, names)| (*slot, names.as_slice())),
+                            after
+                                .as_ref()
+                                .map(|(slot, names)| (*slot, names.as_slice())),
+                        )
+                    }),
+                    |slot, key| {
+                        let mut spellings = spellings.borrow_mut();
+                        if !spellings.contains_key(&slot) {
+                            let (_, doc) = self.pages.get(slot)?;
+                            spellings.insert(slot, first_spellings(&collect(doc, self.config())));
+                        }
+                        spellings.get(&slot)?.get(key).cloned()
+                    },
+                )
+            } else {
+                ReferencedNameTable::from_rows(
+                    self.pages
+                        .slots()
+                        .map(|(slot, (_, doc))| (slot, collect(doc, self.config()))),
+                )
+            }
+        });
+    }
+
+    /// The date of one active explicit key, using exactly the spelling/fallback
+    /// the bulk execution resolver reads above. Used only during index patches.
+    pub(super) fn path_reference_day(&self, key: &str) -> Option<i64> {
+        if !key.bytes().any(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        // The query resolver excludes date spellings claimed by ordinary
+        // pages from journal equivalence (graph_equivalent_page_names_with).
+        if self
+            .real_page_owners()
+            .opening_entry(key)
+            .is_some_and(|entry| entry.kind == super::PageKind::Page)
+        {
+            return None;
+        }
+        let refs = self.explicit_index.shards[super::SnapshotExplicitIndex::shard(key)].get(key)?;
+        if !refs.iter().any(|(path, _)| self.is_active_path(path)) {
+            return None;
+        }
+        let spelling = reference_spelling(key, self.referenced_name_table().get(key));
+        crate::query::eval::reference_day(spelling, &self.config().journal_format())
+    }
+
     /// Explicit keys with active referrers: O(E) traversal plus the existing
     /// active-owner checks. Ordering stays private to the resident index.
     pub(crate) fn explicit_reference_names(&self) -> impl Iterator<Item = &str> {
@@ -246,15 +420,16 @@ impl ReadSnapshot {
         })
     }
 
-    /// The graph-wide referenced-name table, built on first use (O(P + R))
-    /// and inherited by later generations through per-page patches.
+    /// This generation's spelling table, built before publication and patched
+    /// from changed pages. O(1); no document reads or cache construction.
     pub(crate) fn referenced_name_table(&self) -> &ReferencedNameTable {
         self.referenced_name_table
-            .get_or_init(|| ReferencedNameTable::build(&self.pages, self.referenced_name_index()))
+            .get()
+            .expect("publication captures reference spellings")
     }
 
-    /// The table only when this generation already has it (a publication
-    /// never builds it: the first inventory or completion read does).
+    /// Borrow the resident table for incremental capture/oracles, without
+    /// constructing an optional per-page cache. O(1).
     pub(crate) fn referenced_name_table_built(&self) -> Option<&ReferencedNameTable> {
         self.referenced_name_table.get()
     }
@@ -271,7 +446,7 @@ impl ReadSnapshot {
                 (
                     key.clone(),
                     referrers.spelling.clone(),
-                    referrers.slots().to_vec(),
+                    referrers.slots().collect(),
                 )
             })
             .collect()
@@ -356,13 +531,8 @@ impl ReadSnapshot {
             referrers: Option<&'a KeyReferrers>,
             owners: Owners,
         ) -> Option<Cow<'a, str>> {
-            let other = referrers.and_then(|referrers| {
-                referrers
-                    .slots()
-                    .iter()
-                    .copied()
-                    .find(|slot| !owners.contains_key(slot))
-            });
+            let other = referrers
+                .and_then(|referrers| referrers.slots().find(|slot| !owners.contains_key(slot)));
             let owner = owners
                 .into_iter()
                 .find_map(|(slot, spelling)| spelling.map(|spelling| (slot, spelling)));

@@ -1,10 +1,25 @@
-/** The tag table and its availability toggle share one keyed query lifecycle. */
+/** A shown tag table fetches groups; its toggle reads native membership only. */
 import { createEffect, createResource, type Accessor } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { referenceKey, referenceRevision } from "./referenceKeys";
 import type { RefGroup } from "./types";
 import { readOr } from "./resourceRead";
+import { changed } from "./changeKeys";
+
+/** One boolean IPC per target/membership revision, with graph-owned adoption.
+ *  Body-only edits do not refresh this resource; no query or rows are loaded. */
+export function createTagTableAvailabilityResource(name: Accessor<string>, enabled: Accessor<boolean>) {
+  const owners = {};
+  return createResource(
+    () => enabled() ? `${name()}\0${changed(referenceKey("tagTableMembership", name()))}` : null,
+    async () => {
+      const owner = latestOwner(owners, "tag-table-availability", graphOwner());
+      const answer = await readOwned(owner, backend().tagTableAvailable(name()));
+      return answer.kind === "stale" ? undefined : answer.value;
+    },
+  );
+}
 
 export function createTagTableResource(name: Accessor<string>, enabled: Accessor<boolean> = () => true) {
   const owners = {};

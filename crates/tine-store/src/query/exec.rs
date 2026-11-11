@@ -68,6 +68,10 @@ use sample::take_random_subset;
 #[path = "exec_key_tests.rs"]
 mod key_tests;
 #[cfg(test)]
+pub(crate) fn take_candidate_pages() -> usize {
+    candidates::CANDIDATE_PAGES.with(|count| count.replace(0))
+}
+#[cfg(test)]
 #[path = "exec_scope_tests.rs"]
 mod scope_tests;
 
@@ -1214,6 +1218,13 @@ fn query_ir_on_day_cancellable(
     let default_view = ViewSettings::default();
     let no_context = tine_core::query::ir::ExecutionContext::none();
     let (query, view, context) = match request {
+        crate::IrRequest::TagTableAvailable { name } => {
+            if cancelled() {
+                return Ok(None);
+            }
+            let available = graph.tag_table_available(name);
+            return Ok((!cancelled()).then_some(crate::IrAnswer::Available(available)));
+        }
         crate::IrRequest::TaggedPages { name } => {
             tagged_pages = crate::query::tagged_pages_query(graph, name);
             (&tagged_pages, &default_view, &no_context)
