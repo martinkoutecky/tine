@@ -93,7 +93,8 @@ fn query_publish_inventory_work_tracks_only_selected_pages() {
     // Static output, home naming and the snapshot each inventory the selected
     // page and its reference-only TODO page. No source-only row belongs here.
     assert_eq!(
-        inventory_work, [6, 6],
+        inventory_work,
+        [6, 6],
         "three two-row build inventories, independent of source graph size"
     );
 }
