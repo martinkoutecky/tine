@@ -292,6 +292,9 @@ mod journal_guide_tests {
     #[test]
     fn workspace_windows_are_documented() {
         let context = include_str!("templates/keep-context-visible.md");
+        assert!(context.contains("**Show Workspaces** in **Settings → Appearance → Advanced**"));
+        assert!(context.contains("hiding them does not delete them"));
+        assert!(context.contains("This preference belongs to this device"));
         for detail in [
             "## Open a page in its own window",
             "**Open in new window**",

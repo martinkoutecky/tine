@@ -2696,6 +2696,8 @@ export interface MessageArgs {
   "settings-sections-page": { "page": string | number };
   "settings-shade-embedded-blocks-like-logseq-or-show": {};
   "settings-shaded-box": {};
+  "settings-show-workspaces": {};
+  "settings-show-workspaces-hint": {};
   "settings-small-visual-details-saved-on-this-device": {};
   "settings-solid-underline": {};
   "settings-soonest-deadline-first-blocks-without-a-deadline": {};

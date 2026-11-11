@@ -560,7 +560,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-census-settings.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry. Show Workspaces in Settings hides saved-workspace controls and the creation command on desktop and mobile, then restores the same workspaces.","blocking":true}],
       "acceptableVariations":["Form placement, styling and persistence latency may vary while the same workspace creation flow remains available."],
       "nonRequirements":["Exact pixels, a specific generated workspace ID, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

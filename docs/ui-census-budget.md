@@ -80,6 +80,9 @@ journey (`scripts/e2e-*.mjs`), not here.
   blocks** (#764) is a palette and keymap command with no default key and no menu row. **New block after this block's
   children** (#818) is a rebindable editor command with the default key **Alt+Enter** (unbound in OG; in Tine it
   only split the block like Enter, and sheet cells keep their own Alt+Enter). It is not a palette row.
+- 2026-11-10, D-20261110-HF / GH #927: `settings.appearance.advanced` 16→17
+  for the requested **Show Workspaces** device switch. It stays behind Advanced;
+  Settings search reveals it, and the initial Appearance control count stays 29.
 - 2026-11-01, D-20261101-L5 / GH #794: `commands.registry` 135→145 and `commands.palette`
   78→88 for the decided **Set depth 0** to **Set depth 9** (ten commands, all
   unbound; Mod+digit stays pane focus). D-20261101-L5 takes the full 0 to 9 range over the

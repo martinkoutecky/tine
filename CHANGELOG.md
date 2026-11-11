@@ -170,6 +170,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Added
 
 - **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
+- **Settings → Appearance → Advanced → Show Workspaces** hides saved-workspace controls on desktop and mobile while keeping existing workspaces for when you turn it on again (#927).
 - Hover a block's bullet to see when its text last changed in git. Uncommitted edits, unavailable dates and the history limit are shown explicitly, without storing timestamp properties (GH #831).
 - Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
 - Commands can have several hotkeys in Settings → Keyboard shortcuts: keep the default and add alternatives, remove individual bindings, and see conflicts. OG `config.edn` shortcut vectors use every binding (GH #878).
