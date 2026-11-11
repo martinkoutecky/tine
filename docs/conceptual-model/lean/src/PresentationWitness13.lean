@@ -1,5 +1,4 @@
-/- Discriminating, kernel-evaluated presentation and unresolved date instances.
-Date instances are alternatives, not an adopted production policy. -/
+/- Discriminating, kernel-evaluated presentation instances in the generic historical library. -/
 import Twins13
 
 set_option maxRecDepth 8192
@@ -76,35 +75,6 @@ theorem offered_query_projection_recomputed :
     safe P SP E queryGraph [] "R" (literal P queryGraph "R" "S") = true ∧
     queryResults P Q rows {} (execute P E queryGraph "R" (literal P queryGraph "R" "S"))
       .block allQuery = [.block ("S", 1), .block ("S", 2), .block ("S", 5)] := by decide +kernel
-
-/- KEY-DATE: unchanged core boundary is one String→K key for claims, aliases,
-references, queries and substitutions, with configured refKind and stem.
-No production instance for ordinary recognized dates is selected below. -/
-def dateGraph : Graph := [pg "2026-11-06" "ordinary",
-  ⟨"2026_11_06.md", .journals, .md, "journal"⟩]
-def dateLiteral : Inputs String := { P with
-  stem := fun f => if f.dir == .journals then "Nov 6th, 2026" else f.path
-  refKind := fun s => if s == "2026-11-06" || s == "Nov 6th, 2026" then .journal else .page
-  kindPref := .journal }
-def dateFolded : Inputs String := { dateLiteral with
-  key := fun s => if s == "2026-11-06" then "Nov 6th, 2026" else s }
-
-theorem literal_date_instance :
-    dateLiteral.conflictedB dateGraph "2026-11-06" = false ∧
-    (activeGraph dateLiteral dateGraph).map File.path = ["2026-11-06", "2026_11_06.md"] ∧
-    resolve dateLiteral dateGraph "2026-11-06" = (.page, "2026-11-06") ∧
-    resolve dateLiteral dateGraph "Nov 6th, 2026" = (.journal, "Nov 6th, 2026") := by decide +kernel
-
-theorem folded_date_instance :
-    dateFolded.conflictedB dateGraph "Nov 6th, 2026" = true ∧
-    (activeGraph dateFolded dateGraph).map File.path = ["2026_11_06.md"] ∧
-    resolve dateFolded dateGraph "2026-11-06" = (.journal, "Nov 6th, 2026") := by decide +kernel
-
-/-- A globally date-folded key cannot simultaneously give an ordinary file
-a literal, distinct claim for one of those same spellings. -/
-theorem shared_key_forces_claim (I : Inputs String) (f : File) (s canonical : String)
-    (hn : I.name f = s) (hk : I.key s = I.key canonical) :
-    (I.claim f).2 = I.key canonical := by simp [Params.claim, hn, hk]
 
 end PresentationWitness13
 end CM

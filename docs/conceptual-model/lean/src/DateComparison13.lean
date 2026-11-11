@@ -1,451 +1,275 @@
-/- Comparison instrumentation only. No public reader or operation rule changes. -/
-import DateWitness13
+/- Universal structural comparison via primitive reader inputs. Baselines are
+comparison data; no obsolete date policy is selectable by the current API. -/
+
+import DateOperationComparison14
 
 set_option linter.unusedSectionVars false
-set_option linter.unusedSimpArgs false
 namespace CM
 namespace Date13
 open Params Consolidated13 QueryRename6
 variable {K L : Type} [DecidableEq K] (P : Inputs K)
 
-/-- The generic real-first reader's target before direct-alias routing. -/
-def genericTarget (G : Graph) (s : String) : Page K :=
-  let R := readParams P G
-  let A := activeGraph P G
-  if R.real A (P.kindPref, P.key s) then (P.kindPref, P.key s)
-  else if R.real A (otherKind P.kindPref, P.key s) then (otherKind P.kindPref, P.key s)
-  else (P.refKind (P.key s), P.key s)
+/-- Every field is a primitive inventory row, name/path/leaf answer or finite
+selection. No complete reference/query/tree/panel result is a field. A baseline
+may supply the accepted r13 inputs or any other reader's inputs. -/
+structure ReaderInputs (K L : Type) where
+  realRows : List (Page K)
+  blocks : List BlockId
+  seeds : List String
+  virtualRow : String → Option (Page K)
+  refNames : BlockId → List String
+  pathAnswer : String → Page K → Bool
+  leaf : Leaf L → Node K → Bool
+  sourceEligible : Page K → BlockId → Bool
+  blockSource : BlockId → Option (Page K)
+  linkSource : Page K → Bool
+  parentSpelling : Page K → Option String
+  parentLookup : String → Option (Page K)
+  header : BlockId → Bool
+  parentBlock : BlockId → Option BlockId
+  initial : String → Page K
+  direct : String → Option (Page K)
 
-/-- Only an actually used direct-declarer choice is compared. Real targets
-bypass aliases in both readers; the optional choice preserves that branch. -/
-def genericDirect (G : Graph) (s : String) : Option (Page K) :=
-  let R := readParams P G
-  let A := activeGraph P G
-  if R.real A (P.kindPref, P.key s) then none
-  else if R.real A (otherKind P.kindPref, P.key s) then none
-  else minBy R.pageLe (R.declarers A (P.key s))
+def ReaderInputs.pages (r : ReaderInputs K L) := r.realRows ++ r.seeds.filterMap r.virtualRow
+def ReaderInputs.references (r : ReaderInputs K L) (b : BlockId) (t : Page K) :=
+  (r.refNames b).any (fun s => r.pathAnswer s t)
+def ReaderInputs.univ (r : ReaderInputs K L) : Anchor → List (Node K)
+  | .page => r.pages.map Node.page | .block => r.blocks.map Node.block
+def ReaderInputs.den (r : ReaderInputs K L) (a : Anchor) (q : Query L) :=
+  (r.univ a).filter (fun n => q.bval (fun l => r.leaf l n))
+def ReaderInputs.linked (r : ReaderInputs K L) (t : Page K) :=
+  r.blocks.eraseDups.filter (fun b => r.references b t && r.sourceEligible t b)
+def ReaderInputs.visible (r : ReaderInputs K L) (o : QueryPresentation) (raw : List (Node K)) : Node K → Bool
+  | .page _ => true
+  | .block b => (o.showHeaders || !r.header b) &&
+      !(o.removeBlockChildren && (r.parentBlock b).any (fun a => raw.contains (.block a)))
+def ReaderInputs.queryRows (r : ReaderInputs K L) (o : QueryPresentation) (a : Anchor) (q : Query L) :=
+  let raw := r.den a q
+  raw.filter (r.visible o raw)
+def ReaderInputs.links (r : ReaderInputs K L) (S T : Page K) :=
+  decide (S ∈ r.pages) && decide (T ∈ r.pages) && decide (S ≠ T) && r.linkSource S &&
+    r.blocks.any (fun b => decide (r.blockSource b = some S) && r.references b T)
+def ReaderInputs.near (r : ReaderInputs K L) : NearDir → Nat → List (Page K) → List (Page K)
+  | .out,n,X => walk r.pages r.links n X
+  | .inn,n,X => walk r.pages (fun S T => r.links T S) n X
+  | .both,n,X => walk r.pages r.links n X ++ walk r.pages (fun S T => r.links T S) n X
+def ReaderInputs.treeParent (r : ReaderInputs K L) (t : Page K) :=
+  if t ∈ r.pages then (r.parentSpelling t).bind r.parentLookup else none
+def ReaderInputs.children (r : ReaderInputs K L) (t : Page K) :=
+  r.pages.eraseDups.filter (fun c => decide (r.treeParent c = some t))
+def ReaderInputs.tree (r : ReaderInputs K L) := r.pages.eraseDups.map (fun t => (t,r.children t))
+def ReaderInputs.namespaceTree (r : ReaderInputs K L) :=
+  r.tree.filter (fun row => (r.treeParent row.1).isSome || !row.2.isEmpty)
+def ReaderInputs.opening (r : ReaderInputs K L) (s : String) := (r.direct s).getD (r.initial s)
 
-def finalDirect (D : Dates K) (G : Graph) (s : String) : Option (Page K) :=
-  if !(realFiles P G (target P D G s)).isEmpty then none else
-    (minBy (Owner5.rankLe (fun f => Owner5.bytes f.path) Orders.fileLe)
-      (declarers P D G (target P D G s))).map P.claim
+/-- Indexed row differences keep order and multiplicity in the comparison. -/
+def rowDifference {α : Type} (a b : List α) : Prop := ∃ i : Nat, a[i]? ≠ b[i]?
+def functionDifference {α β : Type} (a b : α → β) : Prop := ∃ x, a x ≠ b x
 
-def navigationCases (D : Dates K) (G : Graph) (s : String) : List (String × Bool) :=
-  [("navigation target", decide (target P D G s ≠ genericTarget P G s)),
-   ("navigation direct declarer", decide (finalDirect P D G s ≠ genericDirect P G s))]
+def primitiveDifference (a b : ReaderInputs K L) : Prop :=
+  rowDifference a.realRows b.realRows ∨ rowDifference a.blocks b.blocks ∨ rowDifference a.seeds b.seeds ∨
+  functionDifference a.virtualRow b.virtualRow ∨ functionDifference a.refNames b.refNames ∨
+  (∃ s t, a.pathAnswer s t ≠ b.pathAnswer s t) ∨
+  (∃ l n, a.leaf l n ≠ b.leaf l n) ∨
+  (∃ t x, a.sourceEligible t x ≠ b.sourceEligible t x) ∨
+  functionDifference a.blockSource b.blockSource ∨ functionDifference a.linkSource b.linkSource ∨
+  functionDifference a.parentSpelling b.parentSpelling ∨ functionDifference a.parentLookup b.parentLookup ∨
+  functionDifference a.header b.header ∨ functionDifference a.parentBlock b.parentBlock ∨
+  functionDifference a.initial b.initial ∨ functionDifference a.direct b.direct
 
-theorem generic_resolve_inputs (G : Graph) (s : String) :
-    Consolidated13.resolve P G s = (genericDirect P G s).getD (genericTarget P G s) := by
-  unfold Consolidated13.resolve Rulings9.resolveKeyR8 genericDirect genericTarget
-  simp only [show (readParams P G).kindPref = P.kindPref from rfl,
-    show (readParams P G).refKind = P.refKind from rfl]
-  split <;> simp_all
-  split <;> simp_all
-  cases minBy (readParams P G).pageLe ((readParams P G).declarers (activeGraph P G) (P.key s)) <;> rfl
+theorem rows_eq_of_no_difference {α : Type} (a b : List α) (h : ¬ rowDifference a b) : a = b := by
+  apply List.ext_getElem?
+  intro i
+  exact Classical.byContradiction (fun he => h ⟨i,he⟩)
 
-theorem final_resolve_inputs (D : Dates K) (G : Graph) (s : String) :
-    resolve P D G s = (finalDirect P D G s).getD (target P D G s) := by
-  simp only [resolve, finalDirect]
-  split <;> simp_all
+theorem functions_eq_of_no_difference {α β : Type} (a b : α → β) (h : ¬ functionDifference a b) : a = b := by
+  funext x
+  exact Classical.byContradiction (fun he => h ⟨x,he⟩)
 
-theorem navigationCases_exact (D : Dates K) (G : Graph) (s : String) :
-    anyDifference (navigationCases P D G s) ↔
-      target P D G s ≠ genericTarget P G s ∨ finalDirect P D G s ≠ genericDirect P G s := by
-  simp [anyDifference, navigationCases]
-
-theorem navigation_comparison_generic (D : Dates K) (G : Graph) (s : String) :
-    anyDifference (navigationCases P D G s) ∨ resolve P D G s = Consolidated13.resolve P G s := by
+theorem inputs_eq_of_no_difference (a b : ReaderInputs K L) (h : ¬ primitiveDifference a b) : a = b := by
   classical
-  by_cases h : anyDifference (navigationCases P D G s)
+  simp only [primitiveDifference,not_or] at h
+  have h1 := rows_eq_of_no_difference a.realRows b.realRows h.1
+  have h2 := rows_eq_of_no_difference a.blocks b.blocks h.2.1
+  have h3 := rows_eq_of_no_difference a.seeds b.seeds h.2.2.1
+  have h4 := functions_eq_of_no_difference a.virtualRow b.virtualRow h.2.2.2.1
+  have h5 := functions_eq_of_no_difference a.refNames b.refNames h.2.2.2.2.1
+  have h6 : a.pathAnswer = b.pathAnswer := by
+    funext s t; exact Classical.byContradiction (fun he => h.2.2.2.2.2.1 ⟨s,t,he⟩)
+  have h7 : a.leaf = b.leaf := by
+    funext l n; exact Classical.byContradiction (fun he => h.2.2.2.2.2.2.1 ⟨l,n,he⟩)
+  have h8 : a.sourceEligible = b.sourceEligible := by
+    funext t x; exact Classical.byContradiction (fun he => h.2.2.2.2.2.2.2.1 ⟨t,x,he⟩)
+  have h9 := functions_eq_of_no_difference a.blockSource b.blockSource h.2.2.2.2.2.2.2.2.1
+  have h10 := functions_eq_of_no_difference a.linkSource b.linkSource h.2.2.2.2.2.2.2.2.2.1
+  have h11 := functions_eq_of_no_difference a.parentSpelling b.parentSpelling h.2.2.2.2.2.2.2.2.2.2.1
+  have h12 := functions_eq_of_no_difference a.parentLookup b.parentLookup h.2.2.2.2.2.2.2.2.2.2.2.1
+  have h13 := functions_eq_of_no_difference a.header b.header h.2.2.2.2.2.2.2.2.2.2.2.2.1
+  have h14 := functions_eq_of_no_difference a.parentBlock b.parentBlock h.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  have h15 := functions_eq_of_no_difference a.initial b.initial h.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
+  have h16 := functions_eq_of_no_difference a.direct b.direct h.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2
+  cases a; cases b
+  simp_all
+
+/-- All ordered output surfaces, including arbitrary Boolean queries, every
+neighborhood radius/direction, full and namespace trees, and navigation. -/
+structure ReaderAgreement (a b : ReaderInputs K L) : Prop where
+  pages : a.pages = b.pages
+  blocks : a.blocks = b.blocks
+  references : a.references = b.references
+  den : a.den = b.den
+  linked : a.linked = b.linked
+  counts : ∀ t, (a.linked t).length = (b.linked t).length
+  queryRows : a.queryRows = b.queryRows
+  links : a.links = b.links
+  near : a.near = b.near
+  tree : a.tree = b.tree
+  namespaceTree : a.namespaceTree = b.namespaceTree
+  opening : a.opening = b.opening
+
+theorem structural_comparison_exhaustive (a b : ReaderInputs K L) :
+    primitiveDifference a b ∨ ReaderAgreement a b := by
+  classical
+  by_cases h : primitiveDifference a b
   · exact Or.inl h
-  right
-  have ht : target P D G s = genericTarget P G s :=
-    Classical.byContradiction fun hn => h ((navigationCases_exact P D G s).mpr (Or.inl hn))
-  have hd : finalDirect P D G s = genericDirect P G s :=
-    Classical.byContradiction fun hn => h ((navigationCases_exact P D G s).mpr (Or.inr hn))
-  rw [final_resolve_inputs, generic_resolve_inputs, ht, hd]
+  · right
+    have he := inputs_eq_of_no_difference a b h
+    subst b
+    exact ⟨rfl,rfl,rfl,rfl,rfl,fun _ => rfl,rfl,rfl,rfl,rfl,rfl,rfl⟩
 
-/-- No premise: all differences from R12 are accounted for, including unknown
-names and empty graphs. A positive cause may be masked by another branch. -/
-theorem navigation_comparison_exhaustive (D : Dates K) (G : Graph) (s : String) :
-    activeGraph P G ≠ G ∨ readerNormalization P G ∨ emptyReal P G s = true ∨
-      anyDifference (navigationCases P D G s) ∨ resolve P D G s = P.resolve G s := by
-  let Q : QParams K Unit := ⟨fun _ _ => [], fun _ _ => false, fun _ _ _ => false, fun _ _ _ => false⟩
-  rcases static_comparison_exhaustive P Q { favoritesPage := "" } G s with ha | hp | he | h
-  · exact Or.inl ha
-  · exact Or.inr (Or.inl hp)
-  · exact Or.inr (Or.inr (Or.inl he))
-  · right; right; right
-    rcases navigation_comparison_generic P D G s with hn | hn
-    · exact Or.inl hn
-    · exact Or.inr (hn.trans h.2.2.2.2.2.2.2.2.2)
+def rawSeeds (D : Dates K) (G : Graph) : List String :=
+  (blocks P D G).flatMap (P.refNames (activeGraph P D G)) ++ (activeGraph P D G).flatMap P.fileNsNames
 
-/-- Each raw page-creation input is compared before any list is assembled.
-Its optional row exposes target interpretation, real suppression and Q9. -/
-def rawSeeds (G : Graph) : List String :=
-  (Consolidated13.blocks P G).flatMap (P.refNames (activeGraph P G)) ++
-    (activeGraph P G).flatMap P.fileNsNames
-
-def finalSeed (D : Dates K) (G : Graph) (s : String) : Option (Page K) :=
+def seedRow (D : Dates K) (G : Graph) (s : String) : Option (Page K) :=
   let t := target P D G s
-  if (realFiles P G t).isEmpty && !(edges P D G).any (fun e => decide (e.2 = t)) then some t else none
+  if (realFiles P D G t).isEmpty && !(edges P D G).any (fun e => decide (e.2 = t)) then some t else none
 
-def genericSeed (G : Graph) (s : String) : Option (Page K) :=
-  let R := readParams P G
-  if !R.claimedKey (activeGraph P G) (P.key s) && !R.declaredKey (activeGraph P G) (P.key s)
-  then some (P.refKind (P.key s), P.key s) else none
+def directTarget (D : Dates K) (G : Graph) (s : String) : Option (Page K) :=
+  if !(realFiles P D G (target P D G s)).isEmpty then none else
+    (minBy pathLe (declarers P D G (target P D G s))).map (claim P D)
 
-theorem final_pages_seed_rows (D : Dates K) (G : Graph) :
-    pages P D G = (activeGraph P G).map P.claim ++ (rawSeeds P G).filterMap (finalSeed P D G) := by
-  have hs : seedTargets P D G = (rawSeeds P G).map (target P D G) := by
-    simp only [seedTargets, rawSeeds, List.map_append, List.map_flatMap]
-    rfl
-  rw [pages, hs]
+def readerInputs (D : Dates K) (Q : QParams K L) (R : QueryRowParser) (config : Decided.Config)
+    (favorites : Option String) (spell : K → String) (G : Graph) : ReaderInputs K L where
+  realRows := (activeGraph P D G).map (claim P D)
+  blocks := blocks P D G
+  seeds := rawSeeds P D G
+  virtualRow := seedRow P D G
+  refNames := P.refNames (activeGraph P D G)
+  pathAnswer := fun s t => sameCls (edges P D G) (target P D G s) t
+  leaf := leafAt P D Q G
+  sourceEligible := panelSource P D favorites G
+  blockSource := pageOfBlock P D G
+  linkSource := fun S => decide (S ≠ target P D G config.favoritesPage)
+  parentSpelling := fun t => Ref10.nsParent P.toParams (spell t.2)
+  parentLookup := fun s => (pages P D G).find? (fun p => decide (p = target P D G s))
+  header := fun b => decide (rowKind P D R G b = .header)
+  parentBlock := queryParent P D Q R G
+  initial := target P D G
+  direct := directTarget P D G
+
+theorem pages_seed_rows (D : Dates K) (G : Graph) :
+    pages P D G = (activeGraph P D G).map (claim P D) ++ (rawSeeds P D G).filterMap (seedRow P D G) := by
+  have hs : seedTargets P D G = (rawSeeds P D G).map (target P D G) := by
+    simp only [seedTargets,rawSeeds,List.map_append,List.map_flatMap]; rfl
+  rw [pages,hs]
   congr 1
-  generalize rawSeeds P G = xs
+  generalize rawSeeds P D G = xs
   induction xs with
   | nil => rfl
   | cons a xs ih =>
-    simp only [List.map_cons, List.filter_cons, List.filterMap_cons, finalSeed]
+    simp only [List.map_cons,List.filter_cons,List.filterMap_cons,seedRow]
     split <;> simp_all
 
-theorem generic_pages_seed_rows (G : Graph) :
-    Consolidated13.pages P G = (activeGraph P G).map P.claim ++ (rawSeeds P G).filterMap (genericSeed P G) := by
-  have hs : (readParams P G).pageSeedKeys (activeGraph P G) = (rawSeeds P G).map P.key := by
-    simp only [Params.pageSeedKeys, Params.refKeys, Params.nameKeys, rawSeeds,
-      List.map_append, List.map_flatMap, Function.comp_def]
+theorem reader_inputs_realize (D : Dates K) (Q : QParams K L) (R : QueryRowParser)
+    (config : Decided.Config) (favorites : Option String) (spell : K → String) (G : Graph) :
+    let r := readerInputs P D Q R config favorites spell G
+    r.pages = pages P D G ∧ r.references = referencesB P D G ∧
+    r.den = den P D Q G ∧ r.linked = linked P D favorites G ∧
+    r.queryRows = (fun o a q => queryResults P D Q R o G a q) ∧
+    r.links = links P D config G ∧ r.near = near P D config G ∧
+    r.tree = tree P D spell G ∧ r.namespaceTree = namespaceTree P D spell G ∧
+    r.opening = resolve P D G := by
+  let r := readerInputs P D Q R config favorites spell G
+  have hp : r.pages = pages P D G := (pages_seed_rows P D G).symm
+  have hr : r.references = referencesB P D G := by
+    funext b t
+    simp only [r,ReaderInputs.references,readerInputs,referencesB,refTargets,List.any_map]
     rfl
-  change (activeGraph P G).map P.claim ++ _ = _
-  congr 1
-  unfold Params.refOnlyPagesR
-  rw [hs]
-  generalize rawSeeds P G = xs
-  induction xs with
-  | nil => rfl
-  | cons a xs ih =>
-    simp only [List.map_cons, List.filter_cons, List.filterMap_cons, genericSeed, Bool.true_and]
-    cases hc : (readParams P G).claimedKey (activeGraph P G) (P.key a) <;>
-      cases hd : (readParams P G).declaredKey (activeGraph P G) (P.key a) <;>
-      simp [hc, hd, show (readParams P G).refKind = P.refKind from rfl] <;> exact ih
+  have hu : r.univ = univ P D G := by
+    funext a; cases a <;> simp only [ReaderInputs.univ,univ,hp]; rfl
+  have hd : r.den = den P D Q G := by
+    funext a q; simp only [ReaderInputs.den,den,hu]; rfl
+  have hlinked : r.linked = linked P D favorites G := by
+    funext t; simp only [ReaderInputs.linked,linked,hr]; rfl
+  have hv : ∀ o raw, r.visible o raw = queryRowVisible P D Q R o G raw := by
+    intro o raw; funext n
+    cases n with
+    | page t => rfl
+    | block b =>
+      change ((o.showHeaders || !decide (rowKind P D R G b = .header)) && _) = _
+      cases he : rowKind P D R G b <;> simp [queryRowVisible,he,ReaderInputs.visible,r,readerInputs]
+  have hq : r.queryRows = fun o a q => queryResults P D Q R o G a q := by
+    funext o a q; simp only [ReaderInputs.queryRows,hd,hv,queryResults,queryProjection]
+  have hl : r.links = links P D config G := by
+    funext S T; simp only [ReaderInputs.links,links,hp,hr]; rfl
+  have hn : r.near = near P D config G := by
+    funext d n X; cases d <;> simp only [ReaderInputs.near,near,hp,hl]
+  have htparent : r.treeParent = treeParent P D spell G := by
+    funext t; simp only [ReaderInputs.treeParent,treeParent,hp]; rfl
+  have hchildren : r.children = children P D spell G := by
+    funext t; simp only [ReaderInputs.children,children,hp,htparent]
+  have ht : r.tree = tree P D spell G := by simp only [ReaderInputs.tree,tree,hp,hchildren]
+  have hns : r.namespaceTree = namespaceTree P D spell G := by
+    simp only [ReaderInputs.namespaceTree,namespaceTree,ht,htparent]
+  have ho : r.opening = resolve P D G := by
+    funext s
+    change (directTarget P D G s).getD (target P D G s) = _
+    unfold directTarget resolve openTarget
+    split <;> rfl
+  exact ⟨hp,hr,hd,hlinked,hq,hl,hn,ht,hns,ho⟩
 
-theorem pages_eq_of_seed_rows (D : Dates K) (G : Graph)
-    (h : ∀ s ∈ rawSeeds P G, finalSeed P D G s = genericSeed P G s) :
-    pages P D G = Consolidated13.pages P G := by
-  rw [final_pages_seed_rows, generic_pages_seed_rows]
-  congr 1
-  generalize rawSeeds P G = xs at *
-  induction xs with
-  | nil => rfl
-  | cons a xs ih =>
-    rw [List.filterMap_cons, List.filterMap_cons, h a (by simp)]
-    have ht := ih (fun s hs => h s (by simp [hs]))
-    cases genericSeed P G a <;> simp [ht]
+/-- The baseline argument is arbitrary. In particular no graph-validity,
+unique-path, date-preservation, parser-equivalence or realization premise. -/
+theorem static_comparison_exhaustive_final (D : Dates K) (Q : QParams K L) (R : QueryRowParser)
+    (config : Decided.Config) (favorites : Option String) (spell : K → String) (G : Graph)
+    (baseline : ReaderInputs K L) :
+    primitiveDifference (readerInputs P D Q R config favorites spell G) baseline ∨
+      ReaderAgreement (readerInputs P D Q R config favorites spell G) baseline :=
+  structural_comparison_exhaustive _ _
 
-/-- Source incidence is deliberately a primitive diagnostic: duplicate physical
-paths are representable, and fileAt versus owner-block enumeration can differ. -/
-def finalBlockSource (G : Graph) (S : Page K) (b : BlockId) : Bool :=
-  decide (b ∈ Consolidated13.blocks P G) && decide (P.pageOfBlock (activeGraph P G) b = some S)
-
-def genericBlockSource (G : Graph) (S : Page K) (b : BlockId) : Bool :=
-  decide (b ∈ (readParams P G).pageBlocks (activeGraph P G) S)
-
-/-- Compare the immediate raw-parent lookup, before constructing any tree. -/
-def finalParentLookup (D : Dates K) (G : Graph) (s : String) : Option (Page K) :=
-  (Consolidated13.pages P G).find? (fun p => decide (p = target P D G s))
-
-def genericParentLookup (G : Graph) (s : String) : Option (Page K) :=
-  (Consolidated13.pages P G).eraseDups.find? (fun p => decide (p.2 = P.key s))
-
-/-- Primitive witnesses, rather than inequality of complete reader outputs.
-The reference clause compares a single closed-spelling path answer. -/
-def readerDifference (D : Dates K) (Q : QParams K L) (favorites : Option String) (G : Graph) : Prop :=
-  (∃ s ∈ rawSeeds P G, finalSeed P D G s ≠ genericSeed P G s) ∨
-  (∃ b, ∃ s ∈ P.refNames (activeGraph P G) b, ∃ t,
-    sameCls (edges P D G) (target P D G s) t ≠
-      sameCls ((readParams P G).aliasEdges (activeGraph P G)) (P.key s) t.2) ∨
-  (∃ a n, n ∈ univ P D G a ∧ ∃ l,
-    leafAt P D Q G l n ≠ (readParams P G).leafAt3 Q (activeGraph P G) l n) ∨
-  (∃ t b, b ∈ Consolidated13.blocks P G ∧
-    panelSource P D favorites G t b ≠ Consolidated13.panelSource P favorites G t b) ∨
-  (∃ S b, finalBlockSource P G S b ≠ genericBlockSource P G S b) ∨
-  (∃ s, finalParentLookup P D G s ≠ genericParentLookup P G s)
-
-theorem references_eq_of_paths (D : Dates K) (G : Graph)
-    (h : ∀ b s, s ∈ P.refNames (activeGraph P G) b → ∀ t,
-      sameCls (edges P D G) (target P D G s) t =
-        sameCls ((readParams P G).aliasEdges (activeGraph P G)) (P.key s) t.2) :
-    referencesB P D G = Consolidated13.referencesB P G := by
-  funext b t
-  apply Bool.eq_iff_iff.mpr
-  simp only [referencesB, refTargets, Consolidated13.referencesB, keyReferences,
-    List.any_map, List.any_eq_true]
-  constructor <;> rintro ⟨s, hs, hv⟩
-  · exact ⟨s, hs, (h b s hs t) ▸ hv⟩
-  · refine ⟨s, hs, ?_⟩
-    change sameCls (edges P D G) (target P D G s) t = true
-    rw [h b s hs t]
-    exact hv
-
-theorem den_eq_of_inputs (D : Dates K) (Q : QParams K L) (G : Graph)
-    (hp : pages P D G = Consolidated13.pages P G)
-    (hl : ∀ a n, n ∈ univ P D G a → ∀ l,
-      leafAt P D Q G l n = (readParams P G).leafAt3 Q (activeGraph P G) l n) :
-    den P D Q G = Consolidated13.den P Q G := by
-  funext a q
-  have hu : univ P D G a = (readParams P G).univ true (activeGraph P G) a := by
-    cases a <;> simp only [univ, Params.univ, hp, Consolidated13.pages, Decided.pages]; rfl
-  unfold den Consolidated13.den Decided.den Params.den3 Params.denU3 Params.evalNode3
-  rw [← hu]
-  apply List.filter_congr
-  intro n hm
-  exact bval_congr_leaves q _ _ (fun l _ => hl a n hm l)
-
-theorem links_eq_of_inputs (D : Dates K) (config : Decided.Config) (G : Graph)
-    (hp : pages P D G = Consolidated13.pages P G)
-    (hr : referencesB P D G = Consolidated13.referencesB P G)
-    (hs : ∀ S b, finalBlockSource P G S b = genericBlockSource P G S b) :
-    links P D config G = Consolidated13.links P config G := by
-  have hi : ∀ S b, (b ∈ Consolidated13.blocks P G ∧ P.pageOfBlock (activeGraph P G) b = some S) ↔
-      b ∈ (readParams P G).pageBlocks (activeGraph P G) S := by
-    intro S b
-    have hh := Bool.eq_iff_iff.mp (hs S b)
-    simpa only [finalBlockSource, genericBlockSource, Bool.and_eq_true, decide_eq_true_eq] using hh
-  funext S T
-  apply Bool.eq_iff_iff.mpr
-  rw [links_exact, Consolidated13.links_eq, Decided.linkB_iff, Decided.link_config_iff]
-  simp only [hp, hr, Consolidated13.pages, (readParams P G).referencesB_iff]
-  have hh : (∃ b ∈ Consolidated13.blocks P G,
-      P.pageOfBlock (activeGraph P G) b = some S ∧ Consolidated13.referencesB P G b T = true) ↔
-      ∃ b ∈ (readParams P G).pageBlocks (activeGraph P G) S,
-        Consolidated13.referencesB P G b T = true := by
-    constructor
-    · rintro ⟨b, hb, hS, ht⟩; exact ⟨b, (hi S b).mp ⟨hb, hS⟩, ht⟩
-    · rintro ⟨b, hb, ht⟩
-      obtain ⟨hb, hS⟩ := (hi S b).mpr hb
-      exact ⟨b, hb, hS, ht⟩
-  apply and_congr_right; intro _
-  apply and_congr_right; intro _
-  apply and_congr_right; intro _
-  apply and_congr_right; intro _
-  simpa only [Consolidated13.referencesB, keyReferences_eq, ← (readParams P G).referencesB_iff] using hh
-
-theorem near_eq_of_inputs (D : Dates K) (config : Decided.Config) (G : Graph)
-    (hp : pages P D G = Consolidated13.pages P G)
-    (hl : links P D config G = Consolidated13.links P config G) :
-    near P D config G = Consolidated13.near P config G := by
-  funext d n X
-  cases d <;> simp only [near, Consolidated13.near, hp, hl]
-
-theorem treeParent_eq_of_inputs (D : Dates K) (spell : K → String) (G : Graph)
-    (hp : pages P D G = Consolidated13.pages P G)
-    (hl : ∀ s, finalParentLookup P D G s = genericParentLookup P G s) :
-    treeParent P D spell G = Rulings11.treeParent (readParams P G) spell (activeGraph P G) := by
-  funext t
-  simp only [treeParent, hp, Rulings11.treeParent, Rulings11.treeNodes,
-    List.contains_iff_mem, List.mem_eraseDups]
-  change (if t ∈ Consolidated13.pages P G then
-      (Ref10.nsParent P.toParams (spell t.2)).bind (fun s =>
-        (Consolidated13.pages P G).find? (fun p => decide (p = target P D G s))) else none) =
-    (if t ∈ Consolidated13.pages P G then
-      match Ref10.nsParent P.toParams (spell t.2) with
-      | none => none
-      | some s => genericParentLookup P G s
-    else none)
-  split
-  · simp only [finalParentLookup, genericParentLookup] at hl
-    cases he : Ref10.nsParent P.toParams (spell t.2) with
-    | none => simp only [he, Option.bind_none]
-    | some s =>
-      change (Consolidated13.pages P G).find? _ = _
-      exact hl s
-  · rfl
-
-theorem trees_eq_of_inputs (D : Dates K) (spell : K → String) (G : Graph)
-    (hp : pages P D G = Consolidated13.pages P G)
-    (hl : ∀ s, finalParentLookup P D G s = genericParentLookup P G s) :
-    tree P D spell G = Consolidated13.tree P spell G ∧
-      namespaceTree P D spell G = Consolidated13.namespaceTree P spell G := by
-  have ht := treeParent_eq_of_inputs P D spell G hp hl
-  have hc : children P D spell G = Rulings11.children (readParams P G) spell (activeGraph P G) := by
-    funext t
-    simp only [children, hp, ht, Rulings11.children, Rulings11.treeNodes]
-    rfl
-  have he : tree P D spell G = Consolidated13.tree P spell G := by
-    simp only [tree, hp, hc, Consolidated13.tree, Rulings11.tree, Rulings11.treeNodes]
-    rfl
-  refine ⟨he, ?_⟩
-  simp only [namespaceTree, he, ht, Consolidated13.namespaceTree, Consolidated13.tree, Rulings11.namespaceTree,
-    Rulings11.namespaceNodes, Rulings11.tree, Rulings11.treeNodes, List.filter_map]
-  rfl
-
-/-- Equality certificate for the intermediate generic reader. These fields are
-conclusions derived from primitive inputs, never premises of a headline. -/
-structure GenericStaticAgreement (D : Dates K) (Q : QParams K L) (config : Decided.Config)
-    (favorites : Option String) (spell : K → String) (G : Graph) : Prop where
-  pageList : pages P D G = Consolidated13.pages P G
-  references : referencesB P D G = Consolidated13.referencesB P G
-  queries : den P D Q G = Consolidated13.den P Q G
-  panels : linked P D favorites G = Consolidated13.linked P favorites G
-  counts : referenceCount P D favorites G = Consolidated13.referenceCount P favorites G
-  queryRows : ∀ R o a q, queryResults P D Q R o G a q = Consolidated13.queryResults P Q R o G a q
-  linkRelation : links P D config G = Consolidated13.links P config G
-  neighborhoods : near P D config G = Consolidated13.near P config G
-  fullTree : tree P D spell G = Consolidated13.tree P spell G
-  namespaces : namespaceTree P D spell G = Consolidated13.namespaceTree P spell G
-
-theorem generic_static_of_no_difference (D : Dates K) (Q : QParams K L) (config : Decided.Config)
-    (favorites : Option String) (spell : K → String) (G : Graph)
-    (hn : ¬ readerDifference P D Q favorites G) :
-    GenericStaticAgreement P D Q config favorites spell G := by
+/-- Comparing projected rows directly to raw readings additionally identifies
+an excluded reference source or a header/immediate-parent-suppressed query row. -/
+theorem presented_comparison_exhaustive_final (r : ReaderInputs K L) (t : Page K)
+    (a : Anchor) (q : Query L) (o : QueryPresentation) :
+    (∃ b ∈ r.blocks.eraseDups.filter (fun b => r.references b t),r.sourceEligible t b = false) ∨
+    (∃ n ∈ r.den a q,r.visible o (r.den a q) n = false) ∨
+    (r.linked t = r.blocks.eraseDups.filter (fun b => r.references b t) ∧
+      (r.linked t).length = (r.blocks.eraseDups.filter (fun b => r.references b t)).length ∧
+      r.queryRows o a q = r.den a q) := by
   classical
-  have hs : ∀ s ∈ rawSeeds P G, finalSeed P D G s = genericSeed P G s := by
-    intro s hm
-    exact Classical.byContradiction fun he => hn (Or.inl ⟨s, hm, he⟩)
-  have hp := pages_eq_of_seed_rows P D G hs
-  have hr : referencesB P D G = Consolidated13.referencesB P G := by
-    apply references_eq_of_paths
-    intro b s hm t
-    exact Classical.byContradiction fun he => hn (Or.inr (Or.inl ⟨b, s, hm, t, he⟩))
-  have hleaf : ∀ a n, n ∈ univ P D G a → ∀ l,
-      leafAt P D Q G l n = (readParams P G).leafAt3 Q (activeGraph P G) l n := by
-    intro a n hm l
-    exact Classical.byContradiction fun he => hn (Or.inr (Or.inr (Or.inl ⟨a, n, hm, l, he⟩)))
-  have hpanel : ∀ t b, b ∈ Consolidated13.blocks P G →
-      panelSource P D favorites G t b = Consolidated13.panelSource P favorites G t b := by
-    intro t b hm
-    exact Classical.byContradiction fun he => hn (Or.inr (Or.inr (Or.inr (Or.inl ⟨t, b, hm, he⟩))))
-  have hsource : ∀ S b, finalBlockSource P G S b = genericBlockSource P G S b := by
-    intro S b
-    exact Classical.byContradiction fun he => hn (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨S, b, he⟩)))))
-  have hparent : ∀ s, finalParentLookup P D G s = genericParentLookup P G s := by
-    intro s
-    exact Classical.byContradiction fun he => hn (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨s, he⟩)))))
-  have hl := links_eq_of_inputs P D config G hp hr hsource
-  have ht := trees_eq_of_inputs P D spell G hp hparent
-  have hden := den_eq_of_inputs P D Q G hp hleaf
-  have hlinked : linked P D favorites G = Consolidated13.linked P favorites G := by
-    funext t
-    unfold linked Consolidated13.linked relationHits
-    rw [List.filter_filter]
-    apply List.filter_congr
-    intro b hb
-    rw [hr, hpanel t b (List.mem_eraseDups.mp hb)]
-    exact Bool.and_comm ..
-  refine ⟨hp, hr, hden, hlinked, ?_, ?_,
-    hl, near_eq_of_inputs P D config G hp hl, ht.1, ht.2⟩
-  · funext t
-    exact congrArg List.length (congrFun hlinked t)
-  · intro R o a q
-    simp only [queryResults, Consolidated13.queryResults, hden]
-
-/-- R12 has raw reference hits and raw denotations. Panels/counts and displayed
-queries compare the same current projections of those old raw readings. -/
-structure StaticAgreement (D : Dates K) (Q : QParams K L) (config : Decided.Config)
-    (favorites : Option String) (spell : K → String) (G : Graph) (s : String) : Prop where
-  pageList : pages P D G = Decided.pages P.toParams G
-  blockList : Consolidated13.blocks P G = P.blocks G
-  references : referencesB P D G = P.referencesB G
-  queries : den P D Q G = Decided.den P.toParams Q G
-  panels : ∀ t, linked P D favorites G t =
-    ((P.blocks G).eraseDups.filter (fun b => P.referencesB G b t)).filter (Consolidated13.panelSource P favorites G t)
-  counts : ∀ t, referenceCount P D favorites G t =
-    (((P.blocks G).eraseDups.filter (fun b => P.referencesB G b t)).filter (Consolidated13.panelSource P favorites G t)).length
-  queryRows : ∀ R o a q, queryResults P D Q R o G a q = queryProjection P Q R o G (Decided.den P.toParams Q G a q)
-  linkRelation : links P D config G = Decided.linkB P.toParams config G
-  neighborhoods : near P D config G = Decided.nearL P.toParams config G
-  fullTree : tree P D spell G = Rulings11.tree P.toParams spell G
-  namespaces : namespaceTree P D spell G = Rulings11.namespaceTree P.toParams spell G
-  navigation : resolve P D G s = P.resolve G s
-
-/-- Every graph and every selected navigation request: either an independently
-computed primitive diagnostic, or equality of the complete final reader. -/
-theorem static_comparison_exhaustive_final (D : Dates K) (Q : QParams K L) (config : Decided.Config)
-    (favorites : Option String) (spell : K → String) (G : Graph) (s : String) :
-    activeGraph P G ≠ G ∨ readerNormalization P G ∨ emptyReal P G s = true ∨
-      readerDifference P D Q favorites G ∨ anyDifference (navigationCases P D G s) ∨
-      StaticAgreement P D Q config favorites spell G s := by
-  classical
-  by_cases ha : activeGraph P G = G
-  case neg => exact Or.inl ha
-  right
-  by_cases hparams : readParams P G = P.toParams
-  case neg => exact Or.inl hparams
-  right
-  by_cases hempty : emptyReal P G s = true
-  case pos => exact Or.inl hempty
-  right
-  by_cases hd : readerDifference P D Q favorites G
-  · exact Or.inl hd
-  right
-  rcases navigation_comparison_generic P D G s with hn | hn
-  · exact Or.inl hn
-  right
-  have h := generic_static_of_no_difference P D Q config favorites spell G hd
-  have ho : _ := Consolidated13.static_comparison_exhaustive P Q config G s
-  rcases ho with hA | hP | hE | ho
-  · exact False.elim (hA ha)
-  · exact False.elim (hP hparams)
-  · exact False.elim (hempty hE)
-  obtain ⟨hp, hb, hr, hq, hl, _, hhits, _, hnear, hnav⟩ := ho
-  refine ⟨h.pageList.trans hp, hb, h.references.trans hr, h.queries.trans hq, ?_, ?_, ?_,
-    h.linkRelation.trans hl, h.neighborhoods.trans hnear, ?_, ?_, hn.trans hnav⟩
-  · intro t; rw [h.panels, Consolidated13.linked, hhits]
-  · intro t; rw [h.counts, Consolidated13.referenceCount, Consolidated13.linked, hhits]
-  · intro R o a q
-    simp only [queryResults, h.queries, hq]
-  · simpa only [Consolidated13.tree, ha, hparams] using h.fullTree
-  · simpa only [Consolidated13.namespaceTree, ha, hparams] using h.namespaces
-
-/-- Direct comparison to historical raw panels/query rows additionally names
-every suppressed input row. The old reader did not specify a presentation UI. -/
-theorem presented_comparison_exhaustive_final (D : Dates K) (Q : QParams K L) (config : Decided.Config)
-    (favorites : Option String) (spell : K → String) (R : QueryRowParser) (o : QueryPresentation)
-    (G : Graph) (s : String) (t : Page K) (a : Anchor) (q : Query L) :
-    activeGraph P G ≠ G ∨ readerNormalization P G ∨ emptyReal P G s = true ∨
-      readerDifference P D Q favorites G ∨ anyDifference (navigationCases P D G s) ∨
-      (∃ b ∈ (P.blocks G).eraseDups.filter (fun b => P.referencesB G b t),
-        Consolidated13.panelSource P favorites G t b = false) ∨
-      (∃ b, Node.block b ∈ Decided.den P.toParams Q G a q ∧
-        queryRowVisible P Q R o G (Decided.den P.toParams Q G a q) (.block b) = false) ∨
-      (linked P D favorites G t = (P.blocks G).eraseDups.filter (fun b => P.referencesB G b t) ∧
-       referenceCount P D favorites G t = ((P.blocks G).eraseDups.filter (fun b => P.referencesB G b t)).length ∧
-       queryResults P D Q R o G a q = Decided.den P.toParams Q G a q) := by
-  classical
-  rcases static_comparison_exhaustive_final P D Q config favorites spell G s with ha | hp | he | hd | hv | h
-  · exact Or.inl ha
-  · exact Or.inr (Or.inl hp)
-  · exact Or.inr (Or.inr (Or.inl he))
-  · exact Or.inr (Or.inr (Or.inr (Or.inl hd)))
-  · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl hv))))
-  right; right; right; right; right
-  by_cases hs : ∃ b ∈ (P.blocks G).eraseDups.filter (fun b => P.referencesB G b t),
-      Consolidated13.panelSource P favorites G t b = false
+  by_cases hs : ∃ b ∈ r.blocks.eraseDups.filter (fun b => r.references b t),r.sourceEligible t b = false
   · exact Or.inl hs
   right
-  by_cases hq : ∃ b, Node.block b ∈ Decided.den P.toParams Q G a q ∧
-      queryRowVisible P Q R o G (Decided.den P.toParams Q G a q) (.block b) = false
+  by_cases hq : ∃ n ∈ r.den a q,r.visible o (r.den a q) n = false
   · exact Or.inl hq
   right
-  have hpanel : (((P.blocks G).eraseDups.filter (fun b => P.referencesB G b t)).filter
-      (Consolidated13.panelSource P favorites G t)) =
-      (P.blocks G).eraseDups.filter (fun b => P.referencesB G b t) := by
+  have hp : r.linked t = r.blocks.eraseDups.filter (fun b => r.references b t) := by
+    unfold ReaderInputs.linked
+    have he : (fun b => r.references b t && r.sourceEligible t b) =
+        (fun b => r.sourceEligible t b && r.references b t) := funext (fun _ => Bool.and_comm ..)
+    rw [he,← List.filter_filter]
     apply List.filter_eq_self.mpr
     intro b hb
-    cases hv : Consolidated13.panelSource P favorites G t b with
+    cases he : r.sourceEligible t b with
     | true => rfl
-    | false => exact False.elim (hs ⟨b, hb, hv⟩)
-  have hquery : queryProjection P Q R o G (Decided.den P.toParams Q G a q) =
-      Decided.den P.toParams Q G a q := by
+    | false => exact False.elim (hs ⟨b,hb,he⟩)
+  have hrows : r.queryRows o a q = r.den a q := by
     apply List.filter_eq_self.mpr
     intro n hn
-    cases n with
-    | page _ => rfl
-    | block b =>
-      cases hv : queryRowVisible P Q R o G (Decided.den P.toParams Q G a q) (.block b) with
-      | true => rfl
-      | false => exact False.elim (hq ⟨b, hn, hv⟩)
-  exact ⟨(h.panels t).trans hpanel, (h.counts t).trans (congrArg List.length hpanel),
-    (h.queryRows R o a q).trans hquery⟩
+    cases he : r.visible o (r.den a q) n with
+    | true => rfl
+    | false => exact False.elim (hq ⟨n,hn,he⟩)
+  exact ⟨hp,congrArg List.length hp,hrows⟩
 
 end Date13
 end CM
