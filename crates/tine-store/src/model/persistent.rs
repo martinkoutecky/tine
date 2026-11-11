@@ -127,6 +127,15 @@ impl<K: Ord, V> Map<K, V> {
     pub(crate) fn len(&self) -> usize {
         Node::len(&self.root)
     }
+    #[cfg(test)]
+    pub(crate) fn allocation_bytes(&self) -> usize {
+        // Two Arc allocation headers per row; excludes allocator bookkeeping.
+        std::mem::size_of::<Self>()
+            + self.len()
+                * (std::mem::size_of::<Node<K, V>>()
+                    + std::mem::size_of::<(K, V)>()
+                    + 4 * std::mem::size_of::<usize>())
+    }
     pub(crate) fn is_empty(&self) -> bool {
         self.root.is_none()
     }
