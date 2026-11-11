@@ -117,8 +117,47 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some(value)
 }
 
-/// Where a reconcile sends the keys of held paths that changed on disk.
-pub(crate) type Forward = Box<dyn Fn(Vec<String>) + Send + Sync>;
+/// Where a reconcile sends the keys of held paths that changed on disk, and
+/// a held page's read (`Store::page`) the key of one whose file moved since
+/// its owner's last indexed observation, with where to say once that
+/// observation is indexed, found unchanged or failed (A-H1).
+pub(crate) type Forward = Box<dyn Fn(Vec<String>, Option<Observed>) + Send + Sync>;
+
+/// Told when a forwarded observation settled: its publication indexed, or
+/// nothing to publish (`Ok`), or the owner's read failed (that error).
+pub(crate) type Observed = Sender<std::io::Result<()>>;
+
+/// The read error an owner's failed observation answers (A-H1): its OS
+/// error when it has one, else one naming the failed operation.
+pub(crate) fn observation_failed(
+    os_error: Option<i32>,
+    operation: Option<&'static str>,
+) -> std::io::Error {
+    os_error.map_or_else(
+        || std::io::Error::other(operation.unwrap_or("page read failed")),
+        std::io::Error::from_raw_os_error,
+    )
+}
+
+/// How long a held page's read waits for its forwarded observation (A-H1),
+/// and the page host's `OPERATION_WAIT`, which is defined as this.
+pub(crate) const OBSERVED_WAIT: Duration = Duration::from_secs(10);
+
+thread_local! {
+    /// Set on the thread that runs forwarded observations (the page host's
+    /// driver): a read waiting for one must never run there.
+    static OBSERVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark the calling thread as the one that runs forwarded observations.
+pub(crate) fn mark_observer_thread() {
+    OBSERVER.with(|observer| observer.set(true));
+}
+
+/// Whether the calling thread runs forwarded observations.
+pub(crate) fn on_observer_thread() -> bool {
+    OBSERVER.with(std::cell::Cell::get)
+}
 
 /// The file facts of one watcher snapshot (`Core::file_facts`).
 fn snapshot_file_facts(snapshot: &HashMap<PathBuf, Stamp>) -> FileFacts {
@@ -1029,6 +1068,24 @@ impl WatchHandle {
         raced
     }
 
+    /// A held page's owner read `id` and found the bytes it already holds
+    /// (A-H1): that read's pre-read `stamp` becomes the file's observation,
+    /// as an unchanged publication's does, so a later read trusts it (and
+    /// an own save's racy stamp settles once read outside the window).
+    /// Only when the watcher's entry already carries the revision of those
+    /// bytes: otherwise the entry stays and the next read asks again.
+    /// Returns the paths that raced. The caller holds the writer.
+    pub(crate) fn note_confirmed(&self, id: FileId, stamp: Stamp) -> HashSet<PathBuf> {
+        let path = self.core.path_for_id(&id);
+        let snapshot = self.core.snapshot.lock().unwrap();
+        let indexed = snapshot.get(&path).and_then(|old| old.rev.clone());
+        drop(snapshot);
+        if indexed.is_none() || indexed != stamp.rev {
+            return HashSet::new();
+        }
+        self.note_own_observed(&[(id.clone(), indexed)], &HashMap::from([(id, stamp)]))
+    }
+
     /// The transaction's final bytes for this path are now the asset baseline,
     /// also when it was rolled back and published nothing (no external echo).
     pub(crate) fn settle_asset(&self, path: &Path) {
@@ -1045,6 +1102,53 @@ impl WatchHandle {
     ) {
         self.core.graph.attach_spellings(spellings);
         *self.core.forward.lock().unwrap() = Some(forward);
+    }
+
+    /// Whether `now` (None: no file) shows `path` unchanged since the
+    /// watcher's last observation of it, which for a held page is its
+    /// owner's last indexed one (`note_own`; a forward leaves a retry
+    /// baseline): no file on either side, or [`reconcile::unchanged`]. One
+    /// map lookup. The caller holds the writer.
+    pub(crate) fn unchanged_since_observed(&self, path: &Path, now: Option<&Stamp>) -> bool {
+        let snapshot = self.core.snapshot.lock().unwrap();
+        match (snapshot.get(path), now) {
+            (None, None) => true,
+            (Some(old), Some(new)) => {
+                let racy = self.core.racy.lock().unwrap().contains(path);
+                reconcile::unchanged(old, new, racy, false)
+            }
+            _ => false,
+        }
+    }
+
+    /// Make `path`'s current metadata the owner's last observation, `racy`
+    /// or not: what a rewrite in the observation's time granule leaves on a
+    /// platform with coarse change times (GH #863 D2 tests).
+    #[cfg(test)]
+    pub(crate) fn forge_unchanged_observation_for_tests(&self, path: &Path, racy: bool) {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        let mut stamp = stamp_from_metadata(&metadata).unwrap();
+        let mut snapshot = self.core.snapshot.lock().unwrap();
+        stamp.rev = snapshot.get(path).and_then(|old| old.rev.clone());
+        snapshot.insert(path.to_path_buf(), stamp);
+        let mut set = self.core.racy.lock().unwrap();
+        if racy {
+            set.insert(path.to_path_buf());
+        } else {
+            set.remove(path);
+        }
+    }
+
+    /// Ask held `key`'s owner to observe its file, as a reconcile's forward
+    /// does, telling `done` once that observation settled ([`Observed`]).
+    /// False when no owner is attached. The caller holds the writer.
+    pub(crate) fn forward_observed(&self, key: String, done: Observed) -> bool {
+        let forward = self.core.forward.lock().unwrap();
+        let Some(forward) = forward.as_ref() else {
+            return false;
+        };
+        forward(vec![key], Some(done));
+        true
     }
 
     /// Hand `key`'s index to its owner (STEP3 §5). The caller holds the

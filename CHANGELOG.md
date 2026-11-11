@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening a journal or page now checks for a sync delivery its watcher missed before answering from held content. Journals delivered under another accepted filename are found without creating a duplicate day; unreadable files show their read error and recover when readable again (GH #863).
+
 ## [0.9.0-beta.10] - 2026-11-10
 
 ### Changed
