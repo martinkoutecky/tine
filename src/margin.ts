@@ -10,7 +10,7 @@ import { nextVisible, prevVisible, node as docNode, type OutlineScope } from "./
 import type { Format } from "./render/ast";
 import { bodyNeighbor } from "./document";
 import { commentsInPopup } from "./commentMarginPref";
-import { datedThreadRoot, commentThreadVisibleOrder } from "./document/commentThreads";
+import { datedThreadRoot, commentThreadVisibleOrder } from "./document";
 export { isCommentId, threadRootOf } from "./document";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The

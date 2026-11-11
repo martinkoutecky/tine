@@ -130,7 +130,7 @@ import { commentFromEditor } from "../commentActions";
 import { setCollapsedBlocks } from "../document";
 import { CommentMessages } from "./CommentMessages";
 import { commentKey } from "../editor/commentKeys";
-import { bodyScopeOf } from "../document/commentThreads";
+import { bodyScopeOf } from "../document";
 import { quoteInGroup } from "./CommentGroup";
 import { CommentBelowChip } from "./CommentBelowChip";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";

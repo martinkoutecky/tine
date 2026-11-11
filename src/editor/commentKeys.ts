@@ -1,4 +1,4 @@
-import { bodyScopeOf } from "../document/commentThreads";
+import { bodyScopeOf } from "../document";
 
 /** Annotation text never invokes an outline Enter command, in either editor. */
 export function commentKey(e: KeyboardEvent, id: string, newline: () => void, leave: () => void): boolean {

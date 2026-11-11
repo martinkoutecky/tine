@@ -30,7 +30,7 @@ import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
 import { rowHostOf, rowPositionOf } from "./block/embedRowHost";
-import { bodyScopeOf } from "../document/commentThreads";
+import { bodyScopeOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
