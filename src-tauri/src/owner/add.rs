@@ -80,11 +80,8 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         Some(turn) => turn,
         None => page_turn(slot, &page)?,
     };
-    let author = args
-        .author
-        .clone()
-        .or_else(|| std::env::var("TINE_AUTHOR").ok())
-        .unwrap_or_else(|| "agent".into());
+    let author = super::write::author_name(args.author.as_deref())
+        .map_err(|e| refused("kernel", Some(&page), e))?;
     write_page_in_turn(
         slot,
         turn,
