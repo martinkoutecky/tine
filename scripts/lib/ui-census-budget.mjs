@@ -34,7 +34,7 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
   // GH #805 (0.10 lane brief): Quit Tine must be remappable in Shortcuts.
-  "commands.registry": { env: "desktop", budget: 150, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
+  "commands.registry": { env: "desktop", budget: 151, what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 27, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
   "commands.palette": { env: "desktop", budget: 91, what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },

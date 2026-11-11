@@ -35,6 +35,7 @@ import { installMiddleClickPasteGuard } from "./middleClickPaste";
 import { installRenderStallMonitor } from "./renderStalls";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
+import "./styles/settingsRows.css"; // right after app.css: its Settings row primitives, split out
 import "./styles/guideLevels.css"; // after app.css: reads its .block-children rule
 import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
 import "./styles/topbar.css";

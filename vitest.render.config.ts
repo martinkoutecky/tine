@@ -27,7 +27,7 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 60_000,
     include: ["src/**/*.test.tsx"],
-    setupFiles: ["./src/testSetup.parser.ts", "./src/testSetup.render.ts"],
+    setupFiles: ["./src/testSetup.waitFor.ts", "./src/testSetup.parser.ts", "./src/testSetup.render.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {

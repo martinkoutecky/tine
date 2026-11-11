@@ -28,7 +28,7 @@ import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
-import { openDurableBlock } from "../blockRefActions";
+import { openDurableBlock, removeAuthor, removeAuthorTarget } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
 import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
 import { favoriteBlock, isFavoriteBlock, unfavoriteBlock } from "../favorites";
@@ -38,7 +38,7 @@ import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGr
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
 import { cellBlockId, cellForBlockId, cellOwner, cellSel, focusCell, setCellSel } from "../sheet/selection";
 import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
-import { endEdit, startEditing } from "../editorController";
+import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import { cutBlocks } from "../cut";
@@ -1193,7 +1193,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
-    ...(!multi && blockProperty(id, "tine.author") !== null ? [{ label: msg("comment-remove-author"), run: () => { endEdit("select-block"); setBlockProperty(id, "tine.author", null); } }] : []),
+    ...(!multi && removeAuthorTarget([id]) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(id) }] : []),
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).

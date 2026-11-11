@@ -13,7 +13,7 @@ import { clearClipboardPayload } from "./clipboard";
 import { BUILTIN_KEYS, commandDefaults, installKeybindings, paletteCommands } from "./keybindings";
 import { closeSwitcher, switcherOpen, switcherPrefill } from "./ui";
 import { editingId, endEdit, startEditing } from "./editorController";
-import { pasteAsLinkEdit } from "./blockRefActions";
+import { pasteAsLinkEdit, removeAuthorTarget } from "./blockRefActions";
 import { setGraphMeta } from "./graphSession";
 import { openPage, resetTabsToJournals } from "./router";
 import { setToasts, toasts } from "./toasts";
@@ -508,5 +508,74 @@ describe("paste as link (GH #448)", () => {
     const bare = pasteAsLinkEdit("see ", 4, 4, "https://x.org/a", "md");
     expect(bare).toMatchObject({ text: "see https://x.org/a", start: 19, end: 19 });
     expect(pasteAsLinkEdit("see context", 4, 11, "just words", "md")).toBeNull();
+  });
+});
+
+describe("Remove author (GH #918)", () => {
+  const authored = `Agent words\ntine.author:: Ada Test\nid:: ${A}`;
+  const loadAuthored = () => loadSingle({
+    name: "P", kind: "page", title: "P", format: "md", pre_block: null,
+    // Loaded blocks carry the backend's parsed properties, as in the app.
+    blocks: [{ ...block(A, authored), properties: [["tine.author", "Ada Test"], ["id", A]] },
+      { ...block(B, `Mine\nid:: ${B}`), properties: [["id", B]] }],
+  });
+  const offered = () => paletteCommands().some((c) => c.id === "editor/remove-author");
+
+  it("checks availability without revisiting an unchanged 1,000-block outline", () => {
+    const blocks = Array.from({ length: 1000 }, (_, i) => ({
+      ...block(`cost-${i}`, `Words ${i}\ntine.author:: Ada Test`),
+      properties: [["tine.author", "Ada Test"]] as [string, string][],
+    }));
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null, blocks });
+    let visits = 0;
+    selectBlock("cost-0", { roots: blocks.map(b => b.id), collapsed: (_id, stored) => { visits++; return stored; } });
+    expect(removeAuthorTarget()).toBe("cost-0"); // warm the selection memo
+    visits = 0;
+    expect(removeAuthorTarget()).toBe("cost-0");
+    expect(removeAuthorTarget()).toBe("cost-0");
+    expect(visits).toBe(0);
+    extendSelectionTo("cost-1");
+    expect(removeAuthorTarget()).toBeNull();
+    selectBlock("cost-1");
+    expect(removeAuthorTarget()).toBe("cost-1");
+  });
+
+  it("ships without a key, like the other block commands", () => {
+    expect(commandDefaults().find((c) => c.id === "editor/remove-author")).toMatchObject({ binding: "", label: "Remove author" });
+  });
+
+  it("removes the selected block's author from the palette, one undo step", () => {
+    loadAuthored();
+    selectBlock(A);
+    run("editor/remove-author");
+    expect(doc.byId[A].raw).toBe(`Agent words\nid:: ${A}`);
+    expect(doc.byId[B].raw).toBe(`Mine\nid:: ${B}`);
+    undo();
+    expect(doc.byId[A].raw).toBe(authored);
+  });
+
+  it("is offered only where the block context menu offers Remove author", () => {
+    loadAuthored();
+    expect(offered(), "no block in play").toBe(false);
+    selectBlock(B);
+    expect(offered(), "a block without an author").toBe(false);
+    selectBlock(A);
+    extendSelectionTo(B);
+    expect(offered(), "several selected blocks").toBe(false);
+    selectBlock(A);
+    expect(offered(), "one authored block").toBe(true);
+  });
+
+  it("works from a chord the user binds, while the authored block is being edited", () => {
+    loadAuthored();
+    startEditing(A, 0);
+    const dispose = installKeybindings({ "editor/remove-author": "alt+shift+u" });
+    try {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "U", code: "KeyU", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      expect(doc.byId[A].raw).toBe(`Agent words\nid:: ${A}`);
+      expect(editingId()).toBeNull();
+    } finally {
+      dispose();
+    }
   });
 });

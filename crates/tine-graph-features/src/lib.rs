@@ -70,6 +70,30 @@ impl std::fmt::Display for IncompleteTransaction {
 }
 impl std::error::Error for IncompleteTransaction {}
 
+/// A write refused because `logseq/config.edn` could not be read when the graph
+/// loaded, which keeps the graph read-only ([`Refusal::ConfigUnreadable`]). The
+/// refusal's type survives native adapters as the fixed wire family
+/// `config-unreadable`, and the read error follows it for logs and the CLI; the
+/// window shows its own catalog sentence for the family, never the detail.
+/// After a partial operation ([`after_partial`]) it also carries what was
+/// already saved, as `config-unreadable-after: <done>` and the detail on the
+/// next line, so the window can say both.
+/// Inspection/display costs O(1)/O(detail bytes), with no graph work.
+#[derive(Debug)]
+pub struct ConfigUnreadable {
+    pub after: Option<String>,
+    pub detail: String,
+}
+impl std::fmt::Display for ConfigUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.after {
+            None => write!(f, "config-unreadable: {}", self.detail),
+            Some(done) => write!(f, "config-unreadable-after: {done}\n{}", self.detail),
+        }
+    }
+}
+impl std::error::Error for ConfigUnreadable {}
+
 /// Preserve the original transaction refusal and every rollback/publication
 /// failure location so callers can inspect disk before retrying.
 fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
@@ -136,6 +160,13 @@ fn why_error(why: Why) -> io::Error {
             }
             Refusal::Twin { .. } => io::Error::new(io::ErrorKind::AlreadyExists, "twin page"),
             Refusal::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
+            Refusal::ConfigUnreadable(cause) => io::Error::new(
+                cause.kind,
+                ConfigUnreadable {
+                    after: None,
+                    detail: cause.message,
+                },
+            ),
             Refusal::RepeatedFile(_) => {
                 io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
             }
@@ -158,6 +189,15 @@ fn why_error(why: Why) -> io::Error {
 /// its kind, which callers branch on, and its message leads with what was
 /// saved, so the user is not told the whole operation failed (P3 review #7).
 fn after_partial(done: &str, error: io::Error) -> io::Error {
+    // A config-unreadable refusal keeps its type: the window words it.
+    if let Some(refusal) = error
+        .get_ref()
+        .and_then(|cause| cause.downcast_ref::<ConfigUnreadable>())
+    {
+        let detail = refusal.detail.clone();
+        let after = Some(done.to_owned());
+        return io::Error::new(error.kind(), ConfigUnreadable { after, detail });
+    }
     let text = error.to_string();
     let mut chars = text.chars();
     let rest: String = chars
