@@ -53,6 +53,14 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
 /// As [`rename`]; `Drained` includes a further watcher drain after the host
 /// stops; `Stopped` isolates publication from independent watcher echoes.
 fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts {
+    rename_measured(pages_count, referrers, watcher).0
+}
+
+fn rename_measured(
+    pages_count: usize,
+    referrers: usize,
+    watcher: Watcher,
+) -> (Counts, Vec<cost_counters::WatcherReadCycle>) {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::Builder::new()
         .prefix("rename-io-")
@@ -91,6 +99,7 @@ fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts
         store.stop_watcher_for_tests();
     }
     cost_counters::reset();
+    cost_counters::start_watcher_read_trace();
     let report = hosted(&store, watcher, |host| {
         pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
     })
@@ -107,13 +116,14 @@ fn rename_then(pages_count: usize, referrers: usize, watcher: Watcher) -> Counts
         );
     }
     let counts = cost_counters::snapshot();
+    let cycles = cost_counters::take_watcher_read_trace();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(
         fs::read_to_string(root.join("pages/Ref00001.md")).unwrap(),
         "- links [[Renamed]] [[Renamed/ghost]] 1\n"
     );
     store.close();
-    counts
+    (counts, cycles)
 }
 
 #[test]
@@ -203,8 +213,8 @@ fn rename_publication_reopens_no_referrer() {
 #[test]
 fn rename_watcher_echo_cost_is_linear_in_written_files() {
     let _integration_guard = crate::exclusive_integration_lock();
-    let few = rename_then(60, 2, Watcher::Drained);
-    let many = rename_then(60, 30, Watcher::Drained);
+    let few = rename_measured(60, 2, Watcher::Drained);
+    let many = rename_measured(60, 30, Watcher::Drained);
     // Linear in the files the operation wrote (`files_written`: each page
     // and its draft record), never in the graph. A written page is read at
     // most twice: by the cycle its echo lands in (path-scoped), and once
@@ -220,15 +230,24 @@ fn rename_watcher_echo_cost_is_linear_in_written_files() {
     // What the bound guards: a re-read that grows with the graph. The same
     // rename in a graph ten times larger stays inside the same bound, which
     // a single graph-wide re-read (631 pages) would exceed ninefold.
-    let large = rename_then(600, 30, Watcher::Drained);
-    for counts in [few, many, large] {
+    let large = rename_measured(600, 30, Watcher::Drained);
+    for (pages_count, (counts, cycles)) in [(60, few), (60, many), (600, large)] {
         let bound = per_file * counts.files_written + 4;
+        // Printed on success too: the hosted Windows flake is intermittent,
+        // and the per-pass split of a passing run shows how close it runs.
+        eprintln!(
+            "rename_io watcher trace: unrelated pages={pages_count} reads={} stamps={} \
+             bound={bound} cycles={cycles:?}",
+            counts.watcher_reads, counts.watcher_stamps_by_path
+        );
         assert!(
             counts.watcher_reads <= bound && counts.watcher_stamps_by_path <= bound,
             "contract §5.4: once settled, the watcher's re-reads and re-stamps of what an \
              operation wrote are at most twice the files it wrote plus a small constant; a \
              re-read that grows with the graph is not the accepted cost \
-             (exemplar watch/reconcile.rs racy::hash_settled): {counts:?}"
+             (exemplar watch/reconcile.rs racy::hash_settled), \
+             unrelated pages={pages_count}, bound={bound}: {counts:?}; \
+             cycle reads=[initial hash, racy rehash, metadata retry, other]: {cycles:#?}"
         );
     }
 }

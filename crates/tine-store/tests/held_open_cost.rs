@@ -9,6 +9,7 @@ use std::fs;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use tine_core::model::PageKind;
 use tine_store::cost_counters::{self, Counts};
 use tine_store::{EditKind, PageHost, PageId, Store};
 
@@ -165,6 +166,70 @@ fn io(c: &Counts) -> [(&'static str, u64); 7] {
         ("observation_reads", c.observation_reads),
         ("host_publication_probes", c.host_publication_probes),
     ]
+}
+
+#[test]
+fn an_absent_day_stats_each_candidate_once_and_reads_only_existing_files() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let held = Held::new();
+    let format = tine_core::date::JournalFormat::new(None, None);
+    let day = tine_core::date::JournalDate::from_days(20_000);
+    let stems = format.accepted_stems(day);
+    // The existing counter observes one metadata call per accepted stem and
+    // graph-text extension. An absent day has no page bytes to read.
+    cost_counters::reset();
+    assert!(held
+        .store
+        .page_named(&format.title(day), PageKind::Journal)
+        .unwrap()
+        .is_none());
+    let absent = cost_counters::snapshot();
+    assert_eq!(
+        absent.stamps_by_path,
+        (stems.len() * 3) as u64,
+        "one stat per stem × md/markdown/org"
+    );
+    assert_eq!(
+        absent.full_reads + absent.hash_reads + absent.preamble_reads + absent.store_reads,
+        0
+    );
+
+    // A file delivered behind the stopped watcher is the only candidate
+    // whose bytes may be read; the bounded metadata scan still has no walk.
+    fs::create_dir_all(held.root.join("journals")).unwrap();
+    let path = held.root.join(format!("journals/{}.md", stems[0]));
+    fs::write(&path, "- delivered candidate\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    cost_counters::reset();
+    let read = held
+        .store
+        .page_named(&format.title(day), PageKind::Journal)
+        .unwrap()
+        .unwrap();
+    let existing = cost_counters::snapshot();
+    assert_eq!(read.doc.blocks[0].raw, "delivered candidate");
+    assert_eq!(
+        existing.readdir, 0,
+        "candidate lookup never lists a directory"
+    );
+    eprintln!("absent candidates: {absent:?}; one delivered candidate: {existing:?}");
+    assert_eq!(
+        existing.stamps_by_path,
+        absent.stamps_by_path + 1,
+        "one candidate scan plus the delivered file's watcher stamp"
+    );
+    assert_eq!(
+        existing.full_reads, 2,
+        "only the existing file is read: watcher reconciliation, then the returned page/revision"
+    );
+    assert_eq!(existing.hash_reads, 1, "only the delivered file is hashed");
+    assert_eq!(existing.preamble_reads + existing.store_reads, 0);
 }
 
 #[test]

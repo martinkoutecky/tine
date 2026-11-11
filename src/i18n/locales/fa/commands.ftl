@@ -155,3 +155,5 @@ command-seen-mark-page = علامت‌گذاری صفحه به‌عنوان دی
 command-seen-mark-graph = علامت‌گذاری کل گراف به‌عنوان دیده‌شده
 command-seen-next-change = تغییر بعدی از آخرین بازدید
 command-seen-previous-change = تغییر قبلی از آخرین بازدید
+command-comment-next = دیدگاه بعدی
+command-comment-previous = دیدگاه قبلی

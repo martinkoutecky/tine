@@ -7,8 +7,8 @@
 // ambiguous, whole block, inside code or across markup) put a marker on their
 // block. Phones: highlight or chip (no count) opens the bottom sheet. Only
 // mounted annotated rows own observers. No document writes or additional source
-// loads; grouping runs only while a thread view is open, and only the selected
-// passage's threads are mounted.
+// loads; page review owns grouping in a scope, standalone views group on open,
+// and only the selected passage's threads are mounted.
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, useContext, type Accessor, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { MarginContext, type MarginApi } from "./marginContext";
@@ -27,6 +27,7 @@ import { commentDraftState } from "../commentDraftState";
 import { registerReplyDraft } from "../commentMargin";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { NO_COMMENT_CHILDREN, type CommentChildren } from "../commentChildren";
+import { useCommentReview } from "../commentReview";
 
 export function MarginMarker(props: { parentId: string; comments: readonly string[]; source?: Accessor<CommentChildren>; coverage?: QuoteCoverage }): JSX.Element {
   return <Show when={props.comments.length > 0}><CommentEntry {...props} source={props.source ?? (() => NO_COMMENT_CHILDREN)} /></Show>;
@@ -40,6 +41,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   useResolvedComments();
   const place = useContext(MarginContext);
   const surface = useContext(SurfaceContext);
+  const review = useCommentReview();
   const secondary = place?.surface !== surface && (surface.startsWith("ref:") || surface.startsWith("embed:"));
   const wide = () => !!place && place.thread === null && !secondary && place.api.active();
   let host!: HTMLSpanElement;
@@ -70,7 +72,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   const [target, setTarget] = createSignal<{ id: string; anchor: HTMLElement }>();
   const opened = () => (peek.open() ? target() : undefined);
   const groups = createMemo(() => opened()
-    ? groupCommentEntries(node(props.parentId)?.raw ?? "", entries(), format())
+    ? review?.groups(props.parentId) ?? groupCommentEntries(node(props.parentId)?.raw ?? "", entries(), format())
     : []);
   // Indexed lookups (review round 3, PC-1): which group holds each thread.
   const presented = createMemo(() => new Set(props.comments));
@@ -98,6 +100,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   };
   const close = () => { finishThreadEdit(); peek.dismiss(); host.querySelector<HTMLButtonElement>(".margin-marker,.comment-resolved-entry")?.focus({ preventScroll: true }); };
   const move = (step: number) => {
+    if (review) { finishThreadEdit(); review.move(step as 1 | -1, selectedId()); return; }
     const ids = groups()[index() + step];
     if (ids && opened()) { finishThreadEdit(); open(ids[0], opened()!.anchor); }
   };
@@ -121,6 +124,7 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
   onMount(() => {
     row = host.closest<HTMLElement>(".block-main");
     if (!row) return;
+    if (review && !secondary) onCleanup(review.registerRow(props.parentId, row, surface));
     if (place && !secondary) onCleanup(api.register(props.parentId, row, props.source));
     const pane = row.closest<HTMLElement>(".comment-surface, [data-sidebar-surface], .live-ref-group, .main-content, .right-sidebar") ?? row.parentElement!;
     const read = () => { setWidth(pane.clientWidth || viewportOf(pane).width); schedule(); };
@@ -189,10 +193,21 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
     const edit = editingId();
     const id = request && (request.surface === null || request.surface === surface) ? request.id
       : edit && (editingSurface() === null || editingSurface() === surface) ? threadRootOf(edit, formatForBlock(props.parentId)) : null;
-    if (id && presented().has(id) && (!opened() || groupOf().get(id) !== index())) open(id, blockText());
+    if (id && presented().has(id) && opened()?.id !== id) open(id, blockText());
+    if (request?.preventScroll && opened() && !presented().has(request.id)) peek.dismiss();
   });
   let touch: { x: number; y: number } | undefined;
   const content = () => <div class="comment-popup-content" ref={popupContent}
+    onFocusIn={event => {
+      const target = event.target as HTMLElement;
+      const block = target.closest<HTMLElement>("[data-block-id]")?.dataset.blockId;
+      const id = target.closest<HTMLElement>("[data-reply-root]")?.dataset.replyRoot ?? (block && threadRootOf(block)) ?? selectedId();
+      if (id) {
+        const current = opened();
+        if (current && groupOf().get(id) === index() && current.id !== id) setTarget({ ...current, id });
+        review?.focus(id);
+      }
+    }}
     onTouchStart={event => { const first = event.touches[0]; touch = first && !(event.target as Element).closest("textarea,[contenteditable=true]") ? { x: first.clientX, y: first.clientY } : undefined; }}
     onTouchEnd={event => {
       const last = event.changedTouches[0];
@@ -203,9 +218,9 @@ function CommentEntry(props: { parentId: string; comments: readonly string[]; so
       touch = undefined;
     }}>
     <div class="comment-popup-toolbar">
-      <span>{t("comment-thread-position", { current: index() + 1, count: groups().length })}</span>
-      <button type="button" class="comment-prev-thread" disabled={index() === 0} aria-label={t("comment-prev-thread")} onClick={() => move(-1)}>‹</button>
-      <button type="button" class="comment-next-thread" disabled={index() === groups().length - 1} aria-label={t("comment-next-thread")} onClick={() => move(1)}>›</button>
+      <span>{review ? t("comment-review-position", { current: review.order().indexOf(selectedId() ?? "") + 1, count: review.order().length }) : t("comment-thread-position", { current: index() + 1, count: groups().length })}</span>
+      <button type="button" class="comment-prev-thread" disabled={review ? !review.canMove(-1, selectedId()) : index() === 0} aria-label={t(review ? "command-comment-previous" : "comment-prev-thread")} onClick={() => move(-1)}>‹</button>
+      <button type="button" class="comment-next-thread" disabled={review ? !review.canMove(1, selectedId()) : index() === groups().length - 1} aria-label={t(review ? "command-comment-next" : "comment-next-thread")} onClick={() => move(1)}>›</button>
       <button type="button" class="comment-popup-close" aria-label={t("comment-close-threads")} onClick={close}>×</button>
     </div>
     <SurfaceContext.Provider value={surface}>

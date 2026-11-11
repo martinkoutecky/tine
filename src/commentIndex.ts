@@ -29,13 +29,16 @@ export interface CommentIndex {
   childrenOf(parentId: string): Accessor<CommentChildren>;
   /** Thread roots in file order; notifies on every rescan and root change. */
   roots(): readonly CommentChild[];
+  /** Parents of thread roots, in source outline order. Shares the membership
+   * scan; reading is O(1), including parents hidden by collapsed ancestors. */
+  parents(): readonly string[];
   /** Open thread roots strictly below `id`'s direct children (a direct child's
    * thread is the block's own entry). 0 when `id` is itself in a thread, since
    * nothing below a comment is a root. O(roots × depth). */
   openBelow(id: string): number;
 }
 
-interface Watcher { notify: () => void; track: () => void; leases: number }
+interface Watcher { notify: () => void; value: Accessor<CommentChildren>; dispose: () => void; leases: number }
 
 function sameEntries(a: readonly CommentChild[], b: readonly CommentChild[]): boolean {
   return a.length === b.length && a.every((entry, i) => entry === b[i]);
@@ -52,11 +55,13 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
   let comments = new Map<string, CommentChild>();
   let byParent = new Map<string, CommentChild[]>();
   let rootList: readonly CommentChild[] = [];
+  let rootParents: readonly string[] = [];
   let treeRoots = new Set<string>();
   // Ancestors of the tree roots: their membership decides whether a tree root's
   // comments are roots or replies (a zoomed reply, a reference inside a thread).
   let above = new Map<string, boolean>();
   const watchers = new Map<string, Watcher>();
+  onCleanup(() => { for (const watcher of watchers.values()) watcher.dispose(); });
   const formats = new Map<string, Format>();
   const formatOf = (page: string) => {
     let format = formats.get(page);
@@ -79,8 +84,10 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
     const previous = comments;
     const found = new Map<string, CommentChild>();
     const parents = new Map<string, CommentChild[]>();
+    const positions = new Map<string, number>();
     // Reads plain nodes untracked; tracks the trees' pages and structural edits.
     someBlockInTrees(ids, n => {
+      if (n.children.length) positions.set(n.id, positions.size);
       const entry = n.parent !== null ? commentChildOf(n.id, n.raw, formatOf(n.page)) : null;
       if (entry) {
         const old = previous.get(n.id);
@@ -106,6 +113,8 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
       comments = found; byParent = parents; treeRoots = new Set(ids); above = ancestors;
       // The one root predicate (`threadRootOf`), asked once per comment.
       rootList = [...found.values()].filter(entry => threadRootOf(entry.id, formatOf(docNode(entry.id)!.page)) === entry.id);
+      rootParents = [...new Set(rootList.map(entry => docNode(entry.id)!.parent!))]
+        .sort((a, b) => positions.get(a)! - positions.get(b)!);
       onCleanup(onPageRawChanged(changed => {
         const n = docNode(changed);
         const known = comments.get(changed);
@@ -133,22 +142,25 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
     childrenOf(parentId) {
       let watcher = watchers.get(parentId);
       if (!watcher) {
-        const [track, notify] = createSignal(undefined, { equals: false });
-        watcher = { track, notify, leases: 0 };
+        watcher = createRoot(dispose => {
+          const [track, notify] = createSignal(undefined, { equals: false });
+          const value = createMemo<CommentChildren>(previous => {
+            scan(); track();
+            const next = byParent.get(parentId) ?? [];
+            return sameEntries(previous.entries, next) ? previous : childrenValue(next);
+          }, NO_COMMENT_CHILDREN);
+          return { notify, value, dispose, leases: 0 };
+        });
         watchers.set(parentId, watcher);
       }
       const held = watcher;
       held.leases++;
-      onCleanup(() => { if (--held.leases === 0 && watchers.get(parentId) === held) watchers.delete(parentId); });
-      // Re-runs on each rescan and on an in-place change of one of its children;
-      // notifies its readers only when its own list changed.
-      return createMemo<CommentChildren>(previous => {
-        scan(); held.track();
-        const next = byParent.get(parentId) ?? [];
-        return sameEntries(previous.entries, next) ? previous : childrenValue(next);
-      }, NO_COMMENT_CHILDREN);
+      onCleanup(() => { if (--held.leases === 0 && watchers.get(parentId) === held) { watchers.delete(parentId); held.dispose(); } });
+      // One leased producer per parent, shared by its outline and review views.
+      return held.value;
     },
     roots: () => { scan(); revision(); return rootList; },
+    parents: () => { scan(); return rootParents; },
     openBelow(id) {
       scan(); revision();
       return untrack(() => {

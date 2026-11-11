@@ -204,7 +204,7 @@ pub(crate) enum DiffTrigger {
 }
 
 impl DiffTrigger {
-    fn token(self) -> &'static str {
+    pub(crate) fn token(self) -> &'static str {
         match self {
             Self::Rescan => "rescan_command",
             Self::Recovery => "load_recovery",

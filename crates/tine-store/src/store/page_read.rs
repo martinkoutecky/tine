@@ -227,6 +227,8 @@ impl Store {
             for extension in crate::file_kind::GRAPH_TEXT_EXTENSIONS {
                 let id = PageId::from(format!("{directory}/{stem}.{extension}").as_str());
                 let path = self.graph.root.join(id.as_str());
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::stamp_by_path();
                 let now = match fs::symlink_metadata(&path) {
                     Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,

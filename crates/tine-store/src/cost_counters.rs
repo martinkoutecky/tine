@@ -96,6 +96,8 @@ static STORE_READS: AtomicU64 = AtomicU64::new(0);
 static NAME_INVENTORY_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
 static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
+static WATCHER_READ_TRACE: std::sync::Mutex<Option<Vec<WatcherReadCycle>>> =
+    std::sync::Mutex::new(None);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static OBSERVATION_READS: AtomicU64 = AtomicU64::new(0);
 static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
@@ -111,6 +113,8 @@ pub(crate) static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DEBOUNCED_SAVES: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
+    static WATCHER_READ_CAUSE: std::cell::Cell<WatcherReadCause> = const { std::cell::Cell::new(WatcherReadCause::Other) };
+    static WATCHER_READ_CYCLE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static JOURNAL_WORK: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     /// Set on the watcher thread, whose re-reads of just-written files are
     /// counted apart from the operation that wrote them (contract §5.4, K5).
@@ -189,8 +193,139 @@ fn watcher_read() -> bool {
     let watcher = on_watcher();
     if watcher {
         WATCHER_READS.fetch_add(1, Ordering::Relaxed);
+        if let Some(cycles) = WATCHER_READ_TRACE.lock().unwrap().as_mut() {
+            let index = WATCHER_READ_CYCLE.with(|cycle| cycle.get()).unwrap_or(0);
+            cycles[index].reads[WATCHER_READ_CAUSE.with(|cause| cause.get()) as usize] += 1;
+        }
     }
     watcher
+}
+
+/// Successful watcher reads by cause, in the order named by `WatcherReadCause`.
+/// Entry zero collects reads outside reconciliation; subsequent entries are
+/// reconciliation passes, including a full diff's separate config prepass.
+#[derive(Clone, Debug)]
+pub struct WatcherReadCycle {
+    /// Existing diff trigger token, or `outside_reconciliation` for entry zero.
+    pub trigger: &'static str,
+    /// Whether this pass requested a full metadata diff.
+    pub full: bool,
+    /// Initial hash, unchanged-racy rehash, metadata retry, other read.
+    pub reads: [u64; 4],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum WatcherReadCause {
+    InitialHash,
+    RacyRehash,
+    MetadataRetry,
+    Other,
+}
+
+/// Enable bounded-to-this-measurement diagnostics, reusing the read counter's
+/// successful-open boundary. No graph paths or content are retained.
+/// Process-global like the counters: callers must serialize graph activity.
+pub fn start_watcher_read_trace() {
+    *WATCHER_READ_TRACE.lock().unwrap() = Some(vec![WatcherReadCycle {
+        trigger: "outside_reconciliation",
+        full: false,
+        reads: [0; 4],
+    }]);
+}
+
+/// Stop diagnostics and return the measured passes. O(passes), no filesystem I/O.
+pub fn take_watcher_read_trace() -> Vec<WatcherReadCycle> {
+    WATCHER_READ_TRACE
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap_or_default()
+}
+
+pub(crate) struct WatcherCycle(Option<usize>);
+
+impl Drop for WatcherCycle {
+    fn drop(&mut self) {
+        WATCHER_READ_CYCLE.with(|cycle| cycle.set(self.0));
+    }
+}
+
+pub(crate) fn watcher_cycle(trigger: &'static str, full: bool) -> WatcherCycle {
+    let index = WATCHER_READ_TRACE
+        .lock()
+        .unwrap()
+        .as_mut()
+        .filter(|_| on_watcher())
+        .map(|cycles| {
+            let index = cycles.len();
+            cycles.push(WatcherReadCycle {
+                trigger,
+                full,
+                reads: [0; 4],
+            });
+            index
+        });
+    WatcherCycle(WATCHER_READ_CYCLE.with(|cycle| cycle.replace(index)))
+}
+
+pub(crate) struct WatcherCause(WatcherReadCause);
+
+impl Drop for WatcherCause {
+    fn drop(&mut self) {
+        WATCHER_READ_CAUSE.with(|cause| cause.set(self.0));
+    }
+}
+
+pub(crate) fn watcher_read_cause(cause: WatcherReadCause) -> WatcherCause {
+    WatcherCause(WATCHER_READ_CAUSE.with(|current| current.replace(cause)))
+}
+
+#[cfg(test)]
+mod watcher_read_trace_tests {
+    use super::*;
+
+    #[test]
+    fn cycles_and_nested_read_causes_are_attributed_and_restored() {
+        start_watcher_read_trace();
+        // A scoped thread: joined before the scope returns, so it needs no owner (I-21).
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                mark_watcher_thread();
+                {
+                    let _cycle = watcher_cycle("diagnostic_test_exact", false);
+                    let _initial = watcher_read_cause(WatcherReadCause::InitialHash);
+                    hash_read();
+                    {
+                        let _retry = watcher_read_cause(WatcherReadCause::MetadataRetry);
+                        hash_read();
+                    }
+                    hash_read();
+                }
+                {
+                    let _cycle = watcher_cycle("diagnostic_test_full", true);
+                    {
+                        let _racy = watcher_read_cause(WatcherReadCause::RacyRehash);
+                        hash_read();
+                    }
+                    full_read();
+                }
+            });
+        });
+        let cycles = take_watcher_read_trace();
+        let exact = cycles
+            .iter()
+            .find(|cycle| cycle.trigger == "diagnostic_test_exact")
+            .unwrap();
+        let full = cycles
+            .iter()
+            .find(|cycle| cycle.trigger == "diagnostic_test_full")
+            .unwrap();
+        assert!(!exact.full);
+        assert_eq!(exact.reads, [2, 0, 1, 0]);
+        assert!(full.full);
+        assert_eq!(full.reads, [0, 1, 0, 1]);
+        assert!(take_watcher_read_trace().is_empty());
+    }
 }
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
@@ -251,8 +386,9 @@ pub struct Counts {
     /// (`FileRev::from_file`; `logseq/config.edn` is not counted).
     pub hash_reads: u64,
     /// Graph-text files (`.md`/`.org`) stamped by path
-    /// (`watch::stamp_metadata`, a per-file `symlink_metadata`, which opens
-    /// the file on Windows) rather than from a directory listing's entries.
+    /// (`watch::stamp_metadata` or the absent-day candidate lookup: a per-file
+    /// `symlink_metadata`, which opens the file on Windows) rather than from
+    /// a directory listing's entries.
     pub stamps_by_path: u64,
     /// Non-graph-text (asset) files stamped by path (`watch::stamp_metadata`),
     /// which opens the file on Windows; the asset full walk uses the listing.

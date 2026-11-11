@@ -57,6 +57,7 @@ import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
 import { toggleCommentMargin } from "./commentMargin";
+import { stepPageComment } from "./commentReview";
 import { toggleAuthorMarks } from "./authorMarksPref";
 import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
 import { cellBlockId, cellSel, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
@@ -349,6 +350,8 @@ const COMMANDS: CommandDef[] = [
   // Margin dialogue (vision §3.7): the palette form of Ctrl/Cmd+R. Opening the
   // palette blurs the editor, so the selection is remembered as it opens.
   { id: "comment/on-selection", binding: "", label: msg("command-comment-on-selection"), scope: "global", run: commentOnPaletteSelection, global: true },
+  { id: "comment/next", binding: "", label: msg("command-comment-next"), scope: "global", run: () => stepPageComment(1), global: true },
+  { id: "comment/previous", binding: "", label: msg("command-comment-previous"), scope: "global", run: () => stepPageComment(-1), global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can

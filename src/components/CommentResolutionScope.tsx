@@ -7,6 +7,7 @@ import { hasPendingReplyDraft } from "../commentMargin";
 import { pushToast } from "../toasts";
 import { editingId, endEdit } from "../editorController";
 import { CommentIndexContext, createCommentIndex } from "../commentIndex";
+import { CommentReviewContext, createCommentReview } from "../commentReview";
 
 const ResolvedVisibility = createContext<() => boolean>(() => false);
 export const useResolvedComments = (): (() => boolean) => useContext(ResolvedVisibility);
@@ -21,13 +22,14 @@ const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.l
 export function CommentResolutionScope(props: { roots: readonly string[]; children: JSX.Element }): JSX.Element {
   const index = createCommentIndex(() => props.roots);
   const [shown, setShown] = createSignal(false);
+  const review = createCommentReview(index, shown);
   const resolvedRoots = createMemo(() => index.roots().flatMap(root => (root.resolved ? [root.id] : [])), [], { equals: sameIds });
   const count = () => resolvedRoots().length;
   createEffect(() => {
     const request = replyFocusRequest();
     if (request && resolvedRoots().includes(request.id)) setShown(true);
   });
-  return <CommentIndexContext.Provider value={index}><ResolvedVisibility.Provider value={shown}>
+  return <CommentIndexContext.Provider value={index}><ResolvedVisibility.Provider value={shown}><CommentReviewContext.Provider value={review}>
     <Show when={count() > 0 && !commentMarginHidden()}>
       <button type="button" class="comment-resolved-toggle" aria-pressed={shown()} onClick={() => {
         const resolved = resolvedRoots();
@@ -41,5 +43,5 @@ export function CommentResolutionScope(props: { roots: readonly string[]; childr
       }}>{t("comment-resolved-count", { count: count() })}</button>
     </Show>
     {props.children}
-  </ResolvedVisibility.Provider></CommentIndexContext.Provider>;
+  </CommentReviewContext.Provider></ResolvedVisibility.Provider></CommentIndexContext.Provider>;
 }
