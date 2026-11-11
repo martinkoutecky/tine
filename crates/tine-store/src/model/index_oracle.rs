@@ -32,6 +32,15 @@ impl crate::WholeGraph {
         }
         measure!("block_owners", SnapshotBlockIndex::build(&graph.pages));
         measure!(
+            "path_membership",
+            path_membership::PathMembership::capture(None, graph, &[])
+        );
+        measure!("reference_spelling_support", {
+            referenced_names::ReferencedNameTable::from_rows(graph.pages.slots().map(
+                |(slot, (_, doc))| (slot, collect_document_referenced_names(doc, &graph.config)),
+            ))
+        });
+        measure!(
             "reference_signatures",
             SnapshotReferenceCandidateIndex::capture(
                 None,
@@ -198,10 +207,7 @@ fn lazy_lines(
     let mut referenced = snapshot.referenced_page_names();
     referenced.sort();
     out.push_str(&format!("lazy referenced_page_names {referenced:?}\n"));
-    let index = snapshot
-        .referenced_name_index
-        .get()
-        .expect("referenced_page_names builds the index");
+    let index = snapshot.referenced_name_index();
     for (rel, entry, _) in pages {
         let mut names = index.get(&entry.path).cloned();
         if let Some(names) = names.as_mut() {

@@ -608,6 +608,7 @@ fn warm(store: &Store) {
     let graph = &view.graph;
     graph.block_owner_page("x", true);
     graph.referenced_page_names();
+    graph.referenced_names_for_completion(Some(("B", "checkpoint-warm", "")));
     graph.page_aliases_with_owners();
     graph.alias_owner_paths("bee", None);
     graph.query_index().registry(&graph.pages);
@@ -1730,7 +1731,7 @@ fn a_read_only_session_that_builds_a_lazy_index_is_checkpointed() {
     let root = graph();
     let dir = tempfile::tempdir().unwrap();
     let cp = dir.path().join("graph.bin");
-    // Cold build, checkpointed before anything lazy was built.
+    // Cold build, checkpointed before query indexes or memos were built.
     write_checkpoint(root.path(), &cp);
 
     let session = open_cp(root.path(), &cp);

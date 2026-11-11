@@ -300,6 +300,7 @@ pub(super) struct ChangeSummary {
     text_to: BTreeSet<String>,
     tags_to: BTreeSet<String>,
     tag_table_to: BTreeSet<String>,
+    tag_table_membership_to: BTreeSet<String>,
     refs_to: BTreeSet<String>,
     query_to: BTreeSet<String>,
     days: bool,
@@ -500,6 +501,13 @@ impl Snapshot {
             return summary;
         };
         summary.full |= old.answers.2.day != summary.day || self.unreadable != old.unreadable;
+        for name in self.graph.path_reference_membership_changes(&old.graph) {
+            for graph in [&old.graph, &self.graph] {
+                summary
+                    .tag_table_membership_to
+                    .extend(crate::query::reference_invalidation_names(graph, name));
+            }
+        }
         let mut lifecycle = page_changes.map(Lifecycle::of);
         let Some(current) = lifecycle.as_ref().map_or(edits, |l| Some(&l.edits[..])) else {
             summary.full = true; // create, delete, rename, or unavailable old bytes

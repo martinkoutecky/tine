@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Pages open with less work when checking whether a tag table is available.
+
 - Settings → Appearance → Comments offers **In a popup**: hovering highlighted words opens their live, editable thread with the same delay and close rules as a page link's hover preview, at every width including Wide mode. A click on the words places the caret, touch tablets tap, a reply draft keeps the popover open, and phones keep the bottom sheet. **In the margin** stays the default; the choice uses a new device key, so an earlier On click choice returns to the default once (GH #891; UI-MC010-CLICK-DISPLAY).
 - Resolved comments remain reachable with Reopen and dates in narrow popovers and phone sheets, while staying out of markers and highlights (UI-MC010-COMPACT-RESOLVE; GH #891, #831).
 - Resolve closes a whole comment thread; the page's resolved count reveals it with Reopen, and replying reopens it. Closed threads leave highlights and open counts (UI-MC010-RESOLVE; GH #891).
