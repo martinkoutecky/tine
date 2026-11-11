@@ -325,7 +325,7 @@ mutations = ".publish=1, .write=1"
 
 [[site]]
 file = "crates/tine-graph-features/src/publish_query.rs"
-fn = "publish_query_with_sheets_in"
+fn = "publish_at"
 domain = "graph"
 guard = "crates/tine-store/src/publish.rs#Store::publish_site_at"
 test = "crates/tine-store/tests/publish_site.rs#staged_writer_publishes_files_and_retires_previous_site"

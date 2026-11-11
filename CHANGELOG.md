@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
+
 ### Added
 
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
