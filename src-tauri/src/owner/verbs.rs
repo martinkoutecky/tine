@@ -66,6 +66,13 @@ impl Diag {
 pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, ErrorBody> {
     let args = &request.args;
     match request.verb.as_str() {
+        #[cfg(desktop)]
+        "query.export" => {
+            let args: super::query_export::Args = parse(args)?;
+            let receipt = super::query_export::publish(&slot.store, args, &crate::cli::bundle())
+                .map_err(|message| ErrorBody::new("refused", message, true))?;
+            to_value(&receipt)
+        }
         "page.current" => slot.window.get().map_or_else(
             || Ok(super::window::CurrentPage::absent().payload()),
             |window| window.current_page(),

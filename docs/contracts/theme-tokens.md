@@ -43,6 +43,8 @@ entry and a row here (the guard fails otherwise).
 | `--tine-bullet-size` | Diameter of the block bullet dot | `var(--ls-block-bullet-size)`, 6px |
 | `--tine-tag-color` | Color of `#tags` and tag chips | `var(--tag-color)`, i.e. `--ls-tag-text-color` |
 | `--tine-highlight-bg` | Background of `^^highlighted^^` text | `var(--mark-bg)`, i.e. `--ls-page-mark-bg-color` |
+| `--tine-comment-highlight-bg` | Background of a comment's quoted passage in the source text, including the active passage | `color-mix(in srgb, var(--accent) 14%, transparent)`; active wide-margin passage: 30% |
+| `--tine-comment-card-bg` | Background of comment cards and passage groups | `color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent))`; authored card: 7% `var(--author-color)` instead; resolved card: `var(--bg-secondary)` |
 | `--tine-missing-page-color` | Color of a `[[link]]` to a page that does not exist yet | A link-colored tint pulled toward `var(--text-secondary)` (`color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))`) |
 | `--tine-external-link-underline` | The line under a link to a web address or file (`border-bottom` shorthand; `none` removes it) | `1px solid`, in the text color (OG's `.external-link`) |
 | `--tine-content-width` | Maximum width of the standard page column | 810px (what `--ls-main-content-max-width` is by default) |
@@ -218,7 +220,50 @@ writer.
   Tine ships no animation of its own on it; a theme writes
   `.block-task-checkbox.just-toggled { animation: ... }`.
 
+## 7. Comment styling
+
+These selectors are public hooks for `logseq/custom.css` (D-20261111-CSL,
+GH #929). Removing or renaming one needs a contract update and a CHANGELOG
+Changed entry, as for tokens. The guard renders the real comment UI. Internal
+layout wrappers and the nesting between these elements are not promised.
+
+| Selector | Marks |
+|---|---|
+| `.comment-group` | The shared card for threads on one passage |
+| `.comment-card` | A comment thread's root block |
+| `.comment-in-thread` | Each comment or reply in a thread |
+| `.comment-quote` | The quoted-passage header above a thread or group |
+| `.comment-quote-anchor` | The highlighted passage in the commented text |
+| `.comment-header` | A message's author, date and actions |
+| `.author-chip` | The author label on a comment, reply or attributed block |
+| `.author-chip.agent` | An author label for someone other than the current user's configured name; this includes other people |
+| `.comment-date` | A message's valid creation date |
+| `.comment-composer` | The reply composer |
+| `.comment-popup-content` | The comment content inside a popover or phone sheet |
+
+Every rendered block carrying `tine.author::` has `data-author="<name>"` on
+its block element, including comments and replies. The value is the stored
+property facet value, even when its visible chip says "you" or author marks
+are hidden. An empty value gives `data-author=""`; an absent property gives no
+attribute. No other block properties are exposed as attributes by this hook.
+For example, dim blocks attributed to an agent, and outline Ada's comments:
+
+```css
+[data-author="claude"] { opacity: 0.65; }
+.comment-in-thread[data-author="Ada"] { outline: 1px solid steelblue; }
+:root {
+  --tine-comment-highlight-bg: #fde68a;
+  --tine-comment-card-bg: #fff7ed;
+}
+```
+
+The two comment tokens are independent of `--tine-highlight-bg` (which styles
+`^^highlights^^`). Unset, they preserve the existing state-specific backgrounds.
+
 ## Tests
+
+- src/commentIdentity.test.tsx (public comment selectors rendered by real components, stored data-author and absent attribution)
+- scripts/shot-comment-styling.mjs (routed browser custom.css: comment tokens and author rules at wide, compact and phone widths)
 
 - src/components/justToggled.test.tsx (the `just-toggled` class: absent on load and remount, present on a user toggle, removed after the window)
 - src/themes/typography.test.ts (the typography vocabulary: every accepted and rejected fixture, judged by both the app parser and `tine-theme.mjs check`; the CSS built from parsed families only)

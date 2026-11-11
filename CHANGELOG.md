@@ -8,8 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
+
 ### Added
 
+- Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).
 - **Next comment** and **Previous comment** review a page in margin order, revealing each passage and focusing its live thread. Popovers and phone sheets offer the same page-wide controls; bind shortcuts in Settings (GH #891; UI-MC9-REVIEW).
 - Settings → Editor → Advanced has a **Reference previews** switch, Logseq's `:ui/enable-tooltip?` in the graph's `config.edn` (on when absent). Off, page links, tags and block references open no preview on mouse hover, and on a touch screen holding a page link or tag opens its page menu again instead of a preview. The **Hover preview delay** stays as it is (GH #824).
 

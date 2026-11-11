@@ -360,7 +360,11 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 25)
+## WholeGraph: Names (ceiling: 26)
+# CLI export extends corpus's selection parameter to indexed block-ID candidate
+# pages. A page name cannot identify those pages; CorpusScope types that existing
+# parameter. No Store operation or WholeGraph question is added.
+enum store::CorpusScope
 # CLI read handles use InventoryScope::File(PageId) on the existing inventory
 # question: one named file via the existing page-position map, no new operation.
 # Batch 19: PublishedV1Spellings(All) uses this same inventory question for
@@ -603,7 +607,7 @@ use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,CorpusScope,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
 # Card hB9Zjw: the inventory types moved beside their implementation in
 # store/inventory.rs (size ratchet seam); the same items, re-exported by store.

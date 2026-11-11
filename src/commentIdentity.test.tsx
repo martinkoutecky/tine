@@ -4,8 +4,10 @@
 import { openCommentThread, showThread } from "./tests/commentEntry";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
+import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import { Block } from "./components/Block";
+import { RefBlocks } from "./components/RefBlocks";
 import { CommentNameSetting } from "./components/CommentNameSetting";
 import { backend } from "./backend";
 import { commentRaw, replyRaw } from "./comments";
@@ -14,11 +16,12 @@ import { AUTHOR_TINTS, authorTint, commentAuthorName, isOwnAuthor, normalizeAuth
 import { blockRegions, initParser, editBlock } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
-import { pageByName, resetStore, undo } from "./document";
+import { pageByName, resetStore, setBlockProperty, undo } from "./document";
 import { setGraphMeta } from "./graphSession";
 import { endEdit } from "./editorController";
 import type { BlockDto } from "./types";
 import { bindTestHost } from "./document/host/wiring.test.support";
+import { setAuthorMarksHidden } from "./authorMarksPref";
 
 const PAGE = "CommentIdentity";
 let dispose: (() => void) | undefined;
@@ -28,8 +31,8 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   return { id, raw, collapsed: false, children, ...(properties.length ? { properties } : {}) };
 }
 
-function mount(blocks: BlockDto[], extra?: () => JSX.Element): HTMLElement {
-  loadSingle({ name: PAGE, kind: "page", title: PAGE, format: "md", pre_block: null, blocks });
+function mount(blocks: BlockDto[], extra?: () => JSX.Element, format: "md" | "org" = "md"): HTMLElement {
+  loadSingle({ name: PAGE, kind: "page", title: PAGE, format, pre_block: null, blocks });
   setGraphMeta({ root: "/fixture" } as any);
   const root = document.createElement("div");
   document.body.append(root);
@@ -48,6 +51,7 @@ beforeEach(async () => {
   await bindTestHost();
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
   resetCommentAuthorNameForTests("");
+  setAuthorMarksHidden(false);
 });
 afterEach(() => {
   dispose?.(); dispose = undefined;
@@ -111,6 +115,55 @@ describe("what is written", () => {
 });
 
 describe("what is shown", () => {
+  it("exposes the exact stored facet value with author marks hidden", () => {
+    setAuthorMarksHidden(true);
+    const root = mount([{ id: "p", raw: "Words\nTiNe.Author:: Ada  ", collapsed: false, children: [], properties: [["TiNe.Author", "Ada  "]] }]);
+    expect(root.querySelector('[data-block-id="p"]')?.getAttribute("data-author")).toBe("Ada  ");
+  });
+  it.each(["md", "org"] as const)("keeps data-author current through property edits in %s, including empty values", format => {
+    const raw = format === "md" ? "Words\ntine.author:: Ada" : "Words\n:PROPERTIES:\n:tine.author: Ada\n:END:";
+    const root = mount([{ id: "p", raw, collapsed: false, children: [], properties: [["tine.author", "Ada"]] }], undefined, format);
+    const row = root.querySelector('[data-block-id="p"]')!;
+    expect(row.getAttribute("data-author")).toBe("Ada");
+    setBlockProperty("p", "tine.author", "Bo");
+    expect(row.getAttribute("data-author")).toBe("Bo");
+    setBlockProperty("p", "tine.author", "");
+    expect(row.getAttribute("data-author")).toBe("");
+    setBlockProperty("p", "tine.author", null);
+    expect(row.hasAttribute("data-author")).toBe(false);
+  });
+  it("exposes the stored author to custom.css, including your own name, and omits absent authors", () => {
+    resetCommentAuthorNameForTests("ada");
+    const root = mount([block("p", "A passage\ntine.author:: Ada", [
+      block("c", "Mine\ntine.quote:: passage\ntine.author:: Ada"),
+      block("d", "Agent\ntine.quote:: A\ntine.author:: claude"),
+    ]), block("plain", "Unsigned")]);
+    expect(root.querySelector('[data-block-id="p"]')?.getAttribute("data-author")).toBe("Ada");
+    expect(showThread("c")?.getAttribute("data-author")).toBe("Ada");
+    expect(showThread("d")?.getAttribute("data-author")).toBe("claude");
+    expect(root.querySelector('[data-block-id="plain"]')?.hasAttribute("data-author")).toBe(false);
+  });
+
+  // Review hold f4d4b3971: an authored block shown through RefBlocks (embed inside a
+  // hover preview, reference and query rows) is styled by the same custom.css hook.
+  it("exposes the stored author on reference and embed rows too", () => {
+    const host = document.createElement("div");
+    const stop = render(() => <RefBlocks page={PAGE} blocks={[
+      block("ra", "Agent note\ntine.author:: claude"), block("rp", "Unsigned"),
+    ]} />, host);
+    try {
+      expect(host.querySelector('[data-block-id="ra"]')?.getAttribute("data-author")).toBe("claude");
+      expect(host.querySelector('[data-block-id="rp"]')?.hasAttribute("data-author")).toBe(false);
+    } finally { stop(); }
+  });
+
+  it("renders every public comment class promised to custom.css", () => {
+    const root = mount([block("p", "A passage", [block("c", "Discuss\ntine.quote:: passage\ntine.author:: claude\ntine.date:: 2026-11-07T13:37Z")])]);
+    const section = readFileSync("docs/contracts/theme-tokens.md", "utf8").split("## 7. Comment styling")[1]?.split("## Tests")[0] ?? "";
+    const selectors = [...section.matchAll(/^\| `([^`]+)`/gm)].map(match => match[1]);
+    expect(selectors.length).toBeGreaterThanOrEqual(9);
+    for (const selector of selectors) expect(root.querySelector(selector), `${selector} is a public styling hook`).not.toBeNull();
+  });
   // Each passage has one thread; only the shown passage is mounted (review round 3).
   const chips = (_root: HTMLElement) => ["c", "d", "e"].map(id => showThread(id)!.querySelector<HTMLElement>(":scope > .comment-header .author-chip")!).map((c) => ({ text: c.textContent, agent: c.classList.contains("agent") }));
   const fixture = () => [block("p", "A passage to discuss.", [

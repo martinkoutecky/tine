@@ -151,11 +151,12 @@ pub use store::change_summary::{QueryRegistration, QuerySubscription};
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::checkpoint::CheckpointWrite;
 pub use store::{
-    Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
-    FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
-    InventoryScope, IrAnswer, IrRequest, LinkTarget, Listing, LoadError, OpenError, OpenOptions,
-    Origin, PageId, PageRead, PageReadSource, QueryError, Resolved, SaveBase, SearchRequest, Store,
-    StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
+    Area, Budget, Cancel, Change, ChangeKind, ConfigState, CorpusScope, Day, Depth, FacetPolicy,
+    FileEntry, FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory,
+    InventoryEntry, InventoryScope, IrAnswer, IrRequest, LinkTarget, Listing, LoadError, OpenError,
+    OpenOptions, Origin, PageId, PageRead, PageReadSource, QueryError, Resolved, SaveBase,
+    SearchRequest, Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch,
+    WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::{QueryDialect, QueryResult};
