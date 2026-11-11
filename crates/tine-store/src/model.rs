@@ -33,6 +33,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
+mod path_membership;
 pub(crate) mod referenced_names;
 mod template_names;
 #[cfg(test)]
@@ -598,6 +599,7 @@ pub(crate) struct ReadSnapshot {
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     template_names: template_names::TemplateNames,
+    path_membership: path_membership::PathMembership,
     calendar_days: calendar_days::CalendarDays,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
@@ -941,7 +943,7 @@ impl ReadSnapshot {
             ) {
                 if changed_paths.is_empty() {
                     if Arc::ptr_eq(&old.pages, &pages) {
-                        let _ = referenced_name_table.set(table.clone());
+                        let _ = referenced_name_table.set(table.unchanged());
                     }
                 } else {
                     fn side<'a>(
@@ -1025,6 +1027,7 @@ impl ReadSnapshot {
             public_block_ref_counts: std::sync::OnceLock::new(),
             icon_index: std::sync::OnceLock::new(),
             template_names,
+            path_membership: Default::default(),
             calendar_days,
             memos: SnapshotMemos::default(),
             query_index,
@@ -1044,6 +1047,8 @@ impl ReadSnapshot {
         if let Some(old) = old {
             snapshot.carry_completion_rank(old, changed_paths);
         }
+        snapshot.path_membership =
+            path_membership::PathMembership::capture(old, &snapshot, changed_paths);
         if let Some(support) =
             old.and_then(|old| fileless_names::DaySupport::carry(old, &snapshot, changed_paths))
         {
@@ -1748,19 +1753,6 @@ impl ReadSnapshot {
                 .collect(),
         )
     }
-    pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
-        let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
-        (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
-    }
-    pub(crate) fn physical_explicit_referrers(&self, names: &[String]) -> Vec<crate::PageId> {
-        let paths = self.explicit_index.candidates(names);
-        self.physical_pages
-            .iter()
-            .filter(|(entry, _)| paths.contains(&entry.path))
-            .filter_map(|(entry, _)| entry.rel_path.clone())
-            .collect()
-    }
-
     fn referenced_name_index(&self) -> &SnapshotPageDerivedIndex {
         self.referenced_name_index.get_or_init(|| {
             #[cfg(test)]
@@ -6963,7 +6955,7 @@ mod tests {
     }
 
     #[test]
-    fn block_index_is_eager_and_lazy_indexes_carry_across_a_save() {
+    fn block_index_and_reference_table_carry_across_a_save() {
         let dir = scratch("lazy-snapshot-index-carry");
         fs::write(
             dir.join("pages").join("Target.md"),
@@ -6976,6 +6968,7 @@ mod tests {
         let before = published_snapshot(&store);
         assert!(before.block_index.get().is_some());
         assert!(before.referenced_name_index.get().is_none());
+        assert!(before.referenced_name_table_built().is_some());
         std::thread::scope(|scope| {
             for _ in 0..2 {
                 let snapshot = Arc::clone(&before);
@@ -7003,8 +6996,8 @@ mod tests {
             before
                 .referenced_name_full_builds
                 .load(std::sync::atomic::Ordering::Relaxed),
-            1,
-            "racing readers must share one referenced-name build"
+            0,
+            "the resident spelling table needs no per-page cache build"
         );
 
         save_model_page(&store, "Target", |target| {
@@ -7015,7 +7008,8 @@ mod tests {
         });
         let after = published_snapshot(&store);
         assert!(after.block_index.get().is_some());
-        assert!(after.referenced_name_index.get().is_some());
+        assert!(after.referenced_name_index.get().is_none());
+        assert!(after.referenced_name_table_built().is_some());
         assert_eq!(
             after
                 .block_owner_page("aaaaaaaa-0000-0000-0000-000000000001", true)

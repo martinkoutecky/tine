@@ -18,7 +18,7 @@ import { changed } from "../changeKeys";
 import { PageLoadError, createPinnedPathRecovery, refusedPageOpen, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
-import { createTagTableResource } from "../tagTable";
+import { createTagTableAvailabilityResource, createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
@@ -46,7 +46,7 @@ import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
-import type { JournalFeedPage, PageRead, PageReadSource, RefGroup } from "../types";
+import type { JournalFeedPage, PageRead, PageReadSource } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
@@ -1382,18 +1382,14 @@ function tagTableEnabled(pageName: string): boolean {
   return readPageProperty(pageName, TAG_TABLE_PROP)?.toLowerCase() === "true";
 }
 
-function taggedCount(groups: readonly RefGroup[] | undefined): number {
-  return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
-}
-
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
   // A published export has no query engine behind `queryRun` and cannot save the
   // page property this button toggles, so it offers no toggle and asks nothing
   // (master GH #549).
   const live = !isPublishedExport();
-  const [groups] = createTagTableResource(() => props.page.name, () => live && props.page.kind === "page");
+  const [available] = createTagTableAvailabilityResource(() => props.page.name, () => live && props.page.kind === "page");
   const enabled = () => tagTableEnabled(props.page.name);
-  const visible = () => live && props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
+  const visible = () => live && props.page.kind === "page" && (enabled() || readOr(available, false, "tag table toggle"));
   return (
     <Show when={visible()}>
       <button

@@ -2462,6 +2462,11 @@ pub enum QueryDialect {
 /// One request to [`WholeGraph::query_ir`].
 #[derive(Debug, Clone, Copy)]
 pub enum IrRequest<'a> {
+    /// Exact tag-table existence, without querying or constructing block rows.
+    TagTableAvailable {
+        /// The decoded page, journal title, or alias name.
+        name: &'a str,
+    },
     /// Evaluate a query (`query_run`).
     Run {
         /// The parsed query.
@@ -2494,6 +2499,8 @@ pub enum IrRequest<'a> {
 /// The answer to one [`IrRequest`], in the same variant.
 #[derive(Debug, Clone)]
 pub enum IrAnswer {
+    /// Exact tag-table existence in this published generation.
+    Available(bool),
     /// Rows, totals and statistics.
     Result(Box<tine_core::query::ir::QueryResult>),
     /// One explanation row per root conjunct, each with the conjunct's count
@@ -3030,18 +3037,11 @@ impl WholeGraph {
         }
     }
 
-    /// The IR query front door (SPEC §7.1): `Run` binds the query to its
-    /// context and today (§4.4) and evaluates it in memory under the fixed
-    /// construction bounds, returning an over-bound answer with `exceeded` set
-    /// (`TryFrom<IrAnswer>` refuses it for transport); `ExplainEmpty` counts each probe's rows
-    /// without constructing any (N19); `Registry` is the observed property
-    /// registry (§6.1). Only a statistics fold over its memory budget fails.
-    ///
-    /// `Run`/`ExplainEmpty` check `cancel` once per candidate page and within
-    /// link work (docs/contracts/tql-links-near.md); `Ok(None)` = cancelled: no
-    /// partial answer, never served from nor stored into the memo. Cost: graph-wide `Run`/`ExplainEmpty` is O(P + B) per plan/probe, memoized.
-    /// Exact page-name scopes visit their owners unless global coercions/tag
-    /// facts are needed. Registry build is O(P + B) once per generation, then shared.
+    /// IR door (SPEC §7.1): `Run` binds context/today and marks over-bound answers
+    /// `exceeded` (TryFrom refuses transport). `ExplainEmpty` counts without DTOs.
+    /// `Run`/`ExplainEmpty`: cancellable O(P + B); exact page scopes visit owners.
+    /// Registry builds O(P + B) once per generation; statistics budgets can fail.
+    /// `TagTableAvailable`: O(alias component × log targets), zero row DTOs.
     pub fn query_ir(
         &self,
         request: IrRequest<'_>,

@@ -100,7 +100,7 @@ export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, load
 export { followPageIdentity, installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, queryBlockRaw, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
-export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } from "./tree";
+export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleNeighbor, visibleOrder } from "./tree";
 export { commentsFirst } from "./commentOrder";
 export { bodyNeighbor } from "./bodyNavigation";
 export { bodyScopeOf, commentMessageIds, commentThreadVisibleOrder, datedThreadRoot, hasMessageDate, isCommentId, threadRootOf } from "./commentThreads";
