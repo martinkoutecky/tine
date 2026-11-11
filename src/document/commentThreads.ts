@@ -1,8 +1,8 @@
 // Thread membership is shared by body structure, navigation and pointer paths.
 // OG sees ordinary child bullets on disk; in Tine every descendant of a comment
 // belongs to that annotation, even when an external editor nested it by hand.
-import { doc, formatForBlock } from "./model";
-import { isCommentBlock } from "../comments";
+import { doc, formatForBlock, blockIsOpaqueSheetView } from "./model";
+import { isCommentBlock, COMMENT_DATE_KEY } from "../comments";
 import { facetsOf } from "../render/facets";
 import type { Format } from "../types";
 
@@ -24,4 +24,61 @@ export function threadRootOf(id: string, format: Format = formatForBlock(id)): s
     if (isCommentId(at, format)) root = at;
   }
   return root;
+}
+
+/** A dated thread opts into message outlines. Presence, rather than validity of
+ * the display date, is the file's discriminator. O(depth), no I/O. */
+export function datedThreadRoot(id: string): string | null {
+  const root = threadRootOf(id);
+  return root && hasMessageDate(root) ? root : null;
+}
+
+/** Read the message marker from parser facets, including hand-written dates. */
+export function hasMessageDate(id: string): boolean {
+  const n = doc.byId[id];
+  return !!n && facetsOf(n.raw, formatForBlock(id)).properties.some(([key]) => key.toLowerCase() === COMMENT_DATE_KEY);
+}
+
+/** The editable outline containing this block: null for the main outline,
+ * a message id for its undated body, undefined for annotation text itself.
+ * Structural gestures may not cross this boundary. O(depth), no I/O. */
+export function bodyScopeOf(id: string): string | null | undefined {
+  const root = threadRootOf(id);
+  if (!root) return null;
+  if (!hasMessageDate(root) || hasMessageDate(id)) return undefined;
+  for (let at = doc.byId[id]?.parent; at; at = doc.byId[at]?.parent) {
+    if (hasMessageDate(at)) return at;
+  }
+  return undefined;
+}
+
+/** Dated replies in file pre-order, including messages under a folded body.
+ * O(thread blocks), no I/O; legacy threads have no message projection. */
+export function commentMessageIds(root: string): string[] {
+  if (datedThreadRoot(root) !== root) return [];
+  const ids: string[] = [];
+  const visit = (id: string) => {
+    for (const child of doc.byId[id]?.children ?? []) {
+      if (hasMessageDate(child)) ids.push(child);
+      visit(child);
+    }
+  };
+  visit(root);
+  return ids;
+}
+
+/** The drawn order of a dated thread: each message, its visible ordinary body,
+ * then the next message. O(thread blocks) per navigation gesture;
+ * caller supplies occurrence folds when the view overrides stored folds. */
+export function commentThreadVisibleOrder(root: string, folded: (id: string) => boolean): string[] {
+  const order: string[] = [];
+  const body = (id: string) => {
+    order.push(id);
+    if (!folded(id) && !blockIsOpaqueSheetView(id)) {
+      for (const child of doc.byId[id]?.children ?? []) if (!hasMessageDate(child)) body(child);
+    }
+  };
+  body(root);
+  if (!folded(root)) for (const id of commentMessageIds(root)) body(id);
+  return order;
 }

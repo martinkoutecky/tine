@@ -10,6 +10,7 @@ import { nextVisible, prevVisible, node as docNode, type OutlineScope } from "./
 import type { Format } from "./render/ast";
 import { bodyNeighbor } from "./document";
 import { commentsInPopup } from "./commentMarginPref";
+import { datedThreadRoot, commentThreadVisibleOrder } from "./document/commentThreads";
 export { isCommentId, threadRootOf } from "./document";
 
 /** The narrowest main pane (its scroller's width, px) that gets the margin. The
@@ -98,7 +99,10 @@ export interface MarginNav {
 export function marginPrev(id: string, scope: OutlineScope | null, nav: MarginNav): string | null {
   const step = (at: string) => prevVisible(at, scope);
   if (!nav.thread) return bodyNeighbor(id, -1, scope);
-  if (id !== nav.thread.root) return step(id);
+  if (id !== nav.thread.root) {
+    const order = datedThreadOrder(nav.thread.root, scope);
+    return order ? order[order.indexOf(id) - 1] ?? nav.thread.root : step(id);
+  }
   const order = nav.thread.order?.() ?? [];
   const above = order[order.indexOf(id) - 1];
   return above !== undefined && order.indexOf(id) > 0 && docNode(above) ? lastInThread(above, scope) : nav.thread.parent;
@@ -110,7 +114,8 @@ export function marginPrev(id: string, scope: OutlineScope | null, nav: MarginNa
 export function marginNext(id: string, scope: OutlineScope | null, nav: MarginNav): string | null {
   const step = (at: string) => nextVisible(at, scope);
   if (!nav.thread) return bodyNeighbor(id, 1, scope);
-  const next = step(id);
+  const messages = datedThreadOrder(nav.thread.root, scope);
+  const next = messages ? messages[messages.indexOf(id) + 1] ?? null : step(id);
   if (next !== null && insideThread(next, nav.thread.root)) return next;
   const order = nav.thread.order?.() ?? [];
   const at = order.indexOf(nav.thread.root);
@@ -120,9 +125,18 @@ export function marginNext(id: string, scope: OutlineScope | null, nav: MarginNa
 
 /** The last visible message of a thread. O(thread size). */
 function lastInThread(root: string, scope: OutlineScope | null): string {
+  const messages = datedThreadOrder(root, scope);
+  if (messages) return messages.at(-1) ?? root;
   let last = root;
   for (let at = nextVisible(root, scope); at !== null && insideThread(at, root); at = nextVisible(at, scope)) last = at;
   return last;
+}
+
+function datedThreadOrder(root: string, scope: OutlineScope | null): string[] | null {
+  return datedThreadRoot(root) === root ? commentThreadVisibleOrder(root, id => {
+    if (id === scope?.forceExpandedRoot) return false;
+    return scope?.collapsed?.(id, docNode(id)!.collapsed) ?? docNode(id)!.collapsed;
+  }) : null;
 }
 
 function insideThread(id: string, root: string): boolean {

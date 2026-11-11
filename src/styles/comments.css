@@ -181,15 +181,15 @@
 
 /* Threads read flat in file pre-order, including hand-nested replies.
    Keep the stored tree intact: no structure or save operation runs to flatten it. */
-.ls-block.comment-in-thread > .block-children-container {
+.ls-block.comment-in-thread:not(.comment-message) > .block-children-container {
   margin-inline-start: 0;
 }
-.ls-block.comment-in-thread > .block-children-container > .block-children {
+.ls-block.comment-in-thread:not(.comment-message) > .block-children-container > .block-children {
   margin-inline-start: 0;
   padding-inline-start: 0;
   border-inline-start: 0;
 }
-.ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
+.ls-block.comment-in-thread:not(.comment-message) > .block-children-container > .block-children-left-border {
   display: none;
 }
 /* Inside a thread the chip keeps the block menu. */
@@ -230,8 +230,15 @@
 .comment-card.comment-resolved .block-main,
 .comment-card.comment-resolved .comment-in-thread > .block-main { background: transparent; color: var(--text-muted); }
 .comment-card.comment-resolved .author-chip { color: var(--text-muted); background: var(--bg-tertiary); }
-.comment-in-thread > .block-children-container > .block-children > .ls-block {
+.comment-in-thread:not(.comment-message) > .block-children-container > .block-children > .ls-block,
+.comment-messages > .ls-block {
   margin-top: 8px;
+}
+.comment-card.collapsed > .block-main .block-content {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .comment-composer { display: none; margin: 8px 0 2px; }
 .comment-card:hover > .comment-composer,

@@ -213,6 +213,38 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                 .as_ref()
                 .map(|h| resolve_on(doc, page, h, anchor.unwrap(), args.rev.is_some()))
                 .transpose()?;
+            // MC5: only message roots get a creation date; their descendants
+            // remain an ordinary outline. Ordinary --under is unchanged.
+            let in_thread = args.under.is_some()
+                && path.as_ref().is_some_and(|path| {
+                    (2..=path.len()).any(|depth| {
+                        super::write::block_at(&doc.blocks, &path[..depth]).is_some_and(|block| {
+                            let regions = block_regions::parse(&block.raw, org);
+                            tine_core::editor_text::comment_quote(
+                                regions
+                                    .properties
+                                    .iter()
+                                    .filter(|p| p.primary)
+                                    .map(|p| (p.key.as_str(), p.value.as_str())),
+                            )
+                            .is_some()
+                        })
+                    })
+                });
+            if in_thread {
+                let date = chrono::Utc::now().format("%Y-%m-%dT%H:%MZ").to_string();
+                for block in &mut blocks {
+                    block.raw = block_regions::edit(
+                        &block.raw,
+                        org,
+                        Edit::Property {
+                            key: "tine.date".into(),
+                            value: Some(date.clone()),
+                        },
+                    )
+                    .map_err(|e| refused("kernel", Some(page), e))?;
+                }
+            }
             if let Some(path) = &path {
                 let block = block_at_mut(&mut next.blocks, path).expect("resolved path");
                 if block_regions::parse(&block.raw, org).id.is_none() {

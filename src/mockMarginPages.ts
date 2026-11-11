@@ -6,6 +6,14 @@ import type { BlockDto } from "./types";
  * construction in the mock backend and document/convert.ts). */
 export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) => BlockDto): [string, BlockDto[]][] {
   return [
+    ["Message outlines regression", [
+      b("A passage worth discussing.", [
+        b("The first message\ntine.quote:: passage\ntine.date:: 2026-11-07T13:37Z", [
+          b("Evidence with [[references]]", [b("Nested evidence")]),
+          b("A second message\ntine.date:: 2026-11-07T13:38Z\ntine.author:: Ada", [b("An editable reply outline")]),
+        ]),
+      ]),
+    ]],
     [
       // GH #843: a block with both a reference count and a margin comment count.
       "Badge alignment regression", [
