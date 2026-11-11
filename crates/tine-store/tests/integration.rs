@@ -100,6 +100,9 @@ mod gh540_numbered_first_bullet;
 #[path = "graph_command_boundary.rs"]
 mod graph_command_boundary;
 
+#[path = "held_open_cost.rs"]
+mod held_open_cost;
+
 #[path = "host_edit_cost.rs"]
 mod host_edit_cost;
 

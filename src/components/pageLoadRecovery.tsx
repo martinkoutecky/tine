@@ -33,8 +33,8 @@ export function PageLoadError(props: { error: string }): JSX.Element {
   );
 }
 
-/** Why a path-pinned route was refused: its exact file was absent, or another page answered. */
-export type PinnedPathRefusal = "missing" | "mismatch";
+/** Why a path-pinned route was refused: its exact file was absent, could not be read, or another page answered. */
+export type PinnedPathRefusal = "missing" | "unreadable" | "mismatch";
 
 /**
  * Recovery for a path-pinned page route refused because its exact file was
@@ -43,7 +43,9 @@ export type PinnedPathRefusal = "missing" | "mismatch";
  * substitutes a same-name sibling; it retries the full load (with all its
  * identity and admission checks) when the page's publication changes, and,
  * while the file is missing, probes the exact path without touching the
- * refusal UI, from each completed probe after 3 s doubling to 60 s.
+ * refusal UI, from each completed probe after 3 s doubling to 60 s. A file
+ * that exists but cannot be read keeps its read error shown and recovers the
+ * same way: the first probe that reads it runs the full load again.
  *
  * `begin` starts a load attempt and returns its publication snapshot; `refuse`
  * records a refused attempt and returns the cancel for its probe, if any. The
@@ -68,7 +70,7 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
     },
     refuse(at: string | null, refusal: PinnedPathRefusal, r: Route, live: Owner): (() => void) | undefined {
       setRefusedAt(at);
-      if (refusal !== "missing" || r.kind !== "page" || !r.path || !live()) return undefined;
+      if (refusal === "mismatch" || r.kind !== "page" || !r.path || !live()) return undefined;
       const owner = graphOwner(live);
       const path = r.path;
       let delay = 3000;
@@ -88,7 +90,7 @@ export function createPinnedPathRecovery(route: Accessor<Route>, retry: () => vo
           if (result.kind === "stale") return;
           const dto = result.value;
           const mismatch = pageOpenMismatch(r, dto);
-          if (!mismatch) {
+          if (refusal === "unreadable" || !mismatch) {
             retry();
             return;
           }

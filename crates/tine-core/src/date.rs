@@ -254,6 +254,11 @@ pub struct Format {
     toks: Vec<Tok>,
 }
 
+/// The most width renderings one journal pattern may contribute to
+/// [`JournalFormat::accepted_stems`] (GH #863 D3): an upper bound on the product
+/// of each numeric field's possible widths, so a pattern that repeats fields
+/// cannot make an absent-day lookup allocate or stat exponentially many names.
+pub const WIDTH_RENDERINGS_MAX: usize = 16;
 impl Format {
     pub fn compile(pat: &str) -> Format {
         let b: Vec<char> = pat.chars().collect();
@@ -340,6 +345,61 @@ impl Format {
                 Tok::Weekday(4) => out.push_str(WEEKDAYS_FULL[dow]),
                 Tok::Weekday(_) => out.push_str(WEEKDAYS_ABBR[dow]),
             }
+        }
+        out
+    }
+
+    /// [`Self::format`] of `d` with each numeric field at every width
+    /// [`Self::parse`] reads (a field of up to `max` digits, zero-padded
+    /// from none to `max`): `2026-11-1` beside `2026-11-01`. Names, ordinal
+    /// suffixes and literals as `format` writes them. The product of each
+    /// numeric field's widths: 2 for a month or day below 10, 1 for a year
+    /// past 999, so at most 4 for a pattern with one year, month and day
+    /// field. Not checked to parse back.
+    fn renderings_by_width(&self, d: JournalDate) -> Vec<String> {
+        // A numeric field's value and the most digits the parser reads for it.
+        let field = |t: &Tok| match t {
+            Tok::Year(2) => Some((d.year.rem_euclid(100), 2)),
+            Tok::Year(_) => Some((d.year, 4)),
+            Tok::MonthNum(_) => Some((d.month as i32, 2)),
+            Tok::DayNum(_) | Tok::DayOrd => Some((d.day as i32, 2)),
+            _ => None,
+        };
+        // A format may repeat numeric fields (config accepts "yyyy-MM-dd M M M …"),
+        // and each occurrence multiplies the product: past the bound the pattern
+        // contributes nothing here, and only its ordinary spelling is tried.
+        let within = self.toks.iter().try_fold(1usize, |n, t| {
+            let widths = field(t).map_or(1, |(value, max)| {
+                let digits = value.to_string().len();
+                max.max(digits) - digits + 1
+            });
+            Some(n * widths).filter(|&n| n <= WIDTH_RENDERINGS_MAX)
+        });
+        if within.is_none() {
+            return Vec::new();
+        }
+        let mut out = vec![String::new()];
+        for t in &self.toks {
+            let (value, max) = field(t).unwrap_or((-1, 0));
+            let single = Format {
+                toks: vec![t.clone()],
+            };
+            let pieces: Vec<String> = if value < 0 {
+                vec![single.format(d)]
+            } else {
+                let suffix = if matches!(t, Tok::DayOrd) {
+                    &ordinal(d.day)[value.to_string().len()..]
+                } else {
+                    ""
+                };
+                let digits = value.to_string().len();
+                (digits..=max.max(digits))
+                    .map(|width| format!("{value:0width$}{suffix}"))
+                    .collect()
+            };
+            out = (out.iter())
+                .flat_map(|head| pieces.iter().map(move |piece| format!("{head}{piece}")))
+                .collect();
         }
         out
     }
@@ -610,6 +670,47 @@ impl JournalFormat {
         self.parse_list.iter().find_map(|f| f.parse(s))
     }
 
+    /// Every rendering of `d` in the parse list, deduplicated: the spellings
+    /// of the day this format writes. Real names reached by a looser spelling
+    /// (`2026-10-2`, `October 22nd, 2026`) are found by parsing them, not here.
+    pub fn spellings(&self, d: JournalDate) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(self.parse_list.len());
+        for f in &self.parse_list {
+            let s = f.format(d);
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+        out
+    }
+
+    /// The names [`Self::parse`] reads as `d` that differ from
+    /// [`Self::spellings`] only in numeric field width (`2026-11-1`,
+    /// `2026_11_01`), spellings first, deduplicated, each checked to parse
+    /// back (a two-digit year outside 2000-2099 does not): where a file of the
+    /// day may be found by name without listing a directory (GH #863 D3).
+    /// Bounded by `renderings_by_width`: at most 4 per parse-list pattern
+    /// with one year, month and day field, for a year past 999, and never more
+    /// than [`WIDTH_RENDERINGS_MAX`] per pattern (a pattern whose width product
+    /// would exceed it contributes only its ordinary spelling).
+    /// Other accepted forms (a month name's other length, any ordinal
+    /// suffix, another weekday, case, surrounding space) are not listed.
+    pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
+        let widths = self
+            .parse_list
+            .iter()
+            .flat_map(|f| f.renderings_by_width(d));
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<String> = Vec::new();
+        for s in self.spellings(d).into_iter().chain(widths) {
+            if !seen.contains(&s) && self.parse(&s) == Some(d) {
+                seen.insert(s.clone());
+                out.push(s);
+            }
+        }
+        out
+    }
+
     /// Display title for a date, in the user's `:journal/page-title-format`.
     pub fn title(&self, d: JournalDate) -> String {
         self.title.format(d)
@@ -646,6 +747,67 @@ impl JournalFormat {
 #[cfg(test)]
 mod fmt_tests {
     use super::*;
+
+    /// GH #863 D3: the stems a day's file may carry include every numeric
+    /// width the parser accepts (default settings read `2026-11-1` as
+    /// November 1), each parses back to that day, and the list is bounded.
+    #[test]
+    fn accepted_stems_cover_the_parsers_numeric_widths() {
+        let fmt = JournalFormat::default();
+        let day = d(2026, 11, 1);
+        let stems = fmt.accepted_stems(day);
+        for expected in [
+            "2026_11_01",
+            "2026_11_1",
+            "2026-11-01",
+            "2026-11-1",
+            "Nov 1st, 2026",
+            "Nov 01st, 2026",
+        ] {
+            assert!(
+                stems.iter().any(|s| s == expected),
+                "{expected} in {stems:?}"
+            );
+        }
+        assert_eq!(stems[..3], fmt.spellings(day)[..], "spellings first");
+        let mut unique = stems.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), stems.len(), "deduplicated: {stems:?}");
+        for stem in &stems {
+            assert_eq!(fmt.parse(stem), Some(day), "{stem}");
+        }
+        assert_eq!(stems.len(), 6, "{stems:?}");
+        // Bounded: one-digit month and day double each numeric pattern.
+        assert_eq!(fmt.accepted_stems(d(2026, 1, 1)).len(), 10);
+        assert_eq!(fmt.accepted_stems(d(2026, 11, 22)).len(), 3);
+        // A two-digit year reads 2000 + digits: no other century is listed.
+        let short = JournalFormat::new(Some("d.M.yy"), Some("d.M.yy"));
+        let stems = short.accepted_stems(d(2005, 1, 5));
+        assert!(stems.iter().any(|s| s == "5.1.5"), "{stems:?}");
+        assert!(stems.iter().any(|s| s == "05.01.05"), "{stems:?}");
+        assert!(short
+            .accepted_stems(d(1999, 1, 5))
+            .iter()
+            .all(|s| !s.contains(".99")));
+    }
+
+    #[test]
+    fn accepted_stems_stay_bounded_when_a_format_repeats_numeric_fields() {
+        // Merge review r2 (GH #863): "yyyy-MM-dd" + " M" x 14 made 65,546 stems
+        // for January 1 and ~196k stats under the writer, growing exponentially.
+        let repeated = format!("yyyy-MM-dd{}", " M".repeat(14));
+        let fmt = JournalFormat::new(Some(&repeated), Some("MMM do, yyyy"));
+        let day = d(2026, 1, 1);
+        let stems = fmt.accepted_stems(day);
+        let bound = fmt.spellings(day).len() + 2 * 16; // two patterns, WIDTH_RENDERINGS_MAX each
+        assert!(stems.len() <= bound, "{} stems", stems.len());
+        // The pattern's ordinary spelling is still tried.
+        assert!(
+            stems.iter().any(|s| s.starts_with("2026-01-01 1 1")),
+            "{stems:?}"
+        );
+    }
 
     #[test]
     fn configured_file_stem_is_its_days_canonical_file() {
