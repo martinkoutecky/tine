@@ -4,7 +4,7 @@
 import { createMemo, useContext } from "solid-js";
 import type { OutlineScope } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
-import { AUTHOR_TINTS, authorTint, isOwnAuthor } from "../commentIdentity";
+import { authorTint, isOwnAuthor } from "../commentIdentity";
 import { marginNext, marginPrev, threadRootOf } from "../margin";
 import { nextVisible, prevVisible } from "../document";
 import { inCommentThread } from "./CommentParts";
@@ -15,11 +15,14 @@ import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
 import { createCommentChildren } from "../commentIndex";
+import { NO_COMMENT_CHILDREN } from "../commentChildren";
 import { createQuoteCoverage } from "../render/quoteHighlight";
 export { commentEditorHide } from "../editor/commentProperties";
 
 interface CommentNode { id: string; raw: string; parent: string | null; children: readonly string[] }
 type Props = readonly (readonly [string, string])[];
+const NO_IDS: readonly string[] = [];
+const NO_COMMENT_CLASSES: Record<string, boolean> = {};
 
 /** Local facets and a memo for the adjacent authorship pairs. The thread test
  * walks up the parents rather than providing a context per level (128-level
@@ -48,18 +51,20 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   const bulletless = () => commentSelector() !== null || inThread();
   const commentClasses = () => {
     const by = author();
+    const selector = commentSelector();
+    const thread = inThread();
+    if (by === null && selector === null && !thread) return NO_COMMENT_CLASSES;
     const classes: Record<string, boolean> = {
-      "comment-card": commentSelector() !== null && !inThread(),
-      "comment-resolved": commentSelector() !== null && !inThread() && threadResolved(node().id),
-      "comment-in-thread": bulletless(),
+      "comment-card": selector !== null && !thread,
+      "comment-resolved": selector !== null && !thread && threadResolved(node().id),
+      "comment-in-thread": selector !== null || thread,
       authored: by !== null,
       "author-run-continued": !bulletless() && continued(),
       "author-run-continues": !bulletless() && continues(),
     };
     // Someone else's comment or reply gets its own background, one tint per name
     // (Martin 2026-10-31: the chip alone did not tell them apart).
-    const tint = by !== null ? authorTint(by) : -1;
-    for (let i = 0; i < AUTHOR_TINTS; i++) classes[`author-tint-${i}`] = i === tint;
+    if (by !== null) classes[`author-tint-${authorTint(by)}`] = true;
     return classes;
   };
   return { commentSelector, author, showsAuthor, bulletless, commentClasses };
@@ -73,7 +78,21 @@ const inlineSurface = (surfaceKey: string) => surfaceKey.startsWith("ref:") || s
  * child re-runs none of this (GH #891 review finding 1, round 3). */
 export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt: () => "md" | "org") {
   const showResolved = useResolvedComments();
-  const comments = createCommentChildren(() => node()?.id ?? null);
+  // A leaf cannot own comments. Keep just the eligibility comparison until
+  // children arrive; the covering index already owns membership for the page.
+  const parent = createMemo(() => node()?.children.length ? node().id : null);
+  const state = createMemo(() => parent() === null ? null : parentMarginOutline(node, fmt, showResolved));
+  const quoteCoverage = createQuoteCoverage();
+  return {
+    outlineChildren: () => state()?.outlineChildren() ?? node().children,
+    marginComments: () => state()?.marginComments() ?? NO_IDS,
+    commentChildren: () => state()?.comments() ?? NO_COMMENT_CHILDREN,
+    quoteCoverage,
+  };
+}
+
+function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", showResolved: () => boolean) {
+  const comments = createCommentChildren(() => node().id);
   const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
   // A body editor that is hand-writing its first quote property must finish
   // that buffer before moving to an annotation surface. Otherwise accepting
@@ -96,10 +115,7 @@ export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt:
   }, [], { equals: sameIds });
   const marginComments = createMemo(() => (main() && !commentMarginHidden() ? comments().entries.flatMap(entry => entry.id !== heldBody()
     && (showResolved() || !entry.resolved) ? [entry.id] : []) : []), [], { equals: sameIds });
-  // What this instance's renderer highlights; outlives the rendering while the
-  // block is edited, so the entry point keeps its last answer (review round 2).
-  const quoteCoverage = createQuoteCoverage();
-  return { outlineChildren, marginComments, commentChildren: comments, quoteCoverage };
+  return { outlineChildren, marginComments, comments };
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
