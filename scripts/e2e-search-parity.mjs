@@ -8,6 +8,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 import {
   startWebdriverApplication,
@@ -123,6 +125,7 @@ const switcherSnapshot = (browser) => browser.execute(() => {
     headers: [...document.querySelectorAll(".switcher-group-header > span:first-child")]
       .map((node) => node.textContent?.trim() ?? ""),
     rows,
+    searching: Boolean(document.querySelector(".switcher-empty[role=status]")),
     openSearchTab: Boolean(document.querySelector("[data-open-search-tab]")),
   };
 });
@@ -221,57 +224,64 @@ try {
   await browser.keys(["Enter"]);
   await waitPage(browser, MAIN_PAGE);
 
-  // 0. Duplicate display names retain physical file identity. Visit both
-  // same-name rows (filesystem enumeration order is intentionally irrelevant),
-  // then leave the noncanonical one selected and prove the one name-keyed slot
-  // swaps physical owner rather than keeping or editing its sibling.
+  // 0. CM active-claimant contract (74408bb8e): semantic search exposes
+  // only the opening file; Conflicts retains every exact physical owner.
   await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
   await typeKeys(browser, DUPLICATE_PAGE);
-  await waitFor(browser, (state) => state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 2
+  const twinSearch = await waitFor(browser, (state) => !state.searching
+    && state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 1
     && state.rows[0]?.active && state.rows[0]?.name === DUPLICATE_PAGE,
-  "duplicate page results did not settle with the first row active");
+  "search did not expose exactly one active twin");
   await browser.keys(["Shift", "Enter"]);
   const duplicateSurface = `[data-sidebar-surface="sidebar:page:page:${DUPLICATE_PAGE}"]`;
   await browser.$(duplicateSurface).waitForExist({ timeout: 10_000 });
-  const firstDuplicateBody = await browser.$(`${duplicateSurface} .rs-item-body`).getText();
-  const firstIsNoncanonical = firstDuplicateBody.includes(NONCANONICAL_DUPLICATE_BODY);
-  if (!firstIsNoncanonical && !firstDuplicateBody.includes(CANONICAL_DUPLICATE_BODY)) {
-    throw new Error(`first duplicate row opened unknown content: ${JSON.stringify(firstDuplicateBody)}`);
-  }
-
-  await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
-  await typeKeys(browser, DUPLICATE_PAGE);
-  await waitFor(browser, (state) => state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 2
-    && state.rows[0]?.active,
-  "duplicate page results did not settle for noncanonical selection");
-  await browser.keys(["ArrowDown"]);
-  await waitFor(browser, (state) => state.rows[1]?.active && state.rows[1]?.kind === "page" && state.rows[1]?.name === DUPLICATE_PAGE,
-  "ArrowDown did not select the second duplicate page result");
-  await browser.keys(["Shift", "Enter"]);
   await browser.waitUntil(async () => {
     const text = await browser.$(`${duplicateSurface} .rs-item-body`).getText();
-    return firstIsNoncanonical
-      ? text.includes(CANONICAL_DUPLICATE_BODY) && !text.includes(NONCANONICAL_DUPLICATE_BODY)
-      : text.includes(NONCANONICAL_DUPLICATE_BODY) && !text.includes(CANONICAL_DUPLICATE_BODY);
-  }, {
-    timeout: 10_000,
-    timeoutMsg: "same-name sidebar slot did not replace content with the second physical owner",
-  });
-  const duplicateSlotCount = await browser.execute((selector) => document.querySelectorAll(selector).length, duplicateSurface);
-  if (duplicateSlotCount !== 1) throw new Error(`same-name duplicate created ${duplicateSlotCount} sidebar slots`);
+    return text.includes(CANONICAL_DUPLICATE_BODY) && !text.includes(NONCANONICAL_DUPLICATE_BODY);
+  }, { timeout: 10_000, timeoutMsg: "search did not open the active physical claimant" });
 
-  if (firstIsNoncanonical) {
-    await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
-    await typeKeys(browser, DUPLICATE_PAGE);
-    await waitFor(browser, (state) => state.rows.filter((row) => row.kind === "page" && row.name === DUPLICATE_PAGE).length === 2
-      && state.rows[0]?.active,
-    "duplicate page results did not settle while restoring the noncanonical owner");
-    await browser.keys(["Shift", "Enter"]);
-    await browser.waitUntil(async () => (await browser.$(`${duplicateSurface} .rs-item-body`).getText()).includes(NONCANONICAL_DUPLICATE_BODY), {
-      timeout: 10_000,
-      timeoutMsg: "first duplicate row did not restore its noncanonical physical owner",
-    });
+  await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
+  await typeKeys(browser, NONCANONICAL_BLOCK_QUERY);
+  const inactiveSearch = await waitFor(browser, (state) => !state.searching
+    && state.value === NONCANONICAL_BLOCK_QUERY && state.rows.length === 1 && state.rows[0]?.kind === "new",
+  "inactive claimant block leaked into semantic search");
+  await closeSwitcher(browser);
+
+  await browser.$(".conflict-queue-badge").click();
+  const twinRow = browser.$(".conflict-overview-row").$(
+    `button.conflict-overview-open*=${DUPLICATE_PAGE}`,
+  );
+  await twinRow.waitForExist({ timeout: 10_000 });
+  const fileButtons = ".conflict-overview-name-files button";
+  const canonicalLabel = `pages/${DUPLICATE_PAGE}.md · Opens for this name`;
+  const inactiveLabel = `pages/duplicates/${DUPLICATE_PAGE}.md`;
+  await browser.waitUntil(async () => {
+    const labels = await browser.$$(fileButtons).map((button) => button.getText());
+    return labels.length === 2 && labels.includes(canonicalLabel) && labels.includes(inactiveLabel);
+  }, { timeout: 10_000, timeoutMsg: "Conflicts did not list both exact files and mark the opening claimant" });
+  const conflictFiles = await browser.$$(fileButtons).map((button) => button.getText());
+
+  // Both links replace the same parked slot while keeping Conflicts in view.
+  for (const [label, body, sibling] of [
+    [inactiveLabel, NONCANONICAL_DUPLICATE_BODY, CANONICAL_DUPLICATE_BODY],
+    [canonicalLabel, CANONICAL_DUPLICATE_BODY, NONCANONICAL_DUPLICATE_BODY],
+    [inactiveLabel, NONCANONICAL_DUPLICATE_BODY, CANONICAL_DUPLICATE_BODY],
+  ]) {
+    await browser.performActions([{ type: "key", id: "conflict-link-modifier", actions: [{ type: "keyDown", value: "\uE008" }] }]);
+    try {
+      const link = await browser.$$(fileButtons).find(async (button) => (await button.getText()) === label);
+      if (!link) throw new Error(`Conflicts exact-file link missing: ${label}`);
+      await link.click();
+    }
+    finally { await browser.releaseActions(); }
+    await browser.waitUntil(async () => {
+      const text = await browser.$(`${duplicateSurface} .rs-item-body`).getText();
+      return text.includes(body) && !text.includes(sibling);
+    }, { timeout: 10_000, timeoutMsg: `Conflicts exact-file link did not open ${label}` });
+    await browser.$(".conflict-overview").waitForExist({ timeout: 5000 });
   }
+  const duplicateSlotCount = await browser.$$(duplicateSurface).length;
+  if (duplicateSlotCount !== 1) throw new Error(`same-name duplicate created ${duplicateSlotCount} sidebar slots`);
 
   await browser.$(`${duplicateSurface} .block-content`).click();
   await browser.$(`${duplicateSurface} textarea.block-editor`).waitForExist({ timeout: 5000 });
@@ -282,38 +292,24 @@ try {
     input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
   }, `${duplicateSurface} textarea.block-editor`, NONCANONICAL_EDIT);
   await browser.$(`${duplicateSurface} [data-right-sidebar-item-toggle]`).click();
-  await browser.waitUntil(() => fs.readFileSync(NONCANONICAL_DUPLICATE_FILE, "utf8").includes(NONCANONICAL_EDIT), {
-    timeout: 10_000,
-    timeoutMsg: "noncanonical sidebar edit did not persist to its selected file",
-  });
+  await waitForFileText(NONCANONICAL_DUPLICATE_FILE, (text) => text.includes(NONCANONICAL_EDIT), { timeoutMs: 10_000 });
   const canonicalAfterEdit = fs.readFileSync(CANONICAL_DUPLICATE_FILE, "utf8");
   if (canonicalAfterEdit !== `- ${CANONICAL_DUPLICATE_BODY}\n`) {
     throw new Error(`noncanonical sidebar edit changed its canonical sibling: ${JSON.stringify(canonicalAfterEdit)}`);
   }
-
-  // The block provider must carry the same physical owner through id::
-  // persistence and sidebar hydration, not recover the page canonically by name.
-  await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
-  await typeKeys(browser, NONCANONICAL_BLOCK_QUERY);
-  await waitFor(browser, (state) => state.rows.some((row) => row.kind === "block"
-    && row.excerpt.includes(NONCANONICAL_BLOCK_QUERY)),
-  "noncanonical block result did not settle");
-  await browser.keys(["ArrowDown"]);
-  await waitFor(browser, (state) => state.rows.some((row) => row.active && row.kind === "block"
-    && row.excerpt.includes(NONCANONICAL_BLOCK_QUERY)),
-  "ArrowDown did not select the noncanonical block result");
-  await browser.keys(["Shift", "Enter"]);
-  const duplicateBlockSurface = `[data-sidebar-surface="sidebar:block:${NONCANONICAL_BLOCK_ID}"]`;
-  await browser.$(`${duplicateBlockSurface} .rs-item-body [data-block-ref="${NONCANONICAL_BLOCK_ID}"]`).waitForExist({ timeout: 10_000 });
-  const duplicateBlockText = await browser.$(`${duplicateBlockSurface} .rs-item-body`).getText();
-  if (!duplicateBlockText.includes(NONCANONICAL_BLOCK_QUERY)) {
-    throw new Error(`noncanonical block sidebar body was ${JSON.stringify(duplicateBlockText)}`);
+  const inactiveAfterEdit = fs.readFileSync(NONCANONICAL_DUPLICATE_FILE, "utf8");
+  if (!inactiveAfterEdit.includes(NONCANONICAL_BLOCK_QUERY) || !inactiveAfterEdit.includes(NONCANONICAL_BLOCK_ID)) {
+    throw new Error("editing the inactive claimant lost its other block or identity");
   }
   receipt.observations.exactStorageIdentity = {
+    search: twinSearch.rows,
+    inactiveBlockSearch: inactiveSearch.rows,
+    conflictFiles,
     page: { name: DUPLICATE_PAGE, sidebarSlots: duplicateSlotCount, edited: NONCANONICAL_EDIT },
-    block: { id: NONCANONICAL_BLOCK_ID, query: NONCANONICAL_BLOCK_QUERY },
+    block: { id: NONCANONICAL_BLOCK_ID, query: NONCANONICAL_BLOCK_QUERY, retained: true },
     canonicalSiblingUnchanged: true,
   };
+  await openPageByName(browser, MAIN_PAGE);
 
   // 1. Exact global page result + Shift-only Enter parks the page without
   // changing the focused main route.
