@@ -755,6 +755,10 @@ fn a_served_checkpoint_is_readable_before_ready_and_destructive_reads_wait() {
     let rev = waiter.join().unwrap().unwrap();
     assert!(rev > view.rev());
     assert!(matches!(store.is_graph_ready(), Ok(true)));
+    let launch = store.diagnostics()["launch"].clone();
+    assert_eq!(launch["status"], "ready");
+    assert!(launch["readyMs"].is_number());
+    assert!(launch["publishMs"].is_number());
 }
 
 fn rewrite_header(cp: &Path, edit: impl FnOnce(&mut Header)) {

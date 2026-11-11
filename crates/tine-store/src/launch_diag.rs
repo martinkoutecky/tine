@@ -411,10 +411,15 @@ impl DiagRecorder {
         self.state().fill = Some(stats);
     }
 
-    /// First publication done and status Ready; `publish_began` is when the
-    /// worker started publishing (snapshot capture included).
+    /// First ready snapshot installed, before notification and deferred-change
+    /// draining. `publish_began` includes snapshot capture (also on recovery).
+    /// Called under the load-status lock, before setting Ready. Later recovery
+    /// leaves the first successful launch completion intact.
     pub(crate) fn ready(&self, publish_began: Instant) {
         let mut state = self.state();
+        if state.ready_us.is_some() {
+            return;
+        }
         state.publish_us = Some(micros(publish_began.elapsed()));
         state.ready_us = Some(micros(self.began.elapsed()));
     }

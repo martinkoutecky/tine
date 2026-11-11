@@ -271,6 +271,15 @@ pub(crate) fn contain_index_publication(
     !matches!(*load.status.lock().unwrap(), LoadStatus::Failed(_))
 }
 
+impl LoadStatus {
+    /// Complete the first ready snapshot under the caller's status lock.
+    /// O(1), memory only; timings precede visibility of Ready to readers.
+    pub(crate) fn record_ready(&mut self, graph: &Graph, publish_began: Instant) {
+        graph.diag.ready(publish_began);
+        *self = Self::Ready;
+    }
+}
+
 impl LoadState {
     /// A publication could not capture: `Failed`, unless already closed.
     pub(crate) fn fail_publication(&self, graph: &Graph) {

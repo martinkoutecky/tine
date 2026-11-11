@@ -573,6 +573,35 @@ fn recovered_good(root: &Path, store: &Store, no_row: NoRowExplains) -> String {
     good.unwrap().document.roots[0].raw().to_owned()
 }
 
+#[test]
+fn recovered_ready_diagnostics_include_timings() {
+    let (root, store, no_row) = failed_at_the_index_stage("ready-diag");
+    let failed = store.diagnostics()["launch"].clone();
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["loadStopped"], true);
+    assert!(failed["readyMs"].is_null());
+    drop(no_row);
+    store.refresh(Depth::Stamps).unwrap();
+    let launch = store.diagnostics()["launch"].clone();
+    assert_eq!(launch["status"], "ready");
+    assert!(
+        launch["readyMs"].is_number(),
+        "ready time recorded: {launch}"
+    );
+    assert!(launch["publishMs"].is_number());
+    // A later failed rescan/recovery must keep the original launch endpoint.
+    let no_row = NoRowExplains::arm(&root);
+    assert!(store.refresh(Depth::Rebuild).is_err());
+    drop(no_row);
+    store.refresh(Depth::Stamps).unwrap();
+    let recovered = store.diagnostics()["launch"].clone();
+    assert_eq!(recovered["readyMs"], launch["readyMs"]);
+    assert_eq!(recovered["publishMs"], launch["publishMs"]);
+    store.close();
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
 /// REG-FAILED-LOAD-RACED-OBSERVATION-KEPT, the reconcile: a raced observation
 /// stamps the file with its current metadata and the published revision, so
 /// recovery's diff must hash it, or its row stays on the old bytes for good.

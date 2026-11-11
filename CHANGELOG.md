@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Settings diagnostics always includes ready and publication times when the launch status is ready, including after load recovery (internal: LAUNCH-DIAG-READY).
 - On a phone, and more so with interface scaling above 100% on iOS, Settings rows no longer push their labels to the left: a control that does not fit beside its label, such as the spellcheck languages or a long graph folder path, now moves to its own line and wraps, so the pane no longer scrolls sideways. The toolbar keeps every action reachable at every scale: actions that no longer fit move into the "…" menu, which on a 390-pixel-wide phone now also happens at 100%, and the page no longer gets a horizontal scrollbar that a sideways swipe could catch as an indent (#926).
 - A query or table no longer stays empty or stale until reload when a page it lists starts or stops existing without a file of its own: linking a new `[[Page]]`, giving a blank `Brand/Child` file its first text (which makes `Brand` a page), or removing a page's last reference now refreshes the queries that can list that page, and only those (internal: hHbdR0, REG-QUERY-FILELESS-PAGE-STALE).
 - Merging or deleting a block no longer replaces a long page with an error and loses the editor after earlier structural edits (GH #745).

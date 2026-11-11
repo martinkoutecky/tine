@@ -78,6 +78,35 @@ fn release_hook(pause: &TestPause) {
     ready.notify_all();
 }
 
+#[test]
+fn ready_diagnostics_include_timings_before_deferred_publication() {
+    let root = graph();
+    let store = held_open(root.path());
+    let hook = pause();
+    *store.changes.publish_hooks.pause.lock().unwrap() = Some(Arc::clone(&hook));
+    let subscription = store.subscribe();
+    go(root.path());
+    wait_hook(&hook);
+    // Park the worker after its Ready publication, before end_deferral can
+    // finish. On the old ordering the timings were recorded only after that.
+    let deferred = store.changes.deferred.lock().unwrap();
+    release_hook(&hook);
+    let (sent, received) = std::sync::mpsc::channel();
+    let receiver = std::thread::spawn(move || sent.send(subscription.recv()).unwrap());
+    let change = received.recv_timeout(Duration::from_secs(10));
+    let launch = store.diagnostics()["launch"].clone();
+    drop(deferred);
+    store.close();
+    receiver.join().unwrap();
+    change.expect("Ready publication arrived").unwrap();
+    assert_eq!(launch["status"], "ready");
+    assert!(
+        launch["readyMs"].is_number(),
+        "ready time recorded: {launch}"
+    );
+    assert!(launch["publishMs"].is_number(), "publish time recorded");
+}
+
 fn doc(name: &str, text: &str) -> PageDto {
     PageDto {
         name: name.into(),
