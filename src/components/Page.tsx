@@ -547,10 +547,11 @@ export function PageView(): JSX.Element {
           if (result.kind === "stale") return;
           const dto = result.value;
           // A saved path can use another case spelling on a case-insensitive
-          // volume. Adopt the file's disk spelling in tabs, Recent, and the
-          // route before loading it into the exact-path working set.
-          if (r.path && dto?.id && dto.id !== r.path && dto.kind === r.pageKind
-            && dto.id.toLowerCase() === r.path.toLowerCase()) {
+          // volume, and a route can guess the wrong kind (GH #863: whether a file
+          // is a journal day is the store's answer for its path). Adopt the file's
+          // spelling and kind in tabs, Recent, and the route before loading it.
+          if (r.path && dto?.id && dto.id.toLowerCase() === r.path.toLowerCase()
+            && (dto.id !== r.path || (dto.name === r.name && dto.kind !== r.pageKind))) {
             const from = { name: r.name, pageKind: r.pageKind, path: r.path };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
             renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
