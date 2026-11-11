@@ -11,10 +11,7 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tine_graph_features::publish_query::{
-    plan_query, publish_live_home, publish_query, publish_static, query_request_by_uuid,
-    ExportReceipt,
-};
+use tine_graph_features::publish_query::{publish_live_home, publish_static, ExportReceipt};
 use tine_store::Store;
 
 mod prop;
@@ -477,7 +474,16 @@ fn terminal_stderr(arguments: std::fmt::Arguments<'_>) {
     let _ = writeln!(std::io::stderr().lock(), "{arguments}");
 }
 
-fn bundle() -> Vec<(String, Vec<u8>)> {
+#[cfg(test)]
+pub(crate) fn bundle() -> Vec<(String, Vec<u8>)> {
+    vec![(
+        "index.html".into(),
+        b"<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>".to_vec(),
+    )]
+}
+
+#[cfg(not(test))]
+pub(crate) fn bundle() -> Vec<(String, Vec<u8>)> {
     let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     let assets = context.assets();
     let mut files: Vec<_> = assets
@@ -548,13 +554,26 @@ fn export(format: ExportFormat) -> Result<ExportReceipt, String> {
 }
 
 fn export_query(args: QueryExportArgs) -> Result<ExportReceipt, String> {
-    export_query_with_bundle(args, &bundle())
+    let request = query_export_args(&args)?;
+    let root = args
+        .graph
+        .canonicalize()
+        .map_err(|e| format!("cannot open {}: {e}", args.graph.display()))?;
+    let mut conn = crate::owner::client::connect(&root).map_err(|e| e.to_string())?;
+    let reply = conn
+        .call(
+            "query.export",
+            serde_json::to_value(request).map_err(|e| e.to_string())?,
+        )
+        .map_err(|error| match error {
+            crate::owner::client::Failure::Owner(body) => body.message,
+            crate::owner::client::Failure::Reach(error) => error.to_string(),
+            crate::owner::client::Failure::Lost(message) => message,
+        })?;
+    serde_json::from_value(reply).map_err(|e| e.to_string())
 }
 
-fn export_query_with_bundle(
-    args: QueryExportArgs,
-    bundle: &[(String, Vec<u8>)],
-) -> Result<ExportReceipt, String> {
+fn query_export_args(args: &QueryExportArgs) -> Result<crate::owner::query_export::Args, String> {
     let raw = args.uuid.trim();
     let uuid = raw
         .strip_prefix("((")
@@ -563,14 +582,12 @@ fn export_query_with_bundle(
     let uuid = uuid::Uuid::parse_str(uuid)
         .map_err(|_| "expected a block UUID, bare or wrapped as ((UUID))".to_owned())?
         .to_string();
-    let store = open_store(&args.graph)?;
-    let request = query_request_by_uuid(&store, &uuid, args.name.as_deref(), args.force)
-        .map_err(|e| e.to_string())?;
-    let plan = plan_query(&store, &request).map_err(|e| e.to_string())?;
-    if plan.exists && !args.force {
-        return Err(format!("output already exists at {}; use --force to replace it (the previous export is kept in recovery)", plan.path));
-    }
-    publish_query(&store, &request, &plan.fingerprint, bundle).map_err(|e| e.to_string())
+    Ok(crate::owner::query_export::Args {
+        uuid,
+        name: args.name.clone(),
+        force: args.force,
+        epoch: tine_graph_features::publish_query::export_epoch().map_err(|e| e.to_string())?,
+    })
 }
 
 /// What `tine doctor` found: summary lines for stdout and one line per problem.
@@ -1246,8 +1263,11 @@ mod tests {
         };
         // Default test builds do not embed the frontend. Supply only that build
         // artifact while exercising the real parser, selector and publisher.
-        export_query_with_bundle(
-            args,
+        let request = query_export_args(&args)?;
+        let store = open_store(&args.graph)?;
+        crate::owner::query_export::publish(
+            &store,
+            request,
             &[(
                 "index.html".into(),
                 b"<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>"

@@ -100,6 +100,110 @@ fn query_publish_inventory_work_tracks_only_selected_pages() {
 }
 
 #[test]
+fn uuid_query_resolution_visits_only_candidate_blocks_at_graph_scale() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let uuid = "dde751ae-3413-4afe-a7fc-9e42ddaf3457";
+    let mut visits = Vec::new();
+    let mut io_work = Vec::new();
+    for unrelated in [200, 2000] {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("pages")).unwrap();
+        fs::write(
+            root.path().join("pages/Query.md"),
+            format!(
+                "- {{{{query (task TODO)}}}}\n  id:: {}\n",
+                uuid.to_ascii_uppercase()
+            ),
+        )
+        .unwrap();
+        for index in 0..unrelated {
+            fs::write(
+                root.path().join(format!("pages/Other{index}.md")),
+                format!("- DONE unrelated\n  id:: {index:08X}-ABCD-4ABC-8ABC-ABCDEF123456\n"),
+            )
+            .unwrap();
+        }
+        for entry in fs::read_dir(root.path().join("pages")).unwrap() {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(entry.unwrap().path())
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000),
+                ))
+                .unwrap();
+        }
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        store.whole_graph().unwrap();
+        tine_store::cost_counters::take_query_uuid_blocks(uuid);
+        tine_store::cost_counters::reset();
+        let started = std::time::Instant::now();
+        let request = query_request_by_uuid(&store, uuid, None, false).unwrap();
+        assert_eq!(request.current_page.as_deref(), Some("Query"));
+        let count = tine_store::cost_counters::take_query_uuid_blocks(uuid);
+        eprintln!(
+            "unrelated_pages={unrelated} (uuid_blocks,index_keys)={count:?} lookup_us={}",
+            started.elapsed().as_micros()
+        );
+        visits.push(count);
+        let io = tine_store::cost_counters::snapshot();
+        io_work.push((
+            io.readdir,
+            io.full_reads,
+            io.preamble_reads,
+            io.parses,
+            io.stamps_by_path,
+            io.listing_stamps,
+            io.corpus,
+        ));
+        store.close();
+    }
+    assert_eq!(visits, [(1, 1), (1, 1)]);
+    assert_eq!(io_work, [(0, 0, 0, 0, 0, 0, 0); 2]);
+}
+
+#[test]
+fn uuid_query_resolution_preserves_all_refusals() {
+    let _integration_guard = crate::integration_lock();
+    let uuid = "e92892cd-a09c-4eef-9e61-bd2267b061a3";
+    for (pages, expected) in [
+        (vec![], "unknown block UUID"),
+        (
+            vec![format!("- ordinary text\n  id:: {uuid}\n")],
+            "not a query",
+        ),
+        (
+            vec![format!(
+                "- {{{{query (task TODO)}}}}\n  id:: {uuid}\n- duplicate\n  id:: {}\n",
+                uuid.to_ascii_uppercase()
+            )],
+            "ambiguous block UUID",
+        ),
+        (
+            vec![
+                format!("- {{{{query (task TODO)}}}}\n  id:: {uuid}\n"),
+                format!("- duplicate\n  id:: {}\n", uuid.to_ascii_uppercase()),
+            ],
+            "ambiguous block UUID",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("pages")).unwrap();
+        for (index, text) in pages.iter().enumerate() {
+            fs::write(root.path().join(format!("pages/{index}.md")), text).unwrap();
+        }
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let error = query_request_by_uuid(&store, uuid, None, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(!root.path().join("published-queries").exists());
+        store.close();
+    }
+}
+
+#[test]
 fn uuid_query_selector_uses_the_document_parser_and_host_context() {
     let _integration_guard = crate::integration_lock();
     let (graph, _, initial) = fixture();
