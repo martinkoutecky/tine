@@ -1,9 +1,13 @@
 # Margin comment interaction
 
-Authority: D-20261107-MC3, design §§2,4–7 and 9; D-20261108-MC4, MC5, MC6, MC7, MC8; internal IDs
-UI-MC010-KEYBOARD, UI-MC010-BELOW, UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE,
-UI-MC010-DATES, UI-MC010-MEDIUM, UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY; GH #891 review
-findings 1 and 2.
+Authority: D-20261107-MC3, design §§2,4–7, 9 and 12; D-20261108-MC4, MC5, MC6, MC7, MC8;
+D-20261109-MC9; D-20261111-CSL; internal IDs UI-MC010-KEYBOARD, UI-MC010-BELOW,
+UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE, UI-MC010-DATES, UI-MC010-MEDIUM,
+UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY, UI-MC5-MESSAGES, UI-MC5-COLLAPSE, UI-MC9-REVIEW,
+UI-MC12-REVIEW-QUERY, UI-MC12-UNREAD; GH #891 review findings 1 and 2; GH #929.
+
+Not yet built: the page-level discussion thread (design §13). Everything else in
+the design's 0.10 scope is described below.
 
 - Settings > Appearance > Comments offers **In the margin** (default) and
   **In a popup** (D-20261108-MC7). This viewer preference uses the same
@@ -240,3 +244,50 @@ shares the page's seen context. Git graphs only: with `available: false` (no git
 no history) no mark or changed count appears. **Mark page seen** clears the bars as
 for every block; there is no second unread record, no new file and no per-row IPC.
 Nothing in the graph changes.
+
+## Next and previous comment (D-20261109-MC9)
+
+**Next comment** and **Previous comment** (command ids `comment/next` and
+`comment/previous`) are palette commands and rebindable shortcuts with no default
+key. They walk one resolution scope's open threads in the order the margin draws
+them: `commentReview.ts` takes each parent block of the scope's comment index
+in turn and flattens its `groupCommentEntries` groups with `threadOrder` (anchor
+start, file order for ties, unresolved last). Resolved threads join only while the
+page's **N resolved** control reveals them. That one list is also the order the
+cards, popover and sheet use, so no surface derives its own. The scope is a page,
+or one journal day; a step never crosses days, panes or windows. In a journal feed
+the scope is the day last pointed at or focused, else the first visible day.
+
+A step with no current thread goes to the first thread (forward) or the last
+(backward); it does nothing past either end. It ends any block editing, shows the
+comments if **Hide comments** was on, expands the collapsed ancestors of the
+commented block through the ordinary reveal (one undo step writing the same
+`collapsed::` state as clicking their arrows; the commented block's own fold and
+every other block stay as they are, since a collapsed block keeps its own threads
+reachable), scrolls the target's passage to the centre of its pane and focuses that thread's
+reply composer, opening the popover or phone sheet at the narrower tiers. For a
+grouped passage the passage itself is scrolled, for a resolved thread with no
+painted highlight the passage's position is scrolled, and the popover follows the
+focused thread. Clicking or focusing any thread makes it the current one.
+
+The popover and the phone sheet carry previous and next buttons and the label
+**Comment N of M**; with a review scope these step the whole scope, without one
+(no registered scope) they step only the displayed group and read **Passage N of M**.
+Pinned by `src/components/CommentReview.test.tsx` (backend requests and scrolls
+counted per step, ancestor reveal, journal-day scope, palette entries without
+default keys, hidden comments shown by a step) and the native journey
+`scripts/e2e-comment-review.mjs`.
+
+**Cost.** A step walks at most the scope's thread order, already cached by the
+comment index, and makes no backend read or write other than the ancestor
+reveal's own save (none for a visible target; counted in
+`CommentReview.test.tsx`). Nothing is stored; the current thread is a view signal.
+
+## Styling layer (D-20261111-CSL, GH #929)
+
+The class names users restyle comments with, `data-author` on every block
+carrying `tine.author::`, and the two comment tokens
+`--tine-comment-highlight-bg` and `--tine-comment-card-bg` are public hooks. Their
+list, the `data-author` rules and the guard test live in
+`docs/contracts/theme-tokens.md` §7; this contract only promises that the
+components named here keep drawing those classes.

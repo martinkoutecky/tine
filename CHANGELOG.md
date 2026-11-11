@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Added
 
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
+- `tine add --under` a comment or one of its replies dates each message it inserts (a creation-only UTC minute `tine.date`); lines nested under a message stay undated body text, and ordinary outline insertion gets no date (D-20261108-MC5; GH #891).
 - Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).
 - **Review open comments on this page** and **Review open comments in the graph** (command palette) open a live list of every unresolved thread in the right sidebar. Filter by author, edit a comment right in the list, and the item comes back after a restart. It reads only the pages that hold comments and writes nothing to your graph (GH #891; UI-MC12-REVIEW-QUERY).
 - In a git graph, a comment whose message changed since you last looked shows the same change bar as other changed blocks, and a collapsed block's **N below** chip reads **N below, M changed** (GH #891; UI-MC12-UNREAD).

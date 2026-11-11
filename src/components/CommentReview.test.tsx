@@ -11,7 +11,7 @@ import { answerOpensFromDocument } from "../document/host/documentHost.test.supp
 import { createCommentIndex } from "../commentIndex";
 import { setDoc } from "../document/model";
 import { bindTestHost } from "../document/host/wiring.test.support";
-import { changeCommentsInPopup, persistCommentMarginHidden } from "../commentMarginPref";
+import { changeCommentsInPopup, commentMarginHidden, persistCommentMarginHidden } from "../commentMarginPref";
 import { commandDefaults, paletteCommands, runGlobalCommand } from "../keybindings";
 import { endEdit } from "../editorController";
 import type { BlockDto } from "../types";
@@ -126,6 +126,15 @@ it("offers localized review commands in the palette and shortcut settings withou
     expect(paletteCommands().find(command => command.id === id)?.label).toBe(label);
     expect(commandDefaults().find(command => command.id === id)).toMatchObject({ label, binding: "" });
   }
+});
+
+it("a step shows comments that Hide comments had hidden", async () => {
+  persistCommentMarginHidden(true);
+  mount(1400, false);
+  expect(commentMarginHidden()).toBe(true);
+  stepPageComment(1);
+  await vi.waitFor(() => expect(focused()).toBe("first"));
+  expect(commentMarginHidden()).toBe(false);
 });
 
 it("reviews a parent's own thread before hidden descendant threads and reveals only their ancestor path", async () => {
