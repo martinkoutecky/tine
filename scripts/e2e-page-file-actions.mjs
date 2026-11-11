@@ -167,7 +167,7 @@ try {
   const ids = await browser.execute(() => [...document.querySelectorAll("[data-page-action-id]")]
     .map((item) => item.getAttribute("data-page-action-id")));
   const expectedIds = [
-    "open", "open-sidebar", "open-new-tab", "open-new-window", "favorite-toggle",
+    "open", "open-sidebar", "open-new-tab", "open-new-window", "favorite-toggle", "comment-visibility",
     "copy-as", "copy-page-ref", "copy-page-embed", "copy-link", "copy-export", "share", "export-pdf",
     "show-in-folder", "open-default-app", "page-properties", "set-page-icon",
     "rename-page", "delete-page",
