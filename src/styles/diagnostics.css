@@ -53,8 +53,11 @@
   gap: 0.35rem;
 }
 
+/* On a narrow pane (a phone under interface zoom) the message takes its own
+   line rather than pushing Copy past the pane's edge (GH #926). */
 .diagnostics-error-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.6rem;
 }
@@ -67,7 +70,7 @@
 }
 
 .diagnostics-error-text {
-  flex: 1;
+  flex: 1 1 8rem;
   min-width: 0;
   overflow-wrap: anywhere;
   user-select: text;

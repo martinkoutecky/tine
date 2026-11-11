@@ -215,6 +215,14 @@ pub enum Refusal {
     },
     /// Page bytes are not UTF-8.
     Undecodable,
+    /// `logseq/config.edn` could not be read when the graph last loaded it
+    /// (not UTF-8, too large to parse, or an undownloaded iCloud
+    /// placeholder), so the graph is read-only: its `:file/name-format` is
+    /// unknown and a page file would be written under another name. The
+    /// cause is the read error, for diagnostics and logs, never for display.
+    /// Fixing or replacing config.edn lifts it. Every transaction is refused
+    /// with this before anything changes (`PagePlan::config_write_failure`).
+    ConfigUnreadable(IoError),
     /// A name-only page creation was refused because a graph-text file Tine
     /// cannot read (`file`) could already be that page
     /// (R-CREATE-UNREADABLE-OWNER, docs/storage-contract.md).

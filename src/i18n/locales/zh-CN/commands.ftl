@@ -213,6 +213,7 @@ command-editor-merge-selected-blocks = 合并所选块
 command-editor-new-sibling-after-subtree = 在此块的子块之后新建块
 
 command-editor-select-embedding-block = 选择嵌入所在块
+command-editor-remove-author = 移除作者
 
 command-editor-collapse-children = 折叠（一层）
 
