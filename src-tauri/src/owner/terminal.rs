@@ -80,7 +80,24 @@ pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
     };
     let deadline = Instant::now() + RETRY_FOR;
     loop {
-        let result = client::connect(&root)
+        // A focused-page query has no reason to load a closed graph or start
+        // a headless owner. Ordinary graph reads retain automatic startup.
+        let connection = if verb == "page.current" {
+            match client::connect_existing(&root) {
+                Ok(None) => {
+                    let page = super::window::CurrentPage::NoCurrentPage {
+                        reason: super::window::NoCurrentPage::NoOwnerEndpoint,
+                    };
+                    print(&page.payload(), target.json);
+                    return 3;
+                }
+                Ok(Some(conn)) => Ok(conn),
+                Err(error) => Err(error),
+            }
+        } else {
+            client::connect(&root)
+        };
+        let result = connection
             .map_err(Failure::Reach)
             .and_then(|mut conn| conn.call(verb, args.clone()));
         let retry = match &result {
@@ -97,7 +114,11 @@ pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
         return match result {
             Ok(ok) => {
                 print(&ok, target.json);
-                0
+                if ok["kind"] == "no-current-page" {
+                    3
+                } else {
+                    0
+                }
             }
             Err(failure) => report_failure(failure, target.json, "owner-start"),
         };
@@ -318,6 +339,15 @@ fn nodes(n: u64) -> String {
 pub(super) fn render(ok: &Value, out: &mut String) {
     use std::fmt::Write;
     match text(ok, "kind") {
+        "current-page" => {
+            let _ = writeln!(out, "{}\n{}", text(ok, "name"), text(ok, "url"));
+            if let Some(url) = ok["block_url"].as_str() {
+                let _ = writeln!(out, "{url}");
+            }
+        }
+        "no-current-page" => {
+            let _ = writeln!(out, "No current page: {}", text(ok, "reason"));
+        }
         "page" | "journal" => {
             let page = &ok["page"];
             let _ = writeln!(out, "# {}", text(page, "name"));
