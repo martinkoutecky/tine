@@ -3440,8 +3440,7 @@ impl WholeGraph {
     }
 
     /// Journal days with content in this view, excluding duplicate-day strays.
-    /// O(P + journal blocks) because the scan visits all parsed pages before
-    /// filtering for journals.
+    /// O(D) for D content days; no page or block probes.
     pub fn journal_content_days(&self) -> Vec<Day> {
         self.graph
             .journal_content_days()

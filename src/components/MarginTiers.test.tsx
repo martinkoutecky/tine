@@ -28,7 +28,10 @@ import { consumeReplyFocus, focusCommentReply } from "../commentReplyFocus";
 let dispose: (() => void) | undefined;
 let keys: (() => void) | undefined;
 let disposeSettings: (() => void) | undefined;
-beforeAll(async () => { await initParser(); keys = installKeybindings(); });
+beforeAll(async () => {
+  await initParser(); keys = installKeybindings();
+  if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+});
 afterAll(() => keys?.());
 beforeEach(async () => { answerOpensFromDocument(await bindTestHost()); persistCommentMarginHidden(false); resetCommentAuthorNameForTests("Ada"); });
 afterEach(() => { endEdit("page-navigation"); dispose?.(); if (disposeSettings) chooseComments("margin"); disposeSettings?.(); disposeSettings = undefined; resetStore(); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });

@@ -140,7 +140,7 @@ export function CommentActions(props: { id: string }): JSX.Element {
 
 /** No document node exists while composing: abandoning an empty draft costs
  * zero writes. Once submitted it is an ordinary editable child block. */
-export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
+export function CommentComposer(props: { id: string; surface: string; card?: () => HTMLElement | null | undefined }): JSX.Element {
   const { draft, setDraft, expanded, setExpanded } = commentDraftState(props.id, props.surface);
   // Hiding the margin would unmount this textarea and its unsent text.
   onCleanup(registerReplyDraft(() => draft(), props.id));
@@ -150,11 +150,14 @@ export function CommentComposer(props: { id: string; surface: string }): JSX.Ele
   onMount(() => createEffect(() => {
     const held = replyFocusRequest();
     if (!held || held.id !== props.id || held.surface !== null && held.surface !== props.surface) return;
-    setExpanded(true);
+    const writable = blockWritable(props.id);
+    if (writable) setExpanded(true);
     // Let the expanded class render and the old editor finish unmounting.
     queueMicrotask(() => {
-      if (replyFocusRequest() !== held || !input.isConnected) return;
-      input.focus();
+      const target = writable ? input : props.card?.();
+      if (replyFocusRequest() !== held || !target?.isConnected) return;
+      if (!writable) target.tabIndex = -1;
+      target.focus({ preventScroll: held.preventScroll });
       consumeReplyFocus();
     });
   }));
@@ -204,6 +207,12 @@ function MountedRendering(props: { coverage?: QuoteCoverage }): JSX.Element {
  * `children()` draws; a block with no children (`when` false) has none to mark
  * and draws it plainly, as does a hidden margin (GH #845). */
 export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; comments?: Accessor<CommentChildren>; coverage?: QuoteCoverage; children: () => JSX.Element }): JSX.Element {
+  return <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
+    <QuotedRendering {...props} />
+  </Show>;
+}
+
+function QuotedRendering(props: Parameters<typeof QuoteHighlightProvider>[0]): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
   // the parent's text runs. The block's own comment producer is shared.
   const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format, props.comments);
@@ -211,12 +220,12 @@ export function QuoteHighlightProvider(props: { parentId: string; format: Format
   // The renderer reports what it marks; the entry point reads that (`QuoteCoverage`).
   const coverage = props.coverage;
   return (
-    <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
+    <>
       <MountedRendering coverage={coverage} />
       <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges, drew: coverage?.drew }}>
         {props.children()}
       </QuoteHighlightContext.Provider>
-    </Show>
+    </>
   );
 }
 

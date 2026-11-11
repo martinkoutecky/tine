@@ -54,3 +54,4 @@ comment-thread-position = 第 { $current } 处，共 { $count } 处
 comment-prev-thread = 上一处
 comment-next-thread = 下一处
 comment-close-threads = 关闭评论
+comment-review-position = 第 { $current } 条评论，共 { $count } 条
