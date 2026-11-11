@@ -18,3 +18,7 @@ comment-name-label = نام شما
 comment-name-hint = نظرها و پاسخ‌هایی که در حاشیه می‌نویسید با این نام به‌صورت <code>author::</code> ذخیره می‌شوند، تا در گرافی که با دیگران مشترک است معلوم باشد چه کسی چه نوشته. برای ننوشتن نویسنده خالی بگذارید؛ نظرهای خودتان آن‌وقت با «شما» نمایش داده می‌شوند. روی همین دستگاه ذخیره می‌شود، نه در گراف.
 comment-name-placeholder = نام شما
 comment-review-position = دیدگاه { $current } از { $count }
+comment-collapse = جمع کردن
+comment-expand = باز کردن
+comment-collapse-all = جمع کردن همهٔ دیدگاه‌های این بلوک
+comment-replies = { $count } پاسخ

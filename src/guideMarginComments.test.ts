@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 
 it("the Guide teaches resolve, reveal, reply-to-reopen and immutable comment dates", () => {
   const tips = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
-  for (const fact of ["**Resolve**", "**N resolved**", "**Reopen**", "Replying to a resolved thread reopens it", "tine.resolved:: true", "tine.date:: 2026-11-07T13:37Z", "Editing never updates it", "messages keep file order", "Ordinary blocks get no stored date"])
+  for (const fact of ["**Resolve**", "**N resolved**", "**Reopen**", "Replying to a resolved thread reopens it", "tine.resolved:: true", "tine.date:: 2026-11-07T13:37Z", "Editing never updates it", "messages keep file order", "Ordinary blocks get no stored date", "**Message outlines and folding.**", "**Collapse all comments on this block**", "collapsed:: true"])
     expect(tips).toContain(fact);
 });
 

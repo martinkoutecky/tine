@@ -68,14 +68,14 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
 
 /** Every response starts with the same author handle and top-right actions;
  * quotes are context above this row and the body always starts below it. */
-export function CommentHeader(props: { id: string; author: string | null }): JSX.Element {
+export function CommentHeader(props: { id: string; author: string | null; folded: boolean; toggleFold: () => void }): JSX.Element {
   const date = () => commentDateOf(facetsOf(docNode(props.id)?.raw ?? "", formatForBlock(props.id)).properties);
   return <div class="comment-header">
     <AuthorChip author={props.author} handleOf={props.id} />
     <Show when={date()}>{date => <time class="comment-date" dateTime={date()} title={new Intl.DateTimeFormat(activeLocale(), { dateStyle: "long", timeStyle: "short" }).format(new Date(date()))}>
       {new Intl.DateTimeFormat(activeLocale(), { dateStyle: "short", timeStyle: "short" }).format(new Date(date()))}
     </time>}</Show>
-    <CommentActions id={props.id} />
+    <CommentActions id={props.id} folded={props.folded} toggleFold={props.toggleFold} />
   </div>;
 }
 
@@ -122,9 +122,12 @@ function tintClasses(author: string | null): Record<string, boolean> {
 }
 
 /** Delete shares the first line but consumes its gesture without placing a caret. */
-export function CommentActions(props: { id: string }): JSX.Element {
-  return <Show when={blockWritable(props.id)}>
-    <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+export function CommentActions(props: { id: string; folded: boolean; toggleFold: () => void }): JSX.Element {
+  return <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+      <Show when={docNode(props.id)?.children.length}>
+        <button type="button" class="comment-collapse" onClick={e => { e.stopPropagation(); props.toggleFold(); }}>{t(props.folded ? "comment-expand" : "comment-collapse")}</button>
+      </Show>
+      <Show when={blockWritable(props.id)}>
       <Show when={threadRootOf(props.id) === props.id}>
         <button type="button" class="comment-resolve" onMouseDown={e => e.preventDefault()} onClick={e => {
           e.stopPropagation(); setThreadResolved(props.id, !threadResolved(props.id));
@@ -134,8 +137,8 @@ export function CommentActions(props: { id: string }): JSX.Element {
         e.stopPropagation();
         deleteComment(props.id);
       }}>×</button>
-    </div>
-  </Show>;
+      </Show>
+    </div>;
 }
 
 /** No document node exists while composing: abandoning an empty draft costs

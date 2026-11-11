@@ -5,7 +5,7 @@
 // undo step: no new write path.
 
 import { batch } from "solid-js";
-import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, setBlockProperty, withUndoUnit } from "./document";
+import { blockWritable, formatForBlock, insertEmptyChildBlock, node as docNode, setRaw, setBlockProperty, setCollapsedBlocks, withUndoUnit } from "./document";
 import { editingId, endEdit, startEditing } from "./editorController";
 import { focusedEditorCommandBridge } from "./editorCommandBridge";
 import { graphScopedSignal, refuseStaleWrite } from "./binding";
@@ -18,6 +18,12 @@ import { revealCommentMargin, hasPendingReplyDraft } from "./commentMargin";
 import { commentAuthorName } from "./commentIdentity";
 import { runWithCommentName } from "./commentNamePrompt";
 import { selectionOf } from "./windowRealm";
+
+/** Fold the passage's thread roots in one existing document transaction. */
+export function collapseComments(id: string): void {
+  const parent = docNode(id);
+  if (parent) setCollapsedBlocks(parent.children.filter(child => threadRootOf(child) === child), true);
+}
 import { threadRootOf } from "./margin";
 import { deleteBlock } from "./document";
 import { commentGroups, passageKey } from "./commentGroups";

@@ -60,6 +60,15 @@ const codeFiles = walk("src", (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.t
 const inCode = new Set(codeFiles.flatMap((f) => [...stripTsComments(readFileSync(f, "utf8")).matchAll(TOKEN)].map((m) => m[0])));
 
 describe("public theme tokens (GH #610)", () => {
+  it("comment tokens retain the existing unset backgrounds in every state", () => {
+    const css = readFileSync("src/styles/comments.css", "utf8");
+    for (const fallback of [
+      "color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent))",
+      "color-mix(in srgb, var(--author-color) 7%, var(--bg-primary, transparent))",
+      "var(--bg-secondary)",
+    ]) expect(css).toContain(`var(--tine-comment-card-bg, ${fallback})`);
+    for (const percent of [14, 30]) expect(css).toContain(`var(--tine-comment-highlight-bg, color-mix(in srgb, var(--accent) ${percent}%, transparent))`);
+  });
   it("documents the device-before-graph CSS cascade and guarded in-app saves", () => {
     expect(contract).toContain("global.css");
     expect(contract).toContain("creation on save");

@@ -6,7 +6,7 @@
   margin: 4px 0;
   padding: 2px 8px 4px 8px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent));
+  background: var(--tine-comment-card-bg, color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent)));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .comment-group > .ls-block.comment-card {
@@ -137,7 +137,7 @@
   background: color-mix(in srgb, var(--author-color) 13%, var(--bg-primary, transparent));
 }
 .ls-block.comment-card[class*="author-tint-"] {
-  background: color-mix(in srgb, var(--author-color) 7%, var(--bg-primary, transparent));
+  background: var(--tine-comment-card-bg, color-mix(in srgb, var(--author-color) 7%, var(--bg-primary, transparent)));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--author-color) 22%, transparent);
 }
 
@@ -181,15 +181,15 @@
 
 /* Threads read flat in file pre-order, including hand-nested replies.
    Keep the stored tree intact: no structure or save operation runs to flatten it. */
-.ls-block.comment-in-thread > .block-children-container {
+.ls-block.comment-in-thread:not(.comment-message) > .block-children-container {
   margin-inline-start: 0;
 }
-.ls-block.comment-in-thread > .block-children-container > .block-children {
+.ls-block.comment-in-thread:not(.comment-message) > .block-children-container > .block-children {
   margin-inline-start: 0;
   padding-inline-start: 0;
   border-inline-start: 0;
 }
-.ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
+.ls-block.comment-in-thread:not(.comment-message) > .block-children-container > .block-children-left-border {
   display: none;
 }
 /* Inside a thread the chip keeps the block menu. */
@@ -226,12 +226,19 @@
   color: var(--text-muted); background: transparent; border: 1px solid var(--border-color);
   border-radius: 5px; padding: 4px 8px; margin-block: 8px; cursor: pointer; font: inherit; font-size: 12px;
 }
-.comment-card.comment-resolved { background: var(--bg-secondary); color: var(--text-muted); }
+.comment-card.comment-resolved { background: var(--tine-comment-card-bg, var(--bg-secondary)); color: var(--text-muted); }
 .comment-card.comment-resolved .block-main,
 .comment-card.comment-resolved .comment-in-thread > .block-main { background: transparent; color: var(--text-muted); }
 .comment-card.comment-resolved .author-chip { color: var(--text-muted); background: var(--bg-tertiary); }
-.comment-in-thread > .block-children-container > .block-children > .ls-block {
+.comment-in-thread:not(.comment-message) > .block-children-container > .block-children > .ls-block,
+.comment-messages > .ls-block {
   margin-top: 8px;
+}
+.comment-card.collapsed > .block-main .block-content {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .comment-composer { display: none; margin: 8px 0 2px; }
 .comment-card:hover > .comment-composer,
@@ -277,7 +284,7 @@
 
 /* The passage a comment quotes, inside the parent's text. */
 .comment-quote-anchor {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--tine-comment-highlight-bg, color-mix(in srgb, var(--accent) 14%, transparent));
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
   border-radius: 2px;
 }
@@ -322,7 +329,7 @@
     0 1px 6px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .page-blocks.margin-active .comment-quote-anchor.active {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--tine-comment-highlight-bg, color-mix(in srgb, var(--accent) 30%, transparent));
   border-bottom-color: var(--accent);
 }
 
