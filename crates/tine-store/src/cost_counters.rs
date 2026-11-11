@@ -224,29 +224,30 @@ mod watcher_read_trace_tests {
     #[test]
     fn cycles_and_nested_read_causes_are_attributed_and_restored() {
         start_watcher_read_trace();
-        std::thread::spawn(|| {
-            mark_watcher_thread();
-            {
-                let _cycle = watcher_cycle("diagnostic_test_exact", false);
-                let _initial = watcher_read_cause(WatcherReadCause::InitialHash);
-                hash_read();
+        // A scoped thread: joined before the scope returns, so it needs no owner (I-21).
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                mark_watcher_thread();
                 {
-                    let _retry = watcher_read_cause(WatcherReadCause::MetadataRetry);
+                    let _cycle = watcher_cycle("diagnostic_test_exact", false);
+                    let _initial = watcher_read_cause(WatcherReadCause::InitialHash);
+                    hash_read();
+                    {
+                        let _retry = watcher_read_cause(WatcherReadCause::MetadataRetry);
+                        hash_read();
+                    }
                     hash_read();
                 }
-                hash_read();
-            }
-            {
-                let _cycle = watcher_cycle("diagnostic_test_full", true);
                 {
-                    let _racy = watcher_read_cause(WatcherReadCause::RacyRehash);
-                    hash_read();
+                    let _cycle = watcher_cycle("diagnostic_test_full", true);
+                    {
+                        let _racy = watcher_read_cause(WatcherReadCause::RacyRehash);
+                        hash_read();
+                    }
+                    full_read();
                 }
-                full_read();
-            }
-        })
-        .join()
-        .unwrap();
+            });
+        });
         let cycles = take_watcher_read_trace();
         let exact = cycles
             .iter()
