@@ -4,23 +4,28 @@
 // All of it is derived at render time from ordinary block properties. Slice 2
 // adds the main column's marker for comments drawn in the margin.
 
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, useContext, type JSX } from "solid-js";
-import { MarginContext } from "./marginContext";
+import { createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, Show, type Accessor, type JSX } from "solid-js";
 import { DialogActions } from "./DialogActions";
-import { t } from "../i18n";
-import { anchorQuote, type QuoteSelector } from "../comments";
+import { t, activeLocale } from "../i18n";
+import { anchorQuote, commentDateOf, type QuoteSelector } from "../comments";
 import { AUTHOR_TINTS, authorTint } from "../commentIdentity";
 import { blockWritable, formatForBlock, node as docNode } from "../document";
 import { threadRootOf } from "../document";
 import { registerReplyDraft } from "../commentMargin";
-import { commentFromReplyDraft, deleteComment, submitReply } from "../commentActions";
+import { commentFromReplyDraft, deleteComment, submitReply, setThreadResolved } from "../commentActions";
 import { runWithCommentName } from "../commentNamePrompt";
 import { internalLinkMouseDown } from "../linkGesture";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { commentMarginHidden } from "../commentMarginPref";
 import { openContextMenu } from "../ui";
-import { QuoteHighlightContext, createQuotedSourceRanges, type QuotedRange } from "../render/quoteHighlight";
+import { QuoteHighlightContext, createQuotedSourceRanges, type QuoteCoverage, type QuotedRange } from "../render/quoteHighlight";
 import type { Format } from "../render/ast";
+import type { CommentChildren } from "../commentChildren";
+import { consumeReplyFocus, replyFocusRequest } from "../commentReplyFocus";
+import { commentDraftState } from "../commentDraftState";
+import { threadResolved } from "../commentResolution";
+import { facetsOf } from "../render/facets";
+import { registerTransientLayer } from "../transientLayers";
 
 /** Whether the block under `parentId` belongs to a comment's thread: some
  * ancestor (from `parentId` up) is a comment. O(depth) facet lookups. */
@@ -64,8 +69,12 @@ function QuoteHeader(props: { parentId: string; selector: QuoteSelector }): JSX.
 /** Every response starts with the same author handle and top-right actions;
  * quotes are context above this row and the body always starts below it. */
 export function CommentHeader(props: { id: string; author: string | null }): JSX.Element {
+  const date = () => commentDateOf(facetsOf(docNode(props.id)?.raw ?? "", formatForBlock(props.id)).properties);
   return <div class="comment-header">
     <AuthorChip author={props.author} handleOf={props.id} />
+    <Show when={date()}>{date => <time class="comment-date" dateTime={date()} title={new Intl.DateTimeFormat(activeLocale(), { dateStyle: "long", timeStyle: "short" }).format(new Date(date()))}>
+      {new Intl.DateTimeFormat(activeLocale(), { dateStyle: "short", timeStyle: "short" }).format(new Date(date()))}
+    </time>}</Show>
     <CommentActions id={props.id} />
   </div>;
 }
@@ -116,6 +125,11 @@ function tintClasses(author: string | null): Record<string, boolean> {
 export function CommentActions(props: { id: string }): JSX.Element {
   return <Show when={blockWritable(props.id)}>
     <div class="comment-actions" onMouseDown={(e) => e.stopPropagation()}>
+      <Show when={threadRootOf(props.id) === props.id}>
+        <button type="button" class="comment-resolve" onMouseDown={e => e.preventDefault()} onClick={e => {
+          e.stopPropagation(); setThreadResolved(props.id, !threadResolved(props.id));
+        }}>{threadResolved(props.id) ? t("comment-reopen") : t("comment-resolve")}</button>
+      </Show>
       <button type="button" class="comment-delete" title={t("comment-delete")} aria-label={t("comment-delete")} onClick={(e) => {
         e.stopPropagation();
         deleteComment(props.id);
@@ -127,22 +141,38 @@ export function CommentActions(props: { id: string }): JSX.Element {
 /** No document node exists while composing: abandoning an empty draft costs
  * zero writes. Once submitted it is an ordinary editable child block. */
 export function CommentComposer(props: { id: string; surface: string }): JSX.Element {
-  const [draft, setDraft] = createSignal("");
+  const { draft, setDraft, expanded, setExpanded } = commentDraftState(props.id, props.surface);
   // Hiding the margin would unmount this textarea and its unsent text.
-  onCleanup(registerReplyDraft(draft));
-  const [expanded, setExpanded] = createSignal(false);
+  onCleanup(registerReplyDraft(() => draft(), props.id));
   let input!: HTMLTextAreaElement;
+  const [focused, setFocused] = createSignal(false);
+  const layerId = `comment-draft-${createUniqueId()}`;
+  onMount(() => createEffect(() => {
+    const held = replyFocusRequest();
+    if (!held || held.id !== props.id || held.surface !== null && held.surface !== props.surface) return;
+    setExpanded(true);
+    // Let the expanded class render and the old editor finish unmounting.
+    queueMicrotask(() => {
+      if (replyFocusRequest() !== held || !input.isConnected) return;
+      input.focus();
+      consumeReplyFocus();
+    });
+  }));
   const cancel = () => { setDraft(""); setExpanded(false); input.blur(); };
+  createEffect(() => {
+    if (!focused() || !expanded()) return;
+    onCleanup(registerTransientLayer({ id: layerId, root: () => input.parentElement, dismiss: () => { cancel(); return true; } }));
+  });
   // The first reply of a person with no name asks for one first (tine#841); the
   // draft stays in the composer while the dialog is open.
   const submit = () => { if (draft().trim()) runWithCommentName(() => { if (submitReply(props.id, draft())) cancel(); }); };
   return <Show when={blockWritable(props.id)}>
     <div class="comment-composer" classList={{ expanded: expanded() }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
-      <textarea ref={input} class="comment-reply-draft" rows={expanded() ? 3 : 1}
+      <textarea ref={input} class="comment-reply-draft" data-reply-root={props.id} rows={expanded() ? 3 : 1}
         placeholder={t("comment-reply-placeholder")} aria-label={t("comment-reply-placeholder")}
         value={draft()} onInput={e => setDraft(e.currentTarget.value)}
-        onFocus={() => setExpanded(true)}
-        onBlur={e => { if (!draft().trim() && !e.currentTarget.parentElement?.contains(e.relatedTarget as Node | null)) setExpanded(false); }}
+        onFocus={() => { setFocused(true); setExpanded(true); }}
+        onBlur={e => { setFocused(false); if (!draft().trim() && !e.currentTarget.parentElement?.contains(e.relatedTarget as Node | null)) setExpanded(false); }}
         onKeyDown={e => {
           e.stopPropagation();
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
@@ -151,11 +181,11 @@ export function CommentComposer(props: { id: string; surface: string }): JSX.Ele
             if (draft().trim()) runWithCommentName(() => { if (commentFromReplyDraft(props.id, draft(), selectionStart, selectionEnd, props.surface)) cancel(); });
           }
           else if (e.key === "Escape") { e.preventDefault(); cancel(); }
-          else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+          else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submit(); }
         }} />
       <Show when={expanded()}><DialogActions class="comment-composer-footer"
         cancel={<button type="button" onClick={cancel}>{t("confirm-cancel")}</button>}
-        primary={<button type="button" class="comment-reply" disabled={!draft().trim()} onClick={submit}>{t("comment-reply")}</button>}
+        primary={<button type="button" class="comment-reply" disabled={!draft().trim()} onClick={submit}>{t("comment-send")}</button>}
       /></Show>
     </div>
   </Show>;
@@ -165,70 +195,29 @@ function sameRanges(a: readonly QuotedRange[], b: readonly QuotedRange[]): boole
   return a.length === b.length && a.every(([start, end, id], i) => start === b[i][0] && end === b[i][1] && id === b[i][2]);
 }
 
+function MountedRendering(props: { coverage?: QuoteCoverage }): JSX.Element {
+  props.coverage?.rendering();
+  return null;
+}
+
 /** Mark the passages `parentId`'s comment children quote inside the rendering
  * `children()` draws; a block with no children (`when` false) has none to mark
  * and draws it plainly, as does a hidden margin (GH #845). */
-export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; children: () => JSX.Element }): JSX.Element {
+export function QuoteHighlightProvider(props: { parentId: string; format: Format; when: boolean; comments?: Accessor<CommentChildren>; coverage?: QuoteCoverage; children: () => JSX.Element }): JSX.Element {
   // Equal ranges keep the old array, so typing in a child does not re-render
-  // the parent's text runs.
-  const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format);
+  // the parent's text runs. The block's own comment producer is shared.
+  const observedRanges = createQuotedSourceRanges(() => props.parentId, () => props.format, props.comments);
   const ranges = createMemo(observedRanges, [], { equals: sameRanges });
+  // The renderer reports what it marks; the entry point reads that (`QuoteCoverage`).
+  const coverage = props.coverage;
   return (
     <Show when={props.when && !commentMarginHidden()} fallback={props.children()}>
-      <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges }}>
+      <MountedRendering coverage={coverage} />
+      <QuoteHighlightContext.Provider value={{ blockId: props.parentId, ranges, drew: coverage?.drew }}>
         {props.children()}
       </QuoteHighlightContext.Provider>
     </Show>
   );
 }
 
-/** At the right edge of a block whose comments are drawn in the margin: how
- * many there are. While mounted it asks the margin to draw them, and it asks
- * for a re-measure when the block's text or a comment changes (the quoted
- * passage can move without the page resizing). Clicking emphasises the first
- * thread and its passage. */
-export function MarginMarker(props: { parentId: string; comments: readonly string[] }): JSX.Element {
-  return <Show when={props.comments.length > 0}><MarkerButton parentId={props.parentId} comments={props.comments} /></Show>;
-}
-
-function MarkerButton(props: { parentId: string; comments: readonly string[] }): JSX.Element {
-  const placement = useContext(MarginContext)!;
-  let el!: HTMLButtonElement;
-  onMount(() => {
-    const row = el.closest<HTMLElement>(".block-main");
-    if (!row) return;
-    onCleanup(placement.api.register(props.parentId, row));
-    // The block's text can render its quoted passages a frame after the row
-    // (moving them inside a row of unchanged size): any change to the text's
-    // DOM asks for a re-measure. Class toggles (emphasis) are not watched.
-    const content = row.querySelector(".block-content-wrapper") ?? row;
-    const Observer = (row.ownerDocument.defaultView as (Window & typeof globalThis) | null)?.MutationObserver;
-    if (!Observer) return;
-    const watcher = new Observer(() => placement.api.schedule());
-    watcher.observe(content, { childList: true, subtree: true, characterData: true });
-    onCleanup(() => watcher.disconnect());
-  });
-  createEffect(() => {
-    void docNode(props.parentId)?.raw;
-    for (const id of props.comments) void docNode(id)?.raw;
-    placement.api.schedule();
-  });
-  const label = () => t("comment-margin-count", { count: props.comments.length });
-  return (
-    <button
-      type="button"
-      class="margin-marker"
-      classList={{ active: props.comments.includes(placement.api.activeComment() ?? "") }}
-      ref={el}
-      title={label()}
-      aria-label={label()}
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={(e) => {
-        e.stopPropagation();
-        placement.api.setActiveComment(props.comments[0] ?? null);
-      }}
-    >
-      {props.comments.length}
-    </button>
-  );
-}
+export { MarginMarker } from "./CommentEntry";

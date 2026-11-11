@@ -1,7 +1,7 @@
 // Real-app journey for margin dialogue slice 2 (vision 2026-10 §3.7 "Layout"):
 // on a wide window, Ctrl+R on a selection creates a comment that is drawn in the
 // right-hand margin column (not in the outline); clicking it edits it there,
-// Enter adds a reply, and the page file on disk holds the reply nested under
+// The reply composer adds a reply, and the page file holds it nested under
 // the comment, which is nested under the commented block. GH #845: t then m
 // hides every thread (and leaves the file alone), the choice survives a reload,
 // and t then m shows them again.
@@ -105,13 +105,13 @@ try {
   await browser.keys(["Escape"]);
   await browser.keys(["Escape"]);
 
-  // Drawn in the margin, beside a count on the commented block.
+  // Visible margin threads need no duplicate count badge (MC3 §7).
   await browser.waitUntil(() => browser.execute((comment) => {
     const thread = document.querySelector(".margin-column .margin-thread .ls-block.comment-card");
     return !!thread && thread.textContent.includes(comment)
-      && document.querySelector(".page-blocks .ls-block.authored .margin-marker")?.textContent === "1"
+      && !document.querySelector(".page-blocks .ls-block.authored button.margin-marker")
       && !document.querySelector("textarea.block-editor");
-  }, COMMENT), { timeout: 5_000, timeoutMsg: "the comment is not drawn in the margin with a count marker" });
+  }, COMMENT), { timeout: 5_000, timeoutMsg: "the comment is not drawn in the margin without a duplicate badge" });
   const geometry = await browser.execute(() => {
     const thread = document.querySelector(".margin-thread").getBoundingClientRect();
     const outline = document.querySelector(".page-blocks").getBoundingClientRect();
@@ -121,8 +121,8 @@ try {
   if (!(geometry.threadLeft >= geometry.outlineRight)) throw new Error(`the thread overlaps the outline: ${JSON.stringify(geometry)}`);
   if (geometry.markTop === null || Math.abs(geometry.threadTop - geometry.markTop) > 2) throw new Error(`the thread is not beside its passage: ${JSON.stringify(geometry)}`);
 
-  // Click the comment in the margin: it edits in place. Enter at the end of its
-  // text adds a reply.
+  // Click the comment in the margin: it edits in place. Finish editing, then
+  // send a reply from its composer (plain Enter now inserts a line break).
   await (await browser.$(".margin-column .margin-thread .ls-block.comment-card > .block-main .block-content")).click();
   await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".margin-column textarea.block-editor")), {
     timeout: 5_000, timeoutMsg: "clicking the margin comment did not open its editor there",
@@ -132,13 +132,11 @@ try {
     ta.focus();
     ta.setSelectionRange(comment.length, comment.length);
   }, COMMENT);
-  await browser.keys(["Enter"]);
-  await browser.waitUntil(() => browser.execute(() => {
-    const ta = document.querySelector(".margin-column textarea.block-editor");
-    return !!ta && ta.value === "" && document.activeElement === ta;
-  }), { timeout: 5_000, timeoutMsg: "Enter in the margin comment did not open an empty reply in the thread" });
+  await browser.keys(["Control", "Enter"]);
+  await browser.$(".margin-column .comment-card").moveTo();
+  await browser.$(".margin-column .comment-reply-draft").click();
   await browser.keys(REPLY);
-  await browser.keys(["Escape"]);
+  await browser.keys(["Control", "Enter"]);
 
   // On disk: block > comment (tine.quote::) > reply.
   const saved = await waitForFileText(PAGE_FILE, (text) => text.includes(REPLY) && text.includes(COMMENT), { timeoutMs: 20_000 });
@@ -196,7 +194,7 @@ try {
   await browser.waitUntil(() => browser.execute((comment, reply) => {
     const threads = [...document.querySelectorAll(".margin-column .margin-thread")];
     return threads.some((t) => t.textContent.includes(comment)) && threads.some((t) => t.textContent.includes(reply))
-      && document.querySelector(".page-blocks .ls-block.authored .margin-marker")?.textContent === "1";
+      && !document.querySelector(".page-blocks .ls-block.authored button.margin-marker");
   }, COMMENT, REPLY), { timeout: 5_000, timeoutMsg: "t m did not show the comment threads again" });
   if (fs.readFileSync(PAGE_FILE, "utf8") !== saved) throw new Error("showing the margin changed the page file");
   console.log("PASS: on a wide window a Ctrl+R comment is drawn and edited in the margin; its reply nests under it on disk; t m hides and shows every thread, across a reload, without touching the file");

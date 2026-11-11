@@ -32,6 +32,7 @@ import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
+import { CommentSurface } from "./CommentSurface";
 import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { t } from "../i18n";
@@ -750,7 +751,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
           navOnly: true,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
-        <BlockList ids={groupedIds()} render={(id) => {
+        <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} render={(id, authorNeighbors) => {
             const crumb = createMemo<Crumb[]>((previous) => {
               if (!props.showBreadcrumb) return [];
               const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));
@@ -827,11 +828,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
                       </div>
                     )}
                   </Show>
-                  <Block id={id} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
+                  <Block id={id} authorNeighbors={authorNeighbors} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId} />
                 </Show>
               </>
             );
-          }} />
+          }} /></CommentSurface>
         </LinkDepthContext.Provider>
         </OutlineScopeContext.Provider>
         </EmbedNavExitContext.Provider>

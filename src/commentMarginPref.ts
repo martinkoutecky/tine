@@ -11,6 +11,16 @@ import { createSignal } from "solid-js";
 import { loadStr, saveStr } from "./ui";
 
 const KEY = "logseq-claude.comment-margin-hidden";
+const POPUP_KEY = "logseq-claude.comments-in-popup";
+const [inPopup, setInPopup] = createSignal(loadStr(POPUP_KEY) === "1");
+export const commentsInPopup = inPopup;
+
+/** Viewer preference, like Wide mode: one local write, no graph I/O or IPC.
+ * A refused write leaves the current display choice intact. */
+export function changeCommentsInPopup(value: boolean): void {
+  if (saveStr(POPUP_KEY, value ? "1" : null)) setInPopup(value);
+}
+
 const [hidden, setHidden] = createSignal(loadStr(KEY) === "1");
 export const commentMarginHidden = hidden;
 

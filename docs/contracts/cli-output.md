@@ -354,7 +354,8 @@ or is killed while its write stands in line does not cancel it: the write can la
 - **`block.edit`**: the text replaces the block's text. Every accepted property the text does not name (OG hidden
   built-ins including SRS keys, graph-configured hidden keys, editor-hidden `tine.author::`, and visible ones such as
   `status::`, `src::`) is kept byte-exact; children are kept too. The app also retains editor-hidden `tine.author::`
-  byte-exact when editing ordinary blocks; its author chip stays visible and offers **Remove author** in its menu.
+  byte-exact when editing ordinary blocks; the run's first author chip stays visible and offers **Remove author** in its menu
+  ([author-mark display contract](author-marks.md)).
   OG reads `tine.author::` as an ordinary property; its file syntax is unchanged.
   Removing a property from the CLI takes `tine prop remove`. This is an
   intentional difference from typing in the app, whose editor buffer owns visible properties, and from OG, which

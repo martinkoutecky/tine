@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import { rootIsRtl } from "../render/textDirection";
 import { BlockList } from "./BlockList";
+import { CommentSurface } from "./CommentSurface";
 import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
 import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, openBlockInSidebar, type SidebarBlock, type SidebarItem } from "../ui";
@@ -443,7 +444,7 @@ function PageItem(props: {
               declared={pageAliasNames(page()!)}
               inGraph={!page()!.guide}
             />
-            <BlockList ids={page()!.roots} />
+            <CommentSurface page={page()}><BlockList ids={page()!.roots} /></CommentSurface>
             {/* The same producer the main pane uses: a page opened only here still
                 gets its phantom empty bullet and a trailing target (GH #483). */}
             <PageTypingTarget page={page} surface={props.surfaceKey} />
@@ -577,7 +578,7 @@ function BlockItem(props: {
                   outline's collapsed flag (collapsed:: is not mutated), while
                   descendants keep their own collapse state. */}
               <OutlineScopeContext.Provider value={{ roots: [n().id], forceExpandedRoot: n().id }}>
-                <Block id={n().id} forceExpanded />
+                <CommentSurface page={pageByName(n().page)} roots={[n().id]}><Block id={n().id} forceExpanded /></CommentSurface>
               </OutlineScopeContext.Provider>
             </div>
           )}

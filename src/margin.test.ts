@@ -7,8 +7,10 @@ import { resetStore } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { pageByName } from "./document/model";
 import type { BlockDto } from "./types";
-import { isCommentId, marginColumnWidth, marginNext, marginPrev, MARGIN_COLUMN_MAX, MARGIN_COLUMN_MIN, pageHasComment, stackThreads, threadRootOf } from "./margin";
+import { isCommentId, marginColumnWidth, marginNext, marginPrev, MARGIN_COLUMN_MAX, MARGIN_COLUMN_MIN, stackThreads, threadRootOf } from "./margin";
 import { commentsFirst, nextVisible, prevVisible } from "./document";
+import { createRoot } from "solid-js";
+import { createCommentIndex } from "./commentIndex";
 
 function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
   const properties = blockRegions(raw, "md").properties.filter((p) => p.primary).map((p): [string, string] => [p.key, p.value]);
@@ -17,6 +19,14 @@ function block(id: string, raw: string, children: BlockDto[] = []): BlockDto {
 
 function load(blocks: BlockDto[]): void {
   loadSingle({ name: "M", kind: "page", title: "M", pre_block: null, blocks });
+}
+
+function hasComment(roots: readonly string[]): boolean {
+  return createRoot(dispose => {
+    const found = createCommentIndex(() => roots).roots().length > 0;
+    dispose();
+    return found;
+  });
 }
 
 beforeAll(async () => {
@@ -88,10 +98,10 @@ describe("inline comments sit right under their block (MARGIN-POS, GH #110)", ()
 describe("which blocks belong in the margin", () => {
   it("finds comments anywhere on the page and nothing on a page without them", () => {
     load([block("p", "plain"), block("q", "parent", [block("r", "reply-less child")])]);
-    expect(pageHasComment(pageByName("M")!.roots, "md")).toBe(false);
+    expect(hasComment(pageByName("M")!.roots)).toBe(false);
     resetStore();
     load([block("p", "plain"), block("q", "parent text", [block("c", "a comment\ntine.quote:: parent")])]);
-    expect(pageHasComment(pageByName("M")!.roots, "md")).toBe(true);
+    expect(hasComment(pageByName("M")!.roots)).toBe(true);
     expect(isCommentId("c", "md")).toBe(true);
     expect(isCommentId("q", "md")).toBe(false);
   });
@@ -101,7 +111,7 @@ describe("which blocks belong in the margin", () => {
       block("top", "a root\ntine.quote:: something"),
       block("p", "parent text", [block("c", "comment\ntine.quote:: parent", [block("r", "reply", [block("rr", "deeper")])])]),
     ]);
-    expect(pageHasComment(["top"], "md")).toBe(false);
+    expect(hasComment(["top"])).toBe(false);
     expect(threadRootOf("rr", "md")).toBe("c");
     expect(threadRootOf("c", "md")).toBe("c");
     expect(threadRootOf("p", "md")).toBeNull();
