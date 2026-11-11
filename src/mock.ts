@@ -728,6 +728,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         preferred_format: "md",
         enable_timetracking: true,
         show_brackets: true,
+        enable_tooltip: true,
         enable_search_remove_accents: removeAccents,
         doc_mode_enter_for_new_block: false,
         logical_outdenting: false,
@@ -1158,6 +1159,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setPreferredWorkflow(): Promise<void> {},
     async setTimetrackingEnabled(): Promise<void> {},
     async setShowBrackets(): Promise<void> {},
+    async setEnableTooltip(): Promise<void> {},
     async setDocModeEnterForNewBlock(): Promise<void> {
       // no-op in the browser mock
     },

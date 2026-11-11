@@ -3,7 +3,9 @@
  * The graph UUID is authority; folder names never participate in resolution. */
 export type TineLink = { graph?: string; page?: string; block?: string };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const checked = (text: string) => { if (!UUID.test(text)) throw new Error("Invalid Tine link ID"); return text; };
+/** Whether an existing identity is linkable. O(ID bytes), no I/O or mutation. */
+export const isTineLinkId = (text: string) => UUID.test(text);
+const checked = (text: string) => { if (!isTineLinkId(text)) throw new Error("Invalid Tine link ID"); return text; };
 /** Graph ids are minted lower-case, so the graph id is folded to that spelling. */
 const uuid = (text: string) => checked(text).toLowerCase();
 /** A block id is the AUTHORED `id::` spelling, and the store looks blocks up by
@@ -12,7 +14,7 @@ const uuid = (text: string) => checked(text).toLowerCase();
  * both are pinned by tests/fixtures/deep-link-ids.json). */
 const blockId = checked;
 export const graphLink = (id: string) => `tine://graph/${uuid(id)}`;
-export const pageLink = (name: string, id: string) => `tine://page/${encodeURIComponent(name)}?graph=${uuid(id)}`;
+export const pageLink = (name: string, id?: string) => `tine://page/${encodeURIComponent(name)}${id === undefined ? "" : `?graph=${uuid(id)}`}`;
 export const blockLink = (id: string) => `tine://block/${blockId(id)}`;
 /** Current-graph routes (S3 of the native integrations, ADR 0073): quick
  * actions, launcher shortcuts, App Intents and Spotlight results. Open-only

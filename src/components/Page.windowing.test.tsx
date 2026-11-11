@@ -32,6 +32,8 @@ class WindowObserver {
 }
 
 afterEach(() => {
+  // End a pointer gesture a test left open (a mousedown without mouseup): its document listener would keep the mount alive.
+  document.dispatchEvent(new MouseEvent("mouseup"));
   closeInPageFind({ restoreFocus: false });
   endEdit("page-navigation");
   vi.restoreAllMocks();
@@ -175,7 +177,8 @@ it("GH #745: a structural edit inside a window keeps its other blocks, and the w
     // 24-row windows: window-0 .. window-23 share the first window; row 5 lives in it.
     const mountedRows = () => Array.from({ length: 30 }, (_, i) => host.querySelector(`[data-block-id="window-${i}"]`));
     const windowsOf = () => Array.from(host.querySelectorAll("[data-outline-window]"));
-    for (const w of windowsOf()) WindowObserver.set(w, true);
+    // Render the edited window and the three after it; the rest stay shells, whose identity is checked below.
+    for (const w of windowsOf().slice(0, 4)) WindowObserver.set(w, true);
     const rows = mountedRows();
     expect(rows.every(Boolean)).toBe(true);
     const windowsBefore = windowsOf();

@@ -209,6 +209,11 @@ impl Fixture {
             ("pages", self.ok("pages", json!({ "namespace": "NS" }))),
         ];
         all.extend(self.statuses().into_iter().map(|s| ("owner.status", s)));
+        all.push(("page.current", self.ok("page.current", Value::Null)));
+        all.push(("page.current", current_page_fixture(self)));
+        let mut block = current_page_fixture(self);
+        block["block_url"] = json!(format!("tine://block/{UUID}"));
+        all.push(("page.current", block));
         // Writes last: they change the fixture the reads above answered from.
         all.push(("ref", self.ok("ref", json!({"handle":UUID}))));
         all.push(("ref", self.ok("embed", json!({"handle":UUID}))));
@@ -234,6 +239,19 @@ impl Fixture {
         ));
         all
     }
+}
+
+#[test]
+fn page_current_without_a_window_is_a_typed_answer() {
+    let fixture = Fixture::new();
+    super::op_counts::take_counts(&fixture.root);
+    let reply = fixture.ok("page.current", Value::Null);
+    assert_eq!(reply["kind"], "no-current-page");
+    assert_eq!(reply["reason"], "no-focused-window");
+    assert_eq!(
+        super::op_counts::take_counts(&fixture.root),
+        super::op_counts::OpCounts::default()
+    );
 }
 
 /// An advanced (datalog) form Tine can run, and one it refuses whole.
@@ -426,6 +444,7 @@ fn every_payload_has_exactly_the_documented_fields() {
     }
     for needed in [
         "owner.status",
+        "page.current",
         "page.show",
         "block.show",
         "refs",
@@ -747,7 +766,23 @@ fn query_ab(f: &Fixture) -> Value {
     f.ok("query", json!({ "text": "[[a]]" }))
 }
 
+fn current_page_fixture(_: &Fixture) -> Value {
+    super::window::CurrentPage::CurrentPage {
+        name: "Notes".into(),
+        url: "tine://page/Notes".into(),
+        block_url: None,
+    }
+    .payload()
+}
+
 const DISCLOSURES: &[Disclosure] = &[
+    Disclosure {
+        section: "page.current",
+        field: "reason",
+        base: current_page_fixture,
+        on: |p| *p = super::window::CurrentPage::absent().payload(),
+        words: &["no-focused-window"],
+    },
     Disclosure {
         section: "page.rename",
         field: "report.skipped_conflicted_referrers",
@@ -864,6 +899,7 @@ fn every_disclosure_field_the_contract_names_is_tested_and_shows_in_the_text() {
     // The contract's `yes` rows are exactly the cases below.
     let documented: BTreeSet<(String, String)> = [
         "owner.status",
+        "page.current",
         "page.show",
         "block.show",
         "refs",

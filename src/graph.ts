@@ -6,7 +6,7 @@ import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
-import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
+import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
@@ -467,9 +467,12 @@ export function refreshAfterRename(follow: PageFollower, reopened?: PageTarget):
   if (reopened) removePageTargetAcrossPanes(reopened);
   rewritePagesAcrossPanes(follow);
   followPagesInNavigation(follow);
-  // The epoch bump refreshes the page index (`pageIndex.ts`).
+  // Refetch the page index (`pageIndex.ts`). Every other reader follows the
+  // rename's precise publication summary (its old and new names, the moved
+  // page's blocks, the rewritten referrers), so no display-epoch bump: that
+  // would rerun every mounted query and reference panel (D-20261102-PERF row 3).
   resetPageIndex();
-  bumpGraphEpoch();
+  bumpPageInventoryRev();
 }
 
 installRenameRefreshHandler(refreshAfterRename);

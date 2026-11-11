@@ -22,6 +22,7 @@ import { changedAny } from "../changeKeys";
 import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
+import { applyGraphChange } from "../document";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
@@ -34,10 +35,10 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
-import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds } from "../hoverPreviewSettings";
+import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds, previewsEnabled, changePreviewsEnabled } from "../hoverPreviewSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
 import { cm6EditorAvailable, cm6EditorEnabled, setCm6EditorEnabled } from "../editor/cm6Setting";
@@ -635,6 +636,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+      <Field setting={settings["settings-show-workspaces"]}>
+        <Toggle on={showWorkspaces()} onClick={() => setShowWorkspaces(!showWorkspaces())} />
+      </Field>
       <Field
         setting={settings["settings-ui-right-to-left-note-layout"]}
 
@@ -793,6 +797,9 @@ function EditorTab(props: { search: string }): JSX.Element {
       </Show>
 
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
+        <Field setting={settings["settings-reference-previews"]}>
+          <Toggle on={previewsEnabled()} onClick={() => changePreviewsEnabled(!previewsEnabled())} />
+        </Field>
         <Field setting={settings["settings-hover-preview-delay"]}>
           <input
             type="number" min="0" step="any"
@@ -1224,11 +1231,14 @@ function BackupsTab(): JSX.Element {
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  const reconcile = async (op: () => Promise<void>, ok: Msg) => {
+  const reconcile = async (op: () => Promise<void>, ok: Msg, kept?: { path: string; name: string }) => {
     const owner = bindingOwner();
     try {
       const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
+      // Own-origin writes raise no watcher event, so a view of the kept day reloads here through the ordinary
+      // external-change rule (as ConflictResolution's apply does): a clean view takes the merged file.
+      if (kept) await applyGraphChange({ path: kept.path, name: kept.name, kind: "journal", created: false, removed: false }, true);
       pushToast(ok, "success");
       await refreshJournalConflicts();
     } catch (e) {
@@ -1271,7 +1281,8 @@ function JournalConflictsPanel(): JSX.Element {
                     onOpen={() => openFileRow(f, c.title)}
                     onMerge={!f.canonical && canonical ? () => void reconcile(
                       () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
-                      msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name })
+                      msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name }),
+                      { path: canonical.path, name: c.title },
                     ) : undefined}
                     onRename={(n) => void reconcile(
                       () => backend().renameFileToPage(f.path, n, "rename-page"),
