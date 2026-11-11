@@ -1,5 +1,68 @@
-//! Test-only accounting for the waited save and print paths.
+//! Test-only accounting for the waited save, print and export paths.
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Source-graph work, keyed by canonical root so concurrent fixture graphs
+/// and the publisher's private build graphs cannot contaminate the counts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QueryExportWork {
+    /// Store opens for this graph, including cold owner startup.
+    pub opens: u64,
+}
+
+static QUERY_EXPORT_WORK: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, QueryExportWork>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Take and reset this source graph's export counters.
+pub fn take_query_export_work(root: &std::path::Path) -> QueryExportWork {
+    QUERY_EXPORT_WORK
+        .lock()
+        .unwrap()
+        .remove(root)
+        .unwrap_or_default()
+}
+
+pub(crate) fn source_store_open(root: &std::path::Path) {
+    QUERY_EXPORT_WORK
+        .lock()
+        .unwrap()
+        .entry(root.to_owned())
+        .or_default()
+        .opens += 1;
+}
+
+static UUID_BLOCK_VISITS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Count an actual block visit, keyed by the requested UUID for test isolation.
+pub fn query_uuid_block(uuid: &str) {
+    UUID_BLOCK_VISITS
+        .lock()
+        .unwrap()
+        .entry(uuid.to_owned())
+        .or_default()
+        .0 += 1;
+}
+
+pub(crate) fn query_uuid_index_key(uuid: &str) {
+    UUID_BLOCK_VISITS
+        .lock()
+        .unwrap()
+        .entry(uuid.to_owned())
+        .or_default()
+        .1 += 1;
+}
+
+/// Take and reset (block visits, matching string-index keys) for this selector,
+/// including work on owner threads.
+pub fn take_query_uuid_blocks(uuid: &str) -> (u64, u64) {
+    UUID_BLOCK_VISITS
+        .lock()
+        .unwrap()
+        .remove(uuid)
+        .unwrap_or_default()
+}
 
 static TRANSACTION_RECORD_PROBES: AtomicU64 = AtomicU64::new(0);
 static READDIR: AtomicU64 = AtomicU64::new(0);
@@ -323,8 +386,9 @@ pub struct Counts {
     /// (`FileRev::from_file`; `logseq/config.edn` is not counted).
     pub hash_reads: u64,
     /// Graph-text files (`.md`/`.org`) stamped by path
-    /// (`watch::stamp_metadata`, a per-file `symlink_metadata`, which opens
-    /// the file on Windows) rather than from a directory listing's entries.
+    /// (`watch::stamp_metadata` or the absent-day candidate lookup: a per-file
+    /// `symlink_metadata`, which opens the file on Windows) rather than from
+    /// a directory listing's entries.
     pub stamps_by_path: u64,
     /// Non-graph-text (asset) files stamped by path (`watch::stamp_metadata`),
     /// which opens the file on Windows; the asset full walk uses the listing.

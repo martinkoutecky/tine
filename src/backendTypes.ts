@@ -360,6 +360,7 @@ export interface ChangeSummary {
   textTo?: string[];
   tagsTo?: string[];
   tagTableTo?: string[];
+  tagTableMembershipTo?: string[];
   refsTo?: string[];
   /** Mounted query subscription identities affected by this publication. */
   queryTo?: string[];

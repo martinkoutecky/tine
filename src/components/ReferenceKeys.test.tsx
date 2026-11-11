@@ -25,7 +25,7 @@ let rev = 0;
 let dispose: (() => void) | undefined;
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 function publish(fields: Partial<ChangeSummary> = {}) {
-  applyChangeSummary({ rev: String(++rev), full: false, pages: [], blocks: [], linksTo: [], textTo: [], tagsTo: [], tagTableTo: [], refsTo: [], props: {}, inventoryChanged: false, ...fields });
+  applyChangeSummary({ rev: String(++rev), full: false, pages: [], blocks: [], linksTo: [], textTo: [], tagsTo: [], tagTableTo: [], tagTableMembershipTo: [], refsTo: [], props: {}, inventoryChanged: false, ...fields });
   bumpDataRev(true);
 }
 const group = (raw: string): RefGroup => ({ page: "Source", kind: "page", blocks: [{ id: "shown", raw, children: [], collapsed: false }] });
@@ -56,9 +56,9 @@ it("a late larger answer cannot auto-collapse references while an edited result 
 it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s skips unrelated saves and refreshes related evidence, full and gaps", async reader => {
   let text = "Original answer";
   const method = reader === "linked" ? "getBacklinks" : reader === "unlinked" ? "getUnlinkedRefs"
-    : reader === "referrers" ? "getBlockReferrers" : reader === "tagged" ? "taggedPages" : "queryRun";
+    : reader === "referrers" ? "getBlockReferrers" : reader === "tagged" ? "taggedPages" : reader === "toggle" ? "tagTableAvailable" : "queryRun";
   const read = vi.spyOn(backend(), method).mockImplementation(async () =>
-    (reader === "tagged" ? { anchor: "page", pages: [{ path: "pages/Source.md", name: text, kind: "page", properties: [] }], exceeded: false }
+    (reader === "toggle" ? true : reader === "tagged" ? { anchor: "page", pages: [{ path: "pages/Source.md", name: text, kind: "page", properties: [] }], exceeded: false }
       : reader === "table" || reader === "toggle" ? { anchor: "block", groups: [group(text)], exceeded: false }
       : [group(text)]) as never);
   const root = document.createElement("div"); document.body.append(root);
@@ -75,7 +75,7 @@ it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s sk
   publish({ pages: ["unrelated"], blocks: ["unrelated"], linksTo: ["unrelated"] }); await tick();
   expect(read).not.toHaveBeenCalled();
   const related = reader === "unlinked" ? { textTo: ["target"] } : reader === "referrers" ? { refsTo: ["target-id"] }
-    : reader === "tagged" ? { tagsTo: ["target"] } : reader === "table" || reader === "toggle" ? { tagTableTo: ["target"] } : { linksTo: ["target"] };
+    : reader === "tagged" ? { tagsTo: ["target"] } : reader === "toggle" ? { tagTableMembershipTo: ["target"] } : reader === "table" ? { tagTableTo: ["target"] } : { linksTo: ["target"] };
   for (const fields of [related, { full: true }, { gap: true }]) {
     text += " changed";
     if ("gap" in fields) rev += 2;
@@ -101,7 +101,7 @@ it.each(["linked", "unlinked", "referrers", "tagged", "table", "toggle"])("%s sk
       } else await vi.waitFor(() => expect(read).toHaveBeenCalled());
     }
   }
-  if (["linked", "unlinked", "referrers", "table", "toggle"].includes(reader)) {
+  if (["linked", "unlinked", "referrers", "table"].includes(reader)) {
     read.mockClear(); publish({ blocks: ["shown"] });
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
   }

@@ -18,7 +18,7 @@ use tine_core::query::{
     admit_source, AdvancedResult, QueryExportBatch, QueryExportResult, QueryExportSpec,
 };
 use tine_core::refs;
-mod eval;
+pub(crate) mod eval;
 pub(crate) mod exec;
 pub(crate) mod index;
 pub(crate) mod link_graph;

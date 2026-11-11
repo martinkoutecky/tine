@@ -160,7 +160,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "registerUnlinkedReference", "registerQuerySubscription", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
-  "queryRun", "taggedPages", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
+  "queryRun", "taggedPages", "tagTableAvailable", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
   "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath",
   "syncConflictDiff", "duplicateJournalDiff", "conflictInventory", "vcsMarkerConflictDiff", "liveConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",

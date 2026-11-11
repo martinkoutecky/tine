@@ -31,6 +31,8 @@ pub(crate) mod namespace;
 mod op_counts;
 mod pages;
 mod properties;
+#[cfg(desktop)]
+pub(crate) mod query_export;
 pub(crate) mod seen;
 #[cfg(desktop)]
 pub(crate) mod serve;

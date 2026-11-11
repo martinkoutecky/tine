@@ -295,6 +295,9 @@ export interface Backend {
    *  which stays literal. Same
    *  cost, memoization and bounds as `queryRun`. */
   taggedPages(name: string): Promise<QueryResult>;
+  /** Exact tag-query existence from maintained membership. One boolean IPC,
+   *  O(alias component × log targets); no query parsing or block DTOs. */
+  tagTableAvailable(name: string): Promise<boolean>;
   /** On-demand empty explanation: roughly two full evaluations per conjunct,
    *  O(conjuncts × (pages + blocks)), without result rows or memoization. Ignores
    *  view; no `result-too-large` refusal. Waits for graph load. */

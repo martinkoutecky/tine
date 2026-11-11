@@ -22,6 +22,10 @@ import { buildPeer, NativePeer, random, semantics, TARGET, type NativeImage, typ
 // client, mirror, query evaluator, parser, serializer or filesystem is mocked.
 vi.mock("../../warmCache", () => ({ waitForWarmCache: async () => true }));
 
+// A cold native build belongs to collection, before the hook's deadline.
+// Awaiting it leaves the fork worker available for Vitest's task-update RPC.
+const nativePeerExecutable = await buildPeer();
+
 type Pending = { arg: Record<string, unknown>; finish: (reply: never) => void };
 let peer: NativePeer;
 let client: HostClient;
@@ -63,7 +67,7 @@ async function model(action: string, args: unknown[], name?: string, labels?: st
 }
 
 beforeAll(async () => {
-  peer = new NativePeer(buildPeer());
+  peer = new NativePeer(nativePeerExecutable);
   await peer.rpc({ op: "reset" });
   const originalBind = HostClient.prototype.bind;
   vi.spyOn(HostClient.prototype, "bind").mockImplementation(async function (this: HostClient) {

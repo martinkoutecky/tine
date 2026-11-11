@@ -186,6 +186,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pagePrintHtml",
   "queryExplainEmpty",
   "taggedPages",
+  "tagTableAvailable",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",
