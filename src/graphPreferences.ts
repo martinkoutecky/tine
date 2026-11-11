@@ -36,6 +36,9 @@ export function writeGraphSignal<T>(
   if (activeScope !== scope) { readers.clear(); scope = activeScope; }
   let scopedRead = readers.get(key) as (() => T) | undefined;
   if (!scopedRead) { scopedRead = () => read(); readers.set(key, scopedRead); }
+  // A config reload may have published an external edit since the last write: roll back to that, not to the
+  // last value this window wrote (seeding ignores keys with writes pending).
+  seedPreference(scopedRead);
   const bound = () => currentScope() === activeScope;
   writePreference(scopedRead, (next) => { if (bound()) apply(next); }, value,
     (next) => bound()

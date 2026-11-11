@@ -454,6 +454,13 @@ pub fn set_show_brackets(store: &Store, enabled: bool) -> io::Result<()> {
     update_scalar(store, ":ui/show-brackets?", bool_text(enabled))
 }
 
+/// Persist `:ui/enable-tooltip?` (OG `config-handler/toggle-ui-enable-tooltip!`).
+/// OG treats an absent key as ON, but writing the explicit boolean keeps the
+/// Settings toggle reversible.
+pub fn set_enable_tooltip(store: &Store, enabled: bool) -> io::Result<()> {
+    update_scalar(store, ":ui/enable-tooltip?", bool_text(enabled))
+}
+
 /// Persist the document-mode escape hatch. OG declares the equivalent key in
 /// `src/main/frontend/schema/handler/common_config.cljc:41` at `6e7afa8eb`.
 pub fn set_doc_mode_enter_for_new_block(store: &Store, enabled: bool) -> io::Result<()> {

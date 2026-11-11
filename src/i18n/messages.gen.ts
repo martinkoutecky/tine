@@ -2562,6 +2562,8 @@ export interface MessageArgs {
   "settings-prose-show-tine-in-the-system-tray": {};
   "settings-prose-start-minimized-to-tray": {};
   "settings-prose-when-a-page-you-are-not-editing-changes-on-disk": {};
+  "settings-reference-previews": {};
+  "settings-reference-previews-hint": {};
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };
@@ -2696,6 +2698,8 @@ export interface MessageArgs {
   "settings-sections-page": { "page": string | number };
   "settings-shade-embedded-blocks-like-logseq-or-show": {};
   "settings-shaded-box": {};
+  "settings-show-workspaces": {};
+  "settings-show-workspaces-hint": {};
   "settings-small-visual-details-saved-on-this-device": {};
   "settings-solid-underline": {};
   "settings-soonest-deadline-first-blocks-without-a-deadline": {};
