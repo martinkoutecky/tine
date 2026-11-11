@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Bullet threading connectors remain continuous where parent rows meet child elbows at fractional display scaling (GH #129, bullet-threading #2).
+
 ## [0.9.0-beta.10] - 2026-11-10
 
 ### Changed

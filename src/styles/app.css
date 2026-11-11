@@ -3875,9 +3875,9 @@ html[data-system-insets="native-viewport"] {
   content: "";
   position: absolute;
   left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
-  top: 0;
+  top: -1px; /* Overlap separately rasterized border ends at fractional DPR (GH #129). */
   width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
-  height: calc(var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
+  height: calc(1px + var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
   box-sizing: border-box;
   border-left: var(--thread-width, 1px) solid var(--thread-incoming-color);
   border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
