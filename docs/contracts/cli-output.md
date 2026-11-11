@@ -336,7 +336,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   `pages/`; an ordinary page file with exactly that name keeps its own file (D-20261107-KD, where OG would
   count that file as the same page as the journal: `convert-page-if-journal-impl`). Content is a page fragment in the
   page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
-  `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. An anchor without `id::` gets one in the same write. A
+  `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. Names are trimmed for both block attribution and run commits. An explicit blank `--author` is refused; blank or whitespace-only `TINE_AUTHOR` counts as unset. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
   When creating a page, a properties-only leading pre-block, or qualifying first Markdown
   properties-only bullet, becomes the page header. It receives no implicit `tine.author`;

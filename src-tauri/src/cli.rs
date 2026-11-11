@@ -241,7 +241,7 @@ enum RunAction {
         #[arg(value_name = "RUN", env = "TINE_RUN")]
         run: String,
         /// Name on the revert commits (default: TINE_AUTHOR, else agent).
-        #[arg(long, env = "TINE_AUTHOR")]
+        #[arg(long)]
         author: Option<String>,
         #[command(flatten)]
         read: ReadArgs,
@@ -297,9 +297,10 @@ struct WriteArgs {
     /// `tine run begin`).
     #[arg(long, value_name = "RUN", env = "TINE_RUN")]
     run: Option<String>,
-    /// Author on created blocks and on the run's commits (default: agent). With
+    /// Author on created blocks and on the run's commits (default: TINE_AUTHOR,
+    /// else agent; blank environment values count as unset). With
     /// `edit`, the flag (not the variable) also sets the block's tine.author::.
-    #[arg(long, env = "TINE_AUTHOR")]
+    #[arg(long)]
     author: Option<String>,
 }
 
