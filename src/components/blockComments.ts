@@ -5,8 +5,7 @@ import { createMemo, useContext } from "solid-js";
 import type { OutlineScope } from "../document";
 import { storedAuthorOf, quoteSelectorOf } from "../comments";
 import { authorTint, isOwnAuthor } from "../commentIdentity";
-import { marginNext, marginPrev, threadRootOf } from "../margin";
-import { nextVisible, prevVisible } from "../document";
+import { marginNext, marginPrev, outlineNext, outlinePrev, threadRootOf } from "../margin";
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
@@ -131,7 +130,7 @@ export function marginNavigation(id: string, scope: OutlineScope | null, surface
   const place = useContext(MarginContext);
   const nav = () => place && (place.thread !== null || (place.api.active() && !inlineSurface(surfaceKey)))
     ? { thread: place.thread, format: fmt() } : null;
-  const viewPrev = () => { const n = nav(); return n ? marginPrev(id, scope, n) : prevVisible(id, scope); };
-  const viewNext = () => { const n = nav(); return n ? marginNext(id, scope, n) : nextVisible(id, scope); };
+  const viewPrev = () => { const n = nav(); return n ? marginPrev(id, scope, n) : outlinePrev(id, scope); };
+  const viewNext = () => { const n = nav(); return n ? marginNext(id, scope, n) : outlineNext(id, scope); };
   return { viewPrev, viewNext };
 }

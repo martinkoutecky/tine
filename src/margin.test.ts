@@ -7,7 +7,7 @@ import { resetStore } from "./document";
 import { loadSingle } from "./document/workingSet";
 import { pageByName } from "./document/model";
 import type { BlockDto } from "./types";
-import { isCommentId, marginColumnWidth, marginNext, marginPrev, MARGIN_COLUMN_MAX, MARGIN_COLUMN_MIN, stackThreads, threadRootOf } from "./margin";
+import { isCommentId, marginColumnWidth, marginNext, marginPrev, outlineNext, outlinePrev, MARGIN_COLUMN_MAX, MARGIN_COLUMN_MIN, stackThreads, threadRootOf } from "./margin";
 import { commentsFirst, nextVisible, prevVisible } from "./document";
 import { createRoot } from "solid-js";
 import { createCommentIndex } from "./commentIndex";
@@ -145,5 +145,35 @@ describe("arrow keys with comments in the margin", () => {
     expect(marginNext("r1", null, t1)).toBe("kid");
     const t2 = { thread: { root: "c2", parent: "p" }, format: "md" as const };
     expect(marginNext("c2", null, t2)).toBe("kid");
+  });
+});
+
+describe("arrow keys through a dated thread drawn inline (secondary surfaces)", () => {
+  const date = "\ntine.date:: 2026-11-07T13:37Z";
+  const outline = (folded: boolean) => load([
+    block("p", "commented text", [
+      block("r", "First message\ntine.quote:: commented" + date, [
+        { ...block("ev", "Evidence", [block("nested", "nested body"), block("reply", "Hand-nested reply" + date)]), collapsed: folded },
+        block("trail", "trailing body"),
+      ]),
+    ]),
+    block("after", "the next block"),
+  ]);
+
+  it("follows message order, not the stored tree", () => {
+    outline(false);
+    expect(outlineNext("nested", null)).toBe("trail");
+    expect(outlineNext("trail", null)).toBe("reply");
+    expect(outlinePrev("reply", null)).toBe("trail");
+    expect(outlineNext("reply", null)).toBe("after");
+    expect(outlinePrev("r", null)).toBe("p");
+  });
+
+  it("a folded body still leads on to the messages under it", () => {
+    outline(true);
+    expect(outlineNext("ev", null)).toBe("trail");
+    expect(outlineNext("trail", null)).toBe("reply");
+    expect(outlinePrev("reply", null)).toBe("trail");
+    expect(outlineNext("reply", null)).toBe("after");
   });
 });

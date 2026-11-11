@@ -123,6 +123,28 @@ export function marginNext(id: string, scope: OutlineScope | null, nav: MarginNa
   return below !== undefined && docNode(below) ? below : bodyNeighbor(nav.thread.parent, 1, scope);
 }
 
+/** Neighbours on a surface that draws threads inline (reference previews,
+ * the sidebar): the stored outline, except that a dated thread is read in
+ * message order, as it is drawn. Body blocks still step over threads
+ * (visibleNeighbor). O(thread size). */
+export function outlinePrev(id: string, scope: OutlineScope | null): string | null {
+  const root = datedThreadRoot(id);
+  const order = root ? datedThreadOrder(root, scope) : null;
+  const at = order?.indexOf(id) ?? -1;
+  if (order && at > 0) return order[at - 1];
+  return prevVisible(id, scope);
+}
+
+export function outlineNext(id: string, scope: OutlineScope | null): string | null {
+  const root = datedThreadRoot(id);
+  const order = root ? datedThreadOrder(root, scope) : null;
+  const at = order?.indexOf(id) ?? -1;
+  if (order && at >= 0 && at + 1 < order.length) return order[at + 1];
+  let next = nextVisible(id, scope);
+  if (root && at >= 0) while (next !== null && insideThread(next, root)) next = nextVisible(next, scope);
+  return next;
+}
+
 /** The last visible message of a thread. O(thread size). */
 function lastInThread(root: string, scope: OutlineScope | null): string {
   const messages = datedThreadOrder(root, scope);
