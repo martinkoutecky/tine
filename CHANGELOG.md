@@ -52,7 +52,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Merging pages keeps equal clashing header properties, blank header lines, original body layout and mixed line endings (REG-CM-MERGE-COMPLETE-TEXT).
 - Merging Org pages keeps the survivor's title in Logseq by containing leftover source directives as body text (REG-CM-ORG-MERGE-DIRECTIVE-TITLE).
-
+- Saving an empty merge survivor again keeps the old source title as block text and preserves the survivor's name (REG-CM-MERGE-SAVE-CLOSURE).
+- Merges rewrite tag-shaped aliases while keeping their hash and existing link wrappers (REG-CM-TAG-ALIAS-MERGE).
 - Opening large pages skips comment setup for leaf rows and hidden quote and folded-thread views (REG-BIGLOAD-ROW-WORK).
 - Bullet threading connectors remain continuous where parent rows meet child elbows at fractional display scaling (GH #129, bullet-threading #2).
 - CLI writes trim author names and refuse an empty `--author`; blank `TINE_AUTHOR` uses the default `agent` instead of creating an empty author property (GH #930).

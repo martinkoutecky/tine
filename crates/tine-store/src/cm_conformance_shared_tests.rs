@@ -17,6 +17,8 @@
 //! store harness asserts the copy equals the original on every file it sees.
 #![allow(dead_code)]
 
+#[path = "cm_conformance_native_shared_tests.rs"]
+pub mod native;
 #[path = "cm_conformance_r13_shared_tests.rs"]
 pub mod r13;
 
@@ -191,39 +193,8 @@ fn walk(blocks: &[DocBlock], level: usize, out: &mut Vec<Value>, config: &Config
     }
 }
 
-/// Keys the store treats as block-scoped (`tine_core::page_header::BLOCK_SCOPED_PROPERTY_KEYS`,
-/// copied): a first root holding one of them is never the page header.
-const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
-    "id",
-    "heading",
-    "collapsed",
-    "background-color",
-    "logseq.order-list-type",
-    "tine.view",
-    "tine.header",
-    "tine.col-widths",
-    "tine.col-aggregates",
-    "tine.group-by",
-    "tine.group-field",
-    "tine.table-widths",
-    "tine.columns",
-    "tine.block-columns",
-    "tine.filter",
-    "tine.sort",
-    "tine.sample",
-    "tine.result-kinds",
-];
-
 fn is_properties_only(raw: &str) -> bool {
-    tine_core::block_regions::page_header_only(raw.trim_end_matches(['\n', '\r'])).is_some_and(
-        |header| {
-            !header.entries.iter().any(|entry| {
-                BLOCK_SCOPED_PROPERTY_KEYS
-                    .iter()
-                    .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
-            })
-        },
-    )
+    tine_core::page_header::is_page_header_candidate(raw)
 }
 
 /// Test-side copy of `tine_store::query::document_alias_spellings` (crate
@@ -288,7 +259,6 @@ pub fn parse_file(rel: &str, text: &str) -> Document {
 /// `name_format` is the graph's `:file/name-format` (the stem codec's
 /// parameter; census Q2: the harness used to decode every stem as Legacy).
 pub fn file_json(
-    view: &WholeGraph,
     rel: &str,
     text: &str,
     aliases: AliasFn,
@@ -300,12 +270,10 @@ pub fn file_json(
     let org = format == Format::Org;
     let file_stem = Path::new(rel).file_stem().unwrap().to_str().unwrap();
     let stem = if journal_dir {
-        // A journal's name is its day title (Tine ignores title:: there).
-        let entries = view.inventory(InventoryScope::File(&PageId::from(rel)));
-        entries
-            .0
-            .first()
-            .map(|e| e.name.clone())
+        let journal = config.journal_format();
+        journal
+            .parse(file_stem)
+            .map(|day| journal.title(day))
             .unwrap_or_else(|| file_stem.to_owned())
     } else {
         decode_page_name(file_stem, name_format)
@@ -341,7 +309,7 @@ pub fn file_json(
 
 /// Every spelling the model may key: names, aliases, occurrences and their
 /// namespace prefixes, probes, query arguments and rename arguments.
-fn spellings(input: &Value, extra: &[String]) -> BTreeSet<String> {
+pub fn spellings(input: &Value, extra: &[String]) -> BTreeSet<String> {
     let mut out: BTreeSet<String> = extra.iter().cloned().collect();
     for file in input["files"].as_array().unwrap() {
         for key in ["stem", "title"] {
@@ -729,7 +697,7 @@ pub fn query_shape(q: &Value) -> String {
     "?".into()
 }
 
-fn query_args(q: &Value, out: &mut Vec<String>) {
+pub fn query_args(q: &Value, out: &mut Vec<String>) {
     for leaf in ["refs", "name"] {
         if let Some(s) = q.get(leaf).and_then(Value::as_str) {
             out.push(s.to_owned());
@@ -781,20 +749,15 @@ pub fn is_sync_copy(rel: &str) -> bool {
         .is_some_and(|stem| tine_core::model::sync_conflict_base(stem).is_some())
 }
 
-/// The bridge's input for `spec` as Tine sees it in `view`.
-pub fn model_input(
-    view: &WholeGraph,
-    spec: &GraphSpec,
-    aliases: AliasFn,
-    map_strings: &[String],
-) -> Value {
+/// The bridge's parser/configuration input, independent of inventory owners.
+pub fn model_input(spec: &GraphSpec, aliases: AliasFn, map_strings: &[String]) -> Value {
     let journal = spec.journal_format();
     let config = spec.config();
     let mut input = json!({
         // A sync-conflict copy is not graph text in Tine (no page, no
         // references; `sync_conflict_base`), and the model has no such file:
         // it is left out of the model's graph (census Q2 fixtures).
-        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel)).map(|(rel, text)| file_json(view, rel, text, aliases, spec.name_format(), &config)).collect::<Vec<_>>(),
+        "files": spec.files.iter().filter(|(rel, _)| !is_sync_copy(rel)).map(|(rel, text)| file_json(rel, text, aliases, spec.name_format(), &config)).collect::<Vec<_>>(),
         "navigate": spec.navigate,
         "favoritesPage": spec.favorites_page.clone().unwrap_or_else(|| NO_FAVORITES.to_owned()),
         "queries": spec.queries.iter().map(|q| json!({"anchor": q.anchor, "q": q.q})).collect::<Vec<_>>(),
@@ -864,8 +827,8 @@ pub fn run_bridge(bridge: &Path, input: &Value) -> Result<Value, String> {
 
 /// Round 13 keeps literal claims separate from the configured date target.
 /// All claimant inputs are parser/config answers; no chosen owner is supplied.
-pub fn model_input_r13(view: &WholeGraph, spec: &GraphSpec) -> Value {
-    let mut input = model_input(view, spec, alias_spellings, &[]);
+pub fn model_input_r13(spec: &GraphSpec) -> Value {
+    let mut input = model_input(spec, alias_spellings, &[]);
     let journal = spec.journal_format();
     let config = spec.config();
     input["favorites"] = json!(config.favorites);
@@ -888,15 +851,6 @@ pub fn model_input_r13(view: &WholeGraph, spec: &GraphSpec) -> Value {
         let rel = file["path"].as_str().unwrap().to_owned();
         let raw = Path::new(&rel).file_stem().unwrap().to_str().unwrap();
         file["rawStem"] = json!(raw);
-        // Do not obtain journal names through an inventory/owner answer.
-        file["stem"] = json!(if rel.starts_with("journals/") {
-            journal
-                .parse(raw)
-                .map(|d| journal.title(d))
-                .unwrap_or_else(|| raw.to_owned())
-        } else {
-            decode_page_name(raw, spec.name_format())
-        });
     }
     let mut extra = spec.navigate.clone();
     extra.extend(config.favorites.iter().cloned());
@@ -992,6 +946,9 @@ pub fn model_input_r13(view: &WholeGraph, spec: &GraphSpec) -> Value {
         .iter()
         .filter(|s| tine_core::refs::url_has_origin(s))
         .collect::<Vec<_>>());
+    for file in input["files"].as_array_mut().unwrap() {
+        native::decorate(file, &config);
+    }
     input
 }
 

@@ -378,11 +378,10 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                             "{}{bullet} kept-{seed}\n{}{bullet} source-{seed} [[{after}]]\n",
                             aliases(&format!("Shared, Kept, {alias}")),
                             if org {
-                                // The uppercase declaration key is protected
-                                // (Alias14's syntax whitelist is exact bytes).
-                                format!(
-                                    "* \n#+BEGIN_QUOTE\n#+ALIAS: {alias}, Shared\n#+END_QUOTE\n"
-                                )
+                                // The uppercase key/separator stay protected;
+                                // unique names move and duplicate Shared is
+                                // consumed under its retained member witness.
+                                "*\n#+BEGIN_QUOTE\n#+ALIAS: , \n#+END_QUOTE\n".to_owned()
                             } else {
                                 "- \n".into()
                             }

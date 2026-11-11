@@ -49,7 +49,7 @@ use crate::query::macro_text::{
 };
 use crate::reference_evidence::RewriteTarget;
 use crate::refs::{is_linkable_property_separator, page_key};
-use crate::text_trace::{Placement, TextTrace, TraceError};
+use crate::text_trace::{TextTrace, TraceError};
 
 /// A covered site the span writer cannot faithfully realize. B3 decides
 /// admission; this writer reports the evidence without refusing the site.
@@ -91,6 +91,12 @@ impl RenameProposal {
         let Some(range) = crate::model::title_name_span(original, format) else {
             return Ok(());
         };
+        let wrappers: HashSet<_> = self
+            .trace
+            .wrappers
+            .iter()
+            .map(|id| self.trace.pieces[*id].range.clone())
+            .collect();
         let mut edits: Vec<_> = self
             .trace
             .pieces
@@ -107,9 +113,16 @@ impl RenameProposal {
         edits.insert(at, (range, name.into()));
         let mut trace = TextTrace::default();
         trace.add_input(original, &edits, &[])?;
-        trace.output = (0..trace.pieces.len()).map(Placement::Original).collect();
+        trace.wrappers = trace
+            .pieces
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| wrappers.contains(&p.range))
+            .map(|(id, _)| id)
+            .collect();
+        trace.ordered_output();
         self.text = trace.render()?;
-        trace.check(&self.text, &trace.substitution)?;
+        trace.check_shadow(&self.text)?;
         self.trace = trace;
         Ok(())
     }
@@ -229,6 +242,7 @@ pub(crate) fn proposal(
     let crlf = lf_offsets_of_crlf(text);
     let original = |at: usize| at + crlf.partition_point(|lf_at| *lf_at < at);
     let mut rewritten = HashSet::new();
+    let mut wrappers = HashSet::new();
     let edits: Vec<_> = edits
         .into_iter()
         .map(|(range, to, name)| {
@@ -238,14 +252,33 @@ pub(crate) fn proposal(
                     rewritten.insert(*name);
                 }
             }
+            // Encoders return native wrappers; the substitution itself names
+            // only the semantic token. Keep their inserts explicit in evidence.
+            let to = if let Some(inner) = to.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+                if text[range.clone()] != *inner {
+                    wrappers.insert(range.clone());
+                    inner.to_owned()
+                } else {
+                    to
+                }
+            } else {
+                to
+            };
             (range, to)
         })
         .collect();
     let mut trace = TextTrace::default();
     trace.add_input(text, &edits, &[])?;
-    trace.output = (0..trace.pieces.len()).map(Placement::Original).collect();
+    trace.wrappers = trace
+        .pieces
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| wrappers.contains(&p.range))
+        .map(|(id, _)| id)
+        .collect();
+    trace.ordered_output();
     let text = trace.render()?;
-    trace.check(&text, &trace.substitution)?;
+    trace.check_shadow(&text)?;
     let unrealized = renames
         .unrealized
         .take()
@@ -537,7 +570,18 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     continue;
                 };
                 if node.starts_with('#') {
-                    edits.push(renames.edit(range, &reference.name, &to, tag_for(&to)));
+                    let (start, end, spelling) = if node.starts_with("#[[") && node.ends_with("]]")
+                    {
+                        (3, node.len() - 2, to.to_string())
+                    } else {
+                        (1, node.len(), tag_for(&to)[1..].to_owned())
+                    };
+                    edits.push(renames.edit(
+                        range.start + start..range.start + end,
+                        &reference.name,
+                        &to,
+                        spelling,
+                    ));
                 } else if headline_tag_ok(&to) {
                     // An Org headline tag `:name:`: the range is the name.
                     edits.push(renames.edit(range, &reference.name, &to, to.to_string()));
@@ -767,6 +811,21 @@ fn query_edits(
             let spelled = match family {
                 FormFamily::Tql => crate::query::print::sql_string(&to),
                 FormFamily::Edn => og_token_spelling(token, &to),
+            };
+            let (range, spelled) = if let Some(at) = token.find(&name).filter(|_| !name.is_empty())
+            {
+                let prefix = &token[..at];
+                let suffix = &token[at + name.len()..];
+                if spelled == format!("{prefix}{to}{suffix}") {
+                    (
+                        range.start + at..range.start + at + name.len(),
+                        to.to_string(),
+                    )
+                } else {
+                    (range, spelled)
+                }
+            } else {
+                (range, spelled)
             };
             local.push(renames.edit(
                 form_start + range.start..form_start + range.end,
@@ -1034,6 +1093,26 @@ mod tests {
             for (from, to) in names {
                 assert_eq!(to, from.replacen("Old/", "New/", 1));
             }
+            let start = Instant::now();
+            let proposal = crate::refs::rename_proposal(
+                &text,
+                false,
+                &HashMap::from([("old".into(), "New family".into())]),
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert_eq!(super::BLOCK_WALKS.with(|walks| walks.replace(0)), n);
+            assert_eq!(
+                proposal.trace.wrappers.len(),
+                n,
+                "one explicit tag wrapper per block"
+            );
+            proposal.trace.check_shadow(&proposal.text).unwrap();
+            assert!(
+                start.elapsed() < Duration::from_secs(1),
+                "PC-3: ordered certificates keep the one-second rewrite budget"
+            );
         }
         // Macro safety rejects these proposed edits; collecting at lookup
         // time would incorrectly report both names as moved.

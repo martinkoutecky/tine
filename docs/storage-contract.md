@@ -1004,13 +1004,49 @@ Every page rename is planned as a `HostOp`, including one moved page.
 Merge realization (conceptual model §5.1–5.2) uses the original physical
 survivor and source bytes. Survivor header lines and both bodies retain their
 bytes and terminators outside legal name spans. Nonclashing source properties
-join the header; source titles, equal or differing property clashes, unknown
-lines and blank lines remain in one leftover block between the bodies. Org
+join the header; source titles, equal or differing property clashes, protected
+header syntax and blank header lines remain in one leftover block between the bodies. A
+Markdown leftover starting with an unbulleted property gets an empty native
+title line with the original header bytes on continuations. Its raw text
+starts with a newline; ordinary text, original outline prefixes and existing
+blank first lines already prevent promotion. An ordinary unchanged save cannot
+promote the old source title, including after earlier body roots are removed.
+During merge, a childless first-root survivor header is realized as a native
+preamble, with its protected outline prefix and any nonauthoritative title
+retained in the leftover. Headers with children retain their body parent.
+Ordinary first-property page authoring retains its existing
+promotion rule. This does not decide edits exposing a different, unguarded
+property-only body (Q-SAVEAUTHOR), or closure under Logseq's own saves. Org
 leftovers use a quote container so source directives cannot retitle the page
 in Logseq. Alias fields form one survivor-first union after substitution,
 deduplicated by exact rendered spelling. The reader's property member parser
 owns tokenization; wrappers, odd spacing and unknown remainders remain
 protected text.
+When alias fields combine, complete parser-owned member tokens move into the
+active field; their names are original pieces rather than inserted copies.
+Protected duplicate wrapped members retain their property owner in the inert
+leftover. Preamble prose is already a separate visible body row in the reader.
+The merger materializes it as an outline row, keeping target prose before target
+outline bodies and source prose after the leftover and before source outline
+bodies. Each such row has its single original body identity and query images;
+it is not part of both the combined property header and the leftover.
+
+Name rewrites retain original pieces in source order. Their only encoding
+insertions are paired `[[` and `]]` around a changed semantic name; tag hashes
+and existing wrappers remain protected originals. Merge relocation and approved
+alias consumption have a separate complete-file trace. Native conformance
+requires the accepted round-15c combined admission, including individual stored
+query identities and exact-output save observations for every retained file.
+The observations include every descendant, the native first-root classifier,
+serialization with the actual layout options, and an independent reparse.
+Markdown requires nonpromotion and full document equality; Org additionally
+requires byte-exact serialization. Historical descriptor comparisons do not
+certify native layout or save closure.
+Native occurrence kinds follow semantic property ownership across link/tag
+encodings. A page-link node used solely to wrap its enclosing tag's identical
+name is that same semantic site; separate declarations and different child
+names retain their multiplicity. Conformance evidence also exports the concrete
+scanner occurrences, so that projection remains inspectable.
 
 Every changed rename/merge file has an ephemeral `TextTrace`: a complete
 input partition, original/inserted output placements, the legal span

@@ -227,12 +227,6 @@ pub fn rename_rewrite_with_queries(
 
 pub use rename::{RenameProposal, Site, Unrealized};
 
-/// Native spelling of one linkable-property member, sharing the span writer's
-/// wrapper rule so commas inside a name do not become member separators.
-pub fn linkable_member_spelling(name: &str) -> String {
-    rename::member_spelling(name)
-}
-
 /// Physical block ranges from the same outline authority as the page reader.
 /// Each tuple is (whole block, content start, structural level, continuation
 /// indentation). Ranges include line terminators; children follow their parent.
@@ -462,7 +456,7 @@ mod tests {
             let raw = "[[foo]] #foo #[[foo]] #food https://ex.com/#foo";
             assert_eq!(
                 rename_in_block(raw, "foo", "New", is_org),
-                "[[New]] #New #New #food https://ex.com/#foo"
+                "[[New]] #New #[[New]] #food https://ex.com/#foo"
             );
             let (raw, expected) = if is_org {
                 (

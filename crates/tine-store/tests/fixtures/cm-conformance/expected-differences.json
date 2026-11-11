@@ -1265,6 +1265,1203 @@
     },
     "randomGraphs": 200
   },
+  "renameNative15c": {
+    "fixtures": {
+      "n6-title-rename: Custom Name -> custom: offers/automatic": [],
+      "n6-title-rename: Custom Name -> custom: {\"destination\":\"custom\",\"survivor\":null}": [],
+      "n6-title-rename: Shown Title -> Renamed: offers/automatic": [],
+      "n6-title-rename: Shown Title -> Renamed: {\"destination\":\"Renamed\",\"survivor\":null}": [],
+      "r10-ref-source-alias-target: kb -> ML: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"o\",\"survivor\":null}], Tine [{\"destination\":\"o\",\"survivor\":null}]"
+      ],
+      "r10-ref-source-alias-target: kb -> ML: {\"destination\":\"ML\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r10-ref-source-alias-target: kb -> ML: {\"destination\":\"o\",\"survivor\":null}": [
+        "G3/B4: ordered file projection journals/2026_10_26.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"tag\",\"o\"],[\"pageEmbed\",\"o\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"tag\",\"ML\"],[\"pageEmbed\",\"ML\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}"
+      ],
+      "r10-ref-source-journal-risk: kb -> kc: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"kc\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "r10-ref-source-journal-risk: kb -> kc: {\"destination\":\"kc\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r10-ref-source-merge: kb -> n/y: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r10-ref-source-merge: kb -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "r10-ref-source-own-child: kb -> kb/x: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"kb/x\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename “kb” to “kb/x”: “kb/x” is already a page or an alias inside “kb”, and every page under “kb” moves with it\")"
+      ],
+      "r10-ref-source-own-child: kb -> kb/x: {\"destination\":\"kb/x\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r10-ref-source-parent-only: kb -> n: offers/automatic": [],
+      "r10-ref-source-parent-only: kb -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "r10-ref-source-ref-only-target: kb -> x: offers/automatic": [],
+      "r10-ref-source-ref-only-target: kb -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "r10-ref-source-unused: kb -> kc: offers/automatic": [],
+      "r10-ref-source-unused: kb -> kc: {\"destination\":\"kc\",\"survivor\":null}": [],
+      "r10-relative-real-pages: . -> ./x: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r10-relative-real-pages: . -> ./x: {\"destination\":\"./x\",\"survivor\":\"pages/dotx.md\"}": [],
+      "r10-relative-real-pages: . -> z: offers/automatic": [],
+      "r10-relative-real-pages: . -> z: {\"destination\":\"z\",\"survivor\":null}": [],
+      "r10-url-real-pages: https: -> https://a.b/c: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r10-url-real-pages: https: -> https://a.b/c: {\"destination\":\"https://a.b/c\",\"survivor\":\"pages/url.md\"}": [],
+      "r10-url-real-pages: https: -> z: offers/automatic": [],
+      "r10-url-real-pages: https: -> z: {\"destination\":\"z\",\"survivor\":null}": [],
+      "r11-empty-alias-source: B -> ML: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"},{\"destination\":\"ML\",\"survivor\":null}]"
+      ],
+      "r11-empty-alias-source: B -> ML: {\"destination\":\"ML\",\"survivor\":null}": [],
+      "r11-empty-alias-source: B -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [
+        "G3/B4: chosen substitution \"Machine Learning\", typed \"ML\"; native admission rejects {\"assembly\":false,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "r11-empty-alias-target: ML notes -> ML: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"}]"
+      ],
+      "r11-empty-alias-target: ML notes -> ML: {\"destination\":\"ML\",\"survivor\":\"pages/ML.md\"}": [],
+      "r11-empty-alias-target: ML notes -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r11-fileless-empty-alias-target: B -> ML: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":null}], Tine [{\"destination\":\"ML\",\"survivor\":null}]"
+      ],
+      "r11-fileless-empty-alias-target: B -> ML: {\"destination\":\"ML\",\"survivor\":null}": [],
+      "r11-fileless-empty-alias-target: B -> ML: {\"destination\":\"Machine Learning\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r11-leading-legacy-stem: /n -> z: offers/automatic": [],
+      "r11-leading-legacy-stem: /n -> z: {\"destination\":\"z\",\"survivor\":null}": [],
+      "r11-leading-title: /n -> z: offers/automatic": [],
+      "r11-leading-title: /n -> z: {\"destination\":\"z\",\"survivor\":null}": [],
+      "r12-alias-source-date: 2026-10-26 -> AI: offers/automatic": [],
+      "r12-alias-source-date: 2026-10-26 -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r12-alias-source-date: ML -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":null},{\"destination\":\"owner\",\"survivor\":null}], Tine [{\"destination\":\"owner\",\"survivor\":null}]"
+      ],
+      "r12-alias-source-date: ML -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-date: ML -> 2026-10-26: {\"destination\":\"owner\",\"survivor\":null}": [
+        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-10-26\"],[\"link\",\"owner\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"2026-10-26\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-10-26\"],[\"link\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"2026-10-26\"}}]}],\"name\":\"c\"}",
+        "G3/B4: ordered file projection pages/owner.md: model {\"aliases\":[\"2026-10-26\",\"owner\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"2026-10-26\"],[\"linkableValue\",\"owner\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}, Tine {\"aliases\":[\"2026-10-26\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"2026-10-26\"],[\"linkableValue\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}",
+        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"owner\"],[\"journal\",\"oct 26th, 2026\"]],[[\"page\",\"owner\"],[\"page\",\"owner\"]]], actual writer [[[\"page\",\"owner\"],[\"journal\",\"oct 26th, 2026\"]]]"
+      ],
+      "r12-alias-source-empty-target: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"Artificial Intelligence\",\"survivor\":null}], Tine [{\"destination\":\"AI\",\"survivor\":null}]"
+      ],
+      "r12-alias-source-empty-target: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r12-alias-source-empty-target: ML -> AI: {\"destination\":\"Artificial Intelligence\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-journal-declarer: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "r12-alias-source-journal-declarer: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-journal-target: ML -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":null},{\"destination\":\"Oct 26th, 2026\",\"survivor\":null}], Tine [{\"destination\":\"Oct 26th, 2026\",\"survivor\":null}]"
+      ],
+      "r12-alias-source-journal-target: ML -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-journal-target: ML -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":null}": [
+        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Oct 26th, 2026\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Oct 26th, 2026\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Oct 26th, 2026\"}}]}],\"name\":\"c\"}",
+        "G3/B4: ordered file projection pages/owner.md: model {\"aliases\":[\"Oct 26th, 2026\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Oct 26th, 2026\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}, Tine {\"aliases\":[\"2026-10-26\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"2026-10-26\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"owner\"}"
+      ],
+      "r12-alias-source-journal: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "r12-alias-source-journal: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-journal: ML -> fresh: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"fresh\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "r12-alias-source-journal: ML -> fresh: {\"destination\":\"fresh\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-namespace: old/sub -> new/sub: offers/automatic": [],
+      "r12-alias-source-namespace: old/sub -> new/sub: {\"destination\":\"new/sub\",\"survivor\":null}": [],
+      "r12-alias-source-other-owner: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"Artificial Intelligence\",\"survivor\":null}], Tine [{\"destination\":\"Artificial Intelligence\",\"survivor\":null}]"
+      ],
+      "r12-alias-source-other-owner: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-other-owner: ML -> AI: {\"destination\":\"Artificial Intelligence\",\"survivor\":null}": [
+        "G3/B4: physical output paths: model [\"pages/Artificial Intelligence%2Fx.md\", \"pages/Artificial Intelligence.md\", \"pages/Machine Learning.md\", \"pages/c.md\"], Tine [\"pages/AI%2Fx.md\", \"pages/Artificial Intelligence.md\", \"pages/Machine Learning.md\", \"pages/c.md\"]",
+        "G3/B4: ordered file projection pages/Machine Learning.md: model {\"aliases\":[\"Artificial Intelligence\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Artificial Intelligence\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}, Tine {\"aliases\":[\"AI\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}",
+        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Artificial Intelligence\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence\"}}]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence/x\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"AI\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Artificial Intelligence\"}}]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"AI/x\"}}]}],\"name\":\"c\"}",
+        "G3/B4: computed after-meaning pages: model [[\"page\",\"artificial intelligence\"],[\"page\",\"artificial intelligence/x\"],[\"page\",\"machine learning\"],[\"page\",\"c\"]], actual writer [[\"page\",\"ai/x\"],[\"page\",\"artificial intelligence\"],[\"page\",\"machine learning\"],[\"page\",\"c\"]]",
+        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"artificial intelligence\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"artificial intelligence\"]]], actual writer [[[\"page\",\"artificial intelligence\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"ai\"]]]"
+      ],
+      "r12-alias-source-own-child: ML -> ML/alias: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML/alias\",\"survivor\":null},{\"destination\":\"owner\",\"survivor\":null}], Tine []"
+      ],
+      "r12-alias-source-own-child: ML -> ML/alias: {\"destination\":\"ML/alias\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-own-child: ML -> ML/alias: {\"destination\":\"owner\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-own-child: ML -> ML/child: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML/child\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename “ML” to “ML/child”: “ML/child” is already a page or an alias inside “ML”, and every page under “ML” moves with it\")"
+      ],
+      "r12-alias-source-own-child: ML -> ML/child: {\"destination\":\"ML/child\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-own-child: ML -> ML/linked: offers/automatic": [],
+      "r12-alias-source-own-child: ML -> ML/linked: {\"destination\":\"ML/linked\",\"survivor\":null}": [],
+      "r12-alias-source-own-child: ML -> ML/unused: offers/automatic": [],
+      "r12-alias-source-own-child: ML -> ML/unused: {\"destination\":\"ML/unused\",\"survivor\":null}": [],
+      "r12-alias-source-real: ML -> AI: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r12-alias-source-real: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r12-alias-source-reference-target: ML -> AI: offers/automatic": [],
+      "r12-alias-source-reference-target: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r12-alias-source-same-key: ML -> ml: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ml\",\"survivor\":null},{\"destination\":\"other\",\"survivor\":null},{\"destination\":\"owner\",\"survivor\":null}], Tine [{\"destination\":\"ml\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 3: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r12-alias-source-same-key: ML -> ml: {\"destination\":\"ml\",\"survivor\":null}": [],
+      "r12-alias-source-same-key: ML -> ml: {\"destination\":\"other\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-same-key: ML -> ml: {\"destination\":\"owner\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-same-owner: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":null}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":null}]"
+      ],
+      "r12-alias-source-same-owner: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-same-owner: ML -> AI: {\"destination\":\"Machine Learning\",\"survivor\":null}": [
+        "G3/B4: ordered file projection pages/Machine Learning.md: model {\"aliases\":[\"AI\",\"Machine Learning\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"Machine Learning\"],[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}, Tine {\"aliases\":[\"AI\"],\"blocks\":[{\"level\":1,\"occ\":[[\"linkableValue\",\"AI\"],[\"linkableValue\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[]}],\"name\":\"Machine Learning\"}",
+        "G3/B4: ordered file projection pages/c.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"Machine Learning\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]}],\"name\":\"c\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[[\"link\",\"AI\"],[\"link\",\"AI\"]],\"stored\":[]},{\"level\":1,\"occ\":[],\"stored\":[{\"page\":{\"name\":\"Machine Learning\"}}]}],\"name\":\"c\"}",
+        "G3/B4: computed after-meaning typedAliasEdges: model [[[\"page\",\"machine learning\"],[\"page\",\"ai\"]],[[\"page\",\"machine learning\"],[\"page\",\"machine learning\"]]], actual writer [[[\"page\",\"machine learning\"],[\"page\",\"ai\"]]]"
+      ],
+      "r12-alias-source-two-declarers: ML -> AI: offers/automatic": [],
+      "r12-alias-source-two-declarers: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r12-alias-source-two-empty-targets: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"one\",\"survivor\":null},{\"destination\":\"two\",\"survivor\":null}], Tine [{\"destination\":\"AI\",\"survivor\":null}]"
+      ],
+      "r12-alias-source-two-empty-targets: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r12-alias-source-two-empty-targets: ML -> AI: {\"destination\":\"one\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-two-empty-targets: ML -> AI: {\"destination\":\"two\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-two-targets: ML -> AI: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"AI\",\"survivor\":null},{\"destination\":\"one\",\"survivor\":null},{\"destination\":\"two\",\"survivor\":null}], Tine []"
+      ],
+      "r12-alias-source-two-targets: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-two-targets: ML -> AI: {\"destination\":\"one\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-two-targets: ML -> AI: {\"destination\":\"two\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r12-alias-source-unused: ML -> AI: offers/automatic": [],
+      "r12-alias-source-unused: ML -> AI: {\"destination\":\"AI\",\"survivor\":null}": [],
+      "r13-alias-edge-preview: A -> X: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"X\",\"survivor\":null},{\"destination\":\"B\",\"survivor\":\"pages/B.md\"}], Tine [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"X\",\"survivor\":null}]"
+      ],
+      "r13-alias-edge-preview: A -> X: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "r13-alias-edge-preview: A -> X: {\"destination\":\"X\",\"survivor\":null}": [],
+      "r13-alias-image-conflict: A -> B: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-alias-image-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "r13-empty-child-gains-parent: A -> B/x: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-empty-child-gains-parent: A -> B/x: {\"destination\":\"B/x\",\"survivor\":\"pages/B%2Fx.md\"}": [],
+      "r13-empty-namespace-output: A -> Z/w: offers/automatic": [],
+      "r13-empty-namespace-output: A -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "r13-favorite-image-conflict: A -> B: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-favorite-image-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}",
+        "G10/B4a: favorites: model [\"B/x\"], Tine [\"A/x\"]"
+      ],
+      "r13-fileless-multiple: A -> X: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"X\",\"survivor\":null},{\"destination\":\"B\",\"survivor\":null},{\"destination\":\"C\",\"survivor\":null}], Tine []"
+      ],
+      "r13-fileless-multiple: A -> X: {\"destination\":\"B\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-fileless-multiple: A -> X: {\"destination\":\"C\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-fileless-multiple: A -> X: {\"destination\":\"X\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-fixed-favorites-setting: Favorites -> Saved: offers/automatic": [],
+      "r13-fixed-favorites-setting: Favorites -> Saved: {\"destination\":\"Saved\",\"survivor\":null}": [
+        "G10/B4a: favorites: model [\"Saved\",\"Saved/virtual\"], Tine [\"Saved\", \"Favorites/virtual\"]",
+        "G10/B4a: Favorites exclusion setting changed to Some(\"Saved\")",
+        "G10/B4a: computed after-meaning links: model [[[\"page\",\"saved\"],[\"page\",\"target\"]],[[\"page\",\"r\"],[\"page\",\"saved\"]],[[\"page\",\"r\"],[\"page\",\"saved/virtual\"]]], actual writer [[[\"page\",\"r\"],[\"page\",\"saved\"]],[[\"page\",\"r\"],[\"page\",\"saved/virtual\"]]]"
+      ],
+      "r13-inactive-journal-anchor: Oct 26th, 2026 -> Later: offers/automatic": [],
+      "r13-inactive-journal-anchor: Oct 26th, 2026 -> Later: {\"destination\":\"Later\",\"survivor\":null}": [],
+      "r13-journal-parent-loss: A -> B: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "r13-journal-parent-loss: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-moving-child-vacates: A -> A/x: offers/automatic": [],
+      "r13-moving-child-vacates: A -> A/x: {\"destination\":\"A/x\",\"survivor\":null}": [],
+      "r13-multiple-declarers: A -> X: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"X\",\"survivor\":null},{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"C\",\"survivor\":\"pages/C.md\"}], Tine []"
+      ],
+      "r13-multiple-declarers: A -> X: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-multiple-declarers: A -> X: {\"destination\":\"C\",\"survivor\":\"pages/C.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-multiple-declarers: A -> X: {\"destination\":\"X\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-org-merge-nested: A -> B: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-org-merge-nested: A -> B: {\"destination\":\"B\",\"survivor\":\"pages/nested/B.org\"}": [],
+      "r13-original-conflict: A -> B: offers/automatic": [],
+      "r13-original-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "r13-own-child-chain: A -> A/x: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"A/x\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename “A” to “A/x”: “A/x” is already a page or an alias inside “A”, and every page under “A” moves with it\")"
+      ],
+      "r13-own-child-chain: A -> A/x: {\"destination\":\"A/x\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r13-priority-anchor: A -> Work: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Work\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-priority-anchor: A -> Work: {\"destination\":\"Work\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "r13-protected-equal-header: A -> B: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-protected-equal-header: A -> B: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "r13-query-image-conflict: A -> B: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-query-image-conflict: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":false,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "r13-query-output: A -> B: offers/automatic": [],
+      "r13-query-output: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "r13-rename-onto-date-iso-free: Foo -> 2026-11-02: offers/automatic": [],
+      "r13-rename-onto-date-iso-free: Foo -> 2026-11-02: {\"destination\":\"2026-11-02\",\"survivor\":null}": [],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-11-02\",\"survivor\":null},{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}], Tine [{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}]"
+      ],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"2026-11-02\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-rename-onto-date-iso-journal: Foo -> 2026-11-02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [
+        "G3/B4: chosen substitution \"Nov 2nd, 2026\", typed \"2026-11-02\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "r13-rename-onto-date-title-free: Foo -> Nov 2nd, 2026: offers/automatic": [],
+      "r13-rename-onto-date-title-free: Foo -> Nov 2nd, 2026: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":null}": [],
+      "r13-rename-onto-date-title-journal: Foo -> Nov 2nd, 2026: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-rename-onto-date-title-journal: Foo -> Nov 2nd, 2026: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [],
+      "r13-rename-onto-date-underscore-free: Foo -> 2026_11_02: offers/automatic": [],
+      "r13-rename-onto-date-underscore-free: Foo -> 2026_11_02: {\"destination\":\"2026_11_02\",\"survivor\":null}": [],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026_11_02\",\"survivor\":null},{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}], Tine [{\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}]"
+      ],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"2026_11_02\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-rename-onto-date-underscore-journal: Foo -> 2026_11_02: {\"destination\":\"Nov 2nd, 2026\",\"survivor\":\"journals/2026_11_02.md\"}": [
+        "G3/B4: chosen substitution \"Nov 2nd, 2026\", typed \"2026_11_02\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "r13-same-key-nested-org: Alpha -> ALPHA: offers/automatic": [],
+      "r13-same-key-nested-org: Alpha -> ALPHA: {\"destination\":\"ALPHA\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"pages/nested/physical.org\"], Tine [\"pages/nested/ALPHA.org\"]"
+      ],
+      "r13-singleton-merge: A -> B: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-singleton-merge: A -> B: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "r13-task-anchor: TODO -> Work: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Work\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-task-anchor: TODO -> Work: {\"destination\":\"Work\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "r13-transitive-component: A -> X: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"X\",\"survivor\":null},{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"C\",\"survivor\":\"pages/C.md\"}], Tine [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"X\",\"survivor\":null}]"
+      ],
+      "r13-transitive-component: A -> X: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "r13-transitive-component: A -> X: {\"destination\":\"C\",\"survivor\":\"pages/C.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r13-transitive-component: A -> X: {\"destination\":\"X\",\"survivor\":null}": [],
+      "r13-unrelated-twins: A -> B: offers/automatic": [],
+      "r13-unrelated-twins: A -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "r13-unsafe-literal-safe-alternate: A -> X: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"}], Tine [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"X\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r13-unsafe-literal-safe-alternate: A -> X: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [
+        "G3/B4: chosen substitution \"B\", typed \"X\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
+      ],
+      "r13-unsafe-literal-safe-alternate: A -> X: {\"destination\":\"X\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":false,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "r13-unsupported-query-favorite: Absent -> Other: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Other\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-unsupported-query-favorite: Absent -> Other: {\"destination\":\"Other\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "r13-virtual-capture: A -> B: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "r13-virtual-capture: A -> B: {\"destination\":\"B\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":false,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "r13-whitespace-namespace-output: A -> Z/w: offers/automatic": [],
+      "r13-whitespace-namespace-output: A -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "r6-case-only: Foo -> foo: offers/automatic": [],
+      "r6-case-only: Foo -> foo: {\"destination\":\"foo\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"pages/Foo.md\", \"pages/p.md\"], Tine [\"pages/foo.md\", \"pages/p.md\"]"
+      ],
+      "r6-file-descendant: old -> new: offers/automatic": [],
+      "r6-file-descendant: old -> new: {\"destination\":\"new\",\"survivor\":null}": [],
+      "r6-into-namespace: x -> n/y: offers/automatic": [],
+      "r6-into-namespace: x -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "r6-merge-self-link: a -> b: offers/automatic": [],
+      "r6-merge-self-link: a -> b: {\"destination\":\"b\",\"survivor\":null}": [],
+      "r6-onto-alias: a -> c: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"c\",\"survivor\":null},{\"destination\":\"b\",\"survivor\":\"pages/b.md\"}], Tine [{\"destination\":\"b\",\"survivor\":\"pages/b.md\"},{\"destination\":\"c\",\"survivor\":null}]"
+      ],
+      "r6-onto-alias: a -> c: {\"destination\":\"b\",\"survivor\":\"pages/b.md\"}": [
+        "G3/B4: chosen substitution \"b\", typed \"c\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "r6-onto-alias: a -> c: {\"destination\":\"c\",\"survivor\":null}": [],
+      "r6-onto-real-page: a -> b: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "r6-onto-real-page: a -> b: {\"destination\":\"b\",\"survivor\":\"pages/b.md\"}": [],
+      "r6-ref-only-descendant: old -> new: offers/automatic": [],
+      "r6-ref-only-descendant: old -> new: {\"destination\":\"new\",\"survivor\":null}": [],
+      "r6-refused-journal-risk: old -> new: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"new\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "r6-refused-journal-risk: old -> new: {\"destination\":\"new\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r6-rewrite-set: Tasks -> Chores: offers/automatic": [],
+      "r6-rewrite-set: Tasks -> Chores: {\"destination\":\"Chores\",\"survivor\":null}": [],
+      "r6-task-marker-page: A -> Alpha: offers/automatic": [],
+      "r6-task-marker-page: A -> Alpha: {\"destination\":\"Alpha\",\"survivor\":null}": [],
+      "r9-case-rename-onto-taken-file: N/y -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: the file pages/n%2Fy.md belongs to the page “B”; rename or merge that page first\")"
+      ],
+      "r9-case-rename-onto-taken-file: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r9-merge-into-journal: meeting -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":null},{\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}], Tine [{\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}]"
+      ],
+      "r9-merge-into-journal: meeting -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "r9-merge-into-journal: meeting -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [
+        "G3/B4: chosen substitution \"Oct 26th, 2026\", typed \"2026-10-26\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "r9-merge-through-alias: ML notes -> ML: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"ML\",\"survivor\":null},{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}], Tine [{\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"},{\"destination\":\"ML\",\"survivor\":null}]"
+      ],
+      "r9-merge-through-alias: ML notes -> ML: {\"destination\":\"ML\",\"survivor\":null}": [],
+      "r9-merge-through-alias: ML notes -> ML: {\"destination\":\"Machine Learning\",\"survivor\":\"pages/Machine Learning.md\"}": [
+        "G3/B4: chosen substitution \"Machine Learning\", typed \"ML\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "r9-own-child-alias: a -> a/x: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"a/x\",\"survivor\":null},{\"destination\":\"o\",\"survivor\":\"pages/o.md\"}], Tine []"
+      ],
+      "r9-own-child-alias: a -> a/x: {\"destination\":\"a/x\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r9-own-child-alias: a -> a/x: {\"destination\":\"o\",\"survivor\":\"pages/o.md\"}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r9-own-child-page: Foo -> Foo/bar: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"Foo/bar\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename “Foo” to “Foo/bar”: “Foo/bar” is already a page or an alias inside “Foo”, and every page under “Foo” moves with it\")"
+      ],
+      "r9-own-child-page: Foo -> Foo/bar: {\"destination\":\"Foo/bar\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "r9-own-child-unused: Foo -> Foo/bar: offers/automatic": [],
+      "r9-own-child-unused: Foo -> Foo/bar: {\"destination\":\"Foo/bar\",\"survivor\":null}": [],
+      "random-0: N/y -> Z/w: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z/w\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-0: N/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-100: A -> Z/w: offers/automatic": [],
+      "random-100: A -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-101: B -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":\"pages/N%2Fy.md\"},{\"destination\":\"N/y\",\"survivor\":\"pages/N%2Fy.md\"}], Tine [{\"destination\":\"N/y\",\"survivor\":\"pages/N%2Fy.md\"}]"
+      ],
+      "random-101: B -> n/y: {\"destination\":\"N/y\",\"survivor\":\"pages/N%2Fy.md\"}": [],
+      "random-101: B -> n/y: {\"destination\":\"n/y\",\"survivor\":\"pages/N%2Fy.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-102: n -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename “n” to “n/y”: “n/y” is already a page or an alias inside “n”, and every page under “n” moves with it\")"
+      ],
+      "random-102: n -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G5/B3b: safe candidate cannot be selected through the original request"
+      ],
+      "random-103: x -> Z/w: offers/automatic": [],
+      "random-103: x -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-104: 2026-10-26 -> A: offers/automatic": [],
+      "random-104: 2026-10-26 -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-105: N/y -> n: offers/automatic": [],
+      "random-105: N/y -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-106: B -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":null},{\"destination\":\"n/y\",\"survivor\":null},{\"destination\":\"x\",\"survivor\":null}], Tine []"
+      ],
+      "random-106: B -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-106: B -> 2026-10-26: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-106: B -> 2026-10-26: {\"destination\":\"x\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-107: x -> n: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-107: x -> n: {\"destination\":\"n\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-108: a -> Z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-108: a -> Z: {\"destination\":\"Z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-109: x -> Z: offers/automatic": [],
+      "random-109: x -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-10: a -> n/y: offers/automatic": [],
+      "random-10: a -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-110: n/y -> n/z: offers/automatic": [],
+      "random-110: n/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-111: N/y -> n: offers/automatic": [],
+      "random-111: N/y -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-112: n -> A: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"A\",\"survivor\":\"pages/N%2Fy.md\"},{\"destination\":\"Oct 27th, 2026\",\"survivor\":\"journals/2026_10_27.md\"},{\"destination\":\"a\",\"survivor\":\"pages/N%2Fy.md\"}], Tine []"
+      ],
+      "random-112: n -> A: {\"destination\":\"A\",\"survivor\":\"pages/N%2Fy.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-112: n -> A: {\"destination\":\"Oct 27th, 2026\",\"survivor\":\"journals/2026_10_27.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-112: n -> A: {\"destination\":\"a\",\"survivor\":\"pages/N%2Fy.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-113: A -> n/z: offers/automatic": [],
+      "random-113: A -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-114: n -> Z/w: offers/automatic": [],
+      "random-114: n -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-115: a -> Z: offers/automatic": [],
+      "random-115: a -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-116: B -> a: offers/automatic": [],
+      "random-116: B -> a: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-116: B -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-117: N/y -> n/z: offers/automatic": [],
+      "random-117: N/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-118: n -> n/y: offers/automatic": [],
+      "random-118: n -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-119: n -> n/z: offers/automatic": [],
+      "random-119: n -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-11: N/y -> B: offers/automatic": [],
+      "random-11: N/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-120: A -> n: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-120: A -> n: {\"destination\":\"n\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-121: n/y -> B: offers/automatic": [],
+      "random-121: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-122: n -> Z: offers/automatic": [],
+      "random-122: n -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-123: A -> n/z: offers/automatic": [],
+      "random-123: A -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-124: n/y -> a: offers/automatic": [],
+      "random-124: n/y -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-125: A -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"2026-10-26\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-125: A -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-126: N/y -> A: offers/automatic": [],
+      "random-126: N/y -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-127: n/y -> n/z: offers/automatic": [],
+      "random-127: n/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-128: N/y -> x: offers/automatic": [],
+      "random-128: N/y -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-129: B -> a: offers/automatic": [],
+      "random-129: B -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-12: B -> A: offers/automatic": [],
+      "random-12: B -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-130: n -> 2026-10-26: offers/automatic": [],
+      "random-130: n -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-131: B -> n/z: offers/automatic": [],
+      "random-131: B -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-132: N/y -> n/z: offers/automatic": [],
+      "random-132: N/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-133: N/y -> A: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"A\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-133: N/y -> A: {\"destination\":\"A\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-134: x -> B: offers/automatic": [],
+      "random-134: x -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-135: A -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"B\",\"survivor\":null}]"
+      ],
+      "random-135: A -> n/y: {\"destination\":\"B\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-135: A -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-136: a -> x: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"x\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-136: a -> x: {\"destination\":\"x\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-137: B -> x: offers/automatic": [],
+      "random-137: B -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-138: n/y -> a: offers/automatic": [],
+      "random-138: n/y -> a: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-138: n/y -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-139: N/y -> B: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"},{\"destination\":\"Oct 27th, 2026\",\"survivor\":\"journals/2026_10_27.md\"}], Tine [{\"destination\":\"B\",\"survivor\":\"pages/B.md\"}]"
+      ],
+      "random-139: N/y -> B: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "random-139: N/y -> B: {\"destination\":\"Oct 27th, 2026\",\"survivor\":\"journals/2026_10_27.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-13: n/y -> A: offers/automatic": [],
+      "random-13: n/y -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-140: a -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}]"
+      ],
+      "random-140: a -> n/y: {\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Merged); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-140: a -> n/y: {\"destination\":\"x\",\"survivor\":\"pages/x.md\"}": [],
+      "random-141: a -> Z: offers/automatic": [],
+      "random-141: a -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-142: 2026-10-26 -> A: offers/automatic": [],
+      "random-142: 2026-10-26 -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-143: x -> n/z: offers/automatic": [],
+      "random-143: x -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-144: N/y -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/y\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-144: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-145: B -> Z/w: offers/automatic": [],
+      "random-145: B -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-146: A -> a: offers/automatic": [],
+      "random-146: A -> a: {\"destination\":\"a\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"journals/2026_10_27.md\", \"pages/A.md\", \"pages/N%2Fy.md\"], Tine [\"journals/2026_10_27.md\", \"pages/N%2Fy.md\", \"pages/a.md\"]"
+      ],
+      "random-147: 2026-10-26 -> a: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-147: 2026-10-26 -> a: {\"destination\":\"a\",\"survivor\":\"pages/a.md\"}": [
+        "G4/B3 fixed-day source: \"2026-10-26\" was executed as an ordinary merge; Native15c rejects source selection (day-content moves are separate)"
+      ],
+      "random-148: N/y -> n/z: offers/automatic": [],
+      "random-148: N/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-149: n/y -> 2026-10-26: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-149: n/y -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":\"pages/2026-10-26.md\"}": [],
+      "random-14: A -> B: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-14: A -> B: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "random-150: n/y -> n: offers/automatic": [],
+      "random-150: n/y -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-151: n/y -> n: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-151: n/y -> n: {\"destination\":\"n\",\"survivor\":\"pages/n.md\"}": [],
+      "random-152: n/y -> Z/w: offers/automatic": [],
+      "random-152: n/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-153: x -> 2026-10-26: offers/automatic": [],
+      "random-153: x -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-154: a -> 2026-10-26: offers/automatic": [],
+      "random-154: a -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-155: N/y -> Z/w: offers/automatic": [],
+      "random-155: N/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-156: n/y -> 2026-10-26: offers/automatic": [],
+      "random-156: n/y -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-157: N/y -> Z/w: offers/automatic": [],
+      "random-157: N/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-158: n/y -> B: offers/automatic": [],
+      "random-158: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-159: n -> x: offers/automatic": [],
+      "random-159: n -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-15: n/y -> 2026-10-26: offers/automatic": [],
+      "random-15: n/y -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-160: A -> a: offers/automatic": [],
+      "random-160: A -> a: {\"destination\":\"a\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"journals/2026_10_27.md\", \"pages/A.md\", \"pages/n.md\"], Tine [\"journals/2026_10_27.md\", \"pages/a.md\", \"pages/n.md\"]"
+      ],
+      "random-161: n/y -> x: offers/automatic": [],
+      "random-161: n/y -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-162: 2026-10-26 -> A: offers/automatic": [],
+      "random-162: 2026-10-26 -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-163: x -> n: offers/automatic": [],
+      "random-163: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-164: 2026-10-26 -> x: offers/automatic": [],
+      "random-164: 2026-10-26 -> x: {\"destination\":\"Oct 26th, 2026\",\"survivor\":null}": [],
+      "random-164: 2026-10-26 -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-165: n/y -> x: offers/automatic": [],
+      "random-165: n/y -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-166: B -> Z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-166: B -> Z: {\"destination\":\"Z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-167: x -> B: offers/automatic": [],
+      "random-167: x -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-168: a -> n/z: offers/automatic": [],
+      "random-168: a -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-169: A -> n/y: offers/automatic": [],
+      "random-169: A -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-16: A -> a: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"a\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-16: A -> a: {\"destination\":\"a\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-170: B -> x: offers/automatic": [],
+      "random-170: B -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-171: 2026-10-26 -> n/z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-171: 2026-10-26 -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-172: A -> Z: offers/automatic": [],
+      "random-172: A -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-173: x -> B: offers/automatic": [],
+      "random-173: x -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-174: x -> B: offers/automatic": [],
+      "random-174: x -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-175: x -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null},{\"destination\":\"n\",\"survivor\":\"pages/n.md\"}], Tine [{\"destination\":\"n\",\"survivor\":\"pages/n.md\"},{\"destination\":\"n/y\",\"survivor\":null}]"
+      ],
+      "random-175: x -> n/y: {\"destination\":\"n\",\"survivor\":\"pages/n.md\"}": [
+        "G3/B4: chosen substitution \"n\", typed \"n/y\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
+      ],
+      "random-175: x -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-176: n -> A: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"a\",\"survivor\":null}]"
+      ],
+      "random-176: n -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-176: n -> A: {\"destination\":\"a\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-177: N/y -> a: offers/automatic": [],
+      "random-177: N/y -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-177: N/y -> a: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-178: A -> n/z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-178: A -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-179: x -> n: offers/automatic": [],
+      "random-179: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-17: N/y -> A: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-17: N/y -> A: {\"destination\":\"A\",\"survivor\":\"pages/A.md\"}": [],
+      "random-180: n -> 2026-10-26: offers/automatic": [],
+      "random-180: n -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-181: a -> n/z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-181: a -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-182: n/y -> n: offers/automatic": [],
+      "random-182: n/y -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-183: N/y -> n/y: offers/automatic": [],
+      "random-183: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"journals/2026_10_27.md\", \"pages/N%2Fy.md\"], Tine [\"journals/2026_10_27.md\", \"pages/n%2Fy.md\"]"
+      ],
+      "random-184: A -> n/z: offers/automatic": [],
+      "random-184: A -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-185: a -> Z: offers/automatic": [],
+      "random-185: a -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-186: N/y -> B: offers/automatic": [],
+      "random-186: N/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-187: 2026-10-26 -> Z: offers/automatic": [],
+      "random-187: 2026-10-26 -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-188: A -> N/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"N/y\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-188: A -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-189: x -> A: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"A\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-189: x -> A: {\"destination\":\"A\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-18: B -> x: offers/automatic": [],
+      "random-18: B -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-190: a -> n: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-190: a -> n: {\"destination\":\"n\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-191: N/y -> A: offers/automatic": [],
+      "random-191: N/y -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-192: n -> N/y: offers/automatic": [],
+      "random-192: n -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
+      "random-193: n/y -> B: offers/automatic": [],
+      "random-193: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-194: x -> Z/w: offers/automatic": [],
+      "random-194: x -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-195: x -> Z: offers/automatic": [],
+      "random-195: x -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-196: A -> N/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"N/y\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-196: A -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-197: B -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null},{\"destination\":\"N/y\",\"survivor\":null}], Tine [{\"destination\":\"N/y\",\"survivor\":null}]"
+      ],
+      "random-197: B -> n/y: {\"destination\":\"N/y\",\"survivor\":null}": [
+        "G3/B4: ordered file projection journals/2026_10_26.md: model {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"n\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"tag\",\"N/y\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}, Tine {\"aliases\":[],\"blocks\":[{\"level\":1,\"occ\":[],\"stored\":[]},{\"level\":1,\"occ\":[[\"link\",\"n\"]],\"stored\":[]},{\"level\":1,\"occ\":[[\"tag\",\"n/y\"]],\"stored\":[]}],\"name\":\"Oct 26th, 2026\"}"
+      ],
+      "random-197: B -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-198: n -> a: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"a\",\"survivor\":\"pages/A.md\"},{\"destination\":\"A\",\"survivor\":\"pages/A.md\"}], Tine [{\"destination\":\"A\",\"survivor\":\"pages/A.md\"}]"
+      ],
+      "random-198: n -> a: {\"destination\":\"A\",\"survivor\":\"pages/A.md\"}": [
+        "G3/B4: chosen substitution \"A\", typed \"a\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
+      ],
+      "random-198: n -> a: {\"destination\":\"a\",\"survivor\":\"pages/A.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-199: n -> n/y: offers/automatic": [],
+      "random-199: n -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-19: B -> A: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"A\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-19: B -> A: {\"destination\":\"A\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-1: 2026-10-26 -> a: offers/automatic": [],
+      "random-1: 2026-10-26 -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-20: B -> n/y: offers/automatic": [],
+      "random-20: B -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-21: a -> Z/w: offers/automatic": [],
+      "random-21: a -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-22: N/y -> a: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-22: N/y -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-23: 2026-10-26 -> Z: offers/automatic": [],
+      "random-23: 2026-10-26 -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-24: x -> n: offers/automatic": [],
+      "random-24: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-25: a -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/y\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-25: a -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-26: n/y -> B: offers/automatic": [],
+      "random-26: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-27: N/y -> n/z: offers/automatic": [],
+      "random-27: N/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-28: N/y -> a: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"a\",\"survivor\":\"pages/A.md\"},{\"destination\":\"A\",\"survivor\":\"pages/A.md\"}], Tine [{\"destination\":\"A\",\"survivor\":\"pages/A.md\"}]"
+      ],
+      "random-28: N/y -> a: {\"destination\":\"A\",\"survivor\":\"pages/A.md\"}": [],
+      "random-28: N/y -> a: {\"destination\":\"a\",\"survivor\":\"pages/A.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-29: x -> A: offers/automatic": [],
+      "random-29: x -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-2: x -> B: offers/automatic": [],
+      "random-2: x -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-30: B -> Z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-30: B -> Z: {\"destination\":\"Z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-31: a -> n/z: offers/automatic": [],
+      "random-31: a -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-32: n -> A: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"A\",\"survivor\":\"pages/a.md\"},{\"destination\":\"a\",\"survivor\":\"pages/a.md\"}], Tine [{\"destination\":\"a\",\"survivor\":\"pages/a.md\"}]"
+      ],
+      "random-32: n -> A: {\"destination\":\"A\",\"survivor\":\"pages/a.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-32: n -> A: {\"destination\":\"a\",\"survivor\":\"pages/a.md\"}": [
+        "G3/B4: chosen substitution \"a\", typed \"A\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
+      ],
+      "random-33: a -> 2026-10-26: offers/automatic": [],
+      "random-33: a -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-34: n -> Z: offers/automatic": [],
+      "random-34: n -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-35: x -> Z/w: offers/automatic": [],
+      "random-35: x -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-36: 2026-10-26 -> A: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"A\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-36: 2026-10-26 -> A: {\"destination\":\"A\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-37: n/y -> N/y: offers/automatic": [],
+      "random-37: n/y -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"journals/2026_10_26.md\", \"pages/2026-10-26.md\"], Tine [\"journals/2026_10_26.md\", \"pages/N%2Fy.md\"]"
+      ],
+      "random-38: n -> 2026-10-26: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-38: n -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":\"pages/2026-10-26.md\"}": [],
+      "random-39: x -> N/y: offers/automatic": [],
+      "random-39: x -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
+      "random-3: N/y -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":\"pages/2026-10-26.md\"},{\"destination\":\"x\",\"survivor\":\"pages/B.md\"}], Tine [{\"destination\":\"2026-10-26\",\"survivor\":\"pages/2026-10-26.md\"}]"
+      ],
+      "random-3: N/y -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":\"pages/2026-10-26.md\"}": [],
+      "random-3: N/y -> 2026-10-26: {\"destination\":\"x\",\"survivor\":\"pages/B.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-40: x -> Z: offers/automatic": [],
+      "random-40: x -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-41: x -> n/z: offers/automatic": [],
+      "random-41: x -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-42: B -> n/z: offers/automatic": [],
+      "random-42: B -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-43: x -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/y\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-43: x -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-44: n/y -> x: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-44: n/y -> x: {\"destination\":\"x\",\"survivor\":\"pages/x.md\"}": [],
+      "random-45: x -> n: offers/automatic": [],
+      "random-45: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-46: x -> n: offers/automatic": [],
+      "random-46: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-47: B -> A: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"A\",\"survivor\":null}]"
+      ],
+      "random-47: B -> A: {\"destination\":\"A\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-48: x -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":null},{\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}], Tine [{\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}]"
+      ],
+      "random-48: x -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-48: x -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [],
+      "random-49: 2026-10-26 -> B: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"B\",\"survivor\":null},{\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}], Tine [{\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"},{\"destination\":\"B\",\"survivor\":null}]"
+      ],
+      "random-49: 2026-10-26 -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-49: 2026-10-26 -> B: {\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
+        "G4/B3 fixed-day source: \"2026-10-26\" was executed as an ordinary merge; Native15c rejects source selection (day-content moves are separate)"
+      ],
+      "random-4: x -> B: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-4: x -> B: {\"destination\":\"B\",\"survivor\":\"pages/B.md\"}": [],
+      "random-50: n -> A: offers/automatic": [],
+      "random-50: n -> A: {\"destination\":\"A\",\"survivor\":\"pages/A.md\"}": [],
+      "random-51: N/y -> x: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-51: N/y -> x: {\"destination\":\"x\",\"survivor\":\"pages/a.md\"}": [],
+      "random-52: x -> Z: offers/automatic": [],
+      "random-52: x -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-53: a -> x: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"x\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
+      ],
+      "random-53: a -> x: {\"destination\":\"x\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-54: x -> N/y: offers/automatic": [],
+      "random-54: x -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
+      "random-55: x -> N/y: offers/automatic": [],
+      "random-55: x -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
+      "random-56: B -> n/y: offers/automatic": [],
+      "random-56: B -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-57: a -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}]"
+      ],
+      "random-57: a -> n/y: {\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Merged); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-58: N/y -> Z: offers/automatic": [],
+      "random-58: N/y -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-59: a -> n: offers/automatic": [],
+      "random-59: a -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-5: n/y -> N/y: offers/automatic": [],
+      "random-5: n/y -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"journals/2026_10_27.md\", \"pages/A.md\", \"pages/n%2Fy.md\", \"pages/x.md\"], Tine [\"journals/2026_10_27.md\", \"pages/A.md\", \"pages/N%2Fy.md\", \"pages/x.md\"]"
+      ],
+      "random-60: x -> Z/w: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z/w\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-60: x -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-61: x -> Z/w: offers/automatic": [],
+      "random-61: x -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-62: N/y -> n/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n/y\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: the file pages/n%2Fy.md belongs to the page “B”; rename or merge that page first\")"
+      ],
+      "random-62: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-63: x -> n: offers/automatic": [],
+      "random-63: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-64: a -> N/y: offers/automatic": [],
+      "random-64: a -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
+      "random-65: n -> 2026-10-26: offers/automatic": [],
+      "random-65: n -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-66: a -> A: offers/automatic": [],
+      "random-66: a -> A: {\"destination\":\"A\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"pages/N%2Fy.md\", \"pages/a.md\"], Tine [\"pages/A.md\", \"pages/N%2Fy.md\"]",
+        "G6/B3: computed after-query 0: model [{\"block\":[\"pages/a.md\",0]}], actual writer [{\"block\":[\"pages/A.md\",0]}]"
+      ],
+      "random-66: a -> A: {\"destination\":\"N/y\",\"survivor\":\"pages/N%2Fy.md\"}": [],
+      "random-67: x -> n: offers/automatic": [],
+      "random-67: x -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-68: N/y -> n/y: offers/automatic": [],
+      "random-68: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"pages/N%2Fy.md\"], Tine [\"pages/n%2Fy.md\"]"
+      ],
+      "random-69: N/y -> Z: offers/automatic": [],
+      "random-69: N/y -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-6: 2026-10-26 -> n/z: offers/automatic": [],
+      "random-6: 2026-10-26 -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-70: 2026-10-26 -> x: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-70: 2026-10-26 -> x: {\"destination\":\"x\",\"survivor\":\"pages/x.md\"}": [
+        "G4/B3 fixed-day source: \"2026-10-26\" was executed as an ordinary merge; Native15c rejects source selection (day-content moves are separate)"
+      ],
+      "random-71: A -> N/y: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"N/y\",\"survivor\":\"pages/n%2Fy.md\"},{\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}], Tine [{\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}]"
+      ],
+      "random-71: A -> N/y: {\"destination\":\"N/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-71: A -> N/y: {\"destination\":\"n/y\",\"survivor\":\"pages/n%2Fy.md\"}": [
+        "G3/B4: chosen substitution \"n/y\", typed \"N/y\"; native admission rejects {\"assembly\":true,\"completeText\":false,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":false,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":true,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":true,\"uniquePaths\":true}"
+      ],
+      "random-72: 2026-10-26 -> x: offers/automatic": [],
+      "random-72: 2026-10-26 -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-73: N/y -> n/y: offers/automatic": [],
+      "random-73: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"pages/A.md\", \"pages/N%2Fy.md\", \"pages/n.md\"], Tine [\"pages/A.md\", \"pages/n%2Fy.md\", \"pages/n.md\"]"
+      ],
+      "random-74: 2026-10-26 -> A: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"A\",\"survivor\":\"pages/a.md\"},{\"destination\":\"a\",\"survivor\":\"pages/a.md\"}], Tine [{\"destination\":\"a\",\"survivor\":\"pages/a.md\"}]"
+      ],
+      "random-74: 2026-10-26 -> A: {\"destination\":\"A\",\"survivor\":\"pages/a.md\"}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-74: 2026-10-26 -> A: {\"destination\":\"a\",\"survivor\":\"pages/a.md\"}": [
+        "G4/B3 fixed-day source: \"2026-10-26\" was executed as an ordinary merge; Native15c rejects source selection (day-content moves are separate)"
+      ],
+      "random-75: N/y -> n/y: offers/automatic": [],
+      "random-75: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"pages/N%2Fy.md\"], Tine [\"pages/n%2Fy.md\"]"
+      ],
+      "random-76: n/y -> n/z: offers/automatic": [],
+      "random-76: n/y -> n/z: {\"destination\":\"n/z\",\"survivor\":null}": [],
+      "random-77: A -> a: offers/automatic": [],
+      "random-77: A -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-78: n/y -> Z/w: offers/automatic": [],
+      "random-78: n/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-79: A -> Z: offers/automatic": [],
+      "random-79: A -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-7: a -> N/y: offers/automatic": [],
+      "random-7: a -> N/y: {\"destination\":\"N/y\",\"survivor\":null}": [],
+      "random-80: N/y -> x: offers/automatic": [],
+      "random-80: N/y -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-81: N/y -> n/y: offers/automatic": [],
+      "random-81: N/y -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [
+        "G6/B3: physical output paths: model [\"journals/2026_10_27.md\", \"pages/N%2Fy.md\", \"pages/a.md\"], Tine [\"journals/2026_10_27.md\", \"pages/a.md\", \"pages/n%2Fy.md\"]"
+      ],
+      "random-82: A -> n: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"n\",\"survivor\":null}], Tine []",
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"cannot rename: some links reach the journal Oct 26th, 2026 through this name; journals keep their names, so renaming would break those links\")"
+      ],
+      "random-82: A -> n: {\"destination\":\"n\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-83: n/y -> 2026-10-26: offers/automatic": [
+        "G3/B4: offered identities: model [{\"destination\":\"2026-10-26\",\"survivor\":null},{\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}], Tine [{\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}]"
+      ],
+      "random-83: n/y -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [
+        "G3/B4: safe candidate cannot be selected through the original request"
+      ],
+      "random-83: n/y -> 2026-10-26: {\"destination\":\"Oct 26th, 2026\",\"survivor\":\"journals/2026_10_26.md\"}": [
+        "G3/B4: chosen substitution \"Oct 26th, 2026\", typed \"2026-10-26\"; native admission rejects {\"assembly\":false,\"completeText\":true,\"givenDomain\":true,\"keyDomain\":true,\"mergeBodyOccurrences\":true,\"nativeAdmission\":false,\"nativeProjection\":true,\"originBytesAndLevels\":false,\"parserLocality\":true,\"pieceIds\":true,\"queryImages\":true,\"rewrite\":true,\"selection\":true,\"shape\":true,\"syntaxInsertions\":true,\"unchangedSaveClosure\":false,\"uniquePaths\":true}"
+      ],
+      "random-84: B -> Z/w: offers/automatic": [],
+      "random-84: B -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-85: N/y -> B: offers/automatic": [],
+      "random-85: N/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-86: n -> a: offers/automatic": [],
+      "random-86: n -> a: {\"destination\":\"a\",\"survivor\":null}": [],
+      "random-87: n/y -> B: offers/automatic": [],
+      "random-87: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-88: A -> Z: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-88: A -> Z: {\"destination\":\"Z\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+      ],
+      "random-89: n/y -> Z/w: offers/automatic": [],
+      "random-89: n/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],
+      "random-8: A -> n/y: offers/automatic": [],
+      "random-8: A -> n/y: {\"destination\":\"n/y\",\"survivor\":null}": [],
+      "random-90: n/y -> n: offers/automatic": [],
+      "random-90: n/y -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-91: x -> 2026-10-26: offers/automatic": [],
+      "random-91: x -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-91: x -> 2026-10-26: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-92: 2026-10-26 -> x: offers/automatic": [
+        "G9/B6: unattended cardinality 1: model allowed=true, Tine Err(\"target page identity already exists elsewhere in the graph\")"
+      ],
+      "random-92: 2026-10-26 -> x: {\"destination\":\"x\",\"survivor\":\"pages/x.md\"}": [
+        "G4/B3 fixed-day source: \"2026-10-26\" was executed as an ordinary merge; Native15c rejects source selection (day-content moves are separate)"
+      ],
+      "random-93: N/y -> A: offers/automatic": [],
+      "random-93: N/y -> A: {\"destination\":\"A\",\"survivor\":null}": [],
+      "random-94: B -> Z: offers/automatic": [],
+      "random-94: B -> Z: {\"destination\":\"Z\",\"survivor\":null}": [],
+      "random-95: n -> x: offers/automatic": [],
+      "random-95: n -> x: {\"destination\":\"x\",\"survivor\":null}": [],
+      "random-96: N/y -> n: offers/automatic": [],
+      "random-96: N/y -> n: {\"destination\":\"n\",\"survivor\":null}": [],
+      "random-97: n/y -> B: offers/automatic": [],
+      "random-97: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
+      "random-98: x -> Z/w: offers/automatic": [
+        "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z/w\",\"survivor\":null}]",
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+      ],
+      "random-98: x -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [
+        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":true,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":false}"
+      ],
+      "random-99: n -> 2026-10-26: offers/automatic": [],
+      "random-99: n -> 2026-10-26: {\"destination\":\"2026-10-26\",\"survivor\":null}": [],
+      "random-9: N/y -> n: offers/automatic": [],
+      "random-9: N/y -> n: {\"destination\":\"n\",\"survivor\":null}": []
+    },
+    "harnessSkipped": [],
+    "random": {},
+    "randomGraphs": 0
+  },
   "renameR13": {
     "fixtures": {
       "n6-title-rename: Custom Name -> custom: offers/automatic": [],

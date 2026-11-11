@@ -289,7 +289,7 @@ fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
     pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
     let merged = read(&root, "pages/dst.md");
     assert!(merged.starts_with("note:: kept\n"), "{merged}");
-    assert!(merged.contains("- title:: Source"), "{merged}");
+    assert!(merged.contains("-\n  title:: Source"), "{merged}");
     let graph = store.whole_graph().unwrap();
     assert!(matches!(
         graph.resolve("dst", false),
@@ -446,7 +446,7 @@ fn org_merge_keeps_the_source_directives() {
     assert_eq!(
         merged,
         "#+ALIAS: Kept, Former\n#+CATEGORY: home\n* survivor block\n\
-         * \n#+BEGIN_QUOTE\n#+TITLE: Old\n#+ALIAS: Former\n#+CATEGORY: work\nfree text\n#+END_QUOTE\n* source block\n"
+         *\n#+BEGIN_QUOTE\n#+TITLE: Old\n#+ALIAS: \n#+CATEGORY: work\n#+END_QUOTE\n* free text\n* source block\n"
     );
     let graph = store.whole_graph().unwrap();
     for name in ["New", "Former", "Kept"] {

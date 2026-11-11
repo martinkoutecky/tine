@@ -3,6 +3,280 @@ use std::{fs, sync::Arc};
 use tine_graph_features::pages;
 use tine_store::Store;
 
+#[test]
+fn preamble_prose_keeps_its_body_row_through_merge_and_saves() {
+    let _guard = crate::integration_lock();
+    for (org, ending) in [(false, "\n"), (false, "\r\n"), (true, "\n"), (true, "\r\n")] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        let ext = if org { "org" } else { "md" };
+        let source = format!("pages/src.{ext}");
+        let target = format!("pages/dst.{ext}");
+        let (source_text, target_text) = if org {
+            (
+                "#+title: src\n{{query [[A]]}}\n* source\n",
+                "#+alias: Kept\ntarget prose\n* target\n",
+            )
+        } else {
+            (
+                "title:: src\n{{query [[A]]}}\n- source\n",
+                "alias:: Kept\ntarget prose\n- target\n",
+            )
+        };
+        fs::write(dir.path().join(&source), source_text.replace('\n', ending)).unwrap();
+        fs::write(dir.path().join(&target), target_text.replace('\n', ending)).unwrap();
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let host = crate::test_host(&store);
+        pages::merge_pages(&store, &host, &source, &target).unwrap();
+        let id = tine_core::model::PageId::from(target.as_str());
+        let bytes = fs::read_to_string(dir.path().join(&target)).unwrap();
+        let raw = |s: &str| format!("{s}{}", if org && ending == "\r\n" { "\r" } else { "" });
+        for _ in 0..2 {
+            let loaded = store.page(&id).unwrap();
+            assert_eq!(loaded.doc.blocks[0].raw, raw("target prose"));
+            assert_eq!(loaded.doc.blocks[1].raw, raw("target"));
+            assert_eq!(loaded.doc.blocks[3].raw, raw("{{query [[A]]}}"));
+            assert_eq!(loaded.doc.blocks[4].raw, raw("source"));
+            assert_eq!(loaded.doc.blocks.len(), 5);
+            crate::test_host_writer::save_on(
+                &host,
+                &store,
+                tine_store::EditKind::SaveBlock,
+                &id,
+                tine_store::SaveBase::Existing(loaded.rev),
+                &loaded.doc,
+            )
+            .unwrap();
+            assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), bytes);
+        }
+        drop(host);
+        drop(store);
+        let reopened = Store::open(dir.path(), Default::default()).unwrap().0;
+        assert_eq!(
+            reopened.page(&id).unwrap().doc.blocks[3].raw,
+            raw("{{query [[A]]}}")
+        );
+    }
+}
+
+#[test]
+fn inert_leftover_survives_two_guarded_saves_and_reopen() {
+    let _guard = crate::integration_lock();
+    for (org, ending) in [(false, "\n"), (false, "\r\n"), (true, "\n"), (true, "\r\n")] {
+        for headerless in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir(dir.path().join("pages")).unwrap();
+            let ext = if org { "org" } else { "md" };
+            let source = format!("pages/src.{ext}");
+            let target = format!("pages/dst.{ext}");
+            fs::write(
+                dir.path().join(&source),
+                (if org {
+                    "#+title: src\n"
+                } else {
+                    "title:: src\n"
+                })
+                .replace('\n', ending),
+            )
+            .unwrap();
+            fs::write(
+                dir.path().join(&target),
+                (if headerless {
+                    if org {
+                        "* kept\n"
+                    } else {
+                        "- kept\n"
+                    }
+                } else {
+                    ""
+                })
+                .replace('\n', ending),
+            )
+            .unwrap();
+            let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+            let host = crate::test_host(&store);
+            pages::merge_pages(&store, &host, &source, &target).unwrap();
+            let id = store
+                .as_page(
+                    &store
+                        .file_id(tine_store::Area::Pages, &format!("dst.{ext}"))
+                        .unwrap(),
+                )
+                .unwrap();
+            if headerless {
+                let mut loaded = store.page(&id).unwrap();
+                loaded.doc.blocks.remove(0);
+                crate::test_host_writer::save_on(
+                    &host,
+                    &store,
+                    tine_store::EditKind::DeleteBlocks,
+                    &id,
+                    tine_store::SaveBase::Existing(loaded.rev),
+                    &loaded.doc,
+                )
+                .unwrap();
+            }
+            let bytes = fs::read_to_string(dir.path().join(&target)).unwrap();
+            for _ in 0..2 {
+                let loaded = store.page(&id).unwrap();
+                crate::test_host_writer::save_on(
+                    &host,
+                    &store,
+                    tine_store::EditKind::SaveBlock,
+                    &id,
+                    tine_store::SaveBase::Existing(loaded.rev),
+                    &loaded.doc,
+                )
+                .unwrap();
+                assert_eq!(fs::read_to_string(dir.path().join(&target)).unwrap(), bytes);
+                assert_eq!(store.page(&id).unwrap().doc.name, "dst");
+            }
+            drop(host);
+            drop(store);
+            let reopened = Store::open(dir.path(), Default::default()).unwrap().0;
+            assert_eq!(reopened.page(&id).unwrap().doc.name, "dst");
+        }
+    }
+}
+
+#[test]
+fn tag_alias_name_cuts_keep_hash_and_existing_wrappers() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for token in ["#src", "#[[src]]"] {
+            for destination in ["dst", "two words"] {
+                for target_alias in [false, true] {
+                    let (key, bullet) = if org {
+                        ("#+alias: ", "*")
+                    } else {
+                        ("alias:: ", "-")
+                    };
+                    let alias = format!("{key}{token}\n");
+                    let source = format!(
+                        "{}{bullet} source\n",
+                        if target_alias { "" } else { &alias }
+                    );
+                    let target = format!(
+                        "{}{bullet} target\n",
+                        if target_alias { &alias } else { "" }
+                    );
+                    let dir = tempfile::tempdir().unwrap();
+                    fs::create_dir(dir.path().join("pages")).unwrap();
+                    let ext = if org { "org" } else { "md" };
+                    let source_path = format!("pages/src.{ext}");
+                    let target_path = format!("pages/{destination}.{ext}");
+                    fs::write(dir.path().join(&source_path), &source).unwrap();
+                    fs::write(dir.path().join(&target_path), &target).unwrap();
+                    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+                    let source_id = tine_core::model::PageId::from(source_path.as_str());
+                    let target_id = tine_core::model::PageId::from(target_path.as_str());
+                    let map = std::collections::HashMap::from([("src".into(), destination.into())]);
+                    let proof = pages::merge_payload::propose(
+                        &store.page(&target_id).unwrap().doc,
+                        &target,
+                        &store.page(&source_id).unwrap().doc,
+                        &source,
+                        &map,
+                        &map,
+                        org,
+                        tine_core::config::FileNameFormat::Legacy,
+                    )
+                    .unwrap();
+                    let expected = if token.contains("[[") || destination.contains(' ') {
+                        format!("#[[{destination}]]")
+                    } else {
+                        format!("#{destination}")
+                    };
+                    assert!(proof.text.contains(&expected), "{}", proof.text);
+                    assert!(proof
+                        .trace
+                        .pieces
+                        .iter()
+                        .enumerate()
+                        .any(|(id, p)| !p.editable && proof.trace.original(id).contains('#')));
+                    proof
+                        .trace
+                        .check(&proof.text, &proof.trace.substitution)
+                        .unwrap();
+                    let host = crate::test_host(&store);
+                    pages::rename_page_as(
+                        &store,
+                        &host,
+                        "src",
+                        destination,
+                        None,
+                        pages::RenameChoice::MergeInto(&target_path),
+                        &[],
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        fs::read_to_string(dir.path().join(&target_path)).unwrap(),
+                        proof.text
+                    );
+                    assert!(!dir.path().join(&source_path).exists());
+                    if let Ok(output) = std::env::var("CM_MERGE_ORACLE") {
+                        let label = format!(
+                            "tag-{org}-{target_alias}-{}-{}.json",
+                            token.contains("[["),
+                            destination.contains(' ')
+                        );
+                        fs::write(std::path::Path::new(&output).join(label), serde_json::to_vec(&serde_json::json!({"text": proof.text, "org": org, "name": destination})).unwrap()).unwrap();
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn survivor_first_root_headers_keep_native_save_closure() {
+    let _guard = crate::integration_lock();
+    for target in [
+        "- alias:: Kept\n",
+        "- title:: other\n",
+        "- alias:: Kept\n  - child\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/src.md"), "- source\n").unwrap();
+        fs::write(dir.path().join("pages/dst.md"), target).unwrap();
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let host = crate::test_host(&store);
+        pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
+        let id = tine_core::model::PageId::from("pages/dst.md");
+        let bytes = fs::read_to_string(dir.path().join("pages/dst.md")).unwrap();
+        for _ in 0..2 {
+            let loaded = store.page(&id).unwrap();
+            crate::test_host_writer::save_on(
+                &host,
+                &store,
+                tine_store::EditKind::SaveBlock,
+                &id,
+                tine_store::SaveBase::Existing(loaded.rev),
+                &loaded.doc,
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read_to_string(dir.path().join("pages/dst.md")).unwrap(),
+                bytes
+            );
+            assert_eq!(store.page(&id).unwrap().doc.name, "dst");
+        }
+        drop(host);
+        drop(store);
+        assert_eq!(
+            Store::open(dir.path(), Default::default())
+                .unwrap()
+                .0
+                .page(&id)
+                .unwrap()
+                .doc
+                .name,
+            "dst"
+        );
+    }
+}
+
 fn merge(
     src: &str,
     dst: &str,
@@ -255,9 +529,9 @@ fn alias_union_uses_exact_spelling_and_protects_non_native_remainders() {
             ("b, c", "a, b", "a, b, c", None),
             ("x", "X", "X, x", None),
             ("b, b, c", "a, a, b", "a, b, c", None),
-            ("[[a, b]]", "kept", "kept, [[a, b]]", Some("[[a, b]]")),
-            ("[[a]]", "kept", "kept, a", Some("[[a]]")),
-            (" a", "kept", "kept, a", Some(" a")),
+            ("[[a, b]]", "kept", "kept, [[a, b]]", None),
+            ("[[a]]", "kept", "kept, [[a]]", None),
+            (" a", "kept", "kept, a", Some(" ")),
         ] {
             let src = format!("{key}{source}\n{bullet} source\n");
             let dst = format!("{key}{target}\n{bullet} target\n");
@@ -277,13 +551,30 @@ fn alias_union_uses_exact_spelling_and_protects_non_native_remainders() {
                 }
                 assert!(text.starts_with(&format!("{key}{active}\n")), "{text:?}");
                 if let Some(leftover) = leftover {
-                    assert!(text.contains(&format!("{key}{leftover}\n")), "{text:?}");
+                    let expected = if org {
+                        format!("*\n#+BEGIN_QUOTE\n{leftover}\n#+END_QUOTE\n")
+                    } else {
+                        format!("- {leftover}\n")
+                    };
+                    assert!(text.contains(&expected), "{text:?}");
                 }
+                assert!(
+                    proof.trace.output.iter().all(|p| match p {
+                        tine_core::text_trace::Placement::Original(_) => true,
+                        tine_core::text_trace::Placement::Insert(s) => s
+                            .replace("#+BEGIN_QUOTE", "")
+                            .replace("#+END_QUOTE", "")
+                            .chars()
+                            .all(|c| !c.is_alphanumeric()),
+                    }),
+                    "member names must be moved originals"
+                );
                 let graph = store.whole_graph().unwrap();
                 let tine_store::Resolved::Existing { id, .. } = graph.resolve("dst", false) else {
                     panic!()
                 };
                 let doc = store.page(&id).unwrap().doc;
+                assert_eq!(doc.blocks.len(), 2 + usize::from(leftover.is_some()));
                 let names = tine_core::page_header::page_alias_spellings(
                     doc.pre_block.as_deref(),
                     doc.blocks.first().map(|b| b.raw.as_str()),
@@ -417,7 +708,12 @@ fn first_root_headers_and_source_heading_style_are_realized_from_original_bytes(
         merge(source, target, false, |text, store, proof| {
             assert!(text.contains("- source\n"));
             if target.starts_with("- alias") {
-                assert!(text.starts_with("- alias:: Kept, Former\n"), "{text:?}");
+                let expected = if target.contains("child") {
+                    "- alias:: Kept, Former\n"
+                } else {
+                    "alias:: Kept, Former\n"
+                };
+                assert!(text.starts_with(expected), "{text:?}");
             }
             let graph = store.whole_graph().unwrap();
             for alias in ["Former", "Kept"]
@@ -472,7 +768,7 @@ fn org_title_after_a_clashing_directive_stays_inside_the_leftover_quote() {
         "#+TITLE: dst\n#+CATEGORY: target\n* target\n",
         true,
         |text, _, _| {
-            assert_eq!(text,"#+TITLE: dst\n#+CATEGORY: target\n* target\n* \n#+BEGIN_QUOTE\n#+CATEGORY: source\n#+TITLE: src\n#+END_QUOTE\n* source\n");
+            assert_eq!(text,"#+TITLE: dst\n#+CATEGORY: target\n* target\n*\n#+BEGIN_QUOTE\n#+CATEGORY: source\n#+TITLE: src\n#+END_QUOTE\n* source\n");
         },
     );
 }

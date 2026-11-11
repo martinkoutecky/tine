@@ -62,6 +62,9 @@ pub struct TextTrace {
     pub scope: HashSet<usize>,
     /// The legal span finder's rendering under this candidate's substitution.
     pub substitution: HashMap<usize, String>,
+    /// Paired native link inserts around a changed semantic name. Wrappers
+    /// already present in the input remain protected original pieces.
+    pub wrappers: HashSet<usize>,
     starts: HashMap<(usize, usize), usize>,
 }
 
@@ -192,6 +195,54 @@ impl TextTrace {
         Ok(out)
     }
 
+    /// Build an ordered rewrite image, distinct from merge assembly. O(pieces).
+    pub fn ordered_output(&mut self) {
+        self.output.clear();
+        for id in 0..self.pieces.len() {
+            if self.wrappers.contains(&id) {
+                self.output.push(Placement::Insert("[[".into()));
+            }
+            self.output.push(Placement::Original(id));
+            if self.wrappers.contains(&id) {
+                self.output.push(Placement::Insert("]]".into()));
+            }
+        }
+    }
+
+    /// Certify an ordered name rewrite. No relocation, consumption or assembly
+    /// punctuation is licensed here; only paired links around changed names.
+    /// O(input + output bytes + pieces), no I/O.
+    pub fn check_shadow(&self, output: &str) -> Result<(), TraceError> {
+        if !self.consumed.is_empty() {
+            return Err(TraceError::Consumption);
+        }
+        let mut at = 0;
+        for id in 0..self.pieces.len() {
+            let wrapped = matches!(self.output.get(at), Some(Placement::Insert(s)) if s == "[[");
+            at += usize::from(wrapped);
+            if !matches!(self.output.get(at), Some(Placement::Original(n)) if *n == id) {
+                return Err(TraceError::Partition);
+            }
+            at += 1;
+            if wrapped {
+                if !self.pieces[id].editable
+                    || self
+                        .substitution
+                        .get(&id)
+                        .is_none_or(|s| s == self.original(id))
+                    || !matches!(self.output.get(at), Some(Placement::Insert(s)) if s == "]]")
+                {
+                    return Err(TraceError::Substitution);
+                }
+                at += 1;
+            }
+        }
+        if at != self.output.len() {
+            return Err(TraceError::Output);
+        }
+        self.check(output, &self.substitution)
+    }
+
     /// Check `TraceValid` against the actual proposed output and substitution.
     pub fn check(&self, output: &str, m: &HashMap<usize, String>) -> Result<(), TraceError> {
         let mut offsets = vec![0; self.inputs.len()];
@@ -279,6 +330,33 @@ mod tests {
             .unwrap();
         t.output = (0..t.pieces.len()).map(Placement::Original).collect();
         t
+    }
+    #[test]
+    fn shadow_rejects_reversal_rotation_and_unpaired_or_nonname_insertions() {
+        let mut t = TextTrace::default();
+        t.add_input("owner", &[], &[1, 2, 3, 4]).unwrap();
+        for ids in [vec![4, 3, 2, 1, 0], vec![1, 2, 3, 4, 0]] {
+            t.output = ids.into_iter().map(Placement::Original).collect();
+            let output = t.render().unwrap();
+            assert!(
+                t.check(&output, &t.substitution).is_ok(),
+                "merge relocation is distinct"
+            );
+            assert!(t.check_shadow(&output).is_err());
+        }
+        t.ordered_output();
+        t.output.insert(0, Placement::Insert("_".into()));
+        assert!(t.check_shadow(&t.render().unwrap()).is_err());
+        t.ordered_output();
+        t.output.insert(0, Placement::Insert("[[".into()));
+        t.output.insert(2, Placement::Insert("]]".into()));
+        assert!(t.check_shadow(&t.render().unwrap()).is_err());
+        let mut t = trace();
+        t.wrappers.insert(1);
+        t.ordered_output();
+        assert_eq!(t.check_shadow("before [[New]] after"), Ok(()));
+        t.output.pop();
+        assert!(t.check_shadow(&t.render().unwrap()).is_err());
     }
     #[test]
     fn trace_valid_rejects_byte_loss_duplication_protected_edits_and_missing_substitution() {

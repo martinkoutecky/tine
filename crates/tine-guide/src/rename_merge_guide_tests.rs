@@ -7,6 +7,8 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "A page merge keeps both bodies' original text and layout",
         "clashing properties, including equal values",
         "Org source directives stay inside a quote",
+        "Saving it again keeps the survivor's name",
+        "Tag-shaped aliases keep their `#` and existing brackets",
         // GH #535: when an unsaved page still stops a rename, or a refusal
         // reads as arbitrary.
         "stops the rename only if the rename would change that page",
