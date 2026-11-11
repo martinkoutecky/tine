@@ -228,8 +228,8 @@ export function anchorQuote(parentRaw: string, selector: QuoteSelector, format: 
 
 // --- reading the format -----------------------------------------------------
 
-function propertyValue(properties: readonly (readonly [string, string])[], key: string): string | null {
-  for (const [k, v] of properties) if (propertyKeyNorm(k) === key) return v.trim();
+function propertyValue(properties: readonly (readonly [string, string])[], key: string, trim = true): string | null {
+  for (const [k, v] of properties) if (propertyKeyNorm(k) === key) return trim ? v.trim() : v;
   return null;
 }
 
@@ -246,7 +246,12 @@ export function quoteSelectorOf(properties: readonly (readonly [string, string])
 
 /** The block's `tine.author::`, or null for the graph owner (absent or empty). */
 export function authorOf(properties: readonly (readonly [string, string])[]): string | null {
-  return propertyValue(properties, AUTHOR_KEY) || null;
+  return storedAuthorOf(properties)?.trim() || null;
+}
+
+/** Stored author facet value for CSS attribution, including empty values; O(properties). */
+export function storedAuthorOf(properties: readonly (readonly [string, string])[]): string | null {
+  return propertyValue(properties, AUTHOR_KEY, false);
 }
 
 export function resolvedOf(properties: readonly (readonly [string, string])[]): boolean {
