@@ -2286,6 +2286,8 @@ mod og_20d_guide_tests {
             "tine page current",
             "no-current-page",
             "block_url",
+            "block that has an `id::` has focus",
+            "has `block_url: null`",
             "--output PARENT",
             "absolute path",
             "refuses to replace",

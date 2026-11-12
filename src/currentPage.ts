@@ -1,6 +1,7 @@
 import { backend } from "./backend";
 import { captureBinding } from "./binding";
 import { blockLink, isTineLinkId, pageLink } from "./deepLinks";
+import { authoredBlockId } from "./document";
 import { editingId } from "./editorController";
 import type { CurrentPage } from "./nativeTineLinks";
 import { ownedWhen, readOwned, readOwnedResource } from "./owned";
@@ -9,22 +10,23 @@ import { activeElement, activeWindowId } from "./windowRealm";
 
 /** Snapshot the most recently focused graph window's active pane, whether or not
  * Tine has OS focus now (the asking script's app usually has it). O(route/URL bytes + DOM depth),
- * no graph I/O, mutation or rendering. The rendered editor supplies the existing
- * external block identity; another pane's retained edit is not focus. */
+ * no graph I/O, mutation or rendering. The block link is the editing block's
+ * authored `id::` only: a runtime key changes at the next load and would be a
+ * link that silently stops resolving. Another pane's retained edit is not focus. */
 export function currentPage(): CurrentPage {
   const router = focusedRouterOf(activeWindowId());
   const route = router.route();
   if (route.kind !== "page" && route.kind !== "journals") return { kind: "no-current-page", reason: "not-page" };
   const element = activeElement();
   const block = element?.closest("[data-block-id]");
-  const id = block?.getAttribute("data-block-id");
-  const editing = id && id === editingId()
+  const key = block?.getAttribute("data-block-id");
+  const editing = key && key === editingId()
     && element?.closest("[data-pane-id]")?.getAttribute("data-pane-id") === router.paneId;
-  const blockId = editing ? block?.getAttribute("data-block-ref") : null;
   const name = route.kind === "page" ? route.name
     : editing ? element?.closest("[data-page-name]")?.getAttribute("data-page-name") : null;
   if (!name) return { kind: "no-current-page", reason: "journals" };
-  const block_url = blockId && isTineLinkId(blockId) ? blockLink(blockId) : null;
+  const authored = editing && key ? authoredBlockId(key) : null;
+  const block_url = authored && isTineLinkId(authored) ? blockLink(authored) : null;
   return { kind: "current-page", name, url: pageLink(name), block_url };
 }
 

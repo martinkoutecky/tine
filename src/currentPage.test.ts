@@ -5,6 +5,7 @@ const state = vi.hoisted(() => ({
   focused: true, window: "main", route: { kind: "page", name: "日本 / A?#%", pageKind: "page" } as Route,
   editing: null as string | null, element: null as Element | null,
   page: "日本 / A?#%", sourcePage: "日本 / A?#%", generation: 7,
+  authored: null as string | null,
 }));
 const api = vi.hoisted(() => ({
   onCurrentPageRequest: vi.fn(), currentPageAnswer: vi.fn(async () => {}),
@@ -18,21 +19,23 @@ vi.mock("./windowRealm", () => ({
   activeWindowId: () => state.window, activeElement: () => state.element,
 }));
 vi.mock("./editorController", () => ({ editingId: () => state.editing }));
-vi.mock("./document", () => ({ node: () => ({ page: state.sourcePage }) }));
+vi.mock("./document", () => ({ node: () => ({ page: state.sourcePage }), authoredBlockId: () => state.authored }));
 import { currentPage, subscribeCurrentPage } from "./currentPage";
 import { focusedRouterOf } from "./panes";
 
 const uuid = "11111111-1111-4111-8111-111111111111";
-function focusEditor(pane = "focused-pane", external = uuid) {
-  state.editing = uuid;
+/** Focus the editor of a block whose text carries `authored` as its `id::` (null: none). */
+function focusEditor(pane = "focused-pane", authored: string | null = uuid) {
+  state.editing = "runtime-key";
+  state.authored = authored;
   state.element = {
     closest: (selector: string) => ({ getAttribute: (key: string) =>
-      selector === "[data-pane-id]" ? pane : selector === "[data-page-name]" ? state.page : key === "data-block-ref" ? external : state.editing }),
+      selector === "[data-pane-id]" ? pane : selector === "[data-page-name]" ? state.page : state.editing }),
   } as unknown as Element;
 }
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.assign(state, { focused: true, window: "main", editing: null, element: null,
+  Object.assign(state, { focused: true, window: "main", editing: null, element: null, authored: null,
     page: "日本 / A?#%", sourcePage: "日本 / A?#%", generation: 7,
     route: { kind: "page", name: "日本 / A?#%", pageKind: "page" } });
 });
@@ -57,10 +60,14 @@ describe("current page snapshot", () => {
     state.focused = false;
     expect(currentPage()).toMatchObject({ kind: "current-page", name: state.page });
   });
-  it("still answers the page for a new block with only a transient key", () => {
-    focusEditor("focused-pane", "b-new-block");
+  it("prints no block link for a block without an authored id, whatever its runtime key", () => {
+    focusEditor("focused-pane", null);
     expect(currentPage()).toMatchObject({ kind: "current-page", name: state.page, block_url: null });
     expect(api.identity).not.toHaveBeenCalled();
+  });
+  it("prints no block link for an authored id that is not a UUID", () => {
+    focusEditor("focused-pane", "not-a-uuid");
+    expect(currentPage()).toMatchObject({ kind: "current-page", block_url: null });
   });
   it.each(["all-pages", "query", "pdf", "conflicts"])("reports the %s view as a typed absence", (kind) => {
     state.route = { kind } as Route;

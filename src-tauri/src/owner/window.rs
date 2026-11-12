@@ -420,6 +420,103 @@ mod current_page_tests {
         assert!(requests.0.lock().unwrap().is_empty());
     }
 
+    /// PC-3 for the whole successful window request: the owner's question to
+    /// the frontend and the frontend's answer are the only work. The frontend
+    /// is a second thread answering through `answer`, as the webview answers
+    /// through its command. Below that, the store spends nothing: no read,
+    /// parse, listing, stamp, write or sync, no Store opened. Its lower bound
+    /// is one channel send and one receive, microseconds; the budget catches a
+    /// graph scan, a sleep, or a retry loop, not noise. The counters are
+    /// process-global: the case runs in a child process of its own.
+    #[test]
+    fn a_successful_current_page_request_is_one_question_one_answer_and_no_graph_work() {
+        const CHILD: &str = "TINE_CURRENT_PAGE_COST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
+                .args([
+                    "--exact",
+                    "owner::window::current_page_tests::a_successful_current_page_request_is_one_question_one_answer_and_no_graph_work",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            let (out, err) = (
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert!(output.status.success(), "{out}\n{err}");
+            assert!(
+                out.contains("1 passed"),
+                "the child ran no case:\n{out}\n{err}"
+            );
+            return;
+        }
+        const REQUESTS: u32 = 200;
+        const BUDGET: Duration = Duration::from_millis(50);
+        let requests = std::sync::Arc::new(CurrentPageRequests::default());
+        let (to_frontend, from_owner) = mpsc::channel::<u64>();
+        let answers = std::sync::Arc::new(AtomicU64::new(0));
+        let frontend = {
+            let (requests, answers) = (requests.clone(), answers.clone());
+            std::thread::spawn(move || {
+                for id in from_owner {
+                    answers.fetch_add(1, Ordering::Relaxed);
+                    requests.deliver_current_page(
+                        id,
+                        CurrentPage::CurrentPage {
+                            name: "日本 / Notes".into(),
+                            url: "tine://page/%E6%97%A5%E6%9C%AC%20%2F%20Notes".into(),
+                            block_url: Some(
+                                "tine://block/92500000-0000-4000-8000-000000000001".into(),
+                            ),
+                        },
+                    );
+                }
+            })
+        };
+        let questions = AtomicU64::new(0);
+        tine_store::cost_counters::reset();
+        let mut slowest = Duration::ZERO;
+        for _ in 0..REQUESTS {
+            let started = std::time::Instant::now();
+            let payload = requests
+                .ask_current_page(|id| {
+                    questions.fetch_add(1, Ordering::Relaxed);
+                    to_frontend.send(id).unwrap();
+                    Ok(())
+                })
+                .unwrap();
+            slowest = slowest.max(started.elapsed());
+            assert_eq!(payload["kind"], "current-page");
+            assert_eq!(payload["name"], "日本 / Notes");
+        }
+        drop(to_frontend);
+        frontend.join().unwrap();
+        println!("{REQUESTS} requests, slowest {slowest:?} (budget {BUDGET:?})");
+        assert_eq!(
+            questions.load(Ordering::Relaxed),
+            u64::from(REQUESTS),
+            "one question each"
+        );
+        assert_eq!(
+            answers.load(Ordering::Relaxed),
+            u64::from(REQUESTS),
+            "one answer each"
+        );
+        assert!(
+            requests.0.lock().unwrap().is_empty(),
+            "every request retires"
+        );
+        assert!(slowest < BUDGET, "slowest {slowest:?} over {BUDGET:?}");
+        assert_eq!(
+            format!("{:?}", tine_store::cost_counters::snapshot()),
+            format!("{:?}", tine_store::cost_counters::Counts::default()),
+            "no graph read, parse, listing, stamp, write or sync"
+        );
+    }
+
     #[test]
     fn current_page_question_answers_page_block_and_absence_once() {
         for page in [

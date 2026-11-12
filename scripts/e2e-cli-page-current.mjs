@@ -18,7 +18,7 @@ const graph = path.join(run, "graph");
 for (const sub of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, sub), { recursive: true });
 const uuid = "92500000-0000-4000-8000-000000000001";
 const file = path.join(graph, "pages/Current.md");
-const bytes = `- current block\n  id:: ${uuid}\n`;
+const bytes = `- current block\n  id:: ${uuid}\n- plain block\n`;
 fs.writeFileSync(file, bytes);
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:default-home {:page "Current"}}\n');
 const fixture = installAccountHome(run);
@@ -71,16 +71,41 @@ try {
   await browser.$(".page-title").click();
   assert.deepEqual(await current(), { schema: "tine.cli/1", kind: "current-page", name: "Current", url: "tine://page/Current", block_url: null });
   assert.equal(await current(0, false), "Current\ntine://page/Current\n");
-  // data-block-id is the session id, not the `id::` uuid; the page has exactly one block.
-  await browser.$(".ls-block .block-content-wrapper").click();
-  await browser.waitUntil(() => browser.execute(() => !!document.activeElement?.closest("[data-block-id]")), { timeout: 10_000 });
-  assert.equal((await current()).block_url, `tine://block/${uuid}`);
+  // data-block-id is the session id, not the `id::` uuid. Two blocks: the first authored, the second plain.
+  const focusBlock = async (index) => {
+    await (await browser.$$(".ls-block .block-content-wrapper"))[index].click();
+    await browser.waitUntil(() => browser.execute(() => !!document.activeElement?.closest("[data-block-id]")), { timeout: 10_000 });
+  };
+  await focusBlock(0);
+  // PC-3: one frontend answer per request, and the end-to-end budget.
+  await browser.execute(() => {
+    const internals = window.__TAURI_INTERNALS__;
+    if (internals.__pageCurrentCalls) return;
+    const invoke = internals.invoke.bind(internals);
+    internals.__pageCurrentCalls = [];
+    internals.invoke = (command, ...rest) => { internals.__pageCurrentCalls.push(command); return invoke(command, ...rest); };
+  });
+  const times = [];
+  let answers = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await browser.execute(() => { window.__TAURI_INTERNALS__.__pageCurrentCalls.length = 0; });
+    assert.equal((await current()).block_url, `tine://block/${uuid}`);
+    times.push(transcript.at(-1).milliseconds);
+    const calls = await browser.execute(() => [...window.__TAURI_INTERNALS__.__pageCurrentCalls]);
+    answers = calls.filter((command) => command === "owner_current_page_answer").length;
+    assert.equal(answers, 1, `one frontend answer per request: ${calls}`);
+  }
+  times.sort((a, b) => a - b);
+  assert(times[2] < 1500, `median ${times[2]} ms over the 1500 ms budget (lower bound: one socket exchange and one webview answer)`);
+  // A block without an authored id has no durable address: no link, and nothing written to make one.
+  await focusBlock(1);
+  assert.equal((await current()).block_url, null);
   await browser.$("button=All pages").click();
   assert.equal((await current(3)).reason, "not-page");
   assert.equal(fs.readFileSync(file, "utf8"), bytes);
   assert(!fs.existsSync(path.join(graph, "logseq/tine-graph-id")));
   fs.writeFileSync(path.join(run, "receipt.json"), JSON.stringify({ commit, passed: true, transcript }, null, 2));
-  console.log("PASS: current page, focused block, non-page view, text/JSON, and unchanged graph bytes");
+  console.log("PASS: current page, authored/plain focused block, one answer and budget, non-page view, text/JSON, and unchanged graph bytes");
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(run, "failure.png")); } catch {}
   fs.writeFileSync(path.join(run, "failure.json"), JSON.stringify({ commit, journey: "CLI focused page", expected: "focused page/block or typed absence without graph I/O", observed: String(error), classification: "ambiguous", transcript }, null, 2));
