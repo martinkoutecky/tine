@@ -508,14 +508,24 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     let logbook =
         |b: &Block| matches!(b, Block::Drawer { name, .. } if name.eq_ignore_ascii_case("LOGBOOK"));
     let rest = blocks.get(1..).unwrap_or_default();
-    if !rest.iter().any(logbook)
-        && (rest.is_empty() || !rest.iter().all(|b| logbook(b) || parser_owned_row(b)))
-    {
+    // Blank paragraphs beside the rows (`TODO\n\nid:: x`, trailing blank
+    // lines before the next headline) do not count; at least one row must.
+    let rows_only = rest.iter().any(|b| !blank_paragraph(b))
+        && rest
+            .iter()
+            .all(|b| logbook(b) || parser_owned_row(b) || blank_paragraph(b));
+    // A CRLF page keeps each line's CR in the raw body (`TODO\r`), which lsdoc
+    // does not read as end of input; the title alone ends at that CR, so a
+    // CRLF bare task reads as its LF twin does.
+    let crlf_title = rest.iter().all(blank_paragraph)
+        && raw
+            .strip_suffix('\r')
+            .is_some_and(|title| !title.contains(['\n', '\r']));
+    if !rest.iter().any(logbook) && !rows_only && !crlf_title {
         return;
     }
-    let Some((title, _)) = raw.split_once('\n') else {
-        return;
-    };
+    let title = raw.split_once('\n').map_or(raw, |(title, _)| title);
+    let title = title.strip_suffix('\r').unwrap_or(title);
     let Some(Block::Bullet { marker, inline, .. } | Block::Heading { marker, inline, .. }) =
         blocks.first_mut()
     else {
@@ -568,6 +578,14 @@ fn parser_owned_row(block: &Block) -> bool {
         }
         _ => false,
     }
+}
+
+fn blank_paragraph(block: &Block) -> bool {
+    matches!(block, Block::Paragraph { inline, .. } if inline.iter().all(|i| match i {
+        Inline::Break { .. } => true,
+        Inline::Plain { text, .. } => text.trim().is_empty(),
+        _ => false,
+    }))
 }
 
 fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
@@ -737,6 +755,21 @@ mod preparation_tests {
             }
         }
         assert_eq!(task("TODO\nid:: 6679-abc", false), todo);
+        // Review r1: CRLF titles and blank lines beside the rows.
+        for (raw, is_org) in [
+            ("TODO\r", true),
+            ("TODO\r", false),
+            ("TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:", true),
+            ("TODO\r\nid:: x", false),
+            ("TODO\n\nid:: x", false),
+            ("TODO\n:PROPERTIES:\n:id: x\n:END:\n\n", true),
+            ("TODO\n:PROPERTIES:\n:id: x\n:END:\n\n", false),
+        ] {
+            assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
+        }
+        for (raw, is_org) in [("TODO\n\n", true), ("TODO\n\nbody\nid:: x", false)] {
+            assert_eq!(task(raw, is_org), None, "{is_org} {raw:?}");
+        }
     }
 
     #[test]

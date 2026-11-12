@@ -27,8 +27,10 @@ header, unrelated metadata/drawers/planning and literal source slices.
 A bare marker title (`TODO` with nothing after the marker) is a task when
 only property, planning or LOGBOOK rows follow it, or a LOGBOOK follows
 anywhere: the shared parse boundary (`lsdoc_block_parse::restore_bare_task`)
-decides it, so adding or removing those rows never changes the header. Body
-text after a bare title stays text, as in Logseq (REG-BARE-TASK-HIDDEN-ROWS).
+decides it, so adding or removing those rows never changes the header. Blank
+lines beside the rows do not count, and a CRLF title ends at its CR, so a CRLF
+bare task reads as its LF twin. Body text after a bare title stays text, as in
+Logseq (REG-BARE-TASK-HIDDEN-ROWS).
 
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.
