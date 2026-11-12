@@ -113,15 +113,16 @@ pub(super) fn serialize(
 /// of `doc`) the line terminators of `source` (K01a). `old` is `source` parsed:
 /// the Org firewall has proved `serialized`'s rule reproduces it, so `source`'s
 /// lines are `old`'s pre-block lines, then each block's lines in pre-order, then
-/// the trailing newline run. Blocks pair as Markdown's do ([`match_blocks`]): a
-/// block whose text is unchanged, wherever it moved and at whatever depth,
-/// keeps each of its lines' own terminators; a changed block takes the old
-/// terminators of the block it replaces line by line; a new line, and a reused
-/// line that was the file's unterminated last line, take the file's
-/// [`line_endings::convention`]. An unchanged pre-block keeps its own, a changed
-/// one positionally. LF-only sources are returned unchanged. Pure. Cost:
-/// O(lines) plus `match_blocks`' LCS over the changed middle of the block
-/// sequence (as a Markdown save).
+/// the trailing newline run.
+///
+/// Rule: a source whose terminators are all one kind gives every line that
+/// kind. Otherwise each new line takes the terminator of the old line it comes
+/// from, and a line from no old line takes [`line_endings::convention`]. Blocks
+/// pair as Markdown's do ([`match_blocks`]: unchanged ones wherever they moved,
+/// changed ones with the old block in their place), the pre-block with the old
+/// pre-block; within a pair, lines pair by [`pair_lines`]. The trailing newline
+/// run aligns from the end. Pure. Cost: O(lines) for a uniform or LF-only
+/// source; otherwise O(lines) plus capped LCS over the changed middles.
 pub(super) fn restore_org(
     serialized: String,
     doc: &Document,
@@ -132,6 +133,9 @@ pub(super) fn restore_org(
         return serialized;
     }
     let (lines, ends) = line_endings::pieces(source);
+    if let Some(&end) = ends.first().filter(|&&e| ends.iter().all(|&x| x == e)) {
+        return serialized.replace('\n', end);
+    }
     let pre_len = |d: &Document| {
         d.pre_block
             .as_ref()
@@ -160,41 +164,25 @@ pub(super) fn restore_org(
 
     let new: Vec<&str> = serialized.split('\n').collect();
     let mut origin: Vec<Option<usize>> = vec![None; new.len()];
-    let (new_pre, old_pre) = (pre_len(doc), pre_len(old));
-    for (k, slot) in origin.iter_mut().enumerate().take(new_pre) {
-        *slot = (k < old_pre).then_some(k);
+    let new_pre = pre_len(doc);
+    let mut place = |at: usize, start: usize, a: &str, b: &[&str]| {
+        let a: Vec<&str> = a.split('\n').collect();
+        for (k, i) in pair_lines(&a, b).into_iter().enumerate() {
+            if let Some(slot) = origin.get_mut(at + k) {
+                *slot = i.map(|i| start + i);
+            }
+        }
+    };
+    if let (Some(a), Some(b)) = (&old.pre_block, &doc.pre_block) {
+        let b = emitted_lines(b);
+        place(0, 0, &emitted_lines(a), &b.split('\n').collect::<Vec<_>>());
     }
     let mut at = new_pre;
     for (j, block) in news.iter().enumerate() {
         let text = emitted_lines(block.raw());
         let b: Vec<&str> = text.split('\n').collect();
-        if let Some(o) = keep[j].map(|o| &olds[o]) {
-            for k in 0..b.len() {
-                if let Some(slot) = origin.get_mut(at + k) {
-                    *slot = Some(o.start + k);
-                }
-            }
-        } else if let Some(o) = hint[j].map(|o| &olds[o]) {
-            // A changed block: its untouched head and tail lines keep their own
-            // terminators; the edited middle takes the old middle's
-            // terminators by position, and lines beyond it the convention.
-            let a: Vec<&str> = o.raw.split('\n').collect();
-            let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-            let room = a.len().min(b.len()) - head;
-            let tail = (a.iter().rev().zip(b.iter().rev()))
-                .take(room)
-                .take_while(|(x, y)| x == y)
-                .count();
-            for k in 0..b.len() {
-                let i = if k >= b.len() - tail {
-                    Some(a.len() - (b.len() - k))
-                } else {
-                    (k < a.len() - tail).then_some(k)
-                };
-                if let Some(slot) = origin.get_mut(at + k) {
-                    *slot = i.map(|i| o.start + i);
-                }
-            }
+        if let Some(o) = keep[j].or(hint[j]).map(|o| &olds[o]) {
+            place(at, o.start, o.raw, &b);
         }
         at += b.len();
     }
@@ -316,6 +304,8 @@ fn subtree_len(block: &DocBlock) -> usize {
 type Matches = (Vec<Option<usize>>, Vec<Option<usize>>);
 
 fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
+    #[cfg(test)]
+    BLOCK_MATCHES.with(|n| n.set(n.get() + 1));
     let (n, m) = (olds.len(), news.len());
     let mut keep = vec![None; m];
     let mut head = 0;
@@ -331,29 +321,9 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
     let (a, b) = (&olds[head..n - tail], &news[head..m - tail]);
     // Quadratic LCS only over the changed middle; a huge middle keeps the
     // unchanged prefix/suffix and re-renders the rest.
-    if !a.is_empty() && !b.is_empty() && a.len() * b.len() <= 4_000_000 {
-        let w = b.len() + 1;
-        let mut dp = vec![0u32; (a.len() + 1) * w];
-        for i in (0..a.len()).rev() {
-            for j in (0..b.len()).rev() {
-                dp[i * w + j] = if a[i].raw == b[j].raw() {
-                    dp[(i + 1) * w + j + 1] + 1
-                } else {
-                    dp[(i + 1) * w + j].max(dp[i * w + j + 1])
-                };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < a.len() && j < b.len() {
-            if a[i].raw == b[j].raw() {
-                keep[head + j] = Some(head + i);
-                i += 1;
-                j += 1;
-            } else if dp[(i + 1) * w + j] >= dp[i * w + j + 1] {
-                i += 1;
-            } else {
-                j += 1;
-            }
+    if a.len() * b.len() <= 4_000_000 {
+        for (i, j) in lcs(a.len(), b.len(), |i, j| a[i].raw == b[j].raw()) {
+            keep[head + j] = Some(head + i);
         }
     }
     // Changed blocks: pair unmatched old and new blocks positionally inside
@@ -382,6 +352,69 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
         }
     }
     (keep, hint)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// [`match_blocks`] calls on this thread, for the uniform-ending fast path test.
+    static BLOCK_MATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The index pairs `(i, j)` of a longest common subsequence of two sequences
+/// of lengths `n` and `m`, where `eq(i, j)` compares their items, in order.
+/// O(n·m) time and table; callers cap the product.
+fn lcs(n: usize, m: usize, eq: impl Fn(usize, usize) -> bool) -> Vec<(usize, usize)> {
+    let w = m + 1;
+    let mut dp = vec![0u32; (n + 1) * w];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i * w + j] = if eq(i, j) {
+                dp[(i + 1) * w + j + 1] + 1
+            } else {
+                dp[(i + 1) * w + j].max(dp[i * w + j + 1])
+            };
+        }
+    }
+    let (mut pairs, mut i, mut j) = (Vec::new(), 0, 0);
+    while i < n && j < m {
+        if eq(i, j) {
+            pairs.push((i, j));
+            i += 1;
+            j += 1;
+        } else if dp[(i + 1) * w + j] >= dp[i * w + j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    pairs
+}
+
+/// For each line of `b`, the line of `a` it comes from: equal lines pair by
+/// LCS (after the common head and tail; a middle over 4,096 line pairs gets
+/// no LCS), and inside each gap between equal pairs the unpaired lines pair by
+/// position (an edit in place); a new line past its gap's old lines is `None`.
+fn pair_lines(a: &[&str], b: &[&str]) -> Vec<Option<usize>> {
+    let head = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let room = a.len().min(b.len()) - head;
+    let tail = (a.iter().rev().zip(b.iter().rev()))
+        .take(room)
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (am, bm) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
+    let mut out: Vec<Option<usize>> = (0..head).map(Some).collect();
+    let anchors = match am.len() * bm.len() <= 4_096 {
+        true => lcs(am.len(), bm.len(), |i, j| am[i] == bm[j]),
+        false => Vec::new(),
+    };
+    let (mut pi, mut pj) = (0, 0);
+    for (i, j) in anchors.into_iter().chain([(am.len(), bm.len())]) {
+        out.extend((pj..j).map(|k| (pi + k - pj < i).then_some(head + pi + k - pj)));
+        out.extend((j < bm.len()).then_some(Some(head + i)));
+        (pi, pj) = (i + 1, j + 1);
+    }
+    out.extend((a.len() - tail..a.len()).map(Some));
+    out
 }
 
 /// Emit the preamble and, once, the separator before the first root: the old
@@ -600,6 +633,24 @@ mod org_terminator_tests {
         let mut doc = old.clone();
         edit(&mut doc);
         restore_org(serialize_org_detect(&doc, Some(source)), &doc, source, &old)
+    }
+
+    /// A source with one kind of terminator is restored without block or
+    /// line matching (a 2,000-block reversal would otherwise run the LCS).
+    #[test]
+    fn a_uniform_ending_save_does_no_matching() {
+        let matches = || super::BLOCK_MATCHES.with(std::cell::Cell::get);
+        let reversed = |d: &mut tine_core::doc::Document| d.roots.reverse();
+        let lines: Vec<String> = (0..2_000).map(|i| format!("* b{i}")).collect();
+        let before = matches();
+        let saved = save(&(lines.join("\r\n") + "\r\n"), reversed);
+        assert_eq!(matches(), before, "uniform CRLF matched blocks");
+        assert!(saved.starts_with("* b1999\r\n* b1998\r\n"));
+        assert_eq!(saved.matches("\r\n").count(), saved.matches('\n').count());
+        assert_eq!(save("* a\r* b\r", reversed), "* b\r* a\r");
+        assert_eq!(matches(), before, "uniform lone CR matched blocks");
+        assert_eq!(save("* a\r\n* b\n", reversed), "* b\n* a\r\n");
+        assert_eq!(matches(), before + 1, "a mixed source pairs blocks");
     }
 
     #[test]
