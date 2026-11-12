@@ -490,6 +490,15 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
     }
 }
 
+/// The block's title line, without its newline: it starts where the block
+/// boundary's leading trim ends (`\nTODO` is titled `TODO`). The one answer for
+/// the bare-task repair and for where structural edits put rows after the title.
+pub fn title_line(raw: &str) -> std::ops::Range<usize> {
+    let start = raw.len() - trim_block_start(raw).len();
+    let end = raw[start..].find('\n').map_or(raw.len(), |p| start + p);
+    start..end
+}
+
 pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     let mut blocks = parse_block_inner(raw, is_org);
     restore_bare_task(raw, is_org, &mut blocks);
@@ -520,10 +529,9 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     {
         return;
     }
-    // The title starts where the block boundary's own leading trim ends
-    // (`\nTODO` is a task), so a row after it reads the same title.
-    let body = trim_block_start(raw);
-    let title = body.split_once('\n').map_or(body, |(title, _)| title);
+    let line = title_line(raw);
+    let body = &raw[line.start..];
+    let title = &raw[line];
     let title = title.strip_suffix('\r').unwrap_or(title);
     // The title alone is what lsdoc already parsed: its answer stands.
     if title == body {
@@ -799,6 +807,37 @@ mod preparation_tests {
             assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
         }
         assert_eq!(task("\nTODO\nbody\nid:: x", false), None);
+        // Review r5: structural edits put rows after the same title line, so a
+        // leading-blank bare task stays one through an id, a schedule and a
+        // user property, in both formats.
+        use crate::block_regions::{edit, Edit};
+        let id = || Edit::Property {
+            key: "id".into(),
+            value: Some("6679-abc".into()),
+        };
+        let scheduled = || Edit::Planning {
+            which: "Scheduled".into(),
+            value: Some("<2026-11-12 Thu>".into()),
+        };
+        let prop = || Edit::Property {
+            key: "owner".into(),
+            value: Some("me".into()),
+        };
+        for (raw, is_org, request) in [
+            ("\nTODO", true, id as fn() -> Edit),
+            ("\nTODO", true, scheduled),
+            ("\nTODO", false, id),
+            ("\nTODO", false, scheduled),
+            ("\nTODO", false, prop),
+            ("\n\nTODO\n", false, id),
+        ] {
+            let after = edit(raw, is_org, request()).unwrap();
+            assert!(
+                after.trim_start().starts_with("TODO\n"),
+                "{is_org} {raw:?} -> {after:?}"
+            );
+            assert_eq!(task(&after, is_org), todo, "{is_org} {raw:?} -> {after:?}");
+        }
         for (raw, is_org) in [("TODO\n\nbody\nid:: x", false), ("TODO\nbody\n\n", true)] {
             assert_eq!(task(raw, is_org), None, "{is_org} {raw:?}");
         }

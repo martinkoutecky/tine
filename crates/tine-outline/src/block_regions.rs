@@ -883,7 +883,12 @@ impl BlockRegions {
             // An Org block's first line is its heading, so it stays the title.
             raw[..lead].rfind('\n').map_or(0, |p| p + 1)
         } else {
-            raw.find('\n').map_or(raw.len(), |p| p + 1)
+            let title = crate::lsdoc_block_parse::title_line(raw);
+            if title.end == raw.len() {
+                raw.len()
+            } else {
+                title.end + 1
+            }
         }
     }
     fn head_end(&self, raw: &str, org: bool) -> usize {
