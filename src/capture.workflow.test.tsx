@@ -2,12 +2,25 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { backend, type GraphConfigChange } from "./backend";
 import { cycleMarkerSmart } from "./editor/repeat";
 import { setWorkflow, workflow } from "./ui";
+import { pushToast, toasts } from "./toasts";
+import { msg } from "./i18n";
 import type { GraphMeta } from "./types";
 
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (e: { payload: unknown }) => void>(),
   config: undefined as undefined | ((change: GraphConfigChange) => void),
+  disposeCapture: undefined as undefined | (() => void),
 }));
+// capture.tsx mounts at import and discards the dispose handle; keep it so the
+// file can own the mount and end it before jsdom is torn down.
+vi.mock("solid-js/web", async (original) => {
+  const web = await original<typeof import("solid-js/web")>();
+  return { ...web, render: ((code, element, init) => {
+    const dispose = web.render(code, element, init);
+    if ((element as Element).id === "capture-root") h.disposeCapture = dispose;
+    return dispose;
+  }) as typeof web.render };
+});
 vi.mock("./components/Block", () => ({ Block: () => <textarea />,
   CaptureCtx: { Provider: (p: { children: unknown }) => p.children },
 }));
@@ -41,8 +54,16 @@ beforeAll(async () => {
 // The capture app mounts at import and is never disposed, so its re-fit timers
 // (resettle: 80 and 220 ms) can fire after jsdom is torn down and throw
 // "document is not defined" as an unhandled error that fails the whole run.
-// Let them drain before the environment goes.
-afterAll(() => new Promise<void>((resolve) => setTimeout(resolve, 300)));
+// Let them drain, then dispose the app: with its <Toasts/> renderer gone, a
+// toast pushed by any async work still in flight (a settings read, a retry)
+// only changes the toast store and cannot touch a document that no longer exists.
+afterAll(async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 300));
+  h.disposeCapture!();
+  pushToast(msg("toast-copied"), "success");
+  expect(document.querySelector(".toast")).toBeNull();
+  expect(toasts()).toHaveLength(1);
+});
 
 function sequence() {
   let raw = "buy milk";
