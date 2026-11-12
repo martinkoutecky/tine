@@ -111,37 +111,6 @@
     },
     {
       "section": "Fixed",
-      "text": "Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading (internal: UI-ZOOM-BACK-SCROLL).",
-      "userVisible": true,
-      "regressions": [
-        "UI-ZOOM-BACK-SCROLL"
-      ],
-      "regressionEvidence": {
-        "status": "current",
-        "reason": "Catalog coverage: UI-ZOOM-BACK-SCROLL. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
-        "refs": [
-          "scripts/e2e-zoom-back.mjs",
-          "src/router.restoreScroll.test.ts"
-        ]
-      },
-      "docs": {
-        "status": "not-applicable",
-        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
-        "refs": []
-      },
-      "website": {
-        "status": "not-applicable",
-        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
-        "refs": []
-      },
-      "blog": {
-        "status": "not-applicable",
-        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
-        "refs": []
-      }
-    },
-    {
-      "section": "Fixed",
       "text": "A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).",
       "userVisible": true,
       "regressions": [
