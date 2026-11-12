@@ -509,19 +509,15 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
         |b: &Block| matches!(b, Block::Drawer { name, .. } if name.eq_ignore_ascii_case("LOGBOOK"));
     let rest = blocks.get(1..).unwrap_or_default();
     // Blank paragraphs beside the rows (`TODO\n\nid:: x`, trailing blank
-    // lines before the next headline) do not count; at least one row must.
-    let rows_only = rest.iter().any(|b| !blank_paragraph(b))
-        && rest
-            .iter()
-            .all(|b| logbook(b) || parser_owned_row(b) || blank_paragraph(b));
-    // A CRLF page keeps each line's CR in the raw body (`TODO\r`), which lsdoc
-    // does not read as end of input; the title alone ends at that CR, so a
-    // CRLF bare task reads as its LF twin does.
-    let crlf_title = rest.iter().all(blank_paragraph)
-        && raw
-            .strip_suffix('\r')
-            .is_some_and(|title| !title.contains(['\n', '\r']));
-    if !rest.iter().any(logbook) && !rows_only && !crlf_title {
+    // lines) do not count either: removing the last row must leave the task a
+    // task. A CRLF page keeps each line's CR in the raw body (`TODO\r`), which
+    // lsdoc does not read as end of input either, so a title alone or with
+    // blank lines reads as its LF twin does.
+    if !rest
+        .iter()
+        .all(|b| logbook(b) || parser_owned_row(b) || blank_paragraph(b))
+        && !rest.iter().any(logbook)
+    {
         return;
     }
     let title = raw.split_once('\n').map_or(raw, |(title, _)| title);
@@ -531,7 +527,13 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     else {
         return;
     };
-    if marker.is_some() {
+    // Only a lone marker-shaped word can become a bare task; anything else
+    // skips the second parse.
+    let marker_word =
+        |t: &str| !t.is_empty() && t.bytes().all(|c| c.is_ascii_uppercase() || c == b'-');
+    if marker.is_some()
+        || !matches!(inline.as_slice(), [Inline::Plain { text, .. }] if marker_word(text))
+    {
         return;
     }
     let title_blocks = parse_block_inner(title, is_org);
@@ -767,7 +769,18 @@ mod preparation_tests {
         ] {
             assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
         }
-        for (raw, is_org) in [("TODO\n\n", true), ("TODO\n\nbody\nid:: x", false)] {
+        // Review r2: removing the last row leaves the title with blank lines,
+        // which must stay a task in both formats and both line endings.
+        for (raw, is_org) in [
+            ("TODO\n", true),
+            ("TODO\n", false),
+            ("TODO\n\n", true),
+            ("TODO\n\n", false),
+            ("TODO\r\n\r\n", true),
+        ] {
+            assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
+        }
+        for (raw, is_org) in [("TODO\n\nbody\nid:: x", false), ("TODO\nbody\n\n", true)] {
             assert_eq!(task(raw, is_org), None, "{is_org} {raw:?}");
         }
     }
