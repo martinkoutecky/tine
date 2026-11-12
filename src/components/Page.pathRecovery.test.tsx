@@ -168,7 +168,6 @@ it("resets the probe delay when a publication revalidates a still-missing route"
 it.each([
   { id: "pages/Twin.org", name: "Twin", kind: "page" as const },
   { id: "pages/Twin.md", name: "Renamed", kind: "page" as const },
-  { id: "pages/Twin.md", name: "Twin", kind: "journal" as const },
 ])("keeps a probe silent when the returned identity differs: %j", async identity => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const diagnostic = vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
@@ -193,6 +192,24 @@ it.each([
     await vi.advanceTimersByTimeAsync(6000);
     expect(read).toHaveBeenCalledTimes(3);
     expect(root.textContent).toBe(refusal);
+  } finally { dispose(); }
+});
+
+it("opens a restored file under the store's kind when the route remembered another (GH #863)", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(backend(), "diagnosticFrontendEvent").mockResolvedValue();
+  const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+  mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Twin", pageKind: "page", path: "pages/Twin.md" });
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  const dispose = render(() => <PageView />, root);
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    read.mockResolvedValue({ id: "pages/Twin.md", name: "Twin", title: "Twin", kind: "journal", rev: "restored", pre_block: null,
+      blocks: [{ id: "restored", raw: "The restored day", children: [], collapsed: false }] });
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(root.textContent).toContain("The restored day"));
+    expect(mainPaneRouter.route()).toMatchObject({ name: "Twin", pageKind: "journal", path: "pages/Twin.md" });
   } finally { dispose(); }
 });
 
