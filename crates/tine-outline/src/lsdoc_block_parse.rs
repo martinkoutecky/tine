@@ -511,7 +511,8 @@ pub(crate) fn first_line_end(raw: &str) -> usize {
 /// title line. A nonempty headline owns the rest of its line when only blanks
 /// follow (lsdoc ends a bare `TODO ` before its trailing blanks, and a CRLF
 /// page keeps each line's CR in the raw), so rows never split the title line;
-/// a headline that already ends with its newline stays where it is.
+/// a headline that already ends with its newline stays where it is, and one
+/// that ends inside the next line's indentation ends at that line's start.
 pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     let (Block::Bullet { span, .. } | Block::Heading { span, .. }) = blocks.first()? else {
         return None;
@@ -526,6 +527,14 @@ pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     }
     if !raw.is_char_boundary(at) {
         at = raw.len();
+    }
+    // The block's parsed text starts after its leading trim, so an empty
+    // headline before an indented drawer ends after that line's indentation;
+    // the indentation is the metadata line's own.
+    if let Some(nl) = raw[..at].rfind('\n') {
+        if raw[nl + 1..at].trim().is_empty() {
+            at = nl + 1;
+        }
     }
     if at > block_lead(raw) && !raw[..at].ends_with('\n') {
         let line_end = raw[at..].find('\n').map_or(raw.len(), |p| at + p + 1);
@@ -988,6 +997,26 @@ mod preparation_tests {
                 after,
                 "{is_org} {raw:?}"
             );
+        }
+        // An empty headline before an indented drawer: the drawer's line,
+        // indentation included, is where metadata begins (R9 review), so the
+        // drawer stays the block's own and a fold updates it.
+        for (raw, at) in [
+            ("\n  :PROPERTIES:\n  :id: x\n  :END:\n", 1),
+            ("\n\t:PROPERTIES:\n\t:id: x\n\t:END:", 1),
+            ("\r\n  :PROPERTIES:\r\n  :id: x\r\n  :END:\r\n", 2),
+        ] {
+            assert_eq!(parse(raw, true).headline_end, Some(at), "{raw:?}");
+            assert_eq!(
+                parse(raw, true).id.map(|p| p.value).as_deref(),
+                Some("x"),
+                "{raw:?}"
+            );
+            let folded = edit(raw, true, fold()).unwrap();
+            assert_eq!(folded.matches(":PROPERTIES:").count(), 1, "{folded:?}");
+            let rows = parse(&folded, true);
+            assert_eq!(rows.id.map(|p| p.value).as_deref(), Some("x"), "{folded:?}");
+            assert!(folded.contains(":collapsed: true"), "{folded:?}");
         }
         // A titleless block's rows begin at the title: a new row joins the end
         // of the run, a schedule goes before it, and both stay readable.
