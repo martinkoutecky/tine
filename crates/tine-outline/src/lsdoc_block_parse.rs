@@ -468,13 +468,19 @@ pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
 }
 
 fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
-    // GH741: lsdoc accepts a bare task at EOF, but loses its marker when the
-    // hidden LOGBOOK follows. Repair that narrow parser shape at the shared
-    // AST boundary so facets, body rendering and clock writers all agree.
-    // lsdoc, rather than another spelling grammar, decides the title marker.
-    if !blocks
-        .iter()
-        .any(|b| matches!(b, Block::Drawer { name, .. } if name.eq_ignore_ascii_case("LOGBOOK")))
+    // lsdoc (like mldoc) accepts a bare task marker only at end of input, so
+    // a parser-owned row after the title turns `TODO` into the plain word.
+    // Structural edits add and remove exactly those rows (an id, a fold, a
+    // SCHEDULED line, the LOGBOOK), so the task state must not depend on them
+    // (I-4): GH741 (a LOGBOOK anywhere after the title) and
+    // REG-BARE-TASK-HIDDEN-ROWS (the title followed only by such rows).
+    // Repaired at the shared AST boundary so facets, body rendering and writers
+    // agree; lsdoc, rather than another spelling grammar, decides the marker.
+    let logbook =
+        |b: &Block| matches!(b, Block::Drawer { name, .. } if name.eq_ignore_ascii_case("LOGBOOK"));
+    let rest = blocks.get(1..).unwrap_or_default();
+    if !rest.iter().any(logbook)
+        && (rest.is_empty() || !rest.iter().all(|b| logbook(b) || parser_owned_row(b)))
     {
         return;
     }
@@ -511,6 +517,27 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
             *marker = Some(accepted.clone());
             inline.clear();
         }
+    }
+}
+
+/// A block-level node that is a row Tine's structural edits own rather than
+/// body text: a property drawer or `key::` lines, or a planning line
+/// (`SCHEDULED:`/`DEADLINE:`/`CLOSED:` timestamps only).
+fn parser_owned_row(block: &Block) -> bool {
+    match block {
+        Block::Properties { .. } => true,
+        Block::Paragraph { inline, .. } => {
+            inline.iter().any(|i| matches!(i, Inline::Timestamp { .. }))
+                && inline.iter().all(|i| match i {
+                    Inline::Timestamp { ts, .. } => {
+                        matches!(ts.as_str(), "Scheduled" | "Deadline" | "Closed")
+                    }
+                    Inline::Break { .. } => true,
+                    Inline::Plain { text, .. } => text.trim().is_empty(),
+                    _ => false,
+                })
+        }
+        _ => false,
     }
 }
 
@@ -642,6 +669,45 @@ mod preparation_tests {
                 matches!(blocks.first(), Some(Block::Bullet { marker: Some(m), inline, .. } | Block::Heading { marker: Some(m), inline, .. }) if m == "DOING" && inline.is_empty())
             );
         }
+    }
+
+    #[test]
+    fn a_bare_task_before_parser_owned_rows_only_is_a_task() {
+        let task = |raw: &str, is_org: bool| {
+            let blocks = parse_block(raw, is_org);
+            assert_eq!(
+                serde_json::to_value(&blocks).unwrap(),
+                serde_json::to_value(&parse_projection(raw, is_org).blocks).unwrap(),
+                "{raw:?}"
+            );
+            match blocks.first() {
+                Some(
+                    Block::Bullet { marker, inline, .. } | Block::Heading { marker, inline, .. },
+                ) => marker.clone().filter(|_| inline.is_empty()),
+                _ => None,
+            }
+        };
+        let todo = Some("TODO".to_string());
+        for is_org in [false, true] {
+            for raw in [
+                "TODO",
+                "TODO\nSCHEDULED: <2026-11-12 Thu>",
+                "TODO\nSCHEDULED: <2026-11-12 Thu> DEADLINE: <2026-11-13 Fri>",
+                "TODO\n:PROPERTIES:\n:id: 6679-abc\n:END:",
+                "TODO\nSCHEDULED: <2026-11-12 Thu>\n:PROPERTIES:\n:id: 6679-abc\n:END:",
+            ] {
+                assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
+            }
+            // Body text after the title stays text, as in Logseq.
+            for raw in [
+                "TODO\nbody",
+                "TODO\n:PROPERTIES:\n:id: 6679-abc\n:END:\nbody",
+                "TODO\nSCHEDULED: <2026-11-12 Thu> later",
+            ] {
+                assert_eq!(task(raw, is_org), None, "{is_org} {raw:?}");
+            }
+        }
+        assert_eq!(task("TODO\nid:: 6679-abc", false), todo);
     }
 
     #[test]

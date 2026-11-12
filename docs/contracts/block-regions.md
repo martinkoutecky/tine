@@ -24,6 +24,11 @@ creating a drawer hoists accepted planning even when authored below body text.
 Literal planning lookalikes remain in place. Markdown built-in identity/collapse
 metadata keeps trailer placement. Debug builds reparse edits and compare the
 header, unrelated metadata/drawers/planning and literal source slices.
+A bare marker title (`TODO` with nothing after the marker) is a task when
+only property, planning or LOGBOOK rows follow it, or a LOGBOOK follows
+anywhere: the shared parse boundary (`lsdoc_block_parse::restore_bare_task`)
+decides it, so adding or removing those rows never changes the header. Body
+text after a bare title stays text, as in Logseq (REG-BARE-TASK-HIDDEN-ROWS).
 
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.
