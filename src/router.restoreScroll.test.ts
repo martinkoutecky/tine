@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createPaneRouter } from "./router";
+import { pursueScroll } from "./routeScrollAnchor";
 import { createRoot } from "solid-js";
 
 // GH #848: a reference read can answer long after a page shows, so coming back to a deep position keeps
@@ -253,6 +254,27 @@ it("keeps the saved position when Alt is pressed in a workspace window while the
     expect(scroller.scrollTop).toBe(9_000);
     void router;
   } finally { scroller.remove(); scroller = main; frame.remove(); }
+});
+
+it("keeps at most one interrupted restore waiting for the reader's scroll on a pane scroller", async () => {
+  const waiting = new Set<EventListenerOrEventListenerObject>();
+  const add = scroller.addEventListener.bind(scroller);
+  const remove = scroller.removeEventListener.bind(scroller);
+  scroller.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions) => {
+    if (type === "scroll") waiting.add(listener);
+    add(type, listener, options);
+  }) as typeof scroller.addEventListener;
+  scroller.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions) => {
+    if (type === "scroll") waiting.delete(listener);
+    remove(type, listener, options);
+  }) as typeof scroller.removeEventListener;
+  height = 800; // a short loading view: every visit is interrupted before it can position
+  for (let visit = 0; visit < 100; visit++) {
+    pursueScroll({ target: 9_000, anchor: undefined, scroller: () => scroller, current: () => true, extend: async () => false, onPositioned: () => {} });
+    await runFrames(1);
+    document.dispatchEvent(new Event("pointerdown")); // Back/Forward clicks, no scrolling
+  }
+  expect(waiting.size).toBeLessThanOrEqual(1);
 });
 
 it("stops pursuing on the first user gesture", async () => {
