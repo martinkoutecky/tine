@@ -19,7 +19,23 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed" | "page_open_refused";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed" | "page_open_refused"
+  | "editor_focus_missed";
+
+/** Which `startEditing` guard refused the request, if any (GH #939). */
+export type EditorFocusGuard = "exit-guard" | "entry-guard" | "none";
+
+/** GH #939: content-free facts when no editor of a requested block holds focus
+ * one frame after the request. No ids, text, titles or paths. */
+export interface EditorFocusMissed {
+  entry: "enter-split" | "other";
+  documentHasFocus: boolean;
+  guard: EditorFocusGuard;
+  targetMounted: boolean;
+  /** `activeElement`'s tag from a closed list; anything else is "other". */
+  activeTag: "textarea" | "input" | "button" | "select" | "iframe" | "a" | "div" | "span" | "body" | "none" | "other";
+  activeIsBlockEditor: boolean;
+}
 
 /** Closed tokens only: journal names, paths and backend error text never enter
  * the always-on report (I-5). These describe the read/publication boundary. */
@@ -35,6 +51,7 @@ export type JournalFeedCause = "empty-rejection" | "other-rejection";
 export type DiscardReason = "failed" | "still-saving";
 
 export interface DiagnosticFrontendFields {
+  editorFocus?: EditorFocusMissed;
   pageOpen?: {
     stage: "route" | "probe";
     readSource: import("./types").PageReadSource | null;
