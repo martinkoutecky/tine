@@ -1,5 +1,63 @@
-//! String-only Windows graph path presentation. Filesystem identity stays with
-//! the caller's canonical PathBuf; this boundary never resolves or writes files.
+//! String-only graph path presentation: Windows verbatim prefixes and the iOS
+//! sandbox container. Filesystem identity stays with the caller's canonical
+//! PathBuf; this boundary never resolves or writes files.
+
+use std::path::Path;
+
+/// The one answer to "where is this graph, as the user is shown it" (GH #926,
+/// IOS-PATH-926). On iOS a graph inside Tine's Documents folder is shown as
+/// `Documents/<path inside it>`, whose last component is the folder name: the
+/// sandbox prefix (`/private/var/mobile/Containers/Data/Application/<uuid>/`)
+/// is noise that changes with every reinstall. Every other path, and every other
+/// platform, gets [`normalize_graph_path`] only. Copying a path still copies the
+/// canonical one; this spelling is never used for identity or file access.
+pub fn display_graph_path(path: &str) -> String {
+    if cfg!(target_os = "ios") {
+        if let Some(shown) = ios_documents_display(path) {
+            return shown;
+        }
+    }
+    normalize_graph_path(path)
+}
+
+/// Pure part of [`display_graph_path`], testable on every host.
+fn ios_documents_display(path: &str) -> Option<String> {
+    let (_, _, inside) = ios_container_parts(Path::new(path))?;
+    if inside.is_empty() {
+        return None;
+    }
+    Some(format!("Documents/{}", inside.join("/")))
+}
+
+/// Splits an iOS app-container path into (what precedes `Containers`, the
+/// container id, the components below `Documents`). Rejects relative paths,
+/// `.`/`..` components and anything that is not a UUID container.
+pub fn ios_container_parts(path: &Path) -> Option<(Vec<String>, uuid::Uuid, Vec<String>)> {
+    if !path.is_absolute() {
+        return None;
+    }
+    // Reject traversal before Path::components can normalize it.
+    if path
+        .to_str()?
+        .split('/')
+        .any(|part| part == "." || part == "..")
+    {
+        return None;
+    }
+    let parts = path
+        .components()
+        .map(|part| part.as_os_str().to_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()?;
+    let at = parts
+        .windows(3)
+        .position(|p| p == ["Containers", "Data", "Application"])?;
+    let id = parts.get(at + 3)?;
+    if id.len() != 36 || parts.get(at + 4)? != "Documents" {
+        return None;
+    }
+    let uuid = uuid::Uuid::parse_str(id).ok()?;
+    Some((parts[..at].to_vec(), uuid, parts[at + 5..].to_vec()))
+}
 
 pub fn normalize_graph_path(path: &str) -> String {
     let Some(rest) = path.strip_prefix(r"\\?\") else {
@@ -130,5 +188,53 @@ mod tests {
         assert_eq!(normalize_graph_path(&long), long);
         let unicode = format!(r"\\?\C:\{}", "😀".repeat(128));
         assert_eq!(normalize_graph_path(&unicode), unicode);
+    }
+
+    const IOS_ID: &str = "0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C";
+
+    #[test]
+    fn ios_graph_shows_documents_relative_path_and_keeps_the_folder_name() {
+        for (full, shown) in [
+            ("Tine graph", "Documents/Tine graph"),
+            ("Graphs/Work notes", "Documents/Graphs/Work notes"),
+        ] {
+            // An absolute path needs a drive on Windows (as in root_identity's tests).
+            let drive = if cfg!(windows) { "C:" } else { "" };
+            for prefix in ["/private/var/mobile", "/var/mobile"] {
+                let path = format!(
+                    "{drive}{prefix}/Containers/Data/Application/{IOS_ID}/Documents/{full}"
+                );
+                assert_eq!(
+                    ios_documents_display(&path).as_deref(),
+                    Some(shown),
+                    "{path}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ios_display_leaves_other_paths_alone() {
+        for path in [
+            format!("/private/var/mobile/Containers/Data/Application/{IOS_ID}/Documents"),
+            format!("/private/var/mobile/Containers/Data/Application/{IOS_ID}/Library/g"),
+            format!("/private/var/mobile/Containers/Data/Application/{IOS_ID}/Documents/../g"),
+            "/private/var/mobile/Containers/Data/Application/not-a-uuid/Documents/g".to_owned(),
+            "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/g".to_owned(),
+            "/home/m/graph".to_owned(),
+            "Documents/g".to_owned(),
+        ] {
+            assert_eq!(ios_documents_display(&path), None, "{path}");
+        }
+    }
+
+    // The rewrite is iOS-only: the same container-shaped path on any other
+    // platform is shown as the plain (Windows-normalized) path.
+    #[test]
+    #[cfg(not(target_os = "ios"))]
+    fn other_platforms_show_the_plain_path() {
+        let path = format!("/private/var/mobile/Containers/Data/Application/{IOS_ID}/Documents/g");
+        assert_eq!(display_graph_path(&path), path);
+        assert_eq!(display_graph_path(r"\\?\C:\x"), r"C:\x");
     }
 }

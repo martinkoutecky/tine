@@ -13,6 +13,9 @@ import {
   workspaces,
 } from "../workspaces";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { installMobileDrawerMode } from "../mobileDrawers";
+import { openWorkspaceCreation } from "../workspaceCreation";
+import { setLeftSidebarOpen, sidebarOpen } from "../ui";
 
 let dispose = () => {};
 
@@ -161,5 +164,30 @@ describe("WorkspaceSwitcher", () => {
     expect(field.value).toBe("工作区");
     const submit = host.querySelector<HTMLButtonElement>(".workspace-edit-form button[type=submit]")!;
     expect(submit.disabled).toBe(false);
+  });
+
+  it("#926: in drawer mode New workspace opens the left drawer and its switcher's form, not the hidden bar switcher's", async () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
+    const query = { matches: true, media: "(max-width: 639px)", addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: () => query });
+    const disposeMode = installMobileDrawerMode();
+    try {
+      setLeftSidebarOpen(false);
+      const bar = document.createElement("div"); document.body.append(bar);
+      const drawer = document.createElement("div"); document.body.append(drawer);
+      const d1 = render(() => <WorkspaceSwitcher compact />, bar);
+      const d2 = render(() => <WorkspaceSwitcher />, drawer);
+      dispose = () => { d1(); d2(); };
+      openWorkspaceCreation();
+      await Promise.resolve();
+      expect(sidebarOpen()).toBe(true);
+      expect(drawer.querySelector("input")).not.toBeNull();
+      expect(bar.querySelector("input")).toBeNull();
+    } finally {
+      setLeftSidebarOpen(false);
+      disposeMode();
+      if (saved) Object.defineProperty(globalThis, "matchMedia", saved);
+      else delete (globalThis as { matchMedia?: unknown }).matchMedia;
+    }
   });
 });
