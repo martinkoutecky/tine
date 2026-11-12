@@ -1,7 +1,7 @@
 import { msg } from "../../i18n";
 import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
-import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible } from "../tree";
+import { OutlineScope, hidesChildrenInView, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
 import { createSignal, createRoot, createMemo, untrack } from "solid-js";
@@ -346,6 +346,21 @@ export function deleteSelection() {
   notice.show();
 }
 
+/** The blocks a selected-only copy carries (GH #943, D-20261112-SU941): the selected
+ * blocks, plus the whole subtree of every selected block whose children its view hides
+ * (a fold or a Sheet view), since those can never be selected. An expanded parent
+ * selected alone stays alone.
+ * O(selection + hidden subtree size). */
+function selectionCopiedIds(): Set<string> {
+  const selected = selectedIds();
+  const out = new Set(selected);
+  const addSubtree = (id: string) => {
+    for (const child of doc.byId[id]?.children ?? []) { out.add(child); addSubtree(child); }
+  };
+  for (const id of selected) if (hidesChildrenInView(id, activeSelectionScope)) addSubtree(id);
+  return out;
+}
+
 /** Public clipboard text for the selected roots; O(visible-order resolution + selected subtree bytes).
  * Defaults to the copy preference; cuts request complete subtrees so their
  * public clipboard flavor includes everything deletion removes. */
@@ -354,7 +369,7 @@ export function selectionMarkdown(includeSubtree = copyIncludeSubtree()): string
   // selected-only are user-configurable (see copySettings): OG copies the full
   // sub-tree of a selected parent; Tine's default copies only the selected blocks.
   const stripCollapsed = copyStripCollapsed();
-  const onlySel = includeSubtree ? undefined : new Set(selectedIds());
+  const onlySel = includeSubtree ? undefined : selectionCopiedIds();
   return topSelected()
     .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
     .join("\n");

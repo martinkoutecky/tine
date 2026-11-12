@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Copying a collapsed block, or a block shown as a sheet (table, board or grid), with Ctrl/Cmd+C on a block selection or Copy blocks in the block menu puts the children it hides on the clipboard, nested folds included; before, with the default "Copy a parent block's sub-blocks" off, the copied text silently left them out. An expanded parent selected alone still copies alone; with the setting on, copies remain whole subtrees as in Logseq (GH #943).
+
 ## [0.9.0-beta.11] - 2026-11-12
 
 ### Fixed
