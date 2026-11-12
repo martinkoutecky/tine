@@ -71,10 +71,15 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 20 (GH #741 F2): a bare marker title followed by a LOGBOOK drawer now parses
 /// as a task, so its projection, task facets and task query answers change for
 /// unchanged graph files; older disposable caches rebuild.
-pub(crate) const FORMAT: u32 = 20;
+/// 21 (REG-BARE-TASK-HIDDEN-ROWS): a bare marker title followed only by
+/// property, planning or LOGBOOK rows parses as a task, so task facets and task
+/// query answers change for unchanged graph files; older caches rebuild.
+/// 22 (REG-BARE-TASK-HIDDEN-ROWS review r6): block regions carry lsdoc's
+/// headline end where it is not the first line's end (`headline_end`).
+pub(crate) const FORMAT: u32 = 22;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.10";
+pub(crate) const PARSER: &str = "lsdoc v0.5.11";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
