@@ -88,6 +88,8 @@ jobs:
 
       - name: Release and offline-source contract fixtures
         run: |
+          node --test scripts/check-privileged-action-pins.test.mjs
+          node scripts/check-privileged-action-pins.mjs
           node scripts/check-flatpak-node-sources.mjs
           node scripts/check-flatpak-cargo-sources.mjs
           node scripts/test-release-readiness-lib.mjs
