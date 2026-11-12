@@ -301,6 +301,34 @@ html[data-system-insets="native-viewport"] {
   display: block;
   margin-block: 8px 0; margin-inline: auto 10px;
 }
+/* GH #926: the drawer is a column, its scroll above a fixed Settings row. */
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.mobile-drawer-settings {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+.mobile-drawer-settings:hover,
+.mobile-drawer-settings:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
 .drawer-floating-background { display: contents; }
 
 .topbar {

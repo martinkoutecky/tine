@@ -2098,6 +2098,27 @@ mod og_20d_guide_tests {
     }
 
     #[test]
+    fn where_things_are_documents_the_help_button_switch_and_settings_paths() {
+        // GH #926 (D-20261111-QP2): a hideable "?" that leaves help reachable,
+        // and Settings two taps away from the "···" menu and the phone drawer.
+        let map = page("Start/Where things are");
+        for detail in [
+            "**Show the help button**",
+            "**Toggle help**",
+            "Settings → **Help & diagnostics**",
+            "its last row is always **Settings**",
+            "fixed **Settings** row",
+            "the toolbar has no workspace switcher",
+            "the first row of the left drawer",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing where-things-are detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
     fn where_things_are_documents_the_full_all_pages_view() {
         // GH #335: the sidebar entry navigates directly to the full view.
         let map = page("Start/Where things are");

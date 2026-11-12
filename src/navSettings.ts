@@ -21,6 +21,19 @@ export function setShowWorkspaces(on: boolean): void {
   writePreference(showWorkspacesSig, setShowWorkspacesSig, on, next => backend().setAppBool(KEY_SHOW_WORKSPACES, next), renderEnglish(msg("settings-show-workspaces")));
 }
 
+const KEY_SHOW_HELP_BUTTON = "show_help_button";
+const [showHelpButtonSig, setShowHelpButtonSig] = createSignal(true);
+
+/** Reactive device preference for the corner "?" button (GH #926); reading is O(1).
+ *  Off hides only the button: the help menu still opens from the palette and
+ *  Settings → Help & diagnostics lists the same entries. */
+export const showHelpButton = showHelpButtonSig;
+
+/** One device write; failure rolls back and toasts through the shared preference writer. */
+export function setShowHelpButton(on: boolean): void {
+  writePreference(showHelpButtonSig, setShowHelpButtonSig, on, next => backend().setAppBool(KEY_SHOW_HELP_BUTTON, next), renderEnglish(msg("settings-show-help-button")));
+}
+
 const KEY_QUERY_TEXT_OPEN = "query_text_open";
 
 const KEY_MOBILE_NAV_BOTTOM = "mobile_navigation_at_bottom";
@@ -93,6 +106,7 @@ export function setNavReuseTabs(on: boolean): void {
 /** Load the device preference at startup (default ON); read failure toasts and resolves. */
 export async function initNavSettings(): Promise<void> {
   loadPreference(showWorkspacesSig, setShowWorkspacesSig, () => backend().getAppBool(KEY_SHOW_WORKSPACES, true), v => v, renderEnglish(msg("settings-show-workspaces")));
+  loadPreference(showHelpButtonSig, setShowHelpButtonSig, () => backend().getAppBool(KEY_SHOW_HELP_BUTTON, true), v => v, renderEnglish(msg("settings-show-help-button")));
   loadPreference(queryTextOpenSig, setQueryTextOpenSig, () => backend().getAppBool(KEY_QUERY_TEXT_OPEN, false), (v) => v, "query text preference");
   loadPreference(mobileNavBottom, setMobileNavBottomSig, () => backend().getAppBool(KEY_MOBILE_NAV_BOTTOM, false), (v) => v, "navigation buttons preference");
   loadPreference(searchOpensHere, setSearchOpensHereSig, () => backend().getAppBool(KEY_SEARCH_OPENS_HERE, false), (v) => v, "search results preference");

@@ -26,7 +26,7 @@ pub(crate) struct DisplayKnownGraph {
 impl From<KnownGraph> for DisplayKnownGraph {
     fn from(graph: KnownGraph) -> Self {
         Self {
-            display_path: tine_core::graph_paths::normalize_graph_path(&graph.path),
+            display_path: tine_core::graph_paths::display_graph_path(&graph.path),
             path: graph.path,
             name: graph.name,
         }

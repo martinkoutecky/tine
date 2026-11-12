@@ -1,8 +1,9 @@
 import { Rich } from "../i18n/Rich";
 import { msg, t, render, renderEnglish, type Msg } from "../i18n";
-import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { openExternal } from "./primitives";
-import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
+import { closeHelpPopup, closeSettings, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
+import { showHelpButton } from "../navSettings";
 import { graphMeta } from "../graphSession";
 import { BUILTIN_KEYS, shortcutBindingsConflict, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
 import { bindingAlternatives, type ShortcutBinding } from "../shortcutBindings";
@@ -51,6 +52,33 @@ export const HELP_ITEMS: HelpItem[] = [
 ];
 
 
+function runHelpItem(item: HelpItem): void {
+  if ("href" in item) openExternal(item.href);
+  else item.run();
+}
+
+/** The help menu's entries as a Settings disclosure (GH #926), so help stays
+ *  reachable when the corner button is hidden. An in-app entry closes Settings
+ *  first (Keyboard shortcuts reopens it on its tab). */
+export function HelpLinks(): JSX.Element {
+  // Rows mount only while open: closed, the disclosure is one control.
+  const [open, setOpen] = createSignal(false);
+  return (
+    <details class="help-links" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>{t("help-help")}</summary>
+      <Show when={open()}><For each={HELP_ITEMS}>
+        {(item) => (
+          <div class="settings-row">
+            <button type="button" class="settings-btn" onClick={() => { if (!("href" in item)) closeSettings(); runHelpItem(item); }}>
+              <EmojiText text={render(item.label)} />
+            </button>
+            <span class="settings-hint"><EmojiText text={render(item.detail)} /></span>
+          </div>
+        )}
+      </For></Show>
+    </details>
+  );
+}
 
 export function HelpPopup(): JSX.Element {
   let root: HTMLDivElement | undefined;
@@ -64,8 +92,7 @@ export function HelpPopup(): JSX.Element {
 
   const run = (item: HelpItem) => {
     closeHelpPopup();
-    if ("href" in item) openExternal(item.href);
-    else item.run();
+    runHelpItem(item);
   };
 
   return (
@@ -86,7 +113,9 @@ export function HelpPopup(): JSX.Element {
           </For>
         </div>
       </Show>
-      <button
+      {/* Hidden by the device setting "Show the help button" (GH #926); the
+          menu above still opens from the palette's "Toggle help" (shift+?). */}
+      <Show when={showHelpButton()}><button
         class="help-corner-btn"
         title={t("help-help-with-shortcut")}
         aria-label={t("help-help")}
@@ -95,7 +124,7 @@ export function HelpPopup(): JSX.Element {
         onClick={toggleHelpPopup}
       >
         ?
-      </button>
+      </button></Show>
     </div>
   );
 }

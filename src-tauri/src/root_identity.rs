@@ -61,30 +61,7 @@ fn census_entries(dir: &Path) -> io::Result<fs::ReadDir> {
 }
 
 fn container_parts(path: &Path) -> Option<(Vec<String>, uuid::Uuid, Vec<String>)> {
-    if !path.is_absolute() {
-        return None;
-    }
-    // Reject traversal before Path::components can normalize it.
-    if path
-        .to_str()?
-        .split('/')
-        .any(|part| part == "." || part == "..")
-    {
-        return None;
-    }
-    let parts = path
-        .components()
-        .map(|part| part.as_os_str().to_str().map(str::to_owned))
-        .collect::<Option<Vec<_>>>()?;
-    let at = parts
-        .windows(3)
-        .position(|p| p == ["Containers", "Data", "Application"])?;
-    let id = parts.get(at + 3)?;
-    if id.len() != 36 || parts.get(at + 4)? != "Documents" {
-        return None;
-    }
-    let uuid = uuid::Uuid::parse_str(id).ok()?;
-    Some((parts[..at].to_vec(), uuid, parts[at + 5..].to_vec()))
+    tine_core::graph_paths::ios_container_parts(path)
 }
 
 /// Pure validator is tested on the host; only iOS may authorize it in production.
