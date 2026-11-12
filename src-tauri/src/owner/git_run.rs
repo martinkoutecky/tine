@@ -25,10 +25,9 @@
 //! (CL4: not a storage mode). libgit2 runs with GIT_OPT_ENABLE_FSYNC_GITDIR.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 
 use git2::{ErrorCode, Oid, Repository, RepositoryState, Signature};
-use libgit2_sys::init as libgit2_init;
 use serde_json::{json, Value};
 use tine_store::PageId;
 
@@ -37,6 +36,8 @@ use crate::state::GraphSlot;
 
 pub(super) mod index_lock_identity;
 use index_lock_identity::IndexLockIdentity;
+mod open;
+pub(crate) use open::{configure_libgit2, discover, graph_prefix};
 
 pub(crate) const TRAILER: &str = "Tine-Run";
 const SNAPSHOT_TRAILER: &str = "Tine-Snapshot";
@@ -136,46 +137,6 @@ pub(crate) fn run_of(args: &Value) -> Result<Option<RunCtx>, ErrorBody> {
     }))
 }
 
-/// Whether libgit2 checks that a repository belongs to this OS user (its
-/// `safe.directory` rule, CVE-2022-24765), per shipped target: Linux, macOS,
-/// Windows and iOS yes; Android no. Android shared storage answers `stat`
-/// with the backing file's owner, never the app's uid (MediaProvider's FUSE
-/// daemon, `pf_getattr`; CI `android-git-storage`), so the check refuses
-/// every repository there. The check guards against a repository another
-/// user planted; on Android any app with storage access can rewrite the
-/// graph itself, which Tine's trust model leaves out of scope
-/// (`specs/notes/2026-08-07-trust-model-and-threat-model-decision.md`).
-pub(crate) const VERIFY_OWNER: bool = !cfg!(target_os = "android");
-
-/// libgit2's process-wide options, set once before this process opens a
-/// repository: fsync on (D-20261019-G8) and [`VERIFY_OWNER`]. Production
-/// opens go through [`discover`].
-pub(crate) fn configure_libgit2() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        libgit2_init();
-        // SAFETY: process-global libgit2 options set once, before any
-        // repository is opened; each takes one int argument.
-        unsafe {
-            libgit2_sys::git_libgit2_opts(
-                libgit2_sys::GIT_OPT_ENABLE_FSYNC_GITDIR as std::os::raw::c_int,
-                1 as std::os::raw::c_int,
-            );
-            libgit2_sys::git_libgit2_opts(
-                libgit2_sys::GIT_OPT_SET_OWNER_VALIDATION as std::os::raw::c_int,
-                VERIFY_OWNER as std::os::raw::c_int,
-            );
-        }
-    });
-}
-
-/// [`Repository::discover`] after [`configure_libgit2`], so no open depends on
-/// another having configured libgit2 first (Android's owner check).
-pub(crate) fn discover(path: &Path) -> Result<Repository, git2::Error> {
-    configure_libgit2();
-    Repository::discover(path)
-}
-
 /// The graph's repository cannot take a run's commits: `refused:git`.
 fn not_usable(message: impl Into<String>) -> ErrorBody {
     super::write::refused("git", None, message)
@@ -266,8 +227,9 @@ impl GitMutationGuard {
     pub(super) fn check_path(&self, path: &Path) -> std::io::Result<()> {
         self.graph.check()?;
         // A normal .git directory must not itself be an alias. A regular .git
-        // pointer file (linked worktree/submodule) still selects its bound
-        // gitdir/commondir, preserving Git's existing metadata scope.
+        // pointer file (linked worktree, submodule, separate git directory)
+        // still selects its bound gitdir/commondir, preserving Git's existing
+        // metadata scope.
         let marker = self.worktree.root().join(".git");
         self.worktree.check_path(&marker)?;
         std::fs::metadata(&marker)?;
@@ -349,21 +311,16 @@ pub(super) fn open_repo_at(graph_root: &Path) -> Result<Repo, ErrorBody> {
         )),
         Err(error) => return Err(git_failed(error)),
     };
-    let Some(workdir) = repo.workdir() else {
+    if repo.workdir().is_none() {
         return Err(not_usable("the graph's repository is bare"));
-    };
+    }
     if repo.state() != RepositoryState::Clean {
         return Err(not_usable(format!(
             "the repository is in the middle of a {:?}; finish it first",
             repo.state()
         )));
     }
-    let root = std::fs::canonicalize(graph_root).map_err(|e| not_usable(e.to_string()))?;
-    let workdir = std::fs::canonicalize(workdir).map_err(|e| not_usable(e.to_string()))?;
-    let prefix = root
-        .strip_prefix(&workdir)
-        .map_err(|_| not_usable("the graph is not inside its repository's work tree"))?
-        .to_path_buf();
+    let prefix = graph_prefix(&repo, graph_root).map_err(not_usable)?;
     let head = repo.find_reference("HEAD").map_err(git_failed)?;
     let Some(branch) = head.symbolic_target().ok().flatten().map(str::to_string) else {
         return Err(not_usable("HEAD is detached; check out a branch first"));
