@@ -478,3 +478,21 @@ fn mixed_ending_org_page_keeps_each_untouched_line_of_a_changed_block() {
     });
     assert_eq!(edited, "* a\r\nnew\r\nx\ny\r\nz!\n* b\r\n");
 }
+
+/// A block too long for the line LCS cap still keeps each untouched line's own
+/// terminator (review r4).
+#[test]
+fn mixed_ending_org_page_keeps_untouched_lines_of_a_long_changed_block() {
+    let _integration_guard = crate::integration_lock();
+    let ending = |i: usize| if i % 2 == 0 { "\n" } else { "\r\n" };
+    let body: String = (0..100).map(|i| format!("line{i}{}", ending(i))).collect();
+    let page = Page::at("pages/p.org", &format!("* a\r\n{body}* b\r\n"));
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        let mut lines: Vec<String> = (0..100).map(|i| format!("line{i}")).collect();
+        lines.insert(0, "new".into());
+        *lines.last_mut().unwrap() = "line99!".into();
+        doc.blocks[0].raw = format!("a\n{}", lines.join("\n"));
+    });
+    let kept: String = (0..99).map(|i| format!("line{i}{}", ending(i))).collect();
+    assert_eq!(edited, format!("* a\r\nnew\r\n{kept}line99!\r\n* b\r\n"));
+}
