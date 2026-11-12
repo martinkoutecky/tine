@@ -90,14 +90,17 @@ describe("task markers (single source of truth)", () => {
   // byte-verified against the vendored lsdoc v0.5.5 wasm (`parse_block_json`,
   // the SAME one-block boundary the rendered checkbox derives from): leading
   // whitespace is skipped, then the marker needs a LITERAL ASCII space or must
-  // be the entire rest of the input (`marker_eof`).
+  // be the entire rest of the input (`marker_eof`). One rule sits on top of
+  // lsdoc: a bare marker followed only by blank lines, rows or a LOGBOOK is a
+  // task (`restore_bare_task`, docs/contracts/block-regions.md).
   describe("lsdoc marker parity (DUP-7)", () => {
     const cases: [string, string | null][] = [
       ["TODO x", "TODO"],
       ["TODO\tx", null], // a tab after the marker is NOT a marker (chip absent)
       ["TODO", "TODO"], // bare marker only at absolute end of input
       ["TODO\nbody line", null], // bare marker with a continuation line: NO marker
-      ["TODO\n", null], // trailing newline is not end of input
+      ["TODO\n", "TODO"], // only blank lines follow: the bare-task rule keeps the task
+      ["TODO\n\n", "TODO"],
       ["TODO \nbody", "TODO"], // marker with an empty (space-only) title
       ["\nTODO x", "TODO"], // the boundary trim skips leading newlines too
       ["  TODO x", "TODO"], // leading space skipped (trim_start)
