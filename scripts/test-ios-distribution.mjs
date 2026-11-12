@@ -68,7 +68,7 @@ assert.match(
 );
 assert.match(
   iosTestFlightWorkflow,
-  /uses: swatinem\/rust-cache@v2[\s\S]*?cache-on-failure: true/,
+  /uses: swatinem\/rust-cache@[0-9a-f]{40} # v2\.[0-9]+\.[0-9]+[\s\S]*?cache-on-failure: true/,
   "the expensive iOS target cache is not preserved after post-build contract failures",
 );
 assert.match(
