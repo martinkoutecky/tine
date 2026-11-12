@@ -5,6 +5,49 @@ use tine_core::model::Format;
 
 use super::io_helpers::{content_refusal, failed};
 use super::{Content, FileId, Refusal, RenameMap, Store, Why};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Per rename map, the first pair that renames a page of one identity to
+/// another, keyed by both identities, so a moved page's own title is matched
+/// in O(1) rather than by a scan of the map (PC-3: a namespace rename moves
+/// K pages of one K-entry map). Built once per map in a preflight.
+#[derive(Default)]
+pub(crate) struct TitleIndexes(HashMap<*const RenameMap, HashMap<(String, String), usize>>);
+
+impl TitleIndexes {
+    /// `map`'s new name for a page titled `title` moved to `destination`: the
+    /// first pair whose old name is `title` and whose new name is
+    /// `destination`, up to page identity.
+    fn new_name<'m>(
+        &mut self,
+        map: &'m Arc<RenameMap>,
+        title: &str,
+        destination: &str,
+    ) -> Option<&'m str> {
+        let index = self.0.entry(Arc::as_ptr(map)).or_insert_with(|| {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::rename_title_probes(map.0.len());
+            let mut index = HashMap::new();
+            for (at, (from, to)) in map.0.iter().enumerate() {
+                index
+                    .entry((
+                        tine_core::refs::page_key(from),
+                        tine_core::refs::page_key(to),
+                    ))
+                    .or_insert(at);
+            }
+            index
+        });
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::rename_title_probes(1);
+        let at = index.get(&(
+            tine_core::refs::page_key(title),
+            tine_core::refs::page_key(destination),
+        ))?;
+        Some(&map.0[*at].1)
+    }
+}
 
 pub(crate) fn rewrite(
     old: &[u8],
@@ -59,7 +102,8 @@ pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Resu
 pub(crate) fn rewrite_move(
     old: &[u8],
     path: &Path,
-    map: &RenameMap,
+    map: &Arc<RenameMap>,
+    titles: &mut TitleIndexes,
     name_format: tine_core::config::FileNameFormat,
     proposed: Option<tine_core::refs::RenameProposal>,
 ) -> Result<Vec<u8>, Why> {
@@ -88,13 +132,9 @@ pub(crate) fn rewrite_move(
     let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
         return Ok(proposal.text.into_bytes());
     };
-    let Some((from, new_name)) = map.0.iter().find(|(from, to)| {
-        tine_core::refs::same_page(from, &title)
-            && tine_core::refs::same_page(to, &destination_name)
-    }) else {
+    let Some(new_name) = titles.new_name(map, &title, &destination_name) else {
         return Ok(proposal.text.into_bytes());
     };
-    let _ = from;
     proposal
         .rebind_title(format == Format::Org, new_name)
         .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;

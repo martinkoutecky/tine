@@ -2534,7 +2534,8 @@ whole-graph inventory. It queues each unmoved, marker-free referrer with
 marker-free page's rewrite is proposed once from the rename's read and queued
 with its move (`PagePlan::move_file` with `MoveRewrite::Prepared`); the move's preflight rebinds
 the own title (which depends on the destination) from that proposal instead
-of walking the page again. Marker-bearing pages are asked of `rename_rewrite`
+of walking the page again. The plan's steps share one `Arc<RenameMap>` (no step copies it), and preflight matches a moved
+page's own title through a per-map index built once, so a K-child namespace rename does O(K) map work, not O(K^2). Marker-bearing pages are asked of `rename_rewrite`
 directly, since a marker-bearing file must not be queued before the planner's
 VCS-marker skip. Preflight still stages the file against the expected revision
 and reuses the kept bytes or proposal only when the staged bytes are
