@@ -39,6 +39,7 @@ impl<'a> PagePlan<'a> {
     pub(super) fn prepare_steps(&self) -> Result<Vec<Prepared>, (usize, Why)> {
         let mut allocated = HashSet::new();
         let mut prepared = Vec::new();
+        let mut titles = validation::TitleIndexes::default();
         for (index, step) in self.steps.iter().enumerate() {
             // Preflight reads and computes, writing nothing, under the writer
             // lock: a page's own-title read and reference rewrite parse it with
@@ -48,7 +49,7 @@ impl<'a> PagePlan<'a> {
             // poison the writer lock and fail every later save and read of the
             // graph until restart (og-gh644 F3).
             let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.preflight(step, &allocated)
+                self.preflight(step, &allocated, &mut titles)
             }))
             .unwrap_or_else(|_| {
                 Err(Why::Refused(Refusal::ReadOnly(
@@ -89,6 +90,7 @@ impl<'a> PagePlan<'a> {
         &self,
         step: &Step,
         allocated: &HashSet<FileId>,
+        titles: &mut validation::TitleIndexes,
     ) -> Result<Prepared, Why> {
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
@@ -285,7 +287,7 @@ impl<'a> PagePlan<'a> {
                     .transpose()?
                     .flatten();
                 let new = if *rebind_title {
-                    rewrite_move(&old, &path, renames, name_format, None)?
+                    rewrite_move(&old, &path, renames, titles, name_format, None)?
                 } else if let Some(new) = reused.map(String::into_bytes) {
                     let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
@@ -345,7 +347,7 @@ impl<'a> PagePlan<'a> {
                             }
                             _ => None,
                         };
-                        Some(rewrite_move(old, &path, map, name_format, reused)?)
+                        Some(rewrite_move(old, &path, map, titles, name_format, reused)?)
                     }
                     (Some(old), None) => Some(old.clone()),
                     (None, None) => None,

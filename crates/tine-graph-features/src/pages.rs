@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::sync::Arc;
 
 use tine_core::model::{Format, PageKind};
 use tine_core::refs;
@@ -785,6 +786,7 @@ fn rename_transaction<'s>(
         skipped,
         mut rewritten,
     } = plan;
+    let map = Arc::new(map); // shared by the steps: one move per namespace child
     let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
     // Every step, rewrite or not, commits only in the planning context.
     tx.expect_view(&graph);
@@ -997,19 +999,17 @@ fn rename_transaction<'s>(
         .filter(|(id, _, _)| moves.contains_key(id))
     {
         let to = &moves[&id];
-        match carried.remove(&id).filter(|_| rewrite) {
-            Some((old, proposal)) => {
-                let format = name_format;
-                let prepared = tine_store::MoveRewrite::Prepared {
-                    renames: &map,
-                    old,
-                    proposal,
-                    format,
-                };
-                tx.move_file(&id.file(), rev, to, prepared)
-            }
-            None => tx.move_file(&id.file(), rev, to, rewrite.then_some(&map)),
+        let rewrite = match carried.remove(&id).filter(|_| rewrite) {
+            Some((old, proposal)) => tine_store::MoveRewrite::Prepared {
+                renames: Arc::clone(&map),
+                old,
+                proposal,
+                format: name_format,
+            },
+            None if rewrite => tine_store::MoveRewrite::Rewrite(Arc::clone(&map)),
+            None => tine_store::MoveRewrite::Verbatim,
         };
+        tx.move_file(&id.file(), rev, to, rewrite);
     }
     if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
         tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);

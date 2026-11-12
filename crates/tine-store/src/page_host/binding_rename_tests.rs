@@ -43,6 +43,7 @@ impl PageHost {
         tx.expect_view(view);
         let mut writes = false;
         let mut changed = Vec::new();
+        let shared = std::sync::Arc::new(map.clone());
         for id in refs {
             let Some((old, rev)) = read(&id)? else {
                 continue;
@@ -73,7 +74,7 @@ impl PageHost {
                         String::from_utf8(old).unwrap(),
                         String::from_utf8(new).unwrap(),
                     ),
-                    Some(map),
+                    Some(&shared),
                     view.config.file_name_format,
                     certificate,
                 );

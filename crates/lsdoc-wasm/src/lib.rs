@@ -465,6 +465,14 @@ fn regions_from_js(raw: &str, regions: &JsValue) -> Result<block_regions::BlockR
     };
     let mut r = BlockRegions::default();
     r.quarantined = get(regions, "quarantined").as_bool().unwrap_or(true);
+    let headline_end = get(regions, "headline_end");
+    if !headline_end.is_null() && !headline_end.is_undefined() {
+        let at = headline_end.as_f64().map(|at| at as usize);
+        r.headline_end = Some(
+            at.filter(|&at| at <= raw.len() && raw.is_char_boundary(at))
+                .ok_or_else(|| JsValue::from_str("Invalid region"))?,
+        );
+    }
     for v in array(regions, "literals").iter() {
         r.literals.push(range(&v)?);
     }
