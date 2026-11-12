@@ -451,3 +451,29 @@ fn mixed_ending_org_page_with_a_pasted_lone_cr_keeps_other_blocks_terminators() 
     });
     assert_eq!(pasted, "* a\r\npasted\r\n* b\n* c\r\n");
 }
+
+/// Every untouched line of a changed pre-block or block keeps its own ending,
+/// wherever it sits; an inserted line takes the convention, an edited one the
+/// ending of the line it replaces.
+#[test]
+fn mixed_ending_org_page_keeps_each_untouched_line_of_a_changed_preamble() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "#+title: T\r\n#+filetags: :x:\n* a\r\n");
+    let directive = page.save(EditKind::SaveBlock, |doc| {
+        doc.pre_block = Some("#+title: T\n#+author: A\n#+filetags: :x:".into());
+    });
+    assert_eq!(
+        directive,
+        "#+title: T\r\n#+author: A\r\n#+filetags: :x:\n* a\r\n"
+    );
+}
+
+#[test]
+fn mixed_ending_org_page_keeps_each_untouched_line_of_a_changed_block() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\nx\ny\r\nz\n* b\r\n");
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\nnew\nx\ny\nz!".into();
+    });
+    assert_eq!(edited, "* a\r\nnew\r\nx\ny\r\nz!\n* b\r\n");
+}
