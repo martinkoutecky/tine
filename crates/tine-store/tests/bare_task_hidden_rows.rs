@@ -327,3 +327,20 @@ fn removing_the_last_row_beside_blank_lines_keeps_the_task() {
         assert_eq!(tasks(&store).len(), 1, "after: {after:?}");
     }
 }
+
+#[test]
+fn a_bare_task_after_a_leading_blank_line_keeps_its_task_through_an_id() {
+    // Review r4: the block boundary skips leading blank lines (`\nTODO` is a
+    // task); adding an id, reopening and removing the id keeps it one.
+    let graph = Graph::new("pages/m.md", "- \n  TODO\n- other\n");
+    let before = tasks(&graph.open());
+    assert_eq!(before.len(), 1, "a task before: {before:?}");
+    let with_id = graph.apply(&[0], id(Some("6679-abc")));
+    assert!(with_id.contains("id:: 6679-abc"), "{with_id:?}");
+    let reopened = graph.open();
+    assert!(reopened.page(&PageId::from("pages/m.md")).is_ok());
+    assert_eq!(tasks(&reopened).len(), 1, "a task with the id: {with_id:?}");
+    reopened.close();
+    let stripped = graph.apply(&[0], id(None));
+    assert_eq!(tasks(&graph.open()), before, "{stripped:?}");
+}
