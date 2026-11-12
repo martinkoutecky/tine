@@ -36,6 +36,9 @@ fn published_site(store: &tine_store::Store) -> std::io::Result<(String, usize)>
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
+    // A pid is reused across runs (small sandbox pid spaces); a folder left by an earlier
+    // run would make publish refuse with "export folder already exists".
+    let _ = std::fs::remove_dir_all(&parent);
     std::fs::create_dir_all(&parent)?;
     let receipt = tine_graph_features::publish_query::publish_static(
         store,
