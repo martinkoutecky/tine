@@ -442,7 +442,10 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
     });
     step("edit a block");
 
-    let map = crate::RenameMap(vec![(target.clone(), renamed.clone())], Vec::new());
+    let map = std::sync::Arc::new(crate::RenameMap(
+        vec![(target.clone(), renamed.clone())],
+        Vec::new(),
+    ));
     let from = format!("pages/{target}.md");
     let to = format!("pages/{renamed}.md");
     let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
@@ -450,7 +453,7 @@ fn incremental_run(root: &Path) -> (String, Vec<String>) {
         &crate::PageId::from(from.clone()).file(),
         rev(root, &from),
         &crate::PageId::from(to.clone()).file(),
-        Some(&map),
+        Some(&*map),
     );
     let mut files = Vec::new();
     markdown_files(root, "pages", &mut files);
