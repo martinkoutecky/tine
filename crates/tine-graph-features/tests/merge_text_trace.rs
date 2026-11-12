@@ -1331,3 +1331,199 @@ fn org_title_after_a_clashing_directive_stays_inside_the_leftover_quote() {
         },
     );
 }
+
+/// Org pages whose page properties sit in a head `:PROPERTIES:` drawer
+/// (REG-CM-MERGE-ORG-DRAWER), for each line ending: (source, target, header
+/// aliases, header property keys, exact survivor bytes when pinned). Shared
+/// with the Native15c admission test.
+pub(crate) fn org_drawer_cases(
+    e: &str,
+) -> Vec<(
+    String,
+    String,
+    Vec<&'static str>,
+    Vec<&'static str>,
+    Option<String>,
+)> {
+    let drawer = |entries: &[&str]| {
+        let mut text = format!(":PROPERTIES:{e}");
+        for entry in entries {
+            text.push_str(&format!("{entry}{e}"));
+        }
+        text + &format!(":END:{e}")
+    };
+    let src = format!("* source{e}");
+    let dst = format!("* target{e}");
+    vec![
+        // The review's F1 witness: a target drawer alias, a headerless source.
+        (
+            src.clone(),
+            drawer(&[":ALIAS: b"]) + &dst,
+            vec!["b"],
+            vec!["alias"],
+            Some(drawer(&[":ALIAS: b"]) + &dst + &src),
+        ),
+        // A target drawer alias takes a source directive's member.
+        (
+            format!("#+alias: a{e}{src}"),
+            drawer(&[":ALIAS: b"]) + &dst,
+            vec!["b", "a"],
+            vec!["alias"],
+            None,
+        ),
+        // The review's F2 witnesses: a source drawer joins the target header
+        // as a whole container.
+        (
+            drawer(&[":TYPE: x"]) + &src,
+            dst.clone(),
+            vec![],
+            vec!["type"],
+            Some(drawer(&[":TYPE: x"]) + &dst + &src),
+        ),
+        (
+            drawer(&[":ALIAS: a"]) + &src,
+            dst.clone(),
+            vec!["a"],
+            vec!["alias"],
+            Some(drawer(&[":ALIAS: a"]) + &dst + &src),
+        ),
+        // Both drawers, nonclashing: the source container follows the target's.
+        (
+            drawer(&[":TYPE: x", ":ALIAS: a"]) + &src,
+            drawer(&[":ALIAS: b"]) + &dst,
+            vec!["b", "a"],
+            vec!["alias", "type"],
+            None,
+        ),
+        // Both drawers, the source title clashing with nothing it may replace:
+        // it is leftover text; its other entry joins.
+        (
+            drawer(&[":TITLE: src", ":TAGS: t"]) + &src,
+            drawer(&[":TYPE: y"]) + &dst,
+            vec![],
+            vec!["type", "tags"],
+            None,
+        ),
+        // A source drawer before target directives keeps every property
+        // readable by Logseq too (the drawer comes first).
+        (
+            drawer(&[":TYPE: x"]) + &format!("#+alias: a{e}{src}"),
+            format!("#+tags: t{e}{dst}"),
+            vec!["a"],
+            vec!["type", "tags", "alias"],
+            None,
+        ),
+        // A target drawer and directive take a source directive.
+        (
+            format!("#+type: x{e}{src}"),
+            drawer(&[":ALIAS: b"]) + &format!("#+tags: t{e}{dst}"),
+            vec!["b"],
+            vec!["alias", "tags", "type"],
+            None,
+        ),
+        // Two source drawers, one empty.
+        (
+            drawer(&[":TYPE: x"]) + &drawer(&[]) + &src,
+            dst.clone(),
+            vec![],
+            vec!["type"],
+            None,
+        ),
+        // An empty drawer on either side.
+        (src.clone(), drawer(&[]) + &dst, vec![], vec![], None),
+        (drawer(&[]) + &src, dst.clone(), vec![], vec![], None),
+    ]
+}
+
+fn header_keys(doc: &tine_core::model::PageDto) -> Vec<String> {
+    let mut keys: Vec<_> = tine_core::page_header::page_header_text(
+        doc.pre_block.as_deref(),
+        doc.blocks.first().map(|b| b.raw.as_str()),
+    )
+    .into_iter()
+    .flat_map(|header| tine_core::page_header::page_property_lines(header, true))
+    .map(|(k, _)| k)
+    .collect();
+    keys.sort();
+    keys
+}
+
+/// A valid Org page with a head drawer merges (REG-CM-MERGE-ORG-DRAWER): the
+/// merger reads, places and checks page properties through the parser's one
+/// view, so drawer entries count as page properties on both sides.
+#[test]
+fn valid_merge_reads_org_head_drawers_as_page_properties() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for e in ["\n", "\r\n", "\r"] {
+        for (src, dst, aliases, keys, exact) in org_drawer_cases(e) {
+            let mut keys: Vec<String> = keys.into_iter().map(String::from).collect();
+            keys.sort();
+            let result = valid_merge(&src, &dst, true, |doc, proof| {
+                assert_eq!(header_aliases(doc, true), aliases, "{src:?} into {dst:?}");
+                assert_eq!(header_keys(doc), keys, "{src:?} into {dst:?}");
+                if let Some(exact) = &exact {
+                    assert_eq!(&proof.text, exact);
+                }
+            });
+            if let Err(error) = result {
+                failures.push(error);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Where the model has no answer for a head drawer yet, the merge refuses and
+/// both pages stay as they were (RECEIPT-cm-b4-fix4 Q5-Q7): a clashing or
+/// equal source drawer entry, or a drawer alias's protected duplicate member,
+/// would lose its property occurrence inside the leftover quote; leftover
+/// drawer delimiters would turn a following title into a tag; and a rebuilt
+/// field's `#+alias: ` key cannot sit in a drawer.
+#[test]
+fn org_drawer_merges_the_model_does_not_settle_refuse_unchanged() {
+    let _guard = crate::integration_lock();
+    let drawer = |entry: &str| format!(":PROPERTIES:\n{entry}\n:END:\n");
+    for (src, dst, error) in [
+        (
+            drawer(":TYPE: x") + "* source\n",
+            drawer(":TYPE: y") + "* target\n",
+            "HiddenOccurrence",
+        ),
+        (
+            drawer(":TYPE: y") + "* source\n",
+            drawer(":TYPE: y") + "* target\n",
+            "HiddenOccurrence",
+        ),
+        (
+            drawer(":TYPE: x") + "* source\n",
+            "#+type: y\n* target\n".to_string(),
+            "HiddenOccurrence",
+        ),
+        (
+            drawer(":ALIAS: #[[a]], b") + "* source\n",
+            "#+alias: a\n* target\n".to_string(),
+            "HiddenOccurrence",
+        ),
+        (
+            "* source\n".to_string(),
+            drawer(":ALIAS: a, a") + "* target\n",
+            "AliasField",
+        ),
+        // Leftover drawer delimiters make the reader take the source title
+        // that follows them for a `#+title` tag (Q7).
+        (
+            drawer(":ALIAS: c d") + "#+title: src\n* source\n",
+            drawer(":TAGS: t") + "* target\n",
+            "AddedOccurrence",
+        ),
+        (
+            ":PROPERTIES:\n:END:\n#+title: src\n* source\n".to_string(),
+            "#+alias: x\n* target\n".to_string(),
+            "AddedOccurrence",
+        ),
+    ] {
+        let error_text = valid_merge(&src, &dst, true, |_, _| {}).unwrap_err();
+        assert!(error_text.ends_with(error), "{error_text}");
+    }
+}

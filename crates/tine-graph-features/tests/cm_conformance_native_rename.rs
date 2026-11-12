@@ -858,12 +858,91 @@ fn native_valid_merges_keep_lone_cr_line_endings() {
     );
 }
 
+/// Native15c admission of valid Org merges whose pages carry a head drawer
+/// (REG-CM-MERGE-ORG-DRAWER): in the target, the source or both, with and
+/// without `:ALIAS:`, beside directives, empty, under each line ending.
+#[test]
+fn native_valid_merges_with_org_head_drawers_are_admitted() {
+    let _guard = crate::integration_lock();
+    let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
+        assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
+        return;
+    };
+    let (source_path, target_path) = ("pages/src.org", "pages/dst.org");
+    let mut rejected = Vec::new();
+    let mut pending = Vec::new();
+    for e in ["\n", "\r\n", "\r"] {
+        for (source, target, ..) in crate::merge_text_trace::org_drawer_cases(e) {
+            let witness = format!("source={source:?} target={target:?}");
+            // Field endings rounds 15c and 15f disagree on are reported by
+            // the generator, not asserted (RECEIPT-cm-b4-fix2 Q1).
+            if crate::merge_generated::expected(&crate::merge_generated::org_case(&source, &target))
+                .pending_15f()
+            {
+                pending.push(witness);
+                continue;
+            }
+            let mut spec = GraphSpec::default();
+            spec.name = "valid-merge".into();
+            spec.files = BTreeMap::from([
+                (source_path.to_owned(), source),
+                (target_path.to_owned(), target),
+            ]);
+            let dir = tempfile::tempdir().unwrap();
+            spec.write(dir.path());
+            let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+            let choice = Choice::Merge(target_path.to_owned());
+            let proof = merge_proof(&store, &spec, "src", "dst", &choice)
+                .unwrap()
+                .2
+                .unwrap();
+            execute(&store, "src", "dst", Some(&choice)).unwrap();
+            let files = read_graph(dir.path());
+            let p = packet(
+                &store,
+                &spec,
+                "src",
+                "dst",
+                source_path,
+                target_path,
+                &proof,
+                &files,
+                json!([]),
+            );
+            assert_local_saves(&p);
+            let result = shared::run_bridge(Path::new(&bridge), &p).unwrap();
+            let failed: Vec<_> = result["checks"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, v)| **v != true)
+                .map(|(k, _)| k.clone())
+                .collect();
+            if result["accepted"] != true || !failed.is_empty() {
+                if let Ok(dest) = std::env::var("CM_NATIVE_REPORT") {
+                    let name = format!("drawer-{}.packet.json", rejected.len());
+                    fs::write(Path::new(&dest).with_file_name(name), p.to_string()).unwrap();
+                }
+                rejected.push(format!("{witness}: {}", failed.join(",")));
+            }
+        }
+    }
+    eprintln!("pending 15f, not asserted: {pending:#?}");
+    assert!(
+        rejected.is_empty(),
+        "Native15c rejected:\n{}",
+        rejected.join("\n")
+    );
+}
+
 /// Native15c admission of the generated merges (`merge_generated`): every
 /// case the model admits must be admitted on Tine's actual output. Three
 /// groups run and are reported, not asserted (RECEIPT-cm-b4-gen): field
 /// endings rounds 15c and 15f disagree on (pending 15f); memberless-only
 /// declarations (model question Q2); and a source `title::` in a first-root
-/// header, whose shadow this harness does not rebind (follow-up F1).
+/// header, whose shadow this harness does not rebind (follow-up F1). Fused
+/// endings (Q4), Org head-drawer refusals (Q5, Q6, Q7 of RECEIPT-cm-b4-fix4)
+/// and lsdoc's debug span tripwire are reported the same way.
 fn native_generated(seed: u64, count: usize) {
     let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
         assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
@@ -902,7 +981,7 @@ fn native_generated(seed: u64, count: usize) {
         } else {
             None
         };
-        let verdict = (|| {
+        let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let proof = merge_proof(&store, &spec, "src", "dst", &choice)
                 .ok_or("no merge proof")?
                 .2
@@ -933,10 +1012,33 @@ fn native_generated(seed: u64, count: usize) {
             } else {
                 Err(format!("rejected: {}", failed.join(",")))
             }
-        })();
+        }))
+        .unwrap_or_else(|p| {
+            let message = p
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            Err(format!("panic: {message}"))
+        });
+        let refused = |reason: &str| matches!(&verdict, Err(e) if e.ends_with(reason));
         let group = group.or_else(|| {
-            matches!(&verdict, Err(e) if e.ends_with("FusedLineEnding"))
-                .then_some("Q4 fused ending")
+            if refused("FusedLineEnding") {
+                Some("Q4 fused ending")
+            } else if refused("HiddenOccurrence") && crate::merge_generated::drawer_leftover(&case) {
+                Some("Q6 drawer leftover")
+            } else if refused("AliasField") && crate::merge_generated::retained_in_drawer(&case) {
+                Some("Q5 retained drawer alias")
+            } else if (refused("HiddenOccurrence") || refused("AddedOccurrence"))
+                && crate::merge_generated::leftover_delimiters(&case)
+            {
+                Some("Q7 leftover drawer delimiters")
+            } else if matches!(&verdict, Err(e) if e.contains(crate::merge_generated::LSDOC_TRIPWIRE))
+            {
+                Some("lsdoc tripwire")
+            } else {
+                None
+            }
         });
         if let Some(group) = group {
             let entry = reported.entry(group).or_default();

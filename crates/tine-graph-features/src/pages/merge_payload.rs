@@ -37,6 +37,7 @@ pub enum RealizationError {
     Trace(TraceError),
     BodyLaw,
     HiddenOccurrence,
+    AddedOccurrence,
     SurvivorIdentity,
     AliasField,
     DirectiveEscape,
@@ -77,6 +78,8 @@ struct Line {
     range: Range<usize>,
     content: Range<usize>,
     property: Option<(String, String)>,
+    /// The Org head drawer (index into `Header::drawers`) holding this line.
+    drawer: Option<usize>,
     alias: Option<Alias>,
 }
 struct Alias {
@@ -93,6 +96,8 @@ struct Header {
     properties: bool,
     prose: Option<Range<usize>>,
     lines: Vec<Line>,
+    /// Each head drawer's `:PROPERTIES:` and `:END:` line indices.
+    drawers: Vec<(usize, usize)>,
 }
 
 impl Header {
@@ -138,9 +143,13 @@ impl Header {
             ));
             physical += raw.len();
         }
-        let fmt = if org { Format::Org } else { Format::Md };
-        let regions = crate::conflicts::pre_regions(&logical, fmt);
-        let (properties, prose) = page.pre_block.as_deref().map_or((first_root, None), |pre| {
+        // The page's properties are the parser's answer, the same one the
+        // reader and the final field check ask (`page_property_lines`):
+        // Markdown `key::` lines, Org `#+KEY:` directives and head drawers.
+        let regions = tine_core::block_regions::parse_document(&logical, org);
+        let properties: HashMap<_, _> = regions.page_properties().map(|p| (p.line.0, p)).collect();
+        let boxes = regions.property_drawer_boundaries(&logical);
+        let (has_properties, prose) = page.pre_block.as_deref().map_or((first_root, None), |pre| {
             let (properties, prose) = tine_core::page_properties::pre_block_parts(pre, org);
             let prose = prose.map(|r| {
                 let mut extra = 0;
@@ -156,30 +165,65 @@ impl Header {
             });
             (!properties.is_empty(), prose)
         });
-        let lines = lines
+        let mut lines: Vec<Line> = lines
             .into_iter()
             .filter(|(range, _, _)| prose.as_ref().is_none_or(|p| range.start < p.start))
             .map(|(range, content, at)| {
-                let property = regions.property(at).cloned();
-                let alias = property
-                    .as_ref()
-                    .filter(|(k, _)| tine_store::query::is_alias_key(k))
-                    .map(|(_, value)| Alias::read(text, content.clone(), value, org));
+                let found = properties.get(&at);
+                // Parser offsets are in the logical line; map them to bytes.
+                let bytes = |r: &tine_core::block_regions::Range| {
+                    content.start + r.0 - at..content.start + r.1 - at
+                };
+                let alias = found
+                    .filter(|p| tine_core::page_header::is_alias_key(&p.key))
+                    .map(|p| {
+                        Alias::read(
+                            text,
+                            content.clone(),
+                            bytes(&p.key_range),
+                            bytes(&p.value_range),
+                            org,
+                        )
+                    });
                 Line {
+                    property: found.map(|p| (p.key.to_ascii_lowercase(), p.value.clone())),
+                    drawer: boxes
+                        .iter()
+                        .position(|&(open, close)| open <= at && at <= close),
                     range,
                     content,
-                    property,
                     alias,
                 }
             })
             .collect();
+        // Re-index by the drawers the header holds (a prose one is not).
+        let mut drawers: Vec<(usize, usize)> = Vec::new();
+        let mut index = HashMap::new();
+        for (n, line) in lines.iter_mut().enumerate() {
+            if let Some(d) = line.drawer {
+                let at = *index.entry(d).or_insert_with(|| {
+                    drawers.push((n, n));
+                    drawers.len() - 1
+                });
+                drawers[at].1 = n;
+                line.drawer = Some(at);
+            }
+        }
         Self {
             end,
             first_root,
-            properties,
+            properties: has_properties,
             prose,
             lines,
+            drawers,
         }
+    }
+
+    /// Whether line `n` opens or closes a head drawer.
+    fn delimiter(&self, n: usize) -> bool {
+        self.drawers
+            .iter()
+            .any(|&(open, close)| n == open || n == close)
     }
 
     fn cuts(&self, text: &str) -> Vec<usize> {
@@ -216,23 +260,31 @@ impl Header {
 }
 
 impl Alias {
-    fn read(text: &str, range: Range<usize>, value: &str, org: bool) -> Self {
+    /// `key` and `value` are the parser's byte ranges of this declaration.
+    fn read(
+        text: &str,
+        range: Range<usize>,
+        key: Range<usize>,
+        value: Range<usize>,
+        org: bool,
+    ) -> Self {
         let raw = &text[range.clone()];
         let body = &raw[..raw.len() - tine_core::doc::line_terminator(raw).len()];
+        let value_start = value.start - range.start;
+        let value = &text[value];
+        // The parser decides what the declaration and its key are. The model's
+        // narrow syntax (§5.2) decides only whether the bytes from the line
+        // start through the key's separator are a consumable native key.
         let key = ["alias:: ", "aliases:: ", "#+alias: ", "#+aliases: "]
             .into_iter()
-            .find(|key| body.starts_with(key))
-            .map(|key| range.start..range.start + key.len());
-        let mut at = key.as_ref().map_or_else(
-            || body.find(value).unwrap_or(body.len()),
-            |r| r.end - range.start,
-        );
+            .find(|k| body[..value_start].starts_with(k) && range.start + k.len() >= key.end)
+            .map(|k| range.start..range.start + k.len());
+        let mut at = key.as_ref().map_or(value_start, |r| r.end - range.start);
         let mut names = Vec::new();
         let mut tokens = Vec::new();
         let mut syntax = Vec::new();
         let mut plain = key.is_some();
         let mut movable = true;
-        let value_start = body.find(value).unwrap_or(at);
         // Reader-owned member parsing; never split a bracketed comma again.
         tine_core::property_refs::for_each_linkable_member(value, org, |name, token| {
             let Some(offset) = body[at..].find(&name) else {
@@ -585,6 +637,32 @@ pub fn propose(
         .iter()
         .filter_map(|l| l.property.as_ref().map(|p| p.0.clone()))
         .collect();
+    // A nonclashing source property joins the target header; a clashing one,
+    // a title and unknown text become leftover text (SPEC §5.1).
+    let joins: Vec<_> = headers[1]
+        .lines
+        .iter()
+        .map(|line| {
+            line.alias.is_none()
+                && line
+                    .property
+                    .as_ref()
+                    .is_some_and(|(key, _)| key != "title" && keys.insert(key.clone()))
+        })
+        .collect();
+    // Joining drawer entries go into one head drawer: the target's last, else
+    // the first source drawer holding one, placed first. One drawer reads the
+    // same in Logseq (mldoc folds a drawer and the directives after it into
+    // one; a directive before a drawer hides it) and in Tine for every line
+    // ending. Other source drawer delimiters are leftover text.
+    let boxed: Vec<_> = (0..headers[1].lines.len())
+        .filter(|&n| headers[1].lines[n].drawer.is_some() && (joins[n] || retained == Some((1, n))))
+        .collect();
+    let target_close = headers[0].drawers.last().map(|d| d.1);
+    let kept_drawer = boxed
+        .first()
+        .filter(|_| target_close.is_none())
+        .and_then(|&n| headers[1].lines[n].drawer);
     let mut active_names = HashSet::new();
     if let Some((file, n)) = retained.filter(|_| !rebuild_retained) {
         for (_, range) in &headers[file].lines[n].alias.as_ref().unwrap().names {
@@ -666,16 +744,15 @@ pub fn propose(
                 }
             } else if file == 0 {
                 continue;
-            } else if line
-                .property
-                .as_ref()
-                .is_some_and(|(key, _)| key != "title" && keys.insert(key.clone()))
-            {
+            } else if joins[n] {
                 promoted.push(n);
                 if line.range.start < line.content.start {
                     moved.push((file, line.range.start..line.content.start));
                 }
-            } else {
+            } else if !(line.drawer.is_some()
+                && line.drawer == kept_drawer
+                && headers[1].delimiter(n))
+            {
                 moved.push((1, line.range.clone()));
             }
         }
@@ -716,7 +793,42 @@ pub fn propose(
     };
     moved.extend(slots[used..].iter().map(|r| (0, r.clone())));
     let mut slots = slots[..used].iter();
+    // The model's rebuilt field starts with the native `#+alias: ` key, which
+    // cannot sit inside a drawer (RECEIPT-cm-b4-fix4 Q5): refuse, unchanged.
+    if rebuild_retained && retained.is_some_and(|(f, n)| headers[f].lines[n].drawer.is_some()) {
+        return Err(RealizationError::AliasField);
+    }
+    promoted.retain(|&n| headers[1].lines[n].drawer.is_none());
+    let entries = |w: &mut Writer| -> Result<(), TraceError> {
+        for &n in &boxed {
+            w.newline();
+            let line = &headers[1].lines[n];
+            if retained == Some((1, n)) {
+                w.field(1, line, &alias_additions, rebuild_retained, org)?;
+            } else {
+                w.original(1, line.content.clone())?;
+            }
+        }
+        Ok(())
+    };
+    let source_drawer = |w: &mut Writer| -> Result<(), TraceError> {
+        if let Some((open, close)) = kept_drawer.map(|d| headers[1].drawers[d]) {
+            w.original(1, headers[1].lines[open].content.clone())?;
+            entries(w)?;
+            w.newline();
+            w.original(1, headers[1].lines[close].content.clone())?;
+            w.newline();
+        }
+        Ok(())
+    };
     for (n, line) in headers[0].lines[..header_insert].iter().enumerate() {
+        if n == 0 {
+            source_drawer(&mut w)?;
+        }
+        if target_close == Some(n) {
+            entries(&mut w)?;
+            w.newline();
+        }
         if normalize_target
             && line
                 .property
@@ -737,7 +849,12 @@ pub fn propose(
             w.original(0, line.content.clone())?;
         }
     }
-    let has_promoted = !promoted.is_empty() || headers[1].lines.iter().any(|l| l.alias.is_some());
+    if header_insert == 0 {
+        source_drawer(&mut w)?;
+    }
+    let has_promoted = !promoted.is_empty()
+        || !boxed.is_empty()
+        || headers[1].lines.iter().any(|l| l.alias.is_some());
     for n in promoted {
         let line = &headers[1].lines[n];
         w.newline();
@@ -961,19 +1078,32 @@ pub fn propose(
     if org && leftover {
         // The same lines, read where they came from: as header directives.
         // A wholly moved alias line's members are in the field instead.
+        // A line from a head drawer is read inside that drawer, as it was.
         let mut original = String::new();
         for (file, n, parts) in &lines {
-            let line = &headers[*file].lines[*n];
-            if line.alias.is_some()
-                && parts.iter().map(|r| r.len()).sum::<usize>() == line.content.len()
+            let header = &headers[*file];
+            let line = &header.lines[*n];
+            if header.delimiter(*n)
+                || line.alias.is_some()
+                    && parts.iter().map(|r| r.len()).sum::<usize>() == line.content.len()
             {
                 continue;
+            }
+            let drawer = line.drawer.map(|d| header.drawers[d]);
+            if let Some((open, _)) = drawer {
+                original.push_str(&w.value(*file, header.lines[open].content.clone())?);
             }
             for range in parts {
                 original.push_str(&w.value(*file, range.clone())?);
             }
             if tine_core::doc::line_terminator(&original).is_empty() {
                 original.push('\n');
+            }
+            if let Some((_, close)) = drawer {
+                original.push_str(&w.value(*file, header.lines[close].content.clone())?);
+                if tine_core::doc::line_terminator(&original).is_empty() {
+                    original.push('\n');
+                }
             }
         }
         let mut required = HashMap::new();
@@ -999,6 +1129,15 @@ pub fn propose(
             .any(|(site, n)| actual.get(site).copied().unwrap_or(0) < *n)
         {
             return Err(RealizationError::HiddenOccurrence);
+        }
+        // Leftover drawer delimiters before a directive make the reader take
+        // `#+title` for a tag (RECEIPT-cm-b4-fix4 Q7): refuse a leftover that
+        // reads a reference to a name none of its lines refers to.
+        let delimiters = lines
+            .iter()
+            .any(|(file, n, _)| headers[*file].delimiter(*n));
+        if delimiters && actual.keys().any(|site| !required.contains_key(site)) {
+            return Err(RealizationError::AddedOccurrence);
         }
     }
     let source_header = usize::from(headers[1].properties) + source_prose;

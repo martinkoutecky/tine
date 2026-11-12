@@ -181,6 +181,40 @@ fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
     if rng.chance(1, 8) {
         lines.last_mut().unwrap().end = "";
     }
+    if org {
+        // A head drawer, from its own stream so the other draws (and so the
+        // seeds' earlier cases) stay as they were. It goes before any
+        // directive: a directive before it hides it in OG (RECEIPT-cm-b4-fix4).
+        let mut d = Rng::new(rng.0 ^ 0xD4A3_E400);
+        if d.chance(1, 2) {
+            let mut drawer = vec![":PROPERTIES:".to_owned()];
+            for _ in 0..d.pick(&[0, 1, 1, 2, 3]) {
+                drawer.push(match d.below(5) {
+                    0 | 1 => {
+                        let line = alias_line(&mut d, true);
+                        let (_, rest) = line.split_once(':').unwrap();
+                        format!("{}{rest}", d.pick(&[":ALIAS:", ":ALIAS:", ":alias:"]))
+                    }
+                    2 => ":TYPE: [[k]]".into(),
+                    3 => ":TAGS: t".into(),
+                    _ => format!(":TITLE: {name}"),
+                });
+            }
+            drawer.push(":END:".into());
+            for (n, content) in drawer.into_iter().enumerate() {
+                let end = end(&mut d);
+                lines.insert(
+                    n,
+                    GenLine {
+                        prefix: String::new(),
+                        content,
+                        end,
+                        header: true,
+                    },
+                );
+            }
+        }
+    }
     // A CR before an empty LF line is one CRLF on disk, not two lines: give
     // that empty line the CR too, so each generated line is a physical one.
     for n in 1..lines.len() {
@@ -190,6 +224,27 @@ fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
         }
     }
     lines
+}
+
+/// A hand-written Org pair as generated lines: the header runs to the first
+/// heading, so the oracle reads it as it reads a generated one.
+pub fn org_case(src: &str, dst: &str) -> Case {
+    let lines = |text: &str| {
+        let mut header = true;
+        physical_lines(text)
+            .into_iter()
+            .map(|l| {
+                header &= !l.starts_with('*');
+                let end = ending(l);
+                line("", &l[..l.len() - end.len()], end, header)
+            })
+            .collect()
+    };
+    Case {
+        org: true,
+        src: lines(src),
+        dst: lines(dst),
+    }
 }
 
 /// `count` cases from `seed`; the same seed always yields the same cases.
@@ -214,25 +269,159 @@ pub struct Decl {
     pub quoted: Option<String>,
 }
 
-pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
-    lines
+/// One page property as the parser reads it: its generated line, key, value,
+/// and whether it sits in the Org head drawer.
+pub struct Entry {
+    pub line: usize,
+    pub key: String,
+    pub value: String,
+    pub drawer: bool,
+}
+
+/// Page properties as the parser reads them: a Markdown line on its own, the
+/// Org header (drawer entries need their drawer) as one text.
+pub fn header_entries(lines: &[GenLine], org: bool) -> Vec<Entry> {
+    let header = lines.iter().take_while(|l| l.header);
+    if !org {
+        return header
+            .enumerate()
+            .flat_map(|(n, l)| {
+                tine_core::page_header::page_property_lines(&l.content, org)
+                    .into_iter()
+                    .map(move |(key, value)| Entry {
+                        line: n,
+                        key,
+                        value,
+                        drawer: false,
+                    })
+            })
+            .collect();
+    }
+    let mut text = String::new();
+    let mut starts = Vec::new();
+    for l in header {
+        starts.push(text.len());
+        text.push_str(&l.content);
+        text.push('\n');
+    }
+    let regions = tine_core::block_regions::parse_document(&text, org);
+    let boxes = regions.property_drawer_boundaries(&text);
+    regions
+        .page_properties()
+        .filter_map(|p| {
+            Some(Entry {
+                line: starts.iter().rposition(|&s| s <= p.line.0)?,
+                key: p.key.to_ascii_lowercase(),
+                value: p.value.clone(),
+                drawer: boxes
+                    .iter()
+                    .any(|&(open, end)| open < p.line.0 && p.line.0 < end),
+            })
+        })
+        .collect()
+}
+
+/// Which generated lines declare an alias.
+fn alias_lines(lines: &[GenLine], org: bool) -> Vec<bool> {
+    let mut out = vec![false; lines.len()];
+    for e in header_entries(lines, org) {
+        out[e.line] |= tine_core::page_header::is_alias_key(&e.key);
+    }
+    out
+}
+
+/// A drawer entry that stays leftover text: a source key the survivor header
+/// already has (or an earlier source line declares), or an alias declaration
+/// other than the retained one keeping a duplicate member (§5.2: it retains
+/// its property owner). Inside the leftover quote a drawer line is no
+/// property, so the merge refuses `HiddenOccurrence`; the model does not place
+/// it yet (Q6 of RECEIPT-cm-b4-fix4).
+pub fn drawer_leftover(case: &Case) -> bool {
+    let (target, source) = (
+        header_entries(&case.dst, case.org),
+        header_entries(&case.src, case.org),
+    );
+    let alias = |e: &Entry| tine_core::page_header::is_alias_key(&e.key);
+    let members = |e: &Entry| tine_core::property_refs::linkable_names(&e.value, case.org);
+    let all: Vec<_> = target
         .iter()
-        .filter(|l| l.header)
-        .flat_map(|l| {
-            tine_core::page_header::page_property_lines(&l.content, org)
+        .map(|e| (false, e))
+        .chain(source.iter().map(|e| (true, e)))
+        .collect();
+    let retained = all
+        .iter()
+        .position(|(_, e)| alias(e) && !members(e).is_empty());
+    let mut keys: std::collections::HashSet<_> = target.iter().map(|e| e.key.clone()).collect();
+    let mut names = std::collections::HashSet::new();
+    all.iter().enumerate().any(|(n, &(from_source, e))| {
+        if alias(e) {
+            let duplicate = members(e)
                 .into_iter()
-                .filter(|(k, _)| tine_core::page_header::is_alias_key(k))
-                .map(|(_, value)| {
-                    let trimmed = value.trim();
-                    Decl {
-                        names: tine_core::property_refs::linkable_names(&value, org),
-                        end: l.end,
-                        quoted: (trimmed.len() > 1
-                            && trimmed.starts_with('"')
-                            && trimmed.ends_with('"'))
-                        .then(|| trimmed.to_owned()),
-                    }
-                })
+                .fold(false, |d, name| !names.insert(name) || d);
+            duplicate && e.drawer && retained != Some(n)
+        } else {
+            from_source && e.drawer && e.key != "title" && !keys.insert(e.key.clone())
+        }
+    })
+}
+
+/// The Org header's head drawers as the parser finds them: whether each is
+/// empty (Tine's reader takes an empty one for prose, mldoc for an empty
+/// property list).
+pub fn drawers(lines: &[GenLine], org: bool) -> Vec<bool> {
+    if !org {
+        return Vec::new();
+    }
+    let header: String = lines
+        .iter()
+        .take_while(|l| l.header)
+        .map(|l| format!("{}\n", l.content))
+        .collect();
+    tine_core::block_regions::parse_document(&header, org)
+        .property_drawer_boundaries(&header)
+        .into_iter()
+        .map(|(open, end)| header[open..end].matches('\n').count() == 1)
+        .collect()
+}
+
+/// The source has a head drawer, whose delimiters may become leftover text.
+/// In the leftover quote they can make the reader take a following line for a
+/// tag, so the merge refuses a leftover reading a reference none of its lines
+/// has (`AddedOccurrence`, or `HiddenOccurrence` for a directive it hides).
+/// The guard is coarse and may refuse a sound merge: Q7 of RECEIPT-cm-b4-fix4.
+pub fn leftover_delimiters(case: &Case) -> bool {
+    !drawers(&case.src, case.org).is_empty()
+}
+
+/// The retained declaration sits in a drawer: a rebuilt field's `#+alias: `
+/// key cannot, so the merge refuses `AliasField` (Q5 of RECEIPT-cm-b4-fix4).
+pub fn retained_in_drawer(case: &Case) -> bool {
+    let entries = header_entries(&case.dst, case.org)
+        .into_iter()
+        .chain(header_entries(&case.src, case.org));
+    entries
+        .filter(|e| tine_core::page_header::is_alias_key(&e.key))
+        .find(|e| !tine_core::property_refs::linkable_names(&e.value, case.org).is_empty())
+        .is_some_and(|e| e.drawer)
+}
+
+/// lsdoc's debug-build span tripwire on a CRLF quote holding an empty drawer
+/// and a spaced tag (follow-up, not a merge defect: rendering such a block
+/// trips it too).
+pub const LSDOC_TRIPWIRE: &str = "OriginCursor queried backwards";
+
+pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
+    header_entries(lines, org)
+        .into_iter()
+        .filter(|e| tine_core::page_header::is_alias_key(&e.key))
+        .map(|Entry { line, value, .. }| {
+            let trimmed = value.trim();
+            Decl {
+                names: tine_core::property_refs::linkable_names(&value, org),
+                end: lines[line].end,
+                quoted: (trimmed.len() > 1 && trimmed.starts_with('"') && trimmed.ends_with('"'))
+                    .then(|| trimmed.to_owned()),
+            }
         })
         .collect()
 }
@@ -335,15 +524,31 @@ fn ending(line: &str) -> &'static str {
 /// The output's page-header lines that declare aliases, with terminators.
 fn header_alias_lines<'a>(output: &'a str, org: bool) -> Vec<&'a str> {
     let lines = physical_lines(output);
-    let first_root = !org && lines.first().is_some_and(|l| l.starts_with("- "));
+    if org {
+        // The Org header is read as one text: a drawer entry needs its drawer.
+        let header: Vec<_> = lines
+            .into_iter()
+            .take_while(|l| !l.starts_with('*'))
+            .collect();
+        let generated: Vec<_> = header
+            .iter()
+            .map(|l| GenLine {
+                prefix: String::new(),
+                content: l.trim_end_matches(['\r', '\n']).to_owned(),
+                end: "",
+                header: true,
+            })
+            .collect();
+        return alias_lines(&generated, org)
+            .into_iter()
+            .zip(header)
+            .filter_map(|(alias, line)| alias.then_some(line))
+            .collect();
+    }
+    let first_root = lines.first().is_some_and(|l| l.starts_with("- "));
     let mut found = Vec::new();
     for (n, line) in lines.iter().enumerate() {
-        let content = if org {
-            if line.starts_with('*') {
-                break;
-            }
-            *line
-        } else if first_root {
+        let content = if first_root {
             if n > 0 && !(line.starts_with("  ") && !line.starts_with("  - ")) {
                 break;
             }
@@ -416,14 +621,14 @@ pub fn check_output(case: &Case, out: &str, doc: &tine_core::model::PageDto) -> 
         }
     }
     // Every non-alias line survives with its own terminator, multiplicity kept.
-    let alias_line = |l: &GenLine| {
-        l.header
-            && tine_core::page_header::page_property_lines(&l.content, org)
-                .iter()
-                .any(|(k, _)| tine_core::page_header::is_alias_key(k))
-    };
+    let (dst_alias, src_alias) = (alias_lines(&case.dst, org), alias_lines(&case.src, org));
     let mut needles = BTreeMap::<String, usize>::new();
-    for l in case.dst.iter().chain(&case.src).filter(|l| !alias_line(l)) {
+    let kept = case
+        .dst
+        .iter()
+        .zip(dst_alias)
+        .chain(case.src.iter().zip(src_alias));
+    for l in kept.filter(|(_, alias)| !alias).map(|(l, _)| l) {
         *needles
             .entry(format!("{}{}", l.content, l.end))
             .or_default() += 1;
@@ -604,6 +809,9 @@ pub struct Report {
     /// Refused, files unchanged, because a CR would fuse with a following
     /// LF into one CRLF (model question Q4 of RECEIPT-cm-b4-fix3).
     pub fused: usize,
+    /// Refused, files unchanged, or tripped, where RECEIPT-cm-b4-fix4 reports
+    /// instead of asserting: Q5, Q6 and the lsdoc tripwire, with a witness.
+    pub reported: BTreeMap<&'static str, (usize, String)>,
     pub classes: BTreeMap<String, (usize, String)>,
 }
 
@@ -612,6 +820,7 @@ pub fn report(cases: &[Case]) -> Report {
         merged: 0,
         pending: 0,
         fused: 0,
+        reported: BTreeMap::new(),
         classes: BTreeMap::new(),
     };
     for case in cases {
@@ -626,14 +835,33 @@ pub fn report(cases: &[Case]) -> Report {
                 r.fused += 1;
                 Vec::new()
             }
-            Ok(Run::Refused(e)) => vec![("refused", e)],
-            Err(p) => vec![(
-                "panic",
-                p.downcast_ref::<String>()
+            Ok(Run::Refused(e)) => match e.as_str() {
+                "merge realization: HiddenOccurrence" if drawer_leftover(case) => {
+                    vec![("Q6 drawer leftover", e)]
+                }
+                "merge realization: HiddenOccurrence" | "merge realization: AddedOccurrence"
+                    if leftover_delimiters(case) =>
+                {
+                    vec![("Q7 leftover drawer delimiters", e)]
+                }
+                "merge realization: AliasField" if retained_in_drawer(case) => {
+                    vec![("Q5 retained drawer alias", e)]
+                }
+                _ => vec![("refused", e)],
+            },
+            Err(p) => {
+                let message = p
+                    .downcast_ref::<String>()
                     .cloned()
                     .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                    .unwrap_or_default(),
-            )],
+                    .unwrap_or_default();
+                let class = if message.contains(LSDOC_TRIPWIRE) {
+                    "lsdoc tripwire"
+                } else {
+                    "panic"
+                };
+                vec![(class, message)]
+            }
         };
         if pending {
             r.pending += 1;
@@ -651,7 +879,11 @@ pub fn report(cases: &[Case]) -> Report {
             } else {
                 class.to_owned()
             };
-            let entry = r.classes.entry(key).or_insert((0, witness.clone()));
+            let entry = if class.starts_with('Q') || class == "lsdoc tripwire" {
+                r.reported.entry(class).or_insert((0, witness.clone()))
+            } else {
+                r.classes.entry(key).or_insert((0, witness.clone()))
+            };
             entry.0 += 1;
             if witness.len() < entry.1.len() {
                 entry.1 = witness;
@@ -666,6 +898,9 @@ fn assert_clean(r: &Report, total: usize) {
         "generated merges: {total} cases, {} merged, {} pending 15f (field ending not asserted), {} fused-ending refusals (Q4, files unchanged)",
         r.merged, r.pending, r.fused
     );
+    for (group, (n, witness)) in &r.reported {
+        eprintln!("  reported {group}: {n}\n    {witness}");
+    }
     let listing: String = r
         .classes
         .iter()
