@@ -522,6 +522,10 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     }
     let title = raw.split_once('\n').map_or(raw, |(title, _)| title);
     let title = title.strip_suffix('\r').unwrap_or(title);
+    // The title alone is what lsdoc already parsed: its answer stands.
+    if title == raw {
+        return;
+    }
     let Some(Block::Bullet { marker, inline, .. } | Block::Heading { marker, inline, .. }) =
         blocks.first_mut()
     else {
