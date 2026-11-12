@@ -23,6 +23,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod preservation;
+mod property_drawers;
+
+/// Validate the content of an already native-owned physical drawer marker.
+/// Matching uses mldoc's exact indentation alphabet; this does not establish
+/// ownership. The caller removes one physical terminator. O(line bytes).
+pub fn is_property_drawer_marker(content: &str, opening: bool) -> bool {
+    content
+        .trim_start_matches([' ', '\t', '\u{c}', '\u{1a}'])
+        .eq_ignore_ascii_case(if opening { ":PROPERTIES:" } else { ":END:" })
+}
 
 /// OG linkable-property member separator, shared by native references and wasm.
 /// `graph_parser/text.cljs::sep-by-comma` at Logseq c67b8b5fa splits both commas.
@@ -345,12 +355,6 @@ pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Optio
     };
     let r = Range(at(*start), at(*end));
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
-}
-fn is_properties_drawer(raw: &str, r: &Range) -> bool {
-    r.slice(raw)
-        .lines()
-        .next()
-        .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
 }
 fn whole_line(raw: &str, r: Range) -> Range {
     let start = raw[..r.0].rfind('\n').map_or(0, |p| p + 1);
@@ -910,36 +914,6 @@ impl BlockRegions {
             }
         }
         at
-    }
-    fn own_org_region(&self, raw: &str) -> Option<usize> {
-        let at = self.head_end(raw, true);
-        self.property_regions
-            .iter()
-            .position(|r| (r.0 == at || r.0 == 0) && is_properties_drawer(raw, r))
-    }
-    /// Whether a `:PROPERTIES:` drawer region starts at `at`.
-    pub fn properties_drawer_at(&self, raw: &str, at: usize) -> bool {
-        self.property_regions
-            .iter()
-            .any(|r| r.0 == at && is_properties_drawer(raw, r))
-    }
-    /// Delimiter byte offsets inside parser-accepted property regions. Used by
-    /// the page form to remove an emptied drawer without reading literal text.
-    pub fn property_drawer_boundaries(&self, raw: &str) -> Vec<(usize, usize)> {
-        let mut out = Vec::new();
-        for region in &self.property_regions {
-            let mut open = None;
-            for line in line_ranges(raw, *region) {
-                if is_properties_drawer(raw, &line) {
-                    open = Some(line.0);
-                } else if line.slice(raw).trim().eq_ignore_ascii_case(":END:") {
-                    if let Some(start) = open.take() {
-                        out.push((start, line.0));
-                    }
-                }
-            }
-        }
-        out
     }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);

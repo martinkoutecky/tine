@@ -3,6 +3,274 @@
 use super::*;
 use shared::native;
 
+#[test]
+fn native_round15k_admissions_use_real_writer_and_save_packets() {
+    let _guard = crate::integration_lock();
+    let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
+        assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
+        return;
+    };
+    let mut admitted = 0;
+    for (org, source, target) in [
+        (false, "- source\n", "alias:: C\\#, C#\n- target\n"),
+        (false, "alias:: C#\n- source\n", "alias:: C\\#\n- target\n"),
+        (
+            false,
+            "- source\n",
+            "alias:: \"literal\", p\\\"q\nAlias:: \"literal\", C\\#\n- target\n",
+        ),
+        (false, "alias:: a\r\n- source\r\n", "- target\r\n"),
+        (false, "alias::\n- source\n", "alias::\n- target\n"),
+        (false, "- title:: src\n- source\n", "- target\n"),
+        (
+            true,
+            ":PROPERTIES:\n:K: source\n:END:\n* source\n",
+            ":PROPERTIES:\n:K: target\n:END:\n* target\n",
+        ),
+        (
+            true,
+            "* source\n",
+            ":PROPERTIES:\n:ALIAS: a, a\n:END:\n* target\n",
+        ),
+        (
+            true,
+            ":PROPERTIES:\n:END:\n#+title: src\n* source\n",
+            "#+alias: x\n* target\n",
+        ),
+        (
+            true,
+            "\u{c}:PROPERTIES:\n:K: value\n\u{c}:END:\n* source\n",
+            "* target\n",
+        ),
+        (
+            true,
+            "\u{1a}:PROPERTIES:\n:K: value\n\u{1a}:END:\n* source\n",
+            "* target\n",
+        ),
+        (
+            true,
+            "* source\r\n",
+            ":PROPERTIES:\r\n:ALIAS: a, a\r\n:END:\r\n* target\r\n",
+        ),
+        (
+            true,
+            "* source\n",
+            ":PROPERTIES:\n:ALIAS: a\n:END:\n:PROPERTIES:\n:ALIAS: a\n:END:\n* target\n",
+        ),
+        (false, "alias:: C\\#\n- source\n", "alias:: C#\n- target\n"),
+        (false, "- source\n", "alias:: \"literal\"\n- target\n"),
+        (true, ":PROPERTIES:\n:END:\n* source\n", "* target\n"),
+        (false, "alias:: a", "- target\r\n"),
+        (
+            true,
+            "#+alias: #a, b\n* source\n",
+            ":PROPERTIES:\n:ALIAS: a\n:K: target\n:END:\n* target\n",
+        ),
+        (
+            true,
+            "#+ALIAS: #a, b\n* source\n",
+            ":PROPERTIES:\n:ALIAS: a\n:K: target\n:END:\n* target\n",
+        ),
+        (
+            true,
+            ":PROPERTIES:\n:S: value\n:END:\n* source\n",
+            ":PROPERTIES:\n:K1: one\n:END:\n:PROPERTIES:\n:K2: two\n:END:\n* target\n",
+        ),
+        (
+            true,
+            ":PROPERTIES:\r\n:END:\n* src body 0\r* src body 1\n",
+            ":PROPERTIES:\r\n:alias:  #[[b]]\r\n:ALIAS: C#\r\n:END:\r\n#+alias: #ns/e,  #[[A]] \n#+alias: #ns/e\n#+alias:\n* dst body 0\n* dst body 1\r\n** dst deep 1\r\n",
+        ),
+        (
+            true,
+            ":PROPERTIES:\r:TITLE: src\n:TITLE: src\r:alias:  b , [[A]] , #b\n:END:\r\n#+title: src\r\n#+alias: [[b]] , [[ns/e]], C\\#\n#+alias:\n#+tags: t\n#+alias:  #[[b]],#[[c d]],  #[[A]]\n* src body 0\n* src body 1\n",
+            "#+type: [[k]]\r\n#+alias:  ns/e,[[a]], [[ns/e]]\n#+aliases:\r\n#+tags: t\r\n* dst body 0\r\n* dst body 1\n** dst deep 1\n",
+        ),
+    ] {
+        let ext = if org { "org" } else { "md" };
+        let source_path = format!("pages/src.{ext}");
+        let target_path = format!("pages/dst.{ext}");
+        let mut spec = GraphSpec::default();
+        spec.name = "round15k".into();
+        spec.files = BTreeMap::from([
+            (source_path.clone(), source.into()),
+            (target_path.clone(), target.into()),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        spec.write(dir.path());
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let choice = Choice::Merge(target_path.clone());
+        let proof = merge_proof(&store, &spec, "src", "dst", &choice)
+            .unwrap()
+            .2
+            .unwrap();
+        execute(&store, "src", "dst", Some(&choice)).unwrap();
+        let files = read_graph(dir.path());
+        let p = packet(
+            &store,
+            &spec,
+            "src",
+            "dst",
+            &source_path,
+            &target_path,
+            &proof,
+            &files,
+            json!([]),
+        );
+        assert_local_saves(&p);
+        let result = shared::run_bridge(Path::new(&bridge), &p).unwrap();
+        if result["accepted"] != true {
+            if let Ok(directory) = std::env::var("CM_MERGE_ORACLE") {
+                fs::write(Path::new(&directory).parent().unwrap().join(format!("native-matrix-rejected-{admitted}.json")), serde_json::to_vec_pretty(&p).unwrap()).unwrap();
+            }
+        }
+        assert_eq!(
+            result["accepted"], true,
+            "source={source:?} target={target:?}: {result}"
+        );
+        assert!(
+            result["checks"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|v| *v == true),
+            "{result}"
+        );
+        if let Ok(directory) = std::env::var("CM_MERGE_ORACLE") {
+            fs::write(Path::new(&directory).join(format!("native-{admitted}.json")), serde_json::to_vec(&json!({"source": source, "target": target, "org": org, "text": proof.text, "nativeDocument": p["saves"][0]["document"]})).unwrap()).unwrap();
+        }
+        if !org && target == "alias:: C\\#, C#\n- target\n" {
+            for discard in [false, true] {
+                let mut candidate = proof.clone();
+                let first = candidate
+                    .trace
+                    .pieces
+                    .iter()
+                    .enumerate()
+                    .find(|(id, piece)| piece.file == 0 && candidate.trace.original(*id) == "C\\#")
+                    .unwrap()
+                    .0;
+                let later = candidate
+                    .trace
+                    .pieces
+                    .iter()
+                    .enumerate()
+                    .find(|(id, piece)| piece.file == 0 && candidate.trace.original(*id) == "C#")
+                    .unwrap()
+                    .0;
+                if discard {
+                    candidate.trace.output.retain(|p| !matches!(p, tine_core::text_trace::Placement::Original(id) if *id == later));
+                    candidate.trace.consumed.push(later);
+                } else {
+                    for placement in &mut candidate.trace.output {
+                        if let tine_core::text_trace::Placement::Original(id) = placement {
+                            if *id == first {
+                                *id = later;
+                            } else if *id == later {
+                                *id = first;
+                            }
+                        }
+                    }
+                }
+                candidate.text = candidate.trace.render().unwrap();
+                let mut candidate_files = files.clone();
+                candidate_files.insert(target_path.clone(), candidate.text.clone());
+                let fixture = tempfile::tempdir().unwrap();
+                let mut fixture_spec = spec.clone();
+                fixture_spec.files = candidate_files.clone();
+                fixture_spec.write(fixture.path());
+                let candidate_store = Store::open(fixture.path(), Default::default()).unwrap().0;
+                let p = packet(
+                    &candidate_store,
+                    &spec,
+                    "src",
+                    "dst",
+                    &source_path,
+                    &target_path,
+                    &candidate,
+                    &candidate_files,
+                    json!([]),
+                );
+                assert_local_saves(&p);
+                let rejected = shared::run_bridge(Path::new(&bridge), &p).unwrap();
+                assert_eq!(rejected["accepted"], false, "{rejected}");
+                assert_eq!(
+                    rejected["checks"][if discard {
+                        "completeText"
+                    } else {
+                        "aliasFirstSpelling"
+                    }],
+                    false,
+                    "{rejected}"
+                );
+                if !discard {
+                    assert!(
+                        rejected["checks"]
+                            .as_object()
+                            .unwrap()
+                            .iter()
+                            .filter(|(name, _)| !["nativeAdmission", "aliasFirstSpelling"]
+                                .contains(&name.as_str()))
+                            .all(|(_, value)| *value == true),
+                        "{rejected}"
+                    );
+                }
+                assert_eq!(
+                    read_graph(dir.path()),
+                    files,
+                    "a rejected candidate never publishes"
+                );
+            }
+        }
+        let input_target = p["before"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["path"] == target_path)
+            .unwrap();
+        if org && input_target["nativeFields"].as_array().unwrap().len() == 2
+            && input_target["orgLayout"]["drawers"].as_array().unwrap().iter()
+                .filter(|d| d["page"] == true).count() == 2
+        {
+            assert_eq!(proof.text.matches(":PROPERTIES:").count(), 2);
+            assert_eq!(proof.text.matches(":END:").count(), 2);
+            let mut candidate = proof.clone();
+            candidate.trace.consumed.clear();
+            candidate.trace.output = (0..candidate.trace.pieces.len())
+                .map(tine_core::text_trace::Placement::Original)
+                .collect();
+            candidate.text = candidate.trace.render().unwrap();
+            assert_eq!(candidate.text, format!("{target}{source}"));
+            let fixture = tempfile::tempdir().unwrap();
+            let mut fixture_spec = spec.clone();
+            fixture_spec.files = BTreeMap::from([(target_path.clone(), candidate.text.clone())]);
+            fixture_spec.write(fixture.path());
+            let candidate_store = Store::open(fixture.path(), Default::default()).unwrap().0;
+            let p = packet(
+                &candidate_store,
+                &spec,
+                "src",
+                "dst",
+                &source_path,
+                &target_path,
+                &candidate,
+                &fixture_spec.files,
+                json!([]),
+            );
+            assert_local_saves(&p);
+            let rejected = shared::run_bridge(Path::new(&bridge), &p).unwrap();
+            assert_eq!(rejected["accepted"], false, "{rejected}");
+            assert_eq!(
+                rejected["checks"]["mergeBodyOccurrences"], false,
+                "{rejected}"
+            );
+            assert_eq!(read_graph(dir.path()), files);
+        }
+        admitted += 1;
+    }
+    assert_eq!(admitted, 22);
+}
+
 fn day_value(day: tine_core::date::JournalDate) -> String {
     day.file_stem()
 }
@@ -648,8 +916,7 @@ fn native_valid_merges_with_duplicate_members_and_header_children() {
 
 /// Native15c admits the actual outputs for rebuilt-field line endings, the
 /// inserted Markdown lines of a CRLF survivor, and memberless alias values.
-/// A promoted source field whose own ending differs from the model's field
-/// ending is a model question (RECEIPT-cm-b4-fix2), so it is not listed here.
+/// The selected source declaration keeps its own native ending too.
 #[test]
 fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
     let _guard = crate::integration_lock();
@@ -700,7 +967,7 @@ fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
         ] {
             let some = format!("{key}a\n");
             for ending in ["\n", "\r\n"] {
-                for (n, (source, target)) in [
+                for (source, target) in [
                     (
                         format!("{some}{bullet} source\n"),
                         format!("{none}{bullet} target\n"),
@@ -719,13 +986,8 @@ fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
                     ),
                 ]
                 .into_iter()
-                .enumerate()
                 {
-                    // The last case promotes a source field into a survivor
-                    // with none: the model's ending is LF there.
-                    if ending == "\n" || n < 3 {
-                        cases.push((source.replace('\n', ending), target.replace('\n', ending)));
-                    }
+                    cases.push((source.replace('\n', ending), target.replace('\n', ending)));
                 }
             }
         }
@@ -762,10 +1024,7 @@ fn native_valid_merges_keep_line_endings_and_memberless_aliases() {
 }
 
 /// Native15c admission of lone-CR and mixed-ending merges
-/// (REG-CM-MERGE-LONE-CR), the inputs of
-/// `merge_text_trace::valid_merge_keeps_lone_cr_line_endings`. A source field
-/// promoted into a survivor without one keeps its own CR, which round 15c's
-/// field ending (LF) disagrees with: pending 15f, so it is not listed here.
+/// (REG-CM-MERGE-LONE-CR), including a source-selected field's own ending.
 /// Nor is a source opening with a blank line: Native15c rejects that in pure
 /// LF too, at 04029874d (`mergeBodyOccurrences`; RECEIPT-cm-b4-fix3 F-BLANK).
 #[test]
@@ -785,6 +1044,7 @@ fn native_valid_merges_keep_lone_cr_line_endings() {
         let source_path = format!("pages/src.{ext}");
         let target_path = format!("pages/dst.{ext}");
         let cases = [
+            (format!("{key}a\r{b} source\r"), format!("{b} target\r")),
             (format!("{b} source\r{b} second\r"), format!("{b} target\n")),
             (format!("{b} source\r"), format!("{b} target\r")),
             (format!("{b} source\r"), format!("{b} first\r{b} target")),
@@ -870,18 +1130,9 @@ fn native_valid_merges_with_org_head_drawers_are_admitted() {
     };
     let (source_path, target_path) = ("pages/src.org", "pages/dst.org");
     let mut rejected = Vec::new();
-    let mut pending = Vec::new();
     for e in ["\n", "\r\n", "\r"] {
         for (source, target, ..) in crate::merge_text_trace::org_drawer_cases(e) {
             let witness = format!("source={source:?} target={target:?}");
-            // Field endings rounds 15c and 15f disagree on are reported by
-            // the generator, not asserted (RECEIPT-cm-b4-fix2 Q1).
-            if crate::merge_generated::expected(&crate::merge_generated::org_case(&source, &target))
-                .pending_15f()
-            {
-                pending.push(witness);
-                continue;
-            }
             let mut spec = GraphSpec::default();
             spec.name = "valid-merge".into();
             spec.files = BTreeMap::from([
@@ -927,7 +1178,6 @@ fn native_valid_merges_with_org_head_drawers_are_admitted() {
             }
         }
     }
-    eprintln!("pending 15f, not asserted: {pending:#?}");
     assert!(
         rejected.is_empty(),
         "Native15c rejected:\n{}",
@@ -935,15 +1185,8 @@ fn native_valid_merges_with_org_head_drawers_are_admitted() {
     );
 }
 
-/// Native15c admission of the generated merges (`merge_generated`): every
-/// case the model admits must be admitted on Tine's actual output. Three
-/// groups run and are reported, not asserted (RECEIPT-cm-b4-gen): field
-/// endings rounds 15c and 15f disagree on (pending 15f); memberless-only
-/// declarations (model question Q2); and a source `title::` in a first-root
-/// header, whose shadow this harness does not rebind (follow-up F1). Fused
-/// endings (Q4), Org head-drawer refusals (Q5, Q6, Q7 of RECEIPT-cm-b4-fix4)
-/// lsdoc's debug span tripwire and two spellings of one name (Q8 of
-/// RECEIPT-cm-b4-fix5) are reported the same way.
+/// Every generated merge requires all same-output native gates. Fused
+/// endings and unavailable native geometry must leave the graph unchanged.
 fn native_generated(seed: u64, count: usize) {
     let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
         assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
@@ -969,19 +1212,6 @@ fn native_generated(seed: u64, count: usize) {
         spec.write(dir.path());
         let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
         let choice = Choice::Merge(target_path.clone());
-        let group = if crate::merge_generated::expected(&case).pending_15f() {
-            Some("pending 15f")
-        } else if crate::merge_generated::memberless_only(&case) {
-            Some("Q2 memberless only")
-        } else if case
-            .src
-            .iter()
-            .any(|l| l.header && !l.prefix.is_empty() && l.content.starts_with("title::"))
-        {
-            Some("F1 first-root source title")
-        } else {
-            None
-        };
         let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let proof = merge_proof(&store, &spec, "src", "dst", &choice)
                 .ok_or("no merge proof")?
@@ -1023,28 +1253,19 @@ fn native_generated(seed: u64, count: usize) {
             Err(format!("panic: {message}"))
         });
         let refused = |reason: &str| matches!(&verdict, Err(e) if e.ends_with(reason));
-        let group = group.or_else(|| {
-            if refused("FusedLineEnding") {
-                Some("Q4 fused ending")
-            } else if refused("HiddenOccurrence") && crate::merge_generated::drawer_leftover(&case) {
-                Some("Q6 drawer leftover")
-            } else if refused("AliasField") && crate::merge_generated::retained_in_drawer(&case) {
-                Some("Q5 retained drawer alias")
-            } else if (refused("HiddenOccurrence") || refused("AddedOccurrence"))
-                && crate::merge_generated::leftover_delimiters(&case)
-            {
-                Some("Q7 leftover drawer delimiters")
-            } else if matches!(&verdict, Err(e) if e.contains("mergeBodyOccurrences"))
-                && crate::merge_generated::same_name_spellings(&case)
-            {
-                Some("Q8 same-name spellings")
-            } else if matches!(&verdict, Err(e) if e.contains(crate::merge_generated::LSDOC_TRIPWIRE))
-            {
-                Some("lsdoc tripwire")
-            } else {
-                None
-            }
-        });
+        let group = if refused("FusedLineEnding") {
+            assert_eq!(read_graph(dir.path()), spec.files);
+            Some("Q4 fused ending")
+        } else if matches!(&verdict, Err(e) if e.contains(crate::merge_generated::LSDOC_TRIPWIRE)) {
+            assert_eq!(
+                read_graph(dir.path()),
+                spec.files,
+                "native extraction failure must precede publication"
+            );
+            Some("native extraction geometry failure")
+        } else {
+            None
+        };
         if let Some(group) = group {
             let entry = reported.entry(group).or_default();
             entry.0 += 1;

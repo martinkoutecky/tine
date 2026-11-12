@@ -16,6 +16,9 @@ page-ui-loading-page = 正在加载页面…
 page-ui-open-graph = 打开图谱…
 
 page-ui-rename-failed = 重命名失败：{ $value1 }
+page-rename-title-identity = Q-TITLE：改写标题中的引用会改变该页面的标识。未更改任何文件。请编辑标题后重试。
+page-merge-missing-name-range = F-LINK：解析器无法安全定位原文中的别名。未更改任何文件。请编辑别名的写法后重试。
+page-merge-alias-owner = Q-OWNER：合并后的文本会丢失别名的属性含义。未更改任何文件。请编辑别名声明后重试。
 
 page-ui-bundled-guide-page = 内置指南页面
 

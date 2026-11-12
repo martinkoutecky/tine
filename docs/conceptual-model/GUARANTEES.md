@@ -1,5 +1,26 @@
 # Guarantees, boundaries and comparison
 
+## Frozen native domain
+
+The current syntax and layout boundary is the frozen native merge and rename
+domain. The [domain and refusal ledger](../contracts/rename-merge-domain.md)
+defines every named refusal, first-original ownership of decoded alias names,
+native quoted-member classification, exact source-drawer consumption and
+physical target-frame retention. The same candidate must pass text, meaning,
+body/origin, query, physical-ending, native owner and unchanged-save checks.
+Title identity conflicts refuse before publication, including stationary
+namespaces. No spelling-collision, multiple-drawer or quoted-member blanket
+refusal is added. Out-of-domain syntax and layouts refuse; further expansion
+is not promised.
+
+The current native certificate remains conditional on P (truthful parser and
+configuration observations), T (fixed legal original partitions), N (physical
+member identifying spellings), S (actual save observations), W (legal writer
+construction), G (opaque query evaluation) and H (audited host effects).
+Bounded model packets do not prove arbitrary production parser or writer
+totality, I/O, save after authoring edits or Logseq-save closure. Whole-day
+aliases retain the one-native-header representation and stay with the stub.
+
 ## Current entry points and proved scope
 
 The current reader and operations are `CM.Date13`, across `Date13.lean`,
@@ -12,9 +33,8 @@ not alternative current date or panel policies.
 The reader is total over finite snapshots. Offered executions use a single
 finite guard and an explicit syntax/text realization boundary. There is no
 extra injectivity, namespace-congruence, positive-query, invariant-predicate,
-fixed-outline-parent or unchanged-alias-component premise. Every current
-rename theorem quantifies its explicit, unselected `DatePolicy` argument.
-That proves the generic mechanism for every argument; it does not choose M2.
+fixed-outline-parent or unchanged-alias-component premise. Generic libraries
+can quantify a `DatePolicy`; the current contract fixes every calendar day.
 
 ### Universal headline ledger
 
@@ -31,13 +51,13 @@ headline assumes a C preservation restriction.
 | `name_panel_is_opening_panel`, `panel_opening`, `linked_exact`, `count_panel`, `panelSource_exact` | Arbitrary graph/name/identity/Favorites setting; no extra premise. Panels and counts use the same ordered list. B: effective Favorites/name interpretation. |
 | `offers_exact`, `default_offered`, `offered_executes`, `unoffered_refused`, `cancel_identity`, `automatic_unique`, `singleton_executes` | A: offered membership or singleton/success equation as the object stated. No safe preferred fallback or freshness-implies-safety premise. The ordinary singleton witness is `DateWitness13.ordinary_onestep`. |
 | `memberSpelling_identifies`, `group_member_substitution` | Arbitrary physical member; its chosen spelling identifies its actual claim and drives the one substitution. B: the operation-only `MemberNames` adapter supplies and certifies accepted identifying spellings. No displayed-label identification or display parse/render round-trip premise. |
-| `group_member_candidate`, `safe_group_member_offered`, `safe_group_member_reachable`, `group_choices_exact` | A: actual distinct real destination-component member; the existing finite guard for safe offers/reachability. Every such safe member is enumerated and executable, not merely every member of an already-filtered list. B: `MemberNames` as above; no M2 choice. |
+| `group_member_candidate`, `safe_group_member_offered`, `safe_group_member_reachable`, `group_choices_exact` | A: actual distinct real destination-component member; the existing finite guard for safe offers/reachability. Every such safe member is enumerated and executable, not merely every member of an already-filtered list. B: `MemberNames` as above. |
 | `distinct_offers_block_automatic` | A: two distinct offered candidates. Automatic execution refuses. `DateWitness13.comprehensive_ambiguous_group` checks Foo → Shared with two MM-dd journals under both fixture fixed-day extremes; both destinations plus Shared are offered. `ambiguous_group_choice_executes` checks selection and the single map. |
-| `safe_root`, `safe_site`, `safe_anchor`, shared `consistent_iff_function` | A: finite guard and membership of the actual demanded site/anchor. B: legal site extraction. No namespace-congruence or injectivity premise. Date anchor selection is explicit M2 data, not an assumed universal preservation result. |
+| `safe_root`, `safe_site`, `safe_anchor`, shared `consistent_iff_function` | A: finite guard and membership of the actual demanded site/anchor. B: legal site extraction. No namespace-congruence or injectivity premise. Calendar-day anchors use the fixed-day contract. |
 | `safe_wf`, `safe_no_new_claim_collision`, `safe_local_conflict`, `execute_map`, `fileless_cardinality`, `merge_exact_files` | A: finite guard for safety facts, actual retained-file membership where stated; assembly/cardinality equations identify raw executions as well. Claim collisions use normalized full identities. |
-| `realized_journal_fixed` | A: physical journals-directory file membership. B: rewrite/merge realization. It proves path and reader claim for that physical file. **No claim of fixed identity for every pages-directory or file-less day source**: that part awaits M2. |
+| `realized_journal_fixed` | A: physical journals-directory file membership. B: rewrite/merge realization. It proves path and reader claim for that physical file. The separate all-day contract fixes pages-directory and file-less day identities too; native interpretation and host execution remain external. |
 | `stationary_twins_opening`, `offered_twins_opening` | A: safe/offered candidate and originally conflicted normalized identity. B: `Realizes` syntax, native merge and complete-text realization. Retention, stationary keys/paths/order, no new entrants and whole-group minimum transport are proved rather than assumed. |
-| `Alias14.complete_text`, `offered_complete_text` | A: actual original file/fragment, offered membership for the operation wrapper. B: fixed legal input partition and role classifier, complete before/after concatenation, retained+consumed multiplicity partition, scoped approved consumption, syntax/body/query realization. The headline itself names retained **or exactly approved alias consumption**. |
+| `Alias14.complete_text`, `offered_complete_text` | A: actual original file/fragment, offered membership for the operation wrapper. B: fixed legal input partition and role classifier, complete before/after concatenation, retained+consumed multiplicity partition, scoped approved consumption, syntax/body/query realization. The headline names retained **or exactly approved consumption**: the narrow alias exception or independently native-owned source drawer boundaries. |
 | `Alias14.opaqueText_bytes`, `opaqueText_multiplicity`, `offered_protected_text` | A: actual protected input fragment and noneditable marking. B: legal fixed role/edit marking and the certificate. Every protected byte and its multiplicity survive. No rule for arbitrary equal-property deduplication. |
 | `Alias14.members_exact`, `members_unique`, `one_field`; `MergeRealization.aliases/fields` | The concrete field serializer is executable and exact by bytes; one-field requires members. Native header parser/extractor agreement for actual writer output is B. `AliasRealization14.inhabited_offered_alias_merge` inhabits the complete offered alias-merge realization, including text, header/body origins and queries. |
 | `edge_exact`, `reference_exact`, `pages_exact`, `den_exact`, `queryResults_exact`, `links_exact`, `children_exact` | Arbitrary current inputs, full Boolean query, given predicates, graph and target. These recompute actual meaning, without preserving a prior answer. B: extraction, query levels/row kinds and given-predicate evaluation on the actual graph. |
@@ -92,12 +112,10 @@ These boundaries are not silently discharged by Boolean allowedness:
   recovery, locking, base-revision safety or publication atomicity. The host
   must use the audited storage path.
 
-M2 is not a theorem hypothesis masquerading as discharged product policy:
-its unresolved argument is visible on the API. A, B and C would instantiate
-`DatePolicy.fixed` as all days, physically represented days or
-journals-directory days respectively. No such production instance exists.
-The day-source offer set and unconditional all-day identity guarantee remain
-open. Exploratory UI operations are not used by any proof.
+The current policy fixes every calendar day. Ordinary same-day respelling and
+non-date alias edits remain covered; moving a day's notes uses the separate
+whole-alias/stub contract. Actual native extraction and host publication remain
+external obligations rather than consequences of a policy parameter.
 
 ## Exhaustive comparison
 

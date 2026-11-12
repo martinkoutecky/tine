@@ -8,15 +8,19 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
 };
+mod drawers;
+pub use drawers::SourceDrawer;
 
-/// The fixed input classifier. Only native alias syntax and exact duplicate
-/// alias-name tokens can be consumed; ordinary text is always retained.
+/// The fixed input classifier. Alias syntax, exact duplicate rendered names
+/// and independently owned source drawer boundaries have narrow consumption
+/// rules; ordinary text is always retained.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Role {
     Opaque,
     AliasKey,
     AliasDelimiter,
     AliasName,
+    DrawerBoundary,
 }
 
 /// One disjoint interval of an original physical file.
@@ -43,11 +47,16 @@ pub enum TraceError {
     Output,
     Multiplicity,
     Consumption,
+    TitleIdentity,
 }
 
 impl std::fmt::Display for TraceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "complete-text certificate: {self:?}")
+        if *self == Self::TitleIdentity {
+            f.write_str("Q-TITLE")
+        } else {
+            write!(f, "complete-text certificate: {self:?}")
+        }
     }
 }
 impl std::error::Error for TraceError {}
@@ -65,6 +74,10 @@ pub struct TextTrace {
     /// Paired native link inserts around a changed semantic name. Wrappers
     /// already present in the input remain protected original pieces.
     pub wrappers: HashSet<usize>,
+    /// Native source head drawers, independently cut before assembly.
+    pub source_drawers: Vec<SourceDrawer>,
+    /// Physical output header extent; only placements wholly inside it join.
+    pub header_end: usize,
     starts: HashMap<(usize, usize), usize>,
 }
 
@@ -247,6 +260,9 @@ impl TextTrace {
     pub fn check(&self, output: &str, m: &HashMap<usize, String>) -> Result<(), TraceError> {
         #[cfg(feature = "test-counters")]
         work::certificate_check();
+        if self.header_end > output.len() {
+            return Err(TraceError::Partition);
+        }
         let mut offsets = vec![0; self.inputs.len()];
         for p in &self.pieces {
             let at = offsets.get_mut(p.file).ok_or(TraceError::Partition)?;
@@ -269,6 +285,7 @@ impl TextTrace {
         let mut at = 0;
         let mut key = false;
         let mut names = HashSet::new();
+        let boundaries = self.approved_drawer_boundaries(m)?;
         for placement in &self.output {
             let text = match placement {
                 Placement::Insert(s) => s.as_str(),
@@ -277,7 +294,7 @@ impl TextTrace {
                     *count = count.saturating_add(1);
                     let text = self.rendered(*id, m)?;
                     match self.pieces[*id].role {
-                        Role::AliasKey => key |= alias_key(self.original(*id)),
+                        Role::AliasKey => key |= consumable_alias_key(self.original(*id)),
                         Role::AliasName => {
                             names.insert(text);
                         }
@@ -301,12 +318,13 @@ impl TextTrace {
                 return Err(TraceError::Consumption);
             }
             let allowed = match p.role {
-                Role::AliasKey => key && alias_key(self.original(*id)),
+                Role::AliasKey => key && consumable_alias_key(self.original(*id)),
                 Role::AliasDelimiter => {
-                    key && matches!(self.original(*id), ", " | "," | "\n" | "\r\n")
+                    key && matches!(self.original(*id), ", " | "," | "\n" | "\r\n" | "\r")
                 }
                 Role::AliasName => names.contains(self.rendered(*id, m)?),
                 Role::Opaque => false,
+                Role::DrawerBoundary => boundaries.contains(id),
             };
             if !allowed {
                 return Err(TraceError::Consumption);
@@ -319,8 +337,13 @@ impl TextTrace {
     }
 }
 
-fn alias_key(s: &str) -> bool {
-    matches!(s, "alias:: " | "aliases:: " | "#+alias: " | "#+aliases: ")
+/// The frozen AL key whitelist, applied only to an independently native-owned
+/// declaration prefix. O(1), bounded tokens; this does not recognize properties.
+pub fn consumable_alias_key(s: &str) -> bool {
+    matches!(
+        s,
+        "alias:: " | "aliases:: " | "#+alias: " | "#+aliases: " | ":ALIAS: " | ":ALIASES: "
+    )
 }
 
 /// Process-global counts of rename text work, for downstream cost tests of a

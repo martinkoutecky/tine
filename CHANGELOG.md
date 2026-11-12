@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Rename and merge refuse a title reference rewrite that would silently change a stationary page's identity (REG-CM-B5-TITLE-IDENTITY).
+- Page merges retain the first spelling of aliases with the same decoded name, preserve native Org property owners and drawer frames, and keep the selected alias declaration's line ending (REG-CM-B5-FROZEN-MERGE).
+
 - CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
 
 ### Added

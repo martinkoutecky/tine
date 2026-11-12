@@ -168,7 +168,11 @@ class TauriBackend implements Backend {
       // family plus the read error. Every caller prints the rejection as it
       // prints any other (a string, as Tauri rejects), so it carries the sentence
       // the open-time notice gives, not the raw read error.
-      throw errorFamily(error) === "config-unreadable" ? configUnreadableText(error) : error;
+      const family = errorFamily(error);
+      if (family === "title-identity") throw t("page-rename-title-identity");
+      if (family === "missing-native-name-range") throw t("page-merge-missing-name-range");
+      if (family === "alias-owner") throw t("page-merge-alias-owner");
+      throw family === "config-unreadable" ? configUnreadableText(error) : error;
     } finally {
       clearTimeout(slowTimer);
       settleSlow?.();

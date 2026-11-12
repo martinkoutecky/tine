@@ -85,9 +85,9 @@ impl RenameProposal {
     /// it is everywhere else (`old/[[old]]` for `Old/[[Old]]` renamed to
     /// `old`). `name` keeps a tail of the old title verbatim (its namespace
     /// suffix); a reference there is rebound in place. A rebound reference
-    /// outside that tail, or rebinding that changes the title's identity
+    /// outside that tail fails encoding/partition validation. Rebinding that changes the title's identity
     /// (`Old/[[Old]]` renamed to `New`: the name says `New/[[Old]]`, its
-    /// reference says `[[New]]`), has no faithful image: `Substitution`.
+    /// reference says `[[New]]`), has no faithful image: `TitleIdentity` (Q-TITLE).
     /// Key, spacing and terminators remain protected, as for reference edits.
     /// O(page pieces).
     pub fn rebind_title(&mut self, org: bool, name: &str) -> Result<(), TraceError> {
@@ -132,7 +132,7 @@ impl RenameProposal {
         rebound.push_str(&original[at..range.end]);
         let title = format!("{}{rebound}", &name[..name.len() - kept]);
         if !crate::refs::same_page(&title, name) {
-            return Err(TraceError::Substitution);
+            return Err(TraceError::TitleIdentity);
         }
         let at = edits.partition_point(|(r, _)| r.start < range.start);
         edits.insert(at, (range, title));
@@ -1122,12 +1122,29 @@ mod tests {
                     }
                     None => assert_eq!(
                         p.rebind_title(org, name),
-                        Err(crate::text_trace::TraceError::Substitution),
+                        Err(crate::text_trace::TraceError::TitleIdentity),
                         "{title}"
                     ),
                 }
             }
         }
+    }
+
+    #[test]
+    fn rebind_title_refuses_an_inner_edit_outside_the_kept_tail() {
+        let links = HashMap::from([("old".into(), "New".into())]);
+        let mut proposal = crate::refs::rename_proposal(
+            "title:: Old/[[Old]]\n- body\n",
+            false,
+            &links,
+            &links,
+            crate::config::FileNameFormat::TripleLowbar,
+        )
+        .unwrap();
+        assert_eq!(
+            proposal.rebind_title(false, "New/Child"),
+            Err(crate::text_trace::TraceError::Substitution)
+        );
     }
 
     #[test]

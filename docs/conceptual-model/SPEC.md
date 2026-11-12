@@ -1,19 +1,30 @@
 # Tine conceptual model
 
+The supported native syntax and layout domain is frozen. The
+[rename and merge domain](../contracts/rename-merge-domain.md) specifies the
+current output rules and the complete named refusal ledger: first decoded-name
+owner supplies each active alias spelling; distinct unconsumable spellings
+remain interpreted native leftovers; the parser owns quoted-member status;
+target physical frames and every non-consumed original survive under legal
+name rendering. Complete native source drawer boundaries have their own narrow
+consumption exception. Active alias fields keep the selected declaration's
+ending; other inserted lines follow the survivor convention. Actual rebound
+title identity conflicts refuse before publication, including stationary
+namespaces. No further syntax widening is promised.
+
 ## 1. Prior decisions and user contract
 
 This specification follows file-based identity, full alias groups, literal name
-queries, namespace closure, stored-query rewriting, CM-TWINS, R13-C4,
-D-20261107-OWN2, D-20261110-CM (CM-DATE, CM-ORDER, CM-ONESTEP, CM-PLAIN),
-D-20261109-AL, D-20261110-CMF and D-20261111-CMR14 (CM-DAYFILE and CM-ALIASDUP).
-D-20261106-CMS governs the length measure; D-20261106-MF/UA govern model-first
-work and universal guarantees. These decisions are followed. Ordinary files
+queries, namespace closure, stored-query rewriting, deterministic physical
+claimants, fixed calendar days and source-day alias retention. Model-first
+development and explicit conditional guarantees are followed. Ordinary files
 remain Logseq Markdown or Org. No operation silently merges conflicting files.
 
-**CM-DATEFIXED / M2 is open.** The right to rename a date source and which day
-identities must be fixed are parameters awaiting Martin's decision (§4.2).
-No default answer is selected. The reader, outside-file changes, ordinary
-non-date renames, text protection and journal creation do not require it.
+Every calendar day is fixed, including a file-less day and an imported
+pages-directory date. Ordinary rename can respell the same day, but cannot
+change it into another day or an ordinary name. A non-date alias owned by a
+day remains editable. The separate move-contents command keeps the day's whole
+alias declaration and a destination stub on the day; it moves the notes.
 
 A name can be written in a page link. An ordinary name has its normalized
 ordinary key. Every accepted spelling of a calendar date names the same day,
@@ -48,9 +59,10 @@ preview is a UI question outside this specification. An unattended caller
 executes only a singleton safe option; cancel changes nothing.
 
 Merging keeps both bodies and protected header text. Its active aliases form
-one native declaration with the exact-byte union of the substituted spellings.
-Only redundant recognized alias syntax and duplicate rendered alias tokens
-with identical retained member witnesses may be consumed (§5.2).
+one native declaration with the exact union of substituted parser-decoded names,
+each supplied by its first original spelling. Redundant recognized alias syntax,
+identical rendered duplicate tokens and independently owned source drawer
+boundaries have the narrow consumption rules in §5.2.
 
 ### Prior art
 
@@ -263,19 +275,11 @@ Every candidate passes one finite check:
 6. A moved non-root virtual page descendant cannot capture stationary content.
 7. Before and after physical paths are unique.
 
-Physical journal-directory files, task markers and priorities remain fixed
-anchors. Marker/priority spellings are not rewritten. The additional fixed-day
-policy is unresolved. `DatePolicy.fixed(G, day)` isolates that question:
-
-- A would fix every day, including file-less dates.
-- B would fix days with physical files, independent of directory.
-- C would fix only days claimed from the journals directory.
-
-There is no selected instance. Under the supplied policy, a fixed date cannot
-be a moving date source, and its identity demands stay fixed. The generic
-proofs apply to every policy argument; they do not establish a product right
-to rename date sources or an unconditional all-date identity guarantee.
-Ordinary non-date source behavior does not decide M2.
+Physical journal-directory files, task markers, priorities and every calendar
+day remain fixed anchors. Marker/priority spellings are not rewritten. A date
+source may be respelled as the same day; ordinary rename cannot change its day
+identity. Move contents is a separate operation with the stub and whole-alias
+retention contract described in the frozen domain.
 
 ### 4.3 Choice, cancellation and preview
 
@@ -330,9 +334,8 @@ date makes it the journal and ensure reuses it. An unchanged date title can
 continue to make a renamed pages-directory file a journal.
 
 There is no outside-rename guarantee that references follow the moved content.
-A later in-app date-page command may offer weaker guarantees than ordinary
-renaming. Its design and date-source rules await M2; no exploratory design is
-an operation authorized by this specification.
+Move contents uses its own contract: the day keeps its aliases and a stub;
+the destination gets the notes. This does not change ordinary rename rules.
 
 ## 5. Text realization and interoperability
 
@@ -345,18 +348,23 @@ and covered occurrence/query name spans use the chosen substitution. Fixed
 marker and priority spellings remain unchanged.
 
 A merge keeps the survivor's path, directory, format and effective-name key.
-Alias spelling union is survivor-first after substitution, deduplicated only
-by exact rendered bytes. X and x remain distinct. The result has one native
+Alias union is survivor-first after substitution, deduplicated by exact native
+decoded names. X and x remain distinct. Each member uses its first original
+owner's rendered spelling; distinct later spellings remain interpreted native
+block properties outside quotes. The result has one native
 alias field when members exist; other properties are not deduplicated.
-Markdown uses `alias::`; Org uses native `#+alias:` (recognized native variants
-are classified by the parser). The native field parser and alias extractor
+Markdown uses `alias::`; Org uses a native `#+alias:` directive or `:ALIAS:`
+drawer entry according to the selected field's container. Recognized native
+variants are classified by the parser. The native field parser and alias extractor
 must agree with the concrete serialized result.
 
 Every output block has valid origins, possibly multiple origins for a merged
 header; each input block/occurrence has an image. The layout is at most one
 combined header, target body blocks in order, at most one leftover source-header
 block, then source body blocks in order. Bodies remain separate. Source titles,
-clashing properties and unknown header text survive as ordinary text;
+clashing properties and unknown header text survive; native property remnants
+retain their property interpretation outside quotes, while directives that
+could become page metadata stay in the leftover quote;
 nonclashing properties join the target header. Equal non-alias properties
 remain protected with multiplicity. Stored queries follow the same origins
 and substitution. Namespace support comes from the actual merged text/name.
@@ -365,7 +373,7 @@ General header parsing and property promotion are serializer boundaries. This
 model includes a bounded native alias serializer and concrete certificates,
 not a full production Markdown/Org property parser or format translator.
 
-### 5.2 Complete text with exactly the alias exception
+### 5.2 Complete text with scoped approved consumption
 
 A fixed input partition accounts for every raw byte before a candidate is
 chosen. Legal editable spans render under substitution. Every other original
@@ -380,12 +388,23 @@ Consumption is confined to the actual merge pair. It permits only:
   with a retained native alias declaration witness.
 - A duplicate rendered alias-name token with a retained alias-member token
   whose rendered bytes are identical.
+- Independently native-owned complete source Org drawer delimiters when all
+  intervening originals join the output header or independently satisfy the
+  alias exception. Target and retained day delimiters remain original.
 
 The bounded syntax classifier accepts native alias keys, comma separators and
-LF/CRLF. Odd spacing, bracket wrappers, quoted or unrecognized remainders,
+LF/CRLF/lone CR. Odd spacing, bracket wrappers, wholly quoted or unrecognized remainders,
 examples and non-alias properties are protected unless separately, explicitly
 classified as approved narrow alias syntax. They are not discarded with a
 whole second line. The concrete prototype keeps them protected.
+In a mixed alias list the parser can classify a quoted token as a complete
+member name, including its quotes. Its name bytes follow the ordinary member
+rules. The selected active field keeps its own terminator; other inserted
+lines use the survivor's convention. Every target physical drawer frame stays
+in order, with new non-alias entries in the last segment. Source marker
+validation uses exactly space, tab, form feed and Ctrl-Z indentation, ASCII
+case-insensitive spelling, one physical terminator, a terminated opening and
+an optionally EOF-terminated closing; it does not infer native ownership.
 
 The complete-text theorem states the retained-or-approved-consumed alternative.
 Protected byte multiplicities survive unchanged. The body law additionally

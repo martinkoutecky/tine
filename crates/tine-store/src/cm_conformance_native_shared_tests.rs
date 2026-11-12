@@ -2,6 +2,8 @@
 //! These read native bytes independently of merge placements and origins.
 use super::*;
 use tine_core::text_trace::{Placement, Role, TextTrace};
+#[path = "cm_conformance_native_layout_tests.rs"]
+mod layout;
 
 fn row(raw: &str, level: usize, block: &DocBlock, config: &Config) -> Value {
     let mut row = block_json(raw, level, block, config);
@@ -98,21 +100,6 @@ pub fn decorate(file: &mut Value, config: &Config) {
     let pre = parsed.pre_block.as_deref();
     let header =
         tine_core::page_header::page_header_text(pre, parsed.roots.first().map(DocBlock::raw));
-    let fields: Vec<_> = header.into_iter().flat_map(|raw| {
-        // Only map layout here: the parser supplies the field and its line.
-        // A mixed-ending header cannot borrow another field's terminator.
-        let physical_end = if pre.is_some() { first } else { outline.first().map_or(0, |b| b.0.end) };
-        let mut at = 0;
-        let endings: BTreeMap<_, _> = raw.split_inclusive('\n').zip(tine_core::doc::physical_lines(&text[..physical_end])).map(|(logical, physical)| {
-            let start = at;
-            at += logical.len();
-            (start, tine_core::doc::line_terminator(physical))
-        }).collect();
-        let regions = tine_core::block_regions::parse_document(raw, org);
-        regions.page_properties().filter(|p| tine_core::page_header::is_alias_key(&p.key)).map(|p| {
-            json!({"names": tine_core::property_refs::linkable_names(&p.value, org), "ending": endings[&p.line.0]})
-        }).collect::<Vec<_>>()
-    }).collect();
     let mut rows = Vec::new();
     if let Some(pre) = pre {
         let projections = tine_core::page_properties::pre_block_projections(pre, org);
@@ -177,11 +164,11 @@ pub fn decorate(file: &mut Value, config: &Config) {
         row["image"] = json!([]);
     }
     let nonblank = !text.trim().is_empty();
-    file["nativeFields"] = json!(fields);
     file["preBlock"] = json!(rows.first().is_some_and(|row| row["kind"] == "header"));
     file["nonblank"] = json!(nonblank);
     file["pieces"] = json!([]);
     file["blocks"] = json!(rows);
+    layout::decorate(file);
 }
 
 pub fn pieces(
@@ -211,7 +198,7 @@ pub fn pieces(
             *next += 1;
             refined.push(global);
             pieces.push(json!({"id": global, "text": &trace.inputs[file][at..end], "editable": p.editable,
-                "role": match p.role { Role::Opaque => "opaque", Role::AliasName => "name", Role::AliasKey => "key", Role::AliasDelimiter => "delimiter" }}));
+                "role": match p.role { Role::Opaque => "opaque", Role::AliasName => "name", Role::AliasKey => "key", Role::AliasDelimiter => "delimiter", Role::DrawerBoundary => "drawerBoundary" }}));
             at = end;
         }
         ids.insert(id, refined);
@@ -251,6 +238,7 @@ pub fn row_images(
     next: &mut usize,
 ) {
     let org = before["format"] == "org";
+    let authoritative_title = before["title"].is_string();
     let links = std::collections::HashMap::from([(page_key(old), chosen.to_owned())]);
     let a = before["blocks"].as_array_mut().unwrap();
     let b = shadow["blocks"].as_array_mut().unwrap();
@@ -259,7 +247,7 @@ pub fn row_images(
         let raw = row["text"].as_str().unwrap();
         let mut proposal =
             tine_core::refs::rename_proposal(raw, org, &links, &links, spec.name_format()).unwrap();
-        if row["kind"] == "header" {
+        if authoritative_title && row["kind"] == "header" {
             if let Some(title) =
                 page_title_from_preamble(raw, if org { Format::Org } else { Format::Md })
             {

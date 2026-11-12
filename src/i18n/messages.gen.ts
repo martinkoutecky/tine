@@ -1442,6 +1442,8 @@ export interface MessageArgs {
   "page-icon-set": {};
   "page-icon-stale": {};
   "page-icon-ui-could-not-load-page-icons-they-will-retry-when": {};
+  "page-merge-alias-owner": {};
+  "page-merge-missing-name-range": {};
   "page-no-journals": {};
   "page-no-journals-hint": {};
   "page-open-failed": { "error": string | number };
@@ -1462,6 +1464,7 @@ export interface MessageArgs {
   "page-prose-key-exists": { "key": string | number };
   "page-prose-key-grammar": {};
   "page-prose-key-managed": { "key": string | number };
+  "page-rename-title-identity": {};
   "page-trailing-could-not-add-a-block-to-this-page": {};
   "page-ui-add-block": {};
   "page-ui-add-row": { "value1": string | number };

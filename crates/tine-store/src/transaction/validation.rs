@@ -13,7 +13,10 @@ use std::sync::Arc;
 /// in O(1) rather than by a scan of the map (PC-3: a namespace rename moves
 /// K pages of one K-entry map). Built once per map in a preflight.
 #[derive(Default)]
-pub(crate) struct TitleIndexes(HashMap<*const RenameMap, HashMap<(String, String), usize>>);
+pub(crate) struct TitleIndexes {
+    moves: HashMap<*const RenameMap, HashMap<(String, String), usize>>,
+    links: HashMap<*const RenameMap, HashMap<String, String>>,
+}
 
 impl TitleIndexes {
     /// `map`'s new name for a page titled `title` moved to `destination`: the
@@ -25,7 +28,7 @@ impl TitleIndexes {
         title: &str,
         destination: &str,
     ) -> Option<&'m str> {
-        let index = self.0.entry(Arc::as_ptr(map)).or_insert_with(|| {
+        let index = self.moves.entry(Arc::as_ptr(map)).or_insert_with(|| {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::rename_title_probes(map.0.len());
             let mut index = HashMap::new();
@@ -59,6 +62,38 @@ pub(crate) fn rewrite(
     let is_org = Format::from_path(path) == Format::Org;
     refuse_read_only_org(old, proposal.text.as_bytes(), is_org)?;
     Ok(proposal.text.into_bytes())
+}
+
+/// Check the actual title image, including a stationary namespace and reused
+/// prepared bytes. Titles and namespace images retain their existing owners.
+/// O(affected page bytes), no I/O; journals keep their filename identity.
+pub(super) fn title_identity(
+    old: &[u8],
+    new: &[u8],
+    format: Format,
+    map: &Arc<RenameMap>,
+    titles: &mut TitleIndexes,
+) -> Result<(), Why> {
+    let old = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
+    let new = std::str::from_utf8(new).map_err(|_| Why::Refused(Refusal::Undecodable))?;
+    if let Some(title) = tine_core::model::page_title_from_preamble(old, format) {
+        let keyed = titles.links.entry(Arc::as_ptr(map)).or_insert_with(|| {
+            map.0
+                .iter()
+                .map(|(a, b)| (tine_core::refs::page_key(a), b.clone()))
+                .collect()
+        });
+        let expected = tine_core::refs::renamed_page_name(&title, &keyed);
+        let actual = tine_core::model::page_title_from_preamble(new, format);
+        if actual.as_deref().is_none_or(|actual| {
+            !tine_core::refs::same_page(actual, expected.as_deref().unwrap_or(&title))
+        }) {
+            return Err(Why::Refused(Refusal::TextRealization(
+                tine_core::text_trace::TraceError::TitleIdentity,
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn rewrite_proposal(

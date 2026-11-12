@@ -4,6 +4,9 @@ export type ErrorFamily =
   | "conflict" | "deleted" | "twin" | "repeated" | "read-only" | "invalid-target"
   | "closed" | "not-found" | "asset-too-large" | "result-too-large" | "stale-graph-binding" | "io" | "rollback-incomplete" | "publication-incomplete"
   | "config-unreadable"
+  | "title-identity"
+  | "missing-native-name-range"
+  | "alias-owner"
   | "unreadable-owner" | "graph-app-owner" | "conflict-copy-gone" | "unknown";
 
 /** Classify exact Tauri wire tokens for control flow. Cost O(message length);
@@ -15,6 +18,9 @@ export function errorFamily(error: unknown): ErrorFamily {
   const withDetail = /^(rollback-incomplete|publication-incomplete|config-unreadable):[\s\S]*$/.exec(message);
   if (withDetail) return withDetail[1] as "rollback-incomplete" | "publication-incomplete" | "config-unreadable";
   switch (message) {
+    case "Q-TITLE": return "title-identity";
+    case "F-LINK": return "missing-native-name-range";
+    case "Q-OWNER": return "alias-owner";
     case "conflict":
     case "deleted":
     case "twin":

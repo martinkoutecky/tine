@@ -7,6 +7,12 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
         "A page merge keeps both bodies' original text and layout",
         "clashing properties, including equal values",
         "Org source directives stay inside a quote",
+        "stops with **Q-TITLE**",
+        "It changes no files",
+        "use their first spelling",
+        "Org drawer remnants remain block properties outside the quote",
+        "**F-LINK** means the parser could not locate an alias name safely",
+        "**Q-OWNER** means a retained alias spelling would lose its native property owner",
         "Saving it again keeps the survivor's name",
         "Tag-shaped aliases keep their `#` and existing brackets",
         // GH #535: when an unsaved page still stops a rename, or a refusal

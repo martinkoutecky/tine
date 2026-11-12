@@ -73,7 +73,9 @@ pub fn preamble_content_range_in(raw: &str, is_org: bool, regions: &BlockRegions
     if regions.quarantined {
         return None;
     }
-    let mut start = 0;
+    let mut start = regions
+        .find_org_preamble_property_region(raw)
+        .map_or(0, |region| region.1);
     for property in regions.page_properties() {
         start = start.max(property.line.1);
         if let Some(drawer) = regions.property_regions.get(property.region) {

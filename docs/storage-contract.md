@@ -1026,7 +1026,9 @@ promotion rule. This does not decide edits exposing a different, unguarded
 property-only body (Q-SAVEAUTHOR), or closure under Logseq's own saves. Org
 leftovers use a quote container so source directives cannot retitle the page
 in Logseq. Alias fields form one survivor-first union after substitution,
-deduplicated by exact rendered spelling. The reader's property member parser
+deduplicated by exact parser-decoded names, keeping the first original spelling.
+Still-distinct raw alternatives remain interpreted native leftover members.
+The reader's property member parser
 owns tokenization; wrappers, odd spacing and unknown remainders remain
 protected text.
 The merger reads both headers, places their lines and validates the survivor
@@ -1036,9 +1038,11 @@ alias key a declaration may rewrite is the parser's key range, never a search
 of its own. A source drawer's joining entries go into the survivor's drawer
 before its `:END:`; with no target drawer, one source drawer opens the survivor
 header, before any directive (in Logseq a directive before a drawer hides it).
-A joined drawer's own delimiters are protected leftover text; a leftover
-holding them that would read a reference to a name none of its lines refers
-to refuses (`AddedOccurrence`).
+A source drawer whose entries all join or independently satisfy alias
+consumption has redundant complete delimiters. Only those delimiters may be
+consumed; remaining source property fragments retain native block-property
+ownership outside quotes. Every target physical frame stays in order, and new
+non-alias joins enter its last physical segment.
 When alias fields combine, complete parser-owned member tokens move into the
 active field; their names are original pieces rather than inserted copies.
 Protected duplicate wrapped members retain their property owner in the inert
@@ -1047,17 +1051,20 @@ duplicate encoded members and protected spacing relocate with their original
 property owner; a native alias key assembles the active selected members.
 The active field is the first declaration with members, survivor first; a
 declaration whose value has none (wholly quoted, empty) is protected leftover
-text. A rebuilt active field ends with the survivor's first alias declaration's
-terminator, else LF (conceptual model `mergeField`). A line ends at CRLF, LF
+text. If neither input has members, all survivor memberless declarations stay
+in place and source declarations become protected leftovers. A rebuilt active
+field keeps its selected original declaration's terminator. A line ends at CRLF, LF
 or a lone CR in both formats (mldoc `eol_chars`); the merger splits lines,
 reads terminators and maps outline offsets through one owner
 (`doc::physical_lines`, `doc::line_terminator`, with parsers reading the
 same-length `org::lone_cr_to_lf` view), so lone-CR and mixed-ending pages merge
 with every original terminator kept. A redundant alias line's LF or CRLF may be
-consumed; its lone CR stays protected leftover text (conceptual model §5.2). Lines the merger inserts take the
+consumed, as may its lone CR. Lines the merger inserts take the
 survivor's line convention (`doc::line_convention`, shared with saves),
-including Org's leftover quote frame; an Org CRLF survivor gets LF, since its
-model keeps a CRLF's `\r` in the line text.
+including Org's leftover frame. An empty Org headline uses the native codec's
+round-tripping spelling with that convention.
+An empty native Org preamble drawer is metadata with one header origin, even
+without property entries; it is not promoted into a prose body row.
 Preamble prose is already a separate visible body row in the reader.
 The merger materializes it as an outline row, keeping target prose before target
 outline bodies and source prose after the leftover and before source outline
@@ -1068,7 +1075,7 @@ Name rewrites retain original pieces in source order. Their only encoding
 insertions are paired `[[` and `]]` around a changed semantic name; tag hashes
 and existing wrappers remain protected originals. Merge relocation and approved
 alias consumption have a separate complete-file trace. Native conformance
-requires the accepted round-15c combined admission, including individual stored
+requires the frozen native combined admission, including individual stored
 query identities and exact-output save observations for every retained file.
 The observations include every descendant, the native first-root classifier,
 serialization with the actual layout options, and an independent reparse.
@@ -1087,7 +1094,10 @@ substitution, and explicit scoped alias consumption. The checker verifies
 complete before/after coverage and retained-or-consumed multiplicity before
 the host admits any writes. Only native alias syntax with a retained native
 declaration witness, or an identical rendered alias-member token with a
-retained member witness, can be consumed. A failed certificate is a typed
+retained member witness, can be consumed under the alias exception. Separately,
+complete parser-owned source drawer markers can be consumed when all entries
+join the native output header or independently satisfy alias consumption.
+Target and retained day markers stay original. A failed certificate is a typed
 `TextRealization` refusal. Malformed imported text or an external edit whose
 layout cannot realize separate ordered bodies refuses the entire proposal;
 the original files remain available to edit or merge manually. Merge bytes
@@ -1095,6 +1105,15 @@ use the existing prepared rewrite step under the revision guard, exact old
 byte comparison, and Org/conflict-marker firewalls. A merge never falls back
 to a reference-only rewrite when its prepared inputs differ. Certificates,
 origins and unrealized-site reports create no durable record or transport.
+
+The frozen [rename and merge domain](contracts/rename-merge-domain.md) defines
+decoded-name first-spelling ownership, parser-owned quoted members, physical
+target-frame preservation and every named prepublication refusal. Multiple
+drawers and alternative spellings of one decoded alias are covered where the
+complete native certificate passes. A title whose actual rewritten identity
+disagrees with its namespace image refuses as `Q-TITLE`, including a stationary
+namespace whose inner reference changes. A missing native member map remains
+`F-LINK`; no guessed source coordinates are used.
 
 Renames and confirmed merges rewrite bare `alias::` / `aliases::` members
 (Org `#+alias:` / `#+aliases:` too) through the same reference scanner and
@@ -1728,7 +1747,9 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::rewrite_move::Undecodable` | 1 | Sync leaves a title-owned move source invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
 | `transaction.rs::reuse::TextRealization` | 3 | Malformed imported or externally edited text cannot match the merge's prepared baseline, input partition or complete output certificate; refuse before any page write or source deletion. |
 | `transaction.rs::rewrite_proposal::TextRealization` | 1 | A span rewrite of imported or externally edited text cannot certify complete input/output bytes and multiplicity; refuse the whole rename without writing a partial substitution. |
-| `transaction.rs::rewrite_move::TextRealization` | 1 | The own title is one edit, the new name with the references inside the title rebound (`RenameProposal::rebind_title`). User or imported text whose title holds a reference the rename rebinds outside the kept namespace suffix, or whose rebound title would no longer name the planned page (`Old/[[Old]]` renamed to `New`: an open model question), cannot be realized faithfully; retain the source and refuse before moving it, rather than publish a title that disagrees with the page's file name or with its own references. |
+| `transaction.rs::rewrite_move::TextRealization` | 1 | The own title is one edit from `RenameProposal::rebind_title`. An edit outside its kept tail is an encoding/partition refusal. An actual rebound title that names a different page from its namespace image refuses as `Q-TITLE`; preflight checks stationary titled pages too. Imported text or an external edit must never publish a new identity through an inner reference. The complete transaction stays unchanged. |
+| `transaction.rs::title_identity::Undecodable` | 2 | Imported or externally edited old or proposed title bytes are not UTF-8; preserve the complete transaction without guessing a title. |
+| `transaction.rs::title_identity::TextRealization` | 1 | The actual native title after a rename or merge names a different identity from its namespace image, including a stationary page whose inner reference changes. Refuse as `Q-TITLE` before publication; edit the title and retry. |
 | `transaction.rs::refuse_read_only_org::ReadOnly` | 1 | An Org referrer is not round-trip editable (malformed imported Org); keep its bytes instead of rewriting it, whether preflight computes the rewrite or reuses one prepared by the rename planner (GH #623). |
 | `transaction.rs::prepare_steps::ReadOnly` | 1 | Malformed input (og-gh644 F3): an external editor, sync delivery or an import left a page whose bytes panic the parser while a transaction's preflight reads it (a moved page's own-title read, a referrer's rewrite). Refuse that transaction before any write, keep the file's bytes, and keep the writer lock usable for every other operation, instead of letting the panic unwind through the writer guard and poison it. |
 | `transaction.rs::rewrite_move::ReadOnly` | 1 | An imported Org page named by `#+TITLE:` or a `:title:` drawer is not round-trip editable; refuse the rename rather than rebind its title in bytes Tine cannot reproduce. |

@@ -295,13 +295,26 @@ impl<'a> PagePlan<'a> {
                 } else {
                     rewrite(&old, &path, renames, name_format)?
                 };
+                // Reject an unreadable replacement before further native
+                // validation walks; its byte bound is already known.
+                validation::page_bytes(&file, &new)?;
+                if file
+                    .as_str()
+                    .starts_with(&format!("{}/", self.store.config().pages_dir))
+                    && !prepared.as_ref().is_some_and(|p| p.is_merge())
+                {
+                    validation::title_identity(
+                        &old,
+                        &new,
+                        Format::from_path(&path),
+                        renames,
+                        titles,
+                    )?;
+                }
                 refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
                 if prepared.as_ref().is_some_and(|p| p.is_merge()) {
                     refuse_marker_rewrite(&new, &old, Format::from_path(&path))?;
                 }
-                // A rewrite (a merge survivor, a referrer, a retitled page) can
-                // grow: publish only bytes the store will open again, as a save does.
-                validation::page_bytes(&file, &new)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -354,6 +367,18 @@ impl<'a> PagePlan<'a> {
                     (None, Some(_)) => unreachable!(),
                 };
                 if let (Some(old), Some(new)) = (&old, &new) {
+                    if let Some(map) = renames.as_ref().filter(|_| {
+                        file.as_str()
+                            .starts_with(&format!("{}/", self.store.config().pages_dir))
+                    }) {
+                        validation::title_identity(
+                            old,
+                            new,
+                            Format::from_path(&self.path(file)?),
+                            map,
+                            titles,
+                        )?;
+                    }
                     refuse_marker_rewrite(old, new, Format::from_path(&self.path(file)?))?;
                     if renames.is_some() {
                         validation::page_bytes(to, new)?;

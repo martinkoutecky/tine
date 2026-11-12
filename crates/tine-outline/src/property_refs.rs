@@ -49,7 +49,9 @@ pub fn plain_segments(nodes: &[Inline], out: &mut Vec<String>) {
 }
 
 /// Linkable-property names in source order, before identity deduplication.
-/// Quoted values have no references. Cost O(value bytes), no I/O.
+/// A wholly quoted value has no references. In a mixed value, the native
+/// Plain splitter can return a quoted token as a complete name, quotes included.
+/// Cost O(value bytes), no I/O.
 pub fn linkable_names(value: &str, is_org: bool) -> Vec<String> {
     let mut names = Vec::new();
     for_each_linkable_member(value, is_org, |name, _, _| names.push(name));
@@ -170,6 +172,18 @@ impl<'a> PlainSource<'a> {
 #[cfg(test)]
 mod member_range_tests {
     use super::for_each_linkable_member;
+
+    #[test]
+    fn mixed_quoted_members_keep_their_complete_native_name_ranges() {
+        for org in [false, true] {
+            assert!(members("\"literal\"", org).is_empty());
+            let value = "\"literal\", p\\\"q";
+            let parsed = members(value, org);
+            assert_eq!(parsed[0], ("\"literal\"".into(), Some("\"literal\""), true));
+            assert_eq!(parsed.len(), 2);
+            assert_eq!(parsed[1].1, Some("p\\\"q"));
+        }
+    }
 
     fn members(value: &str, org: bool) -> Vec<(String, Option<&str>, bool)> {
         let mut out = Vec::new();

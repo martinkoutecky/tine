@@ -6,6 +6,33 @@ use std::collections::HashMap;
 
 use crate::doc::{DocBlock, Document};
 
+#[cfg(test)]
+mod empty_header_tests {
+    use super::*;
+
+    #[test]
+    fn empty_org_page_drawers_are_metadata_and_keep_one_header_origin() {
+        for ending in ["\n", "\r\n", "\r"] {
+            for indent in ["", " \t", "\u{c}", "\u{1a}"] {
+                let bytes = format!("{indent}:PROPERTIES:{ending}{indent}:END:{ending}");
+                let doc = crate::org::parse_org(&bytes);
+                assert!(page_document_is_org(&doc));
+                let pre = doc.pre_block.as_deref().unwrap();
+                let (header, prose) = pre_block_parts(pre, true);
+                assert_eq!(header, ":PROPERTIES:\n:END:");
+                assert!(prose.is_none(), "{bytes:?}");
+                let rows = pre_block_projections(pre, true);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].0, PreBlockKind::Properties);
+            }
+        }
+        let quote = "#+BEGIN_QUOTE\n:PROPERTIES:\n:END:\n#+END_QUOTE";
+        let (header, prose) = pre_block_parts(quote, true);
+        assert!(header.is_empty());
+        assert!(prose.is_some(), "a quoted drawer remains quote content");
+    }
+}
+
 pub use crate::page_header::page_property_lines;
 
 /// The first root carries the format; an empty document's parser-owned Org
@@ -13,10 +40,9 @@ pub use crate::page_header::page_property_lines;
 pub fn page_document_is_org(doc: &Document) -> bool {
     doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
         doc.pre_block.as_deref().is_some_and(|pre| {
-            crate::block_regions::parse_document(pre, true)
-                .page_properties()
-                .next()
-                .is_some()
+            let regions = crate::block_regions::parse_document(pre, true);
+            regions.page_properties().next().is_some()
+                || regions.find_org_preamble_property_region(pre).is_some()
         })
     })
 }
@@ -24,7 +50,7 @@ pub fn page_document_is_org(doc: &Document) -> bool {
 /// Project only parser-owned page properties into native block syntax. Keeping
 /// the whole Org drawer preserves parser ownership for reference evidence.
 pub fn page_property_raw(pre: &str, is_org: bool) -> String {
-    raw_from_lines(&page_property_lines(pre, is_org), is_org)
+    pre_block_parts(pre, is_org).0
 }
 
 fn raw_from_lines(entries: &[(String, String)], is_org: bool) -> String {
@@ -116,13 +142,14 @@ pub fn preamble_content_range(pre: &str, is_org: bool) -> Option<std::ops::Range
 /// parse of the pre-block.
 pub fn pre_block_parts(pre: &str, is_org: bool) -> (String, Option<std::ops::Range<usize>>) {
     let regions = crate::block_regions::parse_document(pre, is_org);
-    (
-        raw_from_lines(
-            &crate::page_header::page_property_lines_in(&regions, is_org),
-            is_org,
-        ),
-        preamble_range_in(pre, is_org, &regions),
-    )
+    let mut raw = raw_from_lines(
+        &crate::page_header::page_property_lines_in(&regions, is_org),
+        is_org,
+    );
+    if raw.is_empty() && is_org && regions.find_org_preamble_property_region(pre).is_some() {
+        raw = ":PROPERTIES:\n:END:".into();
+    }
+    (raw, preamble_range_in(pre, is_org, &regions))
 }
 
 fn preamble_range_in(
