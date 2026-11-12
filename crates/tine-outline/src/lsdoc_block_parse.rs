@@ -481,7 +481,8 @@ pub(crate) fn first_line_end(raw: &str) -> usize {
 /// quote, `#+TITLE: x`) are the block's first line, so that line stays its
 /// title line. A nonempty headline owns the rest of its line when only blanks
 /// follow (lsdoc ends a bare `TODO ` before its trailing blanks, and a CRLF
-/// page keeps each line's CR in the raw), so rows never split the title line.
+/// page keeps each line's CR in the raw), so rows never split the title line;
+/// a headline that already ends with its newline stays where it is.
 pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     let (Block::Bullet { span, .. } | Block::Heading { span, .. }) = blocks.first()? else {
         return None;
@@ -497,7 +498,7 @@ pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     if !raw.is_char_boundary(at) {
         at = raw.len();
     }
-    if at > block_lead(raw) {
+    if at > block_lead(raw) && !raw[..at].ends_with('\n') {
         let line_end = raw[at..].find('\n').map_or(raw.len(), |p| at + p + 1);
         if raw[at..line_end].trim().is_empty() {
             at = line_end;
@@ -1001,6 +1002,11 @@ mod preparation_tests {
             "TODO \nbody",
             "TODO \t\r\nbody",
             "TODO \r",
+            // A headline that already ends with its newline keeps it there:
+            // a blank second line is the body's (R8 review, region sharing).
+            "x\n\nbody",
+            "x\r\n\r\nbody",
+            "TODO\n \nbody",
             // A node at the title position is the title line.
             "#+TITLE: t\n:PROPERTIES:\n:id: x\n:END:",
             "> q\n:PROPERTIES:\n:id: x\n:END:",
@@ -1012,6 +1018,8 @@ mod preparation_tests {
             "> q\nid:: x",
             "TODO \nbody",
             "## TODO \r\nbody",
+            "x\n\nbody",
+            "x\r\n\r\nbody",
         ] {
             assert_eq!(parse(raw, false).headline_end, None, "{raw:?}");
         }
