@@ -702,3 +702,39 @@ fn r8_markdown_bare_heading_task_with_a_trailing_space_keeps_its_marker_through_
         &["## TODO \nSCHEDULED: <2026-11-12 Thu>\nbody"],
     )]);
 }
+
+/// R10: a Markdown whitespace-only continuation of two or more spaces parses
+/// as a hard break once another row follows; it is a blank beside the rows,
+/// so the bare task stays a task (an id added, a page that already has one).
+#[test]
+fn r10_markdown_hard_break_blank_beside_the_rows_keeps_the_task() {
+    run_witnesses(&[
+        (
+            "pages/m.md",
+            "- TODO\n    \n- other\n",
+            &[0],
+            || id(Some("x")),
+            "- TODO\n    \n  id:: x\n- other\n",
+            &["TODO\n  "],
+            &["TODO\n  \nid:: x"],
+        ),
+        (
+            "pages/m.md",
+            "- TODO\n    \n  id:: x\n- other\n",
+            &[0],
+            fold,
+            "- TODO\n    \n  id:: x\n  collapsed:: true\n- other\n",
+            &["TODO\n  \nid:: x"],
+            &["TODO\n  \nid:: x\ncollapsed:: true"],
+        ),
+        (
+            "pages/m.md",
+            "- TODO\n  SCHEDULED: <2026-11-12 Thu>  \n- other\n",
+            &[0],
+            || id(Some("x")),
+            "- TODO\n  SCHEDULED: <2026-11-12 Thu>  \n  id:: x\n- other\n",
+            &["TODO\nSCHEDULED: <2026-11-12 Thu>  "],
+            &["TODO\nSCHEDULED: <2026-11-12 Thu>  \nid:: x"],
+        ),
+    ]);
+}
