@@ -110,7 +110,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 // title followed only by property, planning or LOGBOOK rows parses as a task,
 // so task facets and task query answers change for unchanged graph files;
 // older caches rebuild.
-pub(crate) const FORMAT: u32 = 30;
+// 31 (REG-BARE-TASK-HIDDEN-ROWS review r6; release/0.9 shipped it as 22):
+// block regions carry lsdoc's headline end where it is not the first line's
+// end (`headline_end`); the body gains that one optional field.
+pub(crate) const FORMAT: u32 = 31;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.10";
