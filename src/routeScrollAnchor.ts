@@ -27,12 +27,14 @@ function scrollTopForAnchor(scroller: HTMLElement, anchor: ScrollAnchor): number
 }
 
 const GESTURES = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+const MODIFIER_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta", "Shift", "OS"]);
 
 /** Go to a saved position once the content has rendered. A deep position keeps being pursued while the page grows:
  *  blocks and linked references render and measure asynchronously, and a slow reference read can answer well after
  *  the page shows (GH #848). The row that was first in view wins over the pixel offset once it exists, since rows
  *  above it may have changed height. Ends when position and height have held for half a second, at the deadline, on
- *  a user gesture or when `current` turns false. If the offset is deeper than the loaded content (a journal-feed
+ *  a user gesture (not a bare modifier key) or when `current` turns false; the reader owns the position once
+ *  that gesture scrolls. If the offset is deeper than the loaded content (a journal-feed
  *  position in days not loaded yet), `extend` pulls in more until it is reachable or the feed is exhausted. One
  *  selector lookup and one layout read per frame. */
 export function pursueScroll(options: {
@@ -55,7 +57,14 @@ export function pursueScroll(options: {
   const doc = scroller()?.ownerDocument;
   let positioned = false;
   const claimPosition = () => { if (!positioned) { positioned = true; onPositioned(); } };
-  const release = () => { if (current()) claimPosition(); released = true; finish(); };
+  // A gesture hands control to the reader, but only a scroll the gesture causes makes this the reader's position:
+  // a navigation click or Alt+Left must not save the still-loading view over the saved offset.
+  const claimOnScroll = () => { if (current()) claimPosition(); };
+  const release = (event: Event) => {
+    if (event instanceof KeyboardEvent && MODIFIER_KEYS.has(event.key)) return;
+    released = true; finish();
+    if (current()) scroller()?.addEventListener("scroll", claimOnScroll, { once: true, passive: true });
+  };
   const finish = () => { if (listening) for (const gesture of GESTURES) doc?.removeEventListener(gesture, release, true); };
   // Deferred to a frame so the page's content is laid out first; otherwise a synchronous reset races the content swap.
   const tick = () => {
