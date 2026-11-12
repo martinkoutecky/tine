@@ -107,6 +107,8 @@ static ORPHAN_CHECK_DOCUMENTS: AtomicU64 = AtomicU64::new(0);
 static ORPHAN_CHECK_NANOS: AtomicU64 = AtomicU64::new(0);
 static FILE_RENAMES: AtomicU64 = AtomicU64::new(0);
 static PARSE_INPUT_CHECKS: AtomicU64 = AtomicU64::new(0);
+static RENAME_MAP_CLONES: AtomicU64 = AtomicU64::new(0);
+static RENAME_TITLE_PROBES: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -466,6 +468,12 @@ pub struct Counts {
     /// Page-byte input checks (size, UTF-8, outline depth) before a parse or
     /// a publication (`validate_parse_bytes_for_path`): O(bytes), no parse.
     pub parse_input_checks: u64,
+    /// `RenameMap` copies: O(its entries) each, so a plan shares one map
+    /// between its steps instead.
+    pub rename_map_clones: u64,
+    /// Rename-map entries examined to match a moved page's own title: a
+    /// map's entries once to index it, then one probe per titled page.
+    pub rename_title_probes: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -519,6 +527,8 @@ pub fn reset() {
         &ORPHAN_CHECK_NANOS,
         &FILE_RENAMES,
         &PARSE_INPUT_CHECKS,
+        &RENAME_MAP_CLONES,
+        &RENAME_TITLE_PROBES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -575,11 +585,19 @@ pub fn snapshot() -> Counts {
         orphan_check_nanos: ORPHAN_CHECK_NANOS.load(Ordering::Relaxed),
         file_renames: FILE_RENAMES.load(Ordering::Relaxed),
         parse_input_checks: PARSE_INPUT_CHECKS.load(Ordering::Relaxed),
+        rename_map_clones: RENAME_MAP_CLONES.load(Ordering::Relaxed),
+        rename_title_probes: RENAME_TITLE_PROBES.load(Ordering::Relaxed),
     }
 }
 
 pub(crate) fn file_rename() {
     FILE_RENAMES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn rename_map_clone() {
+    RENAME_MAP_CLONES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn rename_title_probes(entries: usize) {
+    RENAME_TITLE_PROBES.fetch_add(entries as u64, Ordering::Relaxed);
 }
 pub(crate) fn parse_input_check() {
     PARSE_INPUT_CHECKS.fetch_add(1, Ordering::Relaxed);

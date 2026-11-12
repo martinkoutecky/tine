@@ -42,6 +42,27 @@ fn measure(
     op: impl FnOnce(&Store, &tine_store::PageHost) -> std::io::Result<()>,
     check: impl FnOnce(&Path),
 ) -> Bill {
+    measure_in(files, Trash::Fresh, op, check)
+}
+
+/// The graph's trash folder when the operation starts.
+#[derive(Clone, Copy, PartialEq)]
+enum Trash {
+    /// Absent: the first deletion creates it, which freshens its ancestors, so
+    /// each deletion in the next two seconds syncs the whole chain.
+    Fresh,
+    /// Present with every ancestor's modification time past the host's
+    /// `SETTLED` window: a graph that has trashed a page before.
+    Settled,
+}
+
+/// [`measure`] with the trash folder in the given state.
+fn measure_in(
+    files: &[(String, String)],
+    trash: Trash,
+    op: impl FnOnce(&Store, &tine_store::PageHost) -> std::io::Result<()>,
+    check: impl FnOnce(&Path),
+) -> Bill {
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let temp = tempfile::Builder::new()
         .prefix("cm-op-cost-")
@@ -59,6 +80,15 @@ fn measure(
             .unwrap()
             .set_modified(old)
             .unwrap();
+    }
+    if trash == Trash::Settled {
+        let folder = root.join("logseq/.tine-trash/pages");
+        fs::create_dir_all(&folder).unwrap();
+        // Innermost first: setting a directory's time does not touch its
+        // parent's, but creating an entry does.
+        for dir in folder.ancestors().take_while(|dir| dir.starts_with(&root)) {
+            fs::File::open(dir).unwrap().set_modified(old).unwrap();
+        }
     }
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
@@ -181,21 +211,39 @@ fn namespace(k: usize) -> Bill {
 }
 
 fn namespace_sized(k: usize, unrelated: usize) -> Bill {
+    namespace_with(k, unrelated, false, Trash::Fresh)
+}
+
+/// A namespace rename of `k` children among `unrelated` other pages. With
+/// `titled`, each child carries its own `title::` naming the old identity,
+/// which the move rebinds to the new one.
+fn namespace_with(k: usize, unrelated: usize, titled: bool, trash: Trash) -> Bill {
     let mut files = others(unrelated);
     files.push(("pages/Ns.md".into(), "- ns\n".into()));
+    let head = |ns: &str, i: usize| {
+        if titled {
+            format!("title:: {ns}/c{i:03}\n\n")
+        } else {
+            String::new()
+        }
+    };
     for i in 0..k {
-        files.push((format!("pages/Ns%2Fc{i:03}.md"), format!("- child {i}\n")));
+        files.push((
+            format!("pages/Ns%2Fc{i:03}.md"),
+            format!("{}- child {i}\n", head("Ns", i)),
+        ));
     }
     files.push(("pages/Ref.md".into(), "- links [[Ns/c000]]\n".into()));
-    measure(
+    measure_in(
         &files,
+        trash,
         |store, host| pages::rename_page_expected(store, host, "Ns", "Space", None),
         |root| {
             for i in 0..k {
                 assert!(!root.join(format!("pages/Ns%2Fc{i:03}.md")).exists());
                 assert_eq!(
                     fs::read_to_string(root.join(format!("pages/Space%2Fc{i:03}.md"))).unwrap(),
-                    format!("- child {i}\n")
+                    format!("{}- child {i}\n", head("Space", i))
                 );
             }
             assert_eq!(
@@ -240,9 +288,16 @@ fn per_unit(few: &Bill, many: &Bill, units: u64) -> [(&'static str, u64); 10] {
         ("fsyncs", d(f.fsyncs, m.fsyncs)),
         ("file renames", d(f.file_renames, m.file_renames)),
         ("parses", d(f.parses, m.parses)),
+        // An observation re-read (the host re-reading a held page the
+        // watcher saw change, contract 5.4) is billed apart from `reads`; its
+        // input check is one of `parse_input_checks`, so it leaves that count
+        // too (it made a run come out one over, in about one run in five).
         (
             "parse input checks",
-            d(f.parse_input_checks, m.parse_input_checks),
+            d(
+                f.parse_input_checks - f.observation_reads,
+                m.parse_input_checks - m.observation_reads,
+            ),
         ),
         ("reference walks", d(few.walks, many.walks)),
         ("certificate checks", d(few.certificates, many.certificates)),
@@ -347,6 +402,64 @@ fn a_namespace_rename_costs_a_bounded_constant_per_child() {
         CHILD_PINNED,
         CHILD_BOUND,
     );
+}
+
+/// Per namespace child moved in a graph whose trash folder already exists and
+/// is settled (the common case: [`CHILD_PINNED`] measures the first trash use,
+/// where each deletion syncs the folder's three ancestors too). The trash
+/// sync is then the folder alone: one fsync, not four. Fixture note: the
+/// 10 above includes those 3 only because the fixture's first deletion
+/// creates the folder.
+const CHILD_STEADY_PINNED: [u64; 10] = [5, 2, 7, 3, 1, 3, 1, 2, 0, 0];
+
+#[test]
+fn a_namespace_rename_in_a_settled_graph_syncs_the_trash_once_per_child() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let run = |k| namespace_with(k, 40, false, Trash::Settled);
+    let (few, many) = (run(2), run(32));
+    eprintln!("settled namespace: 2 children {few:?}\n32 children {many:?}");
+    let counts = per_unit(&few, &many, 30);
+    pin(
+        "namespace rename in a settled graph",
+        counts,
+        CHILD_STEADY_PINNED,
+        CHILD_BOUND,
+    );
+    // Exactly the first-use case's ten, less the trash folder's three
+    // ancestors: pin() only bounds above, and a lost sync is a protocol change.
+    assert_eq!(counts[2], ("fsyncs", 7), "{few:?} vs {many:?}");
+}
+
+/// PC-3, shared rename map and O(1) title match. A namespace rename queues
+/// one move per child, all for one map of K+1 pairs. Lower bounds: no copy of
+/// the map (the planner builds it once and the steps share it), and for the
+/// moved pages' own titles one index of the map's pairs plus one probe per
+/// titled child. Before, every move copied the map (K copies of K+1 pairs) and
+/// every title scanned it from the start (about K²/2 pairs in all).
+#[test]
+fn a_namespace_rename_shares_its_map_and_matches_titles_in_constant_time() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    for titled in [false, true] {
+        let run = |k| namespace_with(k, 40, titled, Trash::Fresh);
+        let (few, many) = (run(2), run(32));
+        eprintln!("titled={titled}: 2 children {few:?}\n32 children {many:?}");
+        for (k, bill) in [(2u64, few), (32, many)] {
+            assert_eq!(
+                bill.io.rename_map_clones, 0,
+                "PC-3: {k} children copied the rename map {} times; the steps share one: {bill:?}",
+                bill.io.rename_map_clones
+            );
+            let probes = bill.io.rename_title_probes;
+            let (floor, ceiling) = if titled { (k, 2 * k + 1) } else { (0, 0) };
+            assert!(
+                (floor..=ceiling).contains(&probes),
+                "PC-3: {k} {} children matched titles with {probes} map entries examined, \
+                 expected {floor}..={ceiling} (one index of the map, one probe per titled child): \
+                 {bill:?}",
+                if titled { "titled" } else { "untitled" },
+            );
+        }
+    }
 }
 
 /// A merge without renames: both pages read for the proposal and guarded,

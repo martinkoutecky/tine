@@ -25,7 +25,7 @@ impl PagePlan<'_> {
         id: &PageId,
         expected: FileRev,
         text: (String, String),
-        renames: Option<&RenameMap>,
+        renames: Option<&Arc<RenameMap>>,
         format: FileNameFormat,
         certificate: tine_core::text_trace::TextTrace,
     ) {
@@ -33,7 +33,7 @@ impl PagePlan<'_> {
         self.steps.push(Step::Rewrite {
             id: id.clone(),
             expected,
-            renames: renames.cloned().unwrap_or_default(),
+            renames: renames.map_or_else(Default::default, Arc::clone),
             rebind_title: false,
             prepared: Some(Box::new(PreparedRewrite::new(
                 id.file(),
