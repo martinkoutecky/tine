@@ -163,6 +163,26 @@ it("remembers deliberate user scrolling after an interrupted restore", async () 
   expect(scroller.scrollTop).toBe(2_000);
 });
 
+it("remembers the reader's new position after a background tab closes during the restore", async () => {
+  const router = await leaveDeepPage();
+  const shown = router.activeId();
+  router.openPageInNewTab("Background", "page");
+  const background = router.tabs().find((tab) => tab.id !== shown)!.id;
+  await router.closeTab(background);
+  height = 20_000;
+  await runFrames(3); // the restore reaches its position after the unrelated tab change
+  expect(scroller.scrollTop).toBe(9_000);
+  document.dispatchEvent(new Event("wheel"));
+  scroller.scrollTop = 2_000;
+  router.goForward();
+  router.restoreScrollFor(router.route());
+  await runFrames(1);
+  router.goBack();
+  router.restoreScrollFor(router.route());
+  await runFrames(2);
+  expect(scroller.scrollTop).toBe(2_000);
+});
+
 it("remembers the reader's new position when the page is permanently shorter than the saved offset", async () => {
   const router = await leaveDeepPage();
   const clock = vi.spyOn(performance, "now").mockReturnValue(performance.now() + 11_000);
