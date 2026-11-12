@@ -82,6 +82,16 @@ export function cm6Structure(ctx: StructureContext) {
     const end = Math.min(s.end, v.state.doc.length), start = Math.min(s.start, end);
     v.dispatch({ selection: s.direction === "backward" ? EditorSelection.single(end, start) : EditorSelection.single(start, end) });
     v.focus();
+    // A DOM reorder can clear the browser's range before its selectionchange arrives. CM still holds
+    // the old range then, so the dispatch above writes nothing, and the late selectionchange would read
+    // the cleared range back (whether it comes before or after the next frame). Write the range here.
+    const range = v.dom.ownerDocument.getSelection(), main = v.state.selection.main;
+    if (!range || !v.hasFocus) return;
+    const anchor = v.domAtPos(main.anchor), head = v.domAtPos(main.head);
+    if (range.anchorNode !== anchor.node || range.anchorOffset !== anchor.offset
+      || range.focusNode !== head.node || range.focusOffset !== head.offset) {
+      range.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+    }
   };
   const nudge = (v: EditorView, out: boolean) => {
     const s = selection(v), text = v.state.doc.toString();

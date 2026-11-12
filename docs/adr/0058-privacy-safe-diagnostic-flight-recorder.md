@@ -38,7 +38,8 @@ focus in a focused document, or a guard refused the request. Fields: `entry`
 (`enter-split` or `other`), boolean `documentHasFocus`, `guard`
 (`exit-guard`, `entry-guard` or `none`), boolean `targetMounted`,
 `activeTag` (`textarea`, `input`, `button`, `select`, `iframe`, `a`, `div`,
-`span`, `body`, `none` or `other`) and boolean `activeIsBlockEditor`. No block
+`span`, `body`, `none` or `other`; a CodeMirror block editor is a `div`) and
+boolean `activeIsBlockEditor`. No block
 id, text, title or path. The frontend writes at most one per five minutes per
 session and schedules no check inside that window; a newer edit request
 supersedes a pending check.

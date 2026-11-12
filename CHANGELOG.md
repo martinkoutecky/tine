@@ -60,6 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+- Moving a block with Alt+Shift+Up/Down in the CodeMirror editor keeps its selected text selected; depending on timing it could collapse to the start of the block (internal: UI-CM6-MOVE-KEEPS-BROWSER-RANGE-1112).
 - Org pages: renaming or merging a page now also updates links to it inside emphasis (`*[[page]]*`, `/see [[page][label]]/`), also inside quote and other `#+BEGIN_…` blocks; before, those links kept the old name. Linked References mark such links where they stand (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
 - Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading, and shows the block you were reading even when the long page lays out differently on return, for example after a window resize (internal: UI-ZOOM-BACK-SCROLL).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).

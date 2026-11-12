@@ -60,6 +60,13 @@ function mountEditor() {
   return { root, editor, dispose };
 }
 
+/** The tag the record names for a focused block editor: a textarea, or
+ *  CodeMirror's contenteditable `div` (activeIsBlockEditor tells it apart). */
+function blockEditorTag(editor: EditorDriver): string {
+  expect(editor.element.localName).toBe(editor.kind === "cm6" ? "div" : "textarea");
+  return editor.element.localName;
+}
+
 async function pressEnter(editor: EditorDriver) {
   editor.keydown({ key: "Enter", code: "Enter", bubbles: true, cancelable: true });
 }
@@ -95,7 +102,7 @@ describe("editor_focus_missed (GH #939)", () => {
       await settle();
       expect(misses()).toEqual([{ kind: "editor_focus_missed", fields: { editorFocus: {
         entry: "enter-split", documentHasFocus: false, guard: "none", targetMounted: true,
-        activeTag: "textarea", activeIsBlockEditor: true,
+        activeTag: blockEditorTag(editor), activeIsBlockEditor: true,
       } } }]);
     } finally {
       dispose();
@@ -113,7 +120,7 @@ describe("editor_focus_missed (GH #939)", () => {
       expect(pageByName("Focus 939")!.roots).toHaveLength(2);
       expect(misses()).toEqual([{ kind: "editor_focus_missed", fields: { editorFocus: {
         entry: "enter-split", documentHasFocus: true, guard: "exit-guard", targetMounted: false,
-        activeTag: "textarea", activeIsBlockEditor: true,
+        activeTag: blockEditorTag(editor), activeIsBlockEditor: true,
       } } }]);
     } finally {
       release();
