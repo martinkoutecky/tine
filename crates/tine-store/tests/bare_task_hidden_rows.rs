@@ -737,3 +737,51 @@ fn r10_markdown_hard_break_blank_beside_the_rows_keeps_the_task() {
         ),
     ]);
 }
+
+/// R11: an Org directive beside the title is a row, as `block_regions` reads
+/// it and as the drawer that folds it in once an id is added, so the task
+/// reading does not flip on that edit (I-4). In Markdown a `#+` line is body
+/// text before and after, as `block_regions` reads it there.
+#[test]
+fn r11_an_org_directive_beside_a_bare_task_is_a_row_through_id_edits() {
+    run_witnesses(&[
+        (
+            "pages/o.org",
+            "* TODO\n#+comment: x\n* other\n",
+            &[0],
+            || id(Some("x")),
+            "* TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x\n* other\n",
+            &["TODO\n#+comment: x"],
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\r\n#+comment: x\r\n* other\r\n",
+            &[0],
+            || id(Some("x")),
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n#+comment: x\r\n* other\r\n",
+            &["TODO\n#+comment: x"],
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x\n* other\n",
+            &[0],
+            || id(None),
+            // lsdoc folds the directive into the drawer's node, so the emptied
+            // drawer stays (follow-up card); the task reading does not move.
+            "* TODO\n:PROPERTIES:\n:END:\n#+comment: x\n* other\n",
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
+            &["TODO\n:PROPERTIES:\n:END:\n#+comment: x"],
+        ),
+        (
+            "pages/m.md",
+            "- TODO\n  #+comment: x\n- other\n",
+            &[0],
+            || id(Some("x")),
+            "- TODO\n  #+comment: x\n  id:: x\n- other\n",
+            &[],
+            &[],
+        ),
+    ]);
+}

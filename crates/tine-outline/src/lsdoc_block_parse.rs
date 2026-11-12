@@ -568,7 +568,7 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     // must leave the task a task.
     if !rest
         .iter()
-        .all(|b| logbook(b) || parser_owned_row(b) || blank_paragraph(b))
+        .all(|b| logbook(b) || parser_owned_row(b, is_org) || blank_paragraph(b))
         && !rest.iter().any(logbook)
     {
         return;
@@ -637,11 +637,13 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
 }
 
 /// A block-level node that is a row Tine's structural edits own rather than
-/// body text: a property drawer or `key::` lines, or a planning line
-/// (`SCHEDULED:`/`DEADLINE:`/`CLOSED:` timestamps only).
-fn parser_owned_row(block: &Block) -> bool {
+/// body text: a property drawer or `key::` lines, an Org directive (a
+/// metadata row in `block_regions`, folded into the drawer once one is
+/// added), or a planning line (`SCHEDULED:`/`DEADLINE:`/`CLOSED:` only).
+fn parser_owned_row(block: &Block, is_org: bool) -> bool {
     match block {
         Block::Properties { .. } => true,
+        Block::Directive { .. } => is_org,
         Block::Paragraph { inline, .. } => {
             inline.iter().any(|i| matches!(i, Inline::Timestamp { .. }))
                 && inline.iter().all(|i| match i {
@@ -847,6 +849,14 @@ mod preparation_tests {
             }
         }
         assert_eq!(task("TODO\nid:: 6679-abc", false), todo);
+        // Review r11: an Org directive is a row, as its folded drawer is.
+        assert_eq!(task("TODO\n#+comment: x", true), todo);
+        assert_eq!(
+            task("TODO\n#+comment: x\n:PROPERTIES:\n:id: x\n:END:", true),
+            todo
+        );
+        assert_eq!(task("TODO\n#+comment: x\nbody", true), None);
+        assert_eq!(task("TODO\n#+comment: x", false), None);
         // Review r1: CRLF titles and blank lines beside the rows.
         for (raw, is_org) in [
             ("TODO\r", true),
