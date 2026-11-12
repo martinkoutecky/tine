@@ -1,4 +1,4 @@
-import { elementFromPointIn, requestFrame } from "./windowRealm";
+import { elementFromPointIn, isKeyboardEventValue, requestFrame } from "./windowRealm";
 
 /** The row first in view when a route was left, and how far below the scroller's
  * top it stood. Session memory only, beside the pixel offset (GH #848). */
@@ -61,7 +61,7 @@ export function pursueScroll(options: {
   // a navigation click or Alt+Left must not save the still-loading view over the saved offset.
   const claimOnScroll = () => { if (current()) claimPosition(); };
   const release = (event: Event) => {
-    if (event instanceof KeyboardEvent && MODIFIER_KEYS.has(event.key)) return;
+    if (isKeyboardEventValue(event) && MODIFIER_KEYS.has(event.key)) return; // any window's realm
     released = true; finish();
     if (current()) scroller()?.addEventListener("scroll", claimOnScroll, { once: true, passive: true });
   };
