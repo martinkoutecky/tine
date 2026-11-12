@@ -634,6 +634,10 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("git_ignore_setup", include_str!("git_ignore_setup.rs")),
         ("git_lifecycle", include_str!("git_lifecycle.rs")),
         ("git_mobile_tests", include_str!("git_mobile_tests.rs")),
+        (
+            "git_separate_dir_tests",
+            include_str!("git_separate_dir_tests.rs"),
+        ),
         ("git_pull", include_str!("git_pull.rs")),
         ("git_run", include_str!("git_run.rs")),
         ("git_status", include_str!("git_status.rs")),
@@ -641,6 +645,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "index_lock_identity",
             include_str!("git_run/index_lock_identity.rs"),
         ),
+        ("git_run_open", include_str!("git_run/open.rs")),
         ("git_sync", include_str!("git_sync.rs")),
         ("git_sync_clone", include_str!("git_sync/clone.rs")),
         (
@@ -684,7 +689,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 31, "scan every owner/*.rs file");
+    assert_eq!(files, 32, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

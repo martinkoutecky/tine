@@ -329,6 +329,13 @@ export function setPageId(name: string, id: string): void {
   if (i !== undefined) setDoc("pages", i, "id", id);
 }
 
+/** Set loaded page `name`'s kind when it holds file `id` and differs. O(1). */
+export function setPageKind(name: string, id: string, kind: PageKind): void {
+  untrack(updatePageIndex);
+  const i = pageIndexByName[`page:${name}`];
+  if (i !== undefined && doc.pages[i].id === id && doc.pages[i].kind !== kind) setDoc("pages", i, "kind", kind);
+}
+
 /** Source format for a loaded page or its physical owner in the shared inventory.
  *  Only an unknown/new page falls back to the graph's preferred format. */
 export function formatForPage(name: string | undefined): Format {
