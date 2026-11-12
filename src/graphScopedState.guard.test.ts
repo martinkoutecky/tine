@@ -325,7 +325,8 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(route).toMatch(/function openPageAtBlock[\s\S]*?const current = \(\) => stillBound\(binding\)[\s\S]*?routeIntentRevision\(\) === intent/);
     expect(route).toMatch(/const scroller = mainScroller\(\);[\s\S]*?scroller\?\.querySelector/);
     const calendar = readFileSync("src/components/CalendarJump.tsx", "utf8");
-    expect(calendar).toMatch(/rev: changed\("journals"\), epoch: graphEpoch\(\)/);
+    // createGraphResource keys on graphEpoch itself (src/graphResource.ts).
+    expect(calendar).toMatch(/createGraphResource\(\s*\(\) => \(open\(\) \? changed\("journals"\) : null\)/);
     expect(calendar).toMatch(/readOwned\(owner, backend\(\)\.journalContentDays\(\)\)/);
     const session = readFileSync("src/session.ts", "utf8");
     expect(session).toMatch(/function sessionSnapshotToken\(\): string \{\s*return JSON\.stringify\(buildPersistedSession\(\),/);
