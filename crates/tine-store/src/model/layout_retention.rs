@@ -186,8 +186,16 @@ pub(super) fn restore_org(
         }
         at += b.len();
     }
-    // The trailing newline run aligns with the old run from the end.
-    for (t, slot) in origin.iter_mut().enumerate().skip(at) {
+    // The trailing newline run aligns with the old run from the end. It starts
+    // where `serialized`'s content ends, not at `at`: the serializer folds a
+    // last block's own trailing newlines (a draft's `b\n`) into that run.
+    let content = serialized.trim_end_matches('\n');
+    let tail = if content.is_empty() {
+        0
+    } else {
+        content.split('\n').count()
+    };
+    for (t, slot) in origin.iter_mut().enumerate().skip(tail) {
         *slot = (lines.len() + t)
             .checked_sub(new.len())
             .filter(|&i| i >= old_content);

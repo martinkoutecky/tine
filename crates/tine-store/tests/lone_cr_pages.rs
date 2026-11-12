@@ -496,3 +496,25 @@ fn mixed_ending_org_page_keeps_untouched_lines_of_a_long_changed_block() {
     let kept: String = (0..99).map(|i| format!("line{i}{}", ending(i))).collect();
     assert_eq!(edited, format!("* a\r\nnew\r\n{kept}line99!\r\n* b\r\n"));
 }
+
+/// A block draft's own trailing newline is folded into the file's trailing run
+/// by the serializer, so the untouched blank lines at end of file keep their
+/// terminators (review r5 and the develop review).
+#[test]
+fn mixed_ending_org_page_keeps_its_eof_blank_lines_when_the_last_block_draft_ends_in_a_newline() {
+    let _integration_guard = crate::integration_lock();
+    for (source, draft, expected) in [
+        ("* a\r\n\n\r\n", "a!\n", "* a!\r\n\n\r\n"),
+        ("* a\r\n* b\n\n", "b\n", "* a\r\n* b\n\n"),
+    ] {
+        let page = Page::at("pages/p.org", source);
+        let edited = page.save(EditKind::SaveBlock, |doc| {
+            let last = doc.blocks.len() - 1;
+            doc.blocks[last].raw = draft.into();
+        });
+        assert_eq!(
+            edited, expected,
+            "{source:?} with the last block saved as {draft:?}"
+        );
+    }
+}
