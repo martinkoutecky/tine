@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { bumpGraphEpoch } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
 import { outlineMaxDepth } from "../editor/outline";
 import type { ConflictInventory, ConflictObject, DiffRow, SyncConflictDiff } from "../types";
@@ -226,6 +227,25 @@ describe("in-page conflict resolution", () => {
     expect(button(host, "Apply resolution")).toBeUndefined();
     expect(doc.applyGraphChange).not.toHaveBeenCalled();
     dispose();
+  });
+
+  // UI-GRAPH-RESOURCE-OUTLIVES-EPOCH-1112: the comparison read is owned by the
+  // graph epoch; a read the epoch outran is asked again rather than leaving
+  // "Couldn't read this conflict." in place of a comparison that exists.
+  it("shows the comparison, not a read failure, after the epoch moves under the read", async () => {
+    const answer = { mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) };
+    let finishFirst!: (value: typeof answer) => void;
+    vi.spyOn(backend(), "vcsMarkerConflictDiff")
+      .mockImplementationOnce(() => new Promise((finish) => { finishFirst = finish; }))
+      .mockResolvedValue(answer);
+    const { host, dispose } = mount(markerConflict);
+    try {
+      await vi.waitFor(() => expect(finishFirst).toBeDefined());
+      bumpGraphEpoch();
+      finishFirst(answer);
+      await vi.waitFor(() => expect(host.querySelector('[data-row-id="0"] .sync-merge-seg.active')?.getAttribute("data-decision")).toBe("theirs"));
+      expect(host.querySelector(".page-conflict-count")!.textContent).toBe("2 conflicts");
+    } finally { dispose(); }
   });
 
   it("names the sides the marker file itself named and says why saves are refused", async () => {

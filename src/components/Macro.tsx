@@ -5,7 +5,7 @@ import { Rich } from "../i18n/Rich";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 export { ClozeMacro, TweetMacro, VideoMacro, YoutubeTimestamp, ZoteroMacro, youtubeTimestampMacroFor } from "./MediaMacros";
 import { TableWrap } from "./TableWrap";
-import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, useContext, type JSX } from "solid-js";
 import { reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { SurfaceContext } from "./Block";
@@ -81,6 +81,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { createGraphResource } from "../graphResource";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -151,7 +152,6 @@ interface ReadingRequest {
   argument: string;
   name: string;
   properties: [string, string][];
-  epoch: number;
 }
 interface Reading {
   request: ReadingRequest;
@@ -161,7 +161,7 @@ interface Reading {
  *  request (I-20). */
 function createQueryReading(request: () => ReadingRequest | undefined) {
   const owners = {};
-  const [resource] = createResource(request, async (req): Promise<Reading | undefined> => {
+  const [resource] = createGraphResource(request, async (req): Promise<Reading | undefined> => {
     const landed = await readOwned(
       latestOwner(owners, "parse", graphOwner()),
       backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties),
@@ -245,7 +245,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     }),
     [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
-    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
+    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties() }),
     undefined,
     { equals: sameJson },
   );
@@ -521,7 +521,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return explainOpen() && request && request.search === null && ranEmpty() ? request : undefined;
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const explainOwners = {};
-  const [explained] = createResource(explainRequest, async (request): Promise<ExplainEmptyResult | undefined> => {
+  const [explained] = createGraphResource(explainRequest, async (request): Promise<ExplainEmptyResult | undefined> => {
     const landed = await readOwned(
       latestOwner(explainOwners, "explain", graphOwner()),
       backend().queryExplainEmpty(request.query.query, request.query.view, request.context),
