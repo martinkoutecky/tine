@@ -234,6 +234,27 @@ for (const [what, gesture] of [
   });
 }
 
+it("keeps the saved position when Alt is pressed in a workspace window while the returning page is loading", async () => {
+  const frame = document.createElement("iframe");
+  document.body.append(frame);
+  const win = frame.contentWindow! as Window & typeof globalThis;
+  (win as { requestAnimationFrame: unknown }).requestAnimationFrame = (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; };
+  const main = scroller;
+  scroller = win.document.createElement("div");
+  Object.defineProperty(scroller, "scrollHeight", { get: () => height });
+  Object.defineProperty(scroller, "clientHeight", { get: () => 800 });
+  win.document.body.append(scroller);
+  try {
+    const router = await leaveDeepPage();
+    await runFrames(1);
+    win.document.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Alt" }));
+    height = 20_000;
+    await runFrames(2);
+    expect(scroller.scrollTop).toBe(9_000);
+    void router;
+  } finally { scroller.remove(); scroller = main; frame.remove(); }
+});
+
 it("stops pursuing on the first user gesture", async () => {
   await leaveDeepPage();
   await runFrames(2);
