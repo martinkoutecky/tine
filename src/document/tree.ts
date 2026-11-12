@@ -20,6 +20,17 @@ export function indexInSiblings(id: string): number {
   return rootsOf(id).indexOf(id);
 }
 
+/** Whether the block's children are hidden in the view `scope` describes: folded (the
+ * scope's fold override, a zoom's force-expanded root, else the durable flag) or shown
+ * as an opaque Sheet view (grid/table/board) instead of as rows. The one answer visible
+ * order and copy share (GH #943). O(1); the Sheet answer is read only for an unfolded parent. */
+export function hidesChildrenInView(id: string, scope?: OutlineScope | null): boolean {
+  const node = doc.byId[id];
+  if (!node?.children.length) return false;
+  const folded = id !== scope?.forceExpandedRoot && (scope?.collapsed?.(id, node.collapsed) ?? node.collapsed);
+  return folded || blockIsOpaqueSheetView(id);
+}
+
 /** Page-local preorder without DTO copies. Scopes omit missing nodes and can
  * override collapse; ordinary page/feed order retains missing root ids. O(visible nodes). */
 function visitVisible(ids: readonly string[], visit: (id: string) => void, scope?: OutlineScope): void {
@@ -28,8 +39,7 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
     if (!node && scope) continue;
     visit(id);
     if (!node) continue;
-    const collapsed = scope?.collapsed?.(id, node.collapsed) ?? node.collapsed;
-    if ((!collapsed || id === scope?.forceExpandedRoot) && node.children.length && !blockIsOpaqueSheetView(id)) {
+    if (node.children.length && !hidesChildrenInView(id, scope)) {
       // Comments show under their block, before its other children (commentOrder.ts).
       visitVisible(visibleChildren(node.children), visit, scope);
     }
