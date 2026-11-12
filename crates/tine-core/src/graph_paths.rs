@@ -198,9 +198,12 @@ mod tests {
             ("Tine graph", "Documents/Tine graph"),
             ("Graphs/Work notes", "Documents/Graphs/Work notes"),
         ] {
+            // An absolute path needs a drive on Windows (as in root_identity's tests).
+            let drive = if cfg!(windows) { "C:" } else { "" };
             for prefix in ["/private/var/mobile", "/var/mobile"] {
-                let path =
-                    format!("{prefix}/Containers/Data/Application/{IOS_ID}/Documents/{full}");
+                let path = format!(
+                    "{drive}{prefix}/Containers/Data/Application/{IOS_ID}/Documents/{full}"
+                );
                 assert_eq!(
                     ios_documents_display(&path).as_deref(),
                     Some(shown),
