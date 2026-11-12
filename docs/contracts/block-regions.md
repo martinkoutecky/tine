@@ -34,9 +34,13 @@ properties or drawer lsdoc reads at the title position (`*` then
 there. Any other node at the title position (a quote, `#+TITLE: x`) is the
 block's first line and stays its title line. `BlockRegions::headline_end` records the headline's end only
 where it is not the end of the first line after the leading trim, so empty
-regions stay shared; a CR at the very end of the raw (a CRLF page's line
-terminator) stays on the title's line. A whole document has no headline; its
-page rows keep the first physical line as the title line.
+regions stay shared. A nonempty headline owns the rest of its line when only
+blanks follow (lsdoc ends a bare `TODO ` before them; a CRLF page keeps each
+line's CR), so a row never splits the title line. A whole document has no
+headline; its page rows keep the first physical line as the title line.
+OG reference for title placement: `og-1.0.0` at
+`680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content/has-title?`,
+`property/insert-property` and `text/add-timestamp`.
 
 A bare marker title (`TODO` with nothing after the marker) is a task when
 only property, planning or LOGBOOK rows follow it, or a LOGBOOK follows
