@@ -49,7 +49,7 @@ jobs:
 
       - name: Authenticate to Google (Workload Identity Federation)
         id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
         with:
           workload_identity_provider: ${{ vars.PLAY_WIF_PROVIDER }}
           service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
@@ -81,7 +81,7 @@ jobs:
               | "| \($t) | \(.name // "") | \(.status) | \((.versionCodes // []) | join(", ")) | \(if .userFraction then (.userFraction * 100 | tostring) + "%" else "" end) |"' play-state.json
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: play-state
           path: play-state.json
