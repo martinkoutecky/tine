@@ -1786,3 +1786,168 @@ fn a_case_only_namespace_rename_keeps_a_self_spelled_reference_in_a_child_title(
         );
     }
 }
+
+/// Rename (or merge) `Old` with a namespace child `Old___c` whose title is
+/// `title`, through the real host path. Returns the files on disk afterwards,
+/// or the refusal (and then asserts nothing was written).
+fn rename_with_titled_child(
+    new: &str,
+    title: &str,
+    org: bool,
+    merge: bool,
+) -> Result<(tempfile::TempDir, Vec<(String, String)>), String> {
+    let (ext, key, bullet) = if org {
+        ("org", "#+TITLE: ", "*")
+    } else {
+        ("md", "title:: ", "-")
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let pages_dir = dir.path().join("pages");
+    fs::create_dir(&pages_dir).unwrap();
+    fs::write(
+        pages_dir.join(format!("Old.{ext}")),
+        format!("{bullet} a\n"),
+    )
+    .unwrap();
+    if merge {
+        fs::write(
+            pages_dir.join(format!("{new}.{ext}")),
+            format!("{bullet} n\n"),
+        )
+        .unwrap();
+    }
+    let child = format!("{key}{title}\n{bullet} body\n");
+    fs::write(pages_dir.join(format!("Old___c.{ext}")), &child).unwrap();
+    let files = |dir: &std::path::Path| {
+        let mut files: Vec<_> = fs::read_dir(dir.join("pages"))
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                let name = e.file_name().to_string_lossy().into_owned();
+                (name, fs::read_to_string(e.path()).unwrap())
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let before = files(dir.path());
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let into = format!("pages/{new}.{ext}");
+    let result = pages::rename_or_merge_page(
+        &store,
+        &host,
+        "Old",
+        new,
+        None,
+        merge.then_some(into.as_str()),
+        &[],
+    );
+    if let Err(error) = result {
+        assert_eq!(files(dir.path()), before, "a refused rename writes nothing");
+        return Err(error.to_string());
+    }
+    let after = files(dir.path());
+    Ok((dir, after))
+}
+
+/// The child's file after the rename: its bytes and effective title, after
+/// a guarded save and again after reopening the graph.
+fn renamed_child(
+    dir: &std::path::Path,
+    files: &[(String, String)],
+    root: &str,
+) -> (String, String) {
+    let (name, bytes) = files
+        .iter()
+        .find(|(name, _)| !name.starts_with(&format!("{root}.")))
+        .unwrap()
+        .clone();
+    let id = tine_core::model::PageId::from(format!("pages/{name}").as_str());
+    let store = Arc::new(Store::open(dir, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let loaded = store.page(&id).unwrap();
+    let title = loaded.doc.title.clone();
+    crate::test_host_writer::save_on(
+        &host,
+        &store,
+        tine_store::EditKind::SaveBlock,
+        &id,
+        tine_store::SaveBase::Existing(loaded.rev),
+        &loaded.doc,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(dir.join("pages").join(&name)).unwrap(),
+        bytes
+    );
+    drop(host);
+    drop(store);
+    let reopened = Store::open(dir, Default::default()).unwrap().0;
+    assert_eq!(reopened.page(&id).unwrap().doc.title, title);
+    (bytes, title)
+}
+
+/// Review r6 F1 and r7 F1 (one family): a rename rewrites a namespace
+/// child's title, whose bytes also hold references to the renamed page. The
+/// title is one edit (the new identity with its references rebound), so a
+/// valid case-only rename is never refused for overlapping title edits, in
+/// Markdown and Org, whatever spelling the inner references have.
+#[test]
+fn a_case_only_rename_rebinds_references_inside_a_child_title() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for (title, want) in [
+            ("Old/[[old]]", "old/[[old]]"),
+            ("Old/[[Old]]", "old/[[old]]"),
+            ("Old/[[Old]] [[OLD]]", "old/[[old]] [[old]]"),
+            ("Old/[[Old]] and [[Other]]", "old/[[old]] and [[Other]]"),
+        ] {
+            let (dir, files) = rename_with_titled_child("old", title, org, false)
+                .unwrap_or_else(|e| panic!("org={org} {title}: {e}"));
+            let (bytes, effective) = renamed_child(dir.path(), &files, "old");
+            let key = if org { "#+TITLE: " } else { "title:: " };
+            let bullet = if org { "*" } else { "-" };
+            assert_eq!(
+                bytes,
+                format!("{key}{want}\n{bullet} body\n"),
+                "org={org} {title}"
+            );
+            assert_eq!(effective, want, "org={org} {title}");
+        }
+    }
+}
+
+/// The same family where the rename is not case-only: references inside the
+/// child's title that do not name the renamed page are kept, and the title's
+/// namespace prefix follows, through rename and merge (Markdown and Org).
+#[test]
+fn a_rename_or_merge_keeps_other_references_inside_a_child_title() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for merge in [false, true] {
+            let (dir, files) = rename_with_titled_child("New", "Old/[[New]] [[X]]", org, merge)
+                .unwrap_or_else(|e| panic!("org={org} merge={merge}: {e}"));
+            let (_, effective) = renamed_child(dir.path(), &files, "New");
+            assert_eq!(effective, "New/[[New]] [[X]]", "org={org} merge={merge}");
+        }
+    }
+}
+
+/// Pending model question (receipt cm-b4-fix6, Q-TITLE): renaming `Old` to
+/// `New` with a child titled `Old/[[Old]]` has no image meeting both the
+/// identity law (`New/[[Old]]`) and the reference law (`[[New]]`). Until the
+/// model rules, rename and merge refuse before any write (asserted inside
+/// the helper), in Markdown and Org.
+#[test]
+fn a_rename_whose_child_title_cannot_hold_both_laws_refuses_before_writing() {
+    let _guard = crate::integration_lock();
+    for org in [false, true] {
+        for merge in [false, true] {
+            for title in ["Old/[[Old]]", "Old/[[X]] [[Old]]"] {
+                let refused = rename_with_titled_child("New", title, org, merge);
+                assert!(refused.is_err(), "org={org} merge={merge} {title}");
+            }
+        }
+    }
+}

@@ -79,8 +79,17 @@ pub struct RenameProposal {
 }
 
 impl RenameProposal {
-    /// Rebind the own title through the reader's title-name span. All its key,
-    /// spacing and terminators remain protected, just as for reference edits.
+    /// Rebind the own title through the reader's title-name span. The title
+    /// is one edit, and this is its one producer: `name` (the page's new
+    /// identity) with every reference written inside the title rebound, as
+    /// it is everywhere else (`old/[[old]]` for `Old/[[Old]]` renamed to
+    /// `old`). `name` keeps a tail of the old title verbatim (its namespace
+    /// suffix); a reference there is rebound in place. A rebound reference
+    /// outside that tail, or rebinding that changes the title's identity
+    /// (`Old/[[Old]]` renamed to `New`: the name says `New/[[Old]]`, its
+    /// reference says `[[New]]`), has no faithful image: `Substitution`.
+    /// Key, spacing and terminators remain protected, as for reference edits.
+    /// O(page pieces).
     pub fn rebind_title(&mut self, org: bool, name: &str) -> Result<(), TraceError> {
         let original = &self.trace.inputs[0];
         let format = if org {
@@ -91,30 +100,42 @@ impl RenameProposal {
         let Some(range) = crate::model::title_name_span(original, format) else {
             return Ok(());
         };
-        let wrappers: HashSet<_> = self
-            .trace
-            .wrappers
-            .iter()
-            .map(|id| self.trace.pieces[*id].range.clone())
-            .collect();
-        let mut edits: Vec<_> = self
-            .trace
-            .pieces
-            .iter()
-            .enumerate()
-            .filter_map(|(id, p)| {
-                self.trace
-                    .substitution
-                    .get(&id)
-                    .map(|s| (p.range.clone(), s.clone()))
-            })
-            // A byte-identical substitution (a case-only rename reaching a
-            // reference already spelled the new way) is no edit; inside the
-            // title it would overlap the whole-title edit.
-            .filter(|(r, s)| original.get(r.clone()) != Some(s.as_str()))
-            .collect();
+        let kept = common_suffix_len(&original[range.clone()], name);
+        let tail = range.end - kept;
+        let mut edits = Vec::new();
+        let mut wrappers = HashSet::new();
+        let mut rebound = String::new();
+        let mut at = tail;
+        for (id, p) in self.trace.pieces.iter().enumerate() {
+            let Some(to) = self.trace.substitution.get(&id) else {
+                continue;
+            };
+            let wrapped = self.trace.wrappers.contains(&id);
+            if p.range.end <= range.start || p.range.start >= range.end {
+                if wrapped {
+                    wrappers.insert(p.range.clone());
+                }
+                edits.push((p.range.clone(), to.clone()));
+            } else if p.range.start < range.start || p.range.end > range.end {
+                return Err(TraceError::Partition);
+            } else if p.range.start < tail {
+                return Err(TraceError::Substitution);
+            } else {
+                rebound.push_str(&original[at..p.range.start]);
+                let (open, close) = if wrapped { ("[[", "]]") } else { ("", "") };
+                rebound.push_str(open);
+                rebound.push_str(to);
+                rebound.push_str(close);
+                at = p.range.end;
+            }
+        }
+        rebound.push_str(&original[at..range.end]);
+        let title = format!("{}{rebound}", &name[..name.len() - kept]);
+        if !crate::refs::same_page(&title, name) {
+            return Err(TraceError::Substitution);
+        }
         let at = edits.partition_point(|(r, _)| r.start < range.start);
-        edits.insert(at, (range, name.into()));
+        edits.insert(at, (range, title));
         let mut trace = TextTrace::default();
         trace.add_input(original, &edits, &[])?;
         trace.wrappers = trace
@@ -130,6 +151,17 @@ impl RenameProposal {
         self.trace = trace;
         Ok(())
     }
+}
+
+/// Byte length of the longest common suffix of `a` and `b`, at a character
+/// boundary of both.
+fn common_suffix_len(a: &str, b: &str) -> usize {
+    a.chars()
+        .rev()
+        .zip(b.chars().rev())
+        .take_while(|(x, y)| x == y)
+        .map(|(x, _)| x.len_utf8())
+        .sum()
 }
 
 /// One rename, prepared once per text: old page key to new display name, and
@@ -1037,6 +1069,64 @@ mod tests {
             .unwrap();
             p.rebind_title(org, "old/[[old]]").unwrap();
             assert_eq!(p.text, want);
+        }
+    }
+
+    /// Review r7 F1 (the r6 family): the title is one edit holding the new
+    /// identity with its inner references rebound, so no inner reference edit
+    /// can overlap it; an identity the rebound title would not name refuses.
+    #[test]
+    fn rebind_title_is_one_edit_with_its_references_rebound() {
+        for org in [false, true] {
+            let (key, bullet) = if org {
+                ("#+TITLE: ", "*")
+            } else {
+                ("title:: ", "-")
+            };
+            let page = |title: &str| format!("{key}{title}\n{bullet} [[Old]]\n");
+            let case = HashMap::from([("old".into(), "old".into())]);
+            let new = HashMap::from([("old".into(), "New".into())]);
+            for (map, title, name, want) in [
+                (&case, "Old/[[Old]]", "old/[[Old]]", Some("old/[[old]]")),
+                (&case, "Old/[[old]]", "old/[[old]]", Some("old/[[old]]")),
+                (
+                    &case,
+                    "Old/[[Old]] [[OLD]]",
+                    "old/[[Old]] [[OLD]]",
+                    Some("old/[[old]] [[old]]"),
+                ),
+                (&new, "Old/[[X]]", "New/[[X]]", Some("New/[[X]]")),
+                (&new, "Old/[[Old]]", "New/[[Old]]", None),
+            ] {
+                let text = page(title);
+                let mut p = crate::refs::rename_proposal(
+                    &text,
+                    org,
+                    map,
+                    &HashMap::new(),
+                    FileNameFormat::TripleLowbar,
+                )
+                .unwrap();
+                let to = map["old"].clone();
+                match want {
+                    Some(want) => {
+                        p.rebind_title(org, name).unwrap();
+                        assert_eq!(p.text, format!("{key}{want}\n{bullet} [[{to}]]\n"));
+                        let title_edits = p
+                            .trace
+                            .substitution
+                            .keys()
+                            .filter(|id| p.trace.original(**id).starts_with("Old/"))
+                            .count();
+                        assert_eq!(title_edits, 1, "{title}");
+                    }
+                    None => assert_eq!(
+                        p.rebind_title(org, name),
+                        Err(crate::text_trace::TraceError::Substitution),
+                        "{title}"
+                    ),
+                }
+            }
         }
     }
 
