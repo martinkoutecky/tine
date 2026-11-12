@@ -429,6 +429,27 @@ impl Live {
         fs::read_to_string(self.root.join(key)).unwrap()
     }
 
+    /// An external rewrite of `key` whose timestamp differs from the one
+    /// the file had before it. A rewrite of the same length inside the
+    /// timestamp granule of the previous write (about 15 ms on Windows)
+    /// leaves every stamped field equal, which no stamp comparison can tell
+    /// from no write at all (storage spec §5.4); the tests that need the
+    /// watcher to see a change rewrite until the stamp moves.
+    fn rewrite_externally(&self, key: &str, body: &str) {
+        let path = self.root.join(key);
+        let modified = || fs::metadata(&path).unwrap().modified().unwrap();
+        let before = modified();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            fs::write(&path, body).unwrap();
+            if modified() != before {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{key} kept its timestamp");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn until_disk(&self, key: &str, body: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while fs::read_to_string(self.root.join(key)).ok().as_deref() != Some(body) {
@@ -1139,7 +1160,7 @@ fn v3_an_external_return_to_the_pre_save_observation_updates_the_index() {
     let id = live.submit(&key, "- p\n", page.version, None).unwrap();
     let saved = live.answer(&key, id).page.unwrap().version;
     live.until_disk(&key, "- p\n");
-    fs::write(live.root.join(&key), "- a\n").unwrap();
+    live.rewrite_externally(&key, "- a\n");
     drop(writer);
     live.wait(&key, "the adopted return", |mail| {
         mail.page
