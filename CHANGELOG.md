@@ -61,7 +61,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 
-- Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading (internal: UI-ZOOM-BACK-SCROLL).
 - Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).
 - A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).
 - With a default journal template, today's journal again shows as a journal day, and clicking its title opens it instead of reporting that the page is no longer available at that path. A tab or link that remembered the wrong kind of page for a file now opens that file (GH #863).

@@ -1,4 +1,4 @@
-import { elementFromPointIn, isKeyboardEventValue, requestFrame } from "./windowRealm";
+import { elementFromPointIn, requestFrame } from "./windowRealm";
 
 /** The row first in view when a route was left, and how far below the scroller's
  * top it stood. Session memory only, beside the pixel offset (GH #848). */
@@ -27,23 +27,12 @@ function scrollTopForAnchor(scroller: HTMLElement, anchor: ScrollAnchor): number
 }
 
 const GESTURES = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-const MODIFIER_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta", "Shift", "OS"]);
-/** The interrupted pursuit still waiting for the reader's scroll, at most one per scroller: a newer pursuit
- *  retires it, so interrupted visits never pile up listeners on the persistent pane scroller. */
-const waitingForScroll = new WeakMap<HTMLElement, () => void>();
-function retireWaiting(el: HTMLElement | null | undefined): void {
-  const waiting = el && waitingForScroll.get(el);
-  if (!el || !waiting) return;
-  el.removeEventListener("scroll", waiting);
-  waitingForScroll.delete(el);
-}
 
 /** Go to a saved position once the content has rendered. A deep position keeps being pursued while the page grows:
  *  blocks and linked references render and measure asynchronously, and a slow reference read can answer well after
  *  the page shows (GH #848). The row that was first in view wins over the pixel offset once it exists, since rows
  *  above it may have changed height. Ends when position and height have held for half a second, at the deadline, on
- *  a user gesture (not a bare modifier key) or when `current` turns false; the reader owns the position once
- *  that gesture scrolls. If the offset is deeper than the loaded content (a journal-feed
+ *  a user gesture or when `current` turns false. If the offset is deeper than the loaded content (a journal-feed
  *  position in days not loaded yet), `extend` pulls in more until it is reachable or the feed is exhausted. One
  *  selector lookup and one layout read per frame. */
 export function pursueScroll(options: {
@@ -52,10 +41,8 @@ export function pursueScroll(options: {
   scroller: () => HTMLElement | null;
   current: () => boolean;
   extend: () => Promise<boolean>;
-  /** Restoration applied or finished, or the user deliberately took over scrolling. */
-  onPositioned: () => void;
 }): void {
-  const { target, anchor, scroller, current, extend, onPositioned } = options;
+  const { target, anchor, scroller, current, extend } = options;
   const deadline = performance.now() + RESTORE_SCROLL_DEADLINE_MS;
   let tries = 0;
   let extending = false;
@@ -64,22 +51,7 @@ export function pursueScroll(options: {
   let released = false;
   let listening = false;
   const doc = scroller()?.ownerDocument;
-  retireWaiting(scroller());
-  let positioned = false;
-  const claimPosition = () => { if (!positioned) { positioned = true; onPositioned(); } };
-  // A gesture hands control to the reader, but only a scroll the gesture causes makes this the reader's position:
-  // a navigation click or Alt+Left must not save the still-loading view over the saved offset.
-  const claimOnScroll = () => { if (current()) claimPosition(); };
-  const release = (event: Event) => {
-    if (isKeyboardEventValue(event) && MODIFIER_KEYS.has(event.key)) return; // any window's realm
-    released = true; finish();
-    const el = current() ? scroller() : null;
-    if (!el) return;
-    retireWaiting(el);
-    const waiting = () => { waitingForScroll.delete(el); claimOnScroll(); };
-    waitingForScroll.set(el, waiting);
-    el.addEventListener("scroll", waiting, { once: true, passive: true });
-  };
+  const release = () => { released = true; finish(); };
   const finish = () => { if (listening) for (const gesture of GESTURES) doc?.removeEventListener(gesture, release, true); };
   // Deferred to a frame so the page's content is laid out first; otherwise a synchronous reset races the content swap.
   const tick = () => {
@@ -97,12 +69,11 @@ export function pursueScroll(options: {
     const want = Math.min(anchored ?? target, max);
     const moved = Math.abs(el.scrollTop - want) >= 1;
     if (moved) el.scrollTop = want;
-    const reached = anchored !== null || el.scrollTop >= target - 1;
-    if (reached) claimPosition();
     if (target <= 0) return;
     quiet = !moved && el.scrollHeight === lastHeight ? quiet + 1 : 0;
     lastHeight = el.scrollHeight;
-    if ((reached && quiet >= RESTORE_SCROLL_QUIET_FRAMES) || performance.now() > deadline) { claimPosition(); finish(); return; }
+    const reached = anchored !== null || el.scrollTop >= target - 1;
+    if ((reached && quiet >= RESTORE_SCROLL_QUIET_FRAMES) || performance.now() > deadline) { finish(); return; }
     // Out of reach. Content genuinely too short (deeper feed days not loaded): grow it. Otherwise it is async layout
     // catching up, so wait a frame.
     if (max < target - 1 && !extending && tries < 60) {
