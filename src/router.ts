@@ -543,9 +543,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     if (!sameRoute(entry, r)) return;
     const binding = captureBinding();
     const tabId = activeId();
-    const intent = intentRevision;
+    // The visit, not the intent revision: an unrelated tab change must not cancel the pursuit and leave it unowned.
     const current = () => stillBound(binding) && activeId() === tabId
-      && intentRevision === intent && sameRoute(route(), r);
+      && routeVisit() === visit && sameRoute(route(), r);
     const target = scrollByRoute.get(entry) ?? 0;
     const anchor = anchorByRoute.get(entry);
     pursueScroll({ target, anchor, scroller: mainScroller, current, extend: extendFeedForScroll,
