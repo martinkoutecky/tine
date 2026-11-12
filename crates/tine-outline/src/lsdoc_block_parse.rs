@@ -648,9 +648,7 @@ fn parser_owned_row(block: &Block) -> bool {
                     Inline::Timestamp { ts, .. } => {
                         matches!(ts.as_str(), "Scheduled" | "Deadline" | "Closed")
                     }
-                    Inline::Break { .. } => true,
-                    Inline::Plain { text, .. } => text.trim().is_empty(),
-                    _ => false,
+                    i => blank_inline(i),
                 })
         }
         _ => false,
@@ -658,11 +656,18 @@ fn parser_owned_row(block: &Block) -> bool {
 }
 
 fn blank_paragraph(block: &Block) -> bool {
-    matches!(block, Block::Paragraph { inline, .. } if inline.iter().all(|i| match i {
-        Inline::Break { .. } => true,
+    matches!(block, Block::Paragraph { inline, .. } if inline.iter().all(blank_inline))
+}
+
+/// Whitespace between a title and its rows, as lsdoc reads it: a line break
+/// (soft, or hard when a whitespace-only line of two or more spaces precedes
+/// another row) or blank text. The one answer both classifiers above ask.
+fn blank_inline(inline: &Inline) -> bool {
+    match inline {
+        Inline::Break { .. } | Inline::HardBreak { .. } => true,
         Inline::Plain { text, .. } => text.trim().is_empty(),
         _ => false,
-    }))
+    }
 }
 
 // Parses per operation, pinned by `preparation_tests` (PC-3).
