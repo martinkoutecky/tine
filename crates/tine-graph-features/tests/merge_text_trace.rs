@@ -1748,3 +1748,41 @@ fn escaped_alias_members_move_with_their_bytes() {
     )
     .unwrap();
 }
+
+/// Review r6 F1: a case-only namespace rename (`Old` to `old`) reaches a child
+/// whose title holds a reference already spelled the new way. The rename
+/// succeeds and rewrites the child's title prefix, in Markdown and Org.
+#[test]
+fn a_case_only_namespace_rename_keeps_a_self_spelled_reference_in_a_child_title() {
+    let _guard = crate::integration_lock();
+    for (child, text, want) in [
+        (
+            "Old___c.md",
+            "title:: Old/[[old]]\n- body\n",
+            "title:: old/[[old]]\n",
+        ),
+        (
+            "Old___c.org",
+            "#+TITLE: Old/[[old]]\n* body\n",
+            "#+TITLE: old/[[old]]\n",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let pages_dir = dir.path().join("pages");
+        fs::create_dir(&pages_dir).unwrap();
+        fs::write(pages_dir.join("Old.md"), "- a\n").unwrap();
+        fs::write(pages_dir.join(child), text).unwrap();
+        let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+        let host = crate::test_host(&store);
+        pages::rename_page_expected(&store, &host, "Old", "old", None)
+            .unwrap_or_else(|e| panic!("{child}: {e}"));
+        let written: Vec<String> = fs::read_dir(&pages_dir)
+            .unwrap()
+            .map(|e| fs::read_to_string(e.unwrap().path()).unwrap())
+            .collect();
+        assert!(
+            written.iter().any(|t| t.starts_with(want)),
+            "{child}: {written:?}"
+        );
+    }
+}

@@ -108,6 +108,10 @@ impl RenameProposal {
                     .get(&id)
                     .map(|s| (p.range.clone(), s.clone()))
             })
+            // A byte-identical substitution (a case-only rename reaching a
+            // reference already spelled the new way) is no edit; inside the
+            // title it would overlap the whole-title edit.
+            .filter(|(r, s)| original.get(r.clone()) != Some(s.as_str()))
             .collect();
         let at = edits.partition_point(|(r, _)| r.start < range.start);
         edits.insert(at, (range, name.into()));
@@ -1002,6 +1006,37 @@ mod tests {
             assert_eq!(p.trace.substitution.len(), 1);
             let id = *p.trace.substitution.keys().next().unwrap();
             assert_eq!(p.trace.original(id), "Old");
+        }
+    }
+
+    /// Review r6 F1: a case-only rename of namespace `Old` to `old` reaches a
+    /// child whose title holds `[[old]]`; that reference's substitution is
+    /// byte-identical and must not overlap the whole-title edit.
+    #[test]
+    fn rebind_title_ignores_a_byte_identical_reference_inside_the_title() {
+        for (text, org, want) in [
+            (
+                "title:: Old/[[old]]\n- body\n",
+                false,
+                "title:: old/[[old]]\n- body\n",
+            ),
+            (
+                "#+TITLE: Old/[[old]]\n* body\n",
+                true,
+                "#+TITLE: old/[[old]]\n* body\n",
+            ),
+        ] {
+            let map = HashMap::from([("old".into(), "old".into())]);
+            let mut p = crate::refs::rename_proposal(
+                text,
+                org,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            p.rebind_title(org, "old/[[old]]").unwrap();
+            assert_eq!(p.text, want);
         }
     }
 
