@@ -294,3 +294,36 @@ fn crlf_and_blank_lines_beside_the_rows_keep_the_task() {
     assert!(after.starts_with("* TODO\r\n:PROPERTIES:"), "{after:?}");
     assert_eq!(tasks(&graph.open()).len(), 1, "{after:?}");
 }
+
+/// Review r2: removing the last row from a bare task with blank lines beside it
+/// (an id stripped on copy, an Org task expanded) leaves it a task.
+#[test]
+fn removing_the_last_row_beside_blank_lines_keeps_the_task() {
+    let unfold = || Edit::Property {
+        key: "collapsed".into(),
+        value: None,
+    };
+    for (path, source, request) in [
+        (
+            "pages/m.md",
+            "- TODO\n\n  id:: 6679-abc\n- other\n",
+            id(None),
+        ),
+        (
+            "pages/o.org",
+            "* TODO\n:PROPERTIES:\n:collapsed: true\n:END:\n\n* other\n",
+            unfold(),
+        ),
+    ] {
+        let graph = Graph::new(path, source);
+        assert_eq!(tasks(&graph.open()).len(), 1, "before: {source:?}");
+        let after = graph.apply(&[0], request);
+        assert!(
+            !after.contains("id::") && !after.contains("collapsed"),
+            "{after:?}"
+        );
+        let store = graph.open();
+        assert!(store.page(&PageId::from(path)).is_ok(), "opens: {after:?}");
+        assert_eq!(tasks(&store).len(), 1, "after: {after:?}");
+    }
+}
