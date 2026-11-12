@@ -5,6 +5,38 @@ use std::{fs as disk, sync::Arc};
 use tine_core::model::PageDto;
 use tine_store::{FileRev, Refusal, SaveBase, Why};
 
+/// The stale-plan regression probe. Preflight is read-only; a stale context
+/// is `Ok(None)`, so no feature test needs a direct page commit.
+fn preflight_rename(
+    store: &Store,
+    old: &str,
+    plan: RenamePlan,
+    unsaved_paths: &[String],
+) -> io::Result<Option<()>> {
+    preflight_rename_after(store, old, plan, unsaved_paths, || {})
+}
+
+/// [`preflight_rename`] with `between` run after the transaction is built
+/// from the planning reads and before its preflight.
+fn preflight_rename_after(
+    store: &Store,
+    old: &str,
+    plan: RenamePlan,
+    unsaved_paths: &[String],
+    between: impl FnOnce(),
+) -> io::Result<Option<()>> {
+    let tx = match rename_transaction(store, old, plan, unsaved_paths)? {
+        RenameTransaction::Unchanged(_) => return Ok(Some(())),
+        RenameTransaction::Writes { tx, .. } => tx,
+    };
+    between();
+    match tx.plan() {
+        Ok(_) => Ok(Some(())),
+        Err(tine_store::Why::Conflict { .. }) => Ok(None),
+        Err(why) => Err(crate::why_error(why)),
+    }
+}
+
 /// Keep mine: a save guarded on the bytes on disk now, not the editor's base.
 fn keep_mine(store: &Arc<Store>, id: &PageId, page: &PageDto) -> Result<FileRev, SaveRefused> {
     let (_, current) = store.read(&id.file(), None).unwrap();
@@ -281,6 +313,39 @@ fn prepared_referrer_rewrite_still_refuses_an_external_edit() {
     assert_eq!(preflight_rename(&store, "Old", first, &[]).unwrap(), None);
     assert_eq!(text_at(&root, "pages/r.md"), "- [[Old]] outside edit\n");
     assert!(!root.join("pages/New.md").exists());
+}
+
+/// A moved page's rewrite is proposed once, from the rename's own read, and
+/// carried into its move step. An external edit after that read (an editor
+/// or sync delivery) still fails the base-revision guard: the rename
+/// replans and nothing is written.
+#[test]
+fn a_carried_move_rewrite_still_refuses_an_external_edit() {
+    for (old, new, moved) in [
+        ("Old", "New", "pages/Old.md"),
+        ("Ns", "Space", "pages/Ns%2Fchild.md"),
+    ] {
+        let (_temp, root, store) = b2_graph(&[
+            ("pages/Old.md", "title:: Old\n\n- source [[Old]]\n"),
+            ("pages/Ns.md", "- ns\n"),
+            ("pages/Ns%2Fchild.md", "- child [[Ns/child]]\n"),
+        ]);
+        let mut plan = plan_rename(&store, old, new, None, RenameChoice::Rename, &|| {}).unwrap();
+        plan.pages(&store).unwrap();
+        let before = b2_tree(&root);
+        let edited = "- edited outside, still naming [[Old]] and [[Ns/child]]\n";
+        let result = preflight_rename_after(&store, old, plan, &[], || {
+            disk::write(root.join(moved), edited).unwrap();
+        });
+        assert_eq!(result.unwrap(), None, "{moved}: a stale plan replans");
+        let mut expected = before;
+        expected.insert(
+            moved.trim_start_matches("pages/").to_owned(),
+            edited.to_owned(),
+        );
+        assert_eq!(b2_tree(&root), expected, "{moved}: nothing written");
+        store.close();
+    }
 }
 
 #[test]

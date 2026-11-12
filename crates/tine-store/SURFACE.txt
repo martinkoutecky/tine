@@ -220,7 +220,7 @@ fn directory_durability::sync_private_directory
 enum store::SaveBase
 enum store::StoreError
 
-## Transaction steps (ceiling: 39)
+## Transaction steps (ceiling: 40)
 # GS-FIX: commit cannot validate a mixed host/non-page pull without writing.
 # validate runs its read-only preflight before the first host publication;
 # commit still repeats the checks under its own locks at publication time.
@@ -234,6 +234,13 @@ enum transaction::Why
 enum transaction::TrashIf
 enum transaction::TitleRebind
 enum transaction::RewriteEffect
+# Card hIIbC8 (39 -> 40): a rename's moved page carried its reference proposal
+# to preflight only through a second walk. Not a sibling method (rule 3): the
+# existing `PagePlan::move_file` keeps its one door and its `renames` parameter
+# widens to this type (`Option<&RenameMap>` converts), adding the planner's
+# already-made proposal. `rewrite_refs_prepared` cannot carry it: a Rewrite step
+# on the moved file refuses as RepeatedFile and breaks the move's crash order.
+enum transaction::MoveRewrite
 field transaction::IoError.kind
 field transaction::IoError.message
 field transaction::Rollback.kept_external
@@ -604,7 +611,7 @@ use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,Exp
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
-use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
+use crate::transaction::{Content,IoError,MoveRewrite,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,CorpusScope,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,LinkTarget,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
