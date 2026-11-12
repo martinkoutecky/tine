@@ -4531,13 +4531,13 @@ impl Graph {
                 // Corruption firewall: never write a .org file Tine cannot
                 // reproduce byte-for-byte. Such a page is served read-only (the
                 // editor blocks edits), but defend the write path too — a stale
-                // editor or a direct save must not rewrite it. The org serializer
-                // is itself byte-exact (no trivia dance / CRLF rewrite needed):
-                // the block bodies carry their verbatim text, including a CRLF's
-                // `\r`; a lone `\r` line break is put back by `restore_org`.
+                // editor or a direct save must not rewrite it. The org model is
+                // LF-canonical and its bodies are verbatim, so the serializer is
+                // byte-exact up to line terminators, which
+                // `layout_retention::restore_org` puts back line by line (K01a).
                 if let Some(e) = existing {
                     if tine_core::org::serialize_org_detect(old.as_ref().unwrap(), Some(e))
-                        != tine_core::org::lone_cr_to_lf(e)
+                        != tine_core::doc::normalize_line_endings(e)
                     {
                         return Err(io::Error::new(
                             io::ErrorKind::PermissionDenied,
@@ -4546,7 +4546,12 @@ impl Graph {
                     }
                 }
                 let content = tine_core::org::serialize_org_detect(&doc, existing);
-                let content = line_endings::restore_org(content, existing);
+                let content = match existing.zip(old.as_ref()) {
+                    Some((source, old)) => {
+                        layout_retention::restore_org(content, &doc, source, old)
+                    }
+                    None => content,
+                };
                 let parsed = parse_doc(&path, &content);
                 (content, parsed)
             }

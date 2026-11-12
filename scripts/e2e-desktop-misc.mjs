@@ -45,7 +45,11 @@ async function command(query, label) {
   await option.waitForDisplayed({ timeout: 10000 });
   await option.click();
 }
+async function dismissToasts() {
+  await browser.execute(() => { for (const close of document.querySelectorAll(".toast .toast-close")) close.click(); });
+}
 async function click(label) {
+  await dismissToasts();
   const button = await browser.$(`//button[normalize-space(.)='${label}']`);
   await button.waitForDisplayed({ timeout: 10000 });
   await button.waitForEnabled({ timeout: 10000 });
@@ -147,7 +151,7 @@ try {
   assert.deepEqual(labels.slice(-2), ["Cancel", "Save & close"], "Cancel sits left of the primary action");
   assert.equal(labels[0], "Reload");
   // The sticky error toasts sit over the footer buttons; dismiss them as a user would.
-  await browser.execute(() => { for (const close of document.querySelectorAll(".toast .toast-close")) close.click(); });
+  await dismissToasts();
   await browser.execute(() => document.querySelector(".modal-overlay").click());
   await delay(500);
   assert.equal(await browser.$('textarea[aria-label="CSS editor"]').getValue(), mine, "an outside click with unsaved edits does nothing");
