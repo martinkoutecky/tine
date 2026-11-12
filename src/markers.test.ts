@@ -86,6 +86,21 @@ describe("task markers (single source of truth)", () => {
     }
   });
 
+  // REG-BARE-TASK-HIDDEN-ROWS review r11: the shipped wasm reads an Org
+  // directive beside a bare task as a row, as the drawer that folds it in
+  // once an id is added, so the id edit does not flip prose and task.
+  it("an Org directive beside a bare task is a row in the vendored parser", () => {
+    initParser();
+    for (const raw of ["TODO\n#+comment: x", "TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"]) {
+      clearSeededFacets();
+      expect(facetsOf(raw, "org").marker, raw).toBe("TODO");
+    }
+    for (const [raw, format] of [["TODO\n#+comment: x\nbody", "org"], ["TODO\n#+comment: x", "md"]] as const) {
+      clearSeededFacets();
+      expect(facetsOf(raw, format).marker, raw).toBeNull();
+    }
+  });
+
   // lsdoc parity (DUP-7, 2026-08-25 duplication audit). Every case is
   // byte-verified against the vendored lsdoc v0.5.5 wasm (`parse_block_json`,
   // the SAME one-block boundary the rendered checkbox derives from): leading
