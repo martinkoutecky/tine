@@ -131,6 +131,8 @@ fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
 /// Shared replace-allowed platform rename (rename(2) / MoveFileExW with
 /// REPLACE_EXISTING). The caller owns its guard and directory durability.
 pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::file_rename();
     #[cfg(target_os = "windows")]
     {
         // std's own call plus MOVEFILE_WRITE_THROUGH, on the shared native

@@ -105,6 +105,8 @@ static HELD_READ_FORWARDS: AtomicU64 = AtomicU64::new(0);
 static ASSET_REF_DOCUMENTS: AtomicU64 = AtomicU64::new(0);
 static ORPHAN_CHECK_DOCUMENTS: AtomicU64 = AtomicU64::new(0);
 static ORPHAN_CHECK_NANOS: AtomicU64 = AtomicU64::new(0);
+static FILE_RENAMES: AtomicU64 = AtomicU64::new(0);
+static PARSE_INPUT_CHECKS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -458,6 +460,12 @@ pub struct Counts {
     /// page idle for 400 ms, or dirty for 1 s), not at once: an operation's
     /// or a barrier's saves skip it (`progress.rs` `Timing::deadline`).
     pub host_debounced_saves: u64,
+    /// File renames (`rename(2)` / `MoveFileExW`, replacing or not): a
+    /// publication, a page move, a trash step.
+    pub file_renames: u64,
+    /// Page-byte input checks (size, UTF-8, outline depth) before a parse or
+    /// a publication (`validate_parse_bytes_for_path`): O(bytes), no parse.
+    pub parse_input_checks: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -509,6 +517,8 @@ pub fn reset() {
         &ASSET_REF_DOCUMENTS,
         &ORPHAN_CHECK_DOCUMENTS,
         &ORPHAN_CHECK_NANOS,
+        &FILE_RENAMES,
+        &PARSE_INPUT_CHECKS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -563,7 +573,16 @@ pub fn snapshot() -> Counts {
         asset_ref_documents: ASSET_REF_DOCUMENTS.load(Ordering::Relaxed),
         orphan_check_documents: ORPHAN_CHECK_DOCUMENTS.load(Ordering::Relaxed),
         orphan_check_nanos: ORPHAN_CHECK_NANOS.load(Ordering::Relaxed),
+        file_renames: FILE_RENAMES.load(Ordering::Relaxed),
+        parse_input_checks: PARSE_INPUT_CHECKS.load(Ordering::Relaxed),
     }
+}
+
+pub(crate) fn file_rename() {
+    FILE_RENAMES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn parse_input_check() {
+    PARSE_INPUT_CHECKS.fetch_add(1, Ordering::Relaxed);
 }
 
 pub(crate) fn asset_ref_document() {

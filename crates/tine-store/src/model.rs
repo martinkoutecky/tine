@@ -219,6 +219,8 @@ pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Re
 }
 
 fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::parse_input_check();
     if bytes.len() as u64 > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
