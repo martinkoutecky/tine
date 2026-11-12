@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createPaneRouter } from "./router";
 import { pursueScroll } from "./routeScrollAnchor";
+import { registerOutlineWindow } from "./outlineViewport";
 import { createRoot } from "solid-js";
 
 // GH #848: a reference read can answer long after a page shows, so coming back to a deep position keeps
@@ -310,4 +311,32 @@ it("a stable route() read searches no tabs, however many are open", () => {
     for (let i = 0; i < 1_000; i++) router.route();
     expect(search.mock.calls.length + searchIndex.mock.calls.length).toBe(0);
   } finally { search.mockRestore(); searchIndex.mockRestore(); }
+});
+
+it("brings back the reading block when the windowing holds it unmounted and the pixel offset lands elsewhere", async () => {
+  // The window geometry changed since the anchor was saved: the old 9,000 px now shows other blocks, and the reading
+  // block sits at 15,000 px in a window the outline has not mounted.
+  height = 20_000;
+  const rowAt = 15_000;
+  const host = document.createElement("div");
+  scroller.append(host);
+  const mount = () => {
+    if (host.firstChild) return;
+    const row = document.createElement("div");
+    row.className = "ls-block";
+    row.setAttribute("data-block-id", "reading-block");
+    row.getBoundingClientRect = () => ({ top: rowAt - scroller.scrollTop } as DOMRect);
+    host.append(row);
+  };
+  const unregister = registerOutlineWindow(["reading-block"], host, mount);
+  try {
+    pursueScroll({
+      target: 9_000, anchor: { id: "reading-block", offset: 40 }, scroller: () => scroller,
+      current: () => true, extend: async () => false, onPositioned: () => {},
+    });
+    await runFrames(40);
+    const row = scroller.querySelector<HTMLElement>('[data-block-id="reading-block"]');
+    expect(row).not.toBeNull();
+    expect(row!.getBoundingClientRect().top - scroller.getBoundingClientRect().top).toBe(40);
+  } finally { unregister(); host.remove(); }
 });

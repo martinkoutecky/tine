@@ -1,3 +1,4 @@
+import { revealOutlineBlock } from "./outlineViewport";
 import { elementFromPointIn, isKeyboardEventValue, requestFrame } from "./windowRealm";
 
 /** The row first in view when a route was left, and how far below the scroller's
@@ -93,7 +94,10 @@ export function pursueScroll(options: {
     const el = scroller();
     if (!el) { finish(); return; }
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    const anchored = anchor ? scrollTopForAnchor(el, anchor) : null;
+    let anchored = anchor ? scrollTopForAnchor(el, anchor) : null;
+    // The windowing may hold the anchor in an unmounted window (geometry changed since it was saved): mount it, then
+    // measure. Only while it is not in the DOM, so a mounted anchor costs nothing more and nothing remounts per frame.
+    if (anchor && anchored === null && revealOutlineBlock(anchor.id, el)) anchored = scrollTopForAnchor(el, anchor);
     const want = Math.min(anchored ?? target, max);
     const moved = Math.abs(el.scrollTop - want) >= 1;
     if (moved) el.scrollTop = want;
