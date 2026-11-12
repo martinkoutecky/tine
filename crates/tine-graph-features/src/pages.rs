@@ -742,26 +742,6 @@ fn multi_rename(
     Ok(Some(report))
 }
 
-/// The stale-plan regression probe. Preflight is read-only; a stale context
-/// is `Ok(None)`, so no feature test needs a direct page commit.
-#[cfg(test)]
-fn preflight_rename(
-    store: &Store,
-    old: &str,
-    plan: RenamePlan,
-    unsaved_paths: &[String],
-) -> io::Result<Option<()>> {
-    let tx = match rename_transaction(store, old, plan, unsaved_paths)? {
-        RenameTransaction::Unchanged(_) => return Ok(Some(())),
-        RenameTransaction::Writes { tx, .. } => tx,
-    };
-    match tx.plan() {
-        Ok(_) => Ok(Some(())),
-        Err(tine_store::Why::Conflict { .. }) => Ok(None),
-        Err(why) => Err(crate::why_error(why)),
-    }
-}
-
 /// What a rename writes, as a store transaction of its page steps.
 enum RenameTransaction<'s> {
     /// Nothing to write (every referrer already reads the new name, or
@@ -842,6 +822,8 @@ fn rename_transaction<'s>(
     }
     let name_format = config.file_name_format;
     let mut edits = Vec::new();
+    // Moved pages' planning reads and proposals, for their move steps.
+    let mut carried = HashMap::new();
     let mut skipped: Vec<_> = skipped
         .into_iter()
         .map(|id| id.as_str().to_owned())
@@ -892,7 +874,23 @@ fn rename_transaction<'s>(
                 Some(names),
             )
         };
-        let changed = if moved || marked {
+        let mut proposed = None;
+        let changed = if moved && !marked {
+            // The moved page's rewrite, proposed once: its move step reuses
+            // it at preflight (base revision, staged bytes and certificate
+            // still checked there) instead of walking the page again. One
+            // that cannot be certified is left to the move step, which
+            // refuses it as before.
+            match refs::rename_proposal(&content, org, &lookup, &query_lookup, name_format) {
+                Ok(proposal) => {
+                    names.clone_from(&proposal.rewritten);
+                    let changed = proposal.text != content;
+                    proposed = Some(proposal);
+                    changed
+                }
+                Err(_) => rewrite(&mut names) != content,
+            }
+        } else if moved || marked {
             rewrite(&mut names) != content || (!org && marked && own_title)
         } else if rebind {
             let new = rewrite(&mut names);
@@ -949,6 +947,9 @@ fn rename_transaction<'s>(
         }
         if moved || rebind || changed {
             rewritten_names.borrow_mut().extend(names);
+            if let Some(proposal) = proposed {
+                carried.insert(id.clone(), (content, proposal));
+            }
             edits.push((id, rev, true));
         }
     }
@@ -995,7 +996,20 @@ fn rename_transaction<'s>(
         .into_iter()
         .filter(|(id, _, _)| moves.contains_key(id))
     {
-        tx.move_file(&id.file(), rev, &moves[&id], rewrite.then_some(&map));
+        let to = &moves[&id];
+        match carried.remove(&id).filter(|_| rewrite) {
+            Some((old, proposal)) => {
+                let format = name_format;
+                let prepared = tine_store::MoveRewrite::Prepared {
+                    renames: &map,
+                    old,
+                    proposal,
+                    format,
+                };
+                tx.move_file(&id.file(), rev, to, prepared)
+            }
+            None => tx.move_file(&id.file(), rev, to, rewrite.then_some(&map)),
+        };
     }
     if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
         tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
