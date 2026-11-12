@@ -25,6 +25,33 @@ Literal planning lookalikes remain in place. Markdown built-in identity/collapse
 metadata keeps trailer placement. Debug builds reparse edits and compare the
 header, unrelated metadata/drawers/planning and literal source slices.
 
+Where a block's title ends and its rows begin is lsdoc's headline node: its
+source span, mapped to raw by `raw_offset`, the one prepared-to-raw conversion.
+Rows after the title go to the end of that headline (`BlockRegions::title_end`),
+and the Org drawer there is the block's own. An empty title before the
+properties or drawer lsdoc reads at the title position (`*` then
+`:PROPERTIES:`, `- id:: x`) ends where they start: the block's metadata begins
+there. Any other node at the title position (a quote, `#+TITLE: x`) is the
+block's first line and stays its title line. `BlockRegions::headline_end` records the headline's end only
+where it is not the end of the first line after the leading trim, so empty
+regions stay shared. A nonempty headline owns the rest of its line when only
+blanks follow (lsdoc ends a bare `TODO ` before them; a CRLF page keeps each
+line's CR), so a row never splits the title line. A whole document has no
+headline; its page rows keep the first physical line as the title line.
+OG reference for title placement: `og-1.0.0` at
+`680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content/has-title?`,
+`property/insert-property` and `text/add-timestamp`.
+
+A bare marker title (`TODO` with nothing after the marker) is a task when
+only property, planning or LOGBOOK rows follow it, or a LOGBOOK follows
+anywhere: the shared parse boundary (`lsdoc_block_parse::restore_bare_task`)
+decides it, so adding or removing those rows never changes the header. Blank
+lines beside the rows do not count (removing the last row leaves a task). The
+repair asks lsdoc for the headline's source up to the title word (so a CRLF
+bare task reads as its LF twin, and `# TODO` stays a heading) and reparses only
+that, and only when lsdoc did not already see the word at the end of input.
+Body text after a bare title stays text, as in Logseq (REG-BARE-TASK-HIDDEN-ROWS).
+
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.
 Visible-body labels and export projections also require that source format;
