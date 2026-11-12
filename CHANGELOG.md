@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 - CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
+- Diagnostics: when a block's editor does not have the caret one frame after Tine asked it to edit (for example after Enter), the diagnostic report now records a content-free `editor.focus-missed` event (whether the window had focus, whether an edit guard held the request, whether the editor was mounted, and the focused element's kind; no note text, titles or paths), at most once every five minutes, so a report can tell the possible causes apart (GH #939).
 
 ### Added
 

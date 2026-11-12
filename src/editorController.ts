@@ -4,8 +4,10 @@ import { batch, createComputed, createRoot, createSignal, untrack } from "solid-
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
-import { requestFrame } from "./windowRealm";
+import { activeWindow, isElementTag, requestFrame } from "./windowRealm";
 import { clearOnBindingInvalidated } from "./binding";
+import { recordDiagnostic } from "./debug";
+import type { EditorFocusGuard, EditorFocusMissed } from "./backendTypes";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -267,17 +269,67 @@ export function noteSurfaceFocused(surfaceKey: string) {
   setActiveSurface(surfaceKey);
 }
 
+/** GH #939: at most one `editor_focus_missed` record per this many ms. A
+ * stuck state misses on every edit request until it clears; one record per
+ * episode tells the causes apart, and the bound keeps a repeating miss from
+ * evicting older events out of the recorder's shared 1 MiB ring. */
+export const EDITOR_FOCUS_MISS_INTERVAL_MS = 5 * 60_000;
+let editorFocusMissAt = -Infinity;
+// Counts edit requests only: `endEdit` (e.g. a blur after a focus thief) must
+// not cancel the pending check the way it bumps `editIntentRevision`.
+let editRequest = 0;
+
+const FOCUS_TAGS = new Set<string>(["textarea", "input", "button", "select", "iframe", "a", "div", "span", "body"]);
+
+/** GH #939: one frame after an edit request, record (content-free) why no
+ * editor of `id` holds focus. A newer request supersedes this check. Cost on
+ * the normal path: one frame callback and one scan of the mounted editors. */
+function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: EditorFocusGuard) {
+  const request = ++editRequest;
+  if (performance.now() - editorFocusMissAt < EDITOR_FOCUS_MISS_INTERVAL_MS) return;
+  const win = activeWindow();
+  const doc = win.document;
+  // Node unit tests run without a DOM, or with a stub document.
+  if (typeof doc?.hasFocus !== "function") return;
+  requestFrame(win, () => {
+    if (request !== editRequest) return;
+    const documentHasFocus = doc.hasFocus();
+    let targetMounted = false;
+    let targetFocused = false;
+    for (const target of historyEditorTargets) {
+      if (target.blockId !== id) continue;
+      targetMounted = true;
+      if (target.focused?.()) targetFocused = true;
+    }
+    if (guard === "none" && documentHasFocus && targetFocused) return;
+    editorFocusMissAt = performance.now();
+    const active = doc.activeElement;
+    const tag = active?.localName ?? "none";
+    void recordDiagnostic("editor_focus_missed", { editorFocus: {
+      entry,
+      documentHasFocus,
+      guard,
+      targetMounted,
+      activeTag: tag === "none" || FOCUS_TAGS.has(tag) ? tag as EditorFocusMissed["activeTag"] : "other",
+      activeIsBlockEditor: isElementTag(active, "textarea") && active.classList.contains("block-editor"),
+    } });
+  });
+}
+
 export function startEditing(
   id: string,
   offset: CaretPos = 0,
   owner: string | null = null,
   surface: string | null = null,
   preserveHistoryRestore = false,
+  entry: EditorFocusMissed["entry"] = "other",
 ) {
   // Even a refused newer request supersedes pending async navigation.
   editIntentRevision++;
   // Resolve a refused commit first, then commit a property input's draft.
-  if (!canExitEdit() || !prepareEditEntry()) return;
+  if (!canExitEdit()) return checkEditorFocus(id, entry, "exit-guard");
+  if (!prepareEditEntry()) return checkEditorFocus(id, entry, "entry-guard");
+  checkEditorFocus(id, entry, "none");
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);

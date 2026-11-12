@@ -237,7 +237,7 @@ export function splitBlock(
     applyOutlineChange(change);
   }
   if (change.focus) {
-    startEditing(change.focus.key, change.focus.editorOffset ?? 0, null, editingSurface);
+    startEditing(change.focus.key, change.focus.editorOffset ?? 0, null, editingSurface, false, "enter-split");
   }
   markOutlineDirty(change);
 }
