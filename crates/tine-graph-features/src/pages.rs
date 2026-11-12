@@ -868,8 +868,8 @@ fn rename_transaction<'s>(
             && moved
             && (org || marked)
             && std::panic::catch_unwind(|| {
-                tine_core::model::rebind_page_title(&content, syntax, &map.0[0].0, &map.0[0].1)
-                    .is_some_and(|new| org || new != content)
+                tine_core::model::own_title_span(&content, syntax, &map.0[0].0)
+                    .is_some_and(|title| org || content[title] != *map.0[0].1)
             })
             .map_err(|_| unwritable(store, &id))?;
         // Master a8fd4230d: a file carrying VCS conflict markers is not

@@ -407,6 +407,8 @@ fn settle(mut edits: Vec<Edit>) -> std::vec::IntoIter<Edit> {
 
 /// The edits of LF page `text`, in page offsets, settled.
 fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
+    #[cfg(feature = "test-counters")]
+    crate::text_trace::work::page_walk();
     let format = if is_org {
         OutlineFormat::Org
     } else {
@@ -1021,10 +1023,8 @@ mod tests {
             } else {
                 crate::model::Format::Md
             };
-            assert_eq!(
-                crate::model::rebind_page_title(text, format, "Old", "New").as_deref(),
-                Some(want)
-            );
+            let span = crate::model::own_title_span(text, format, "Old").unwrap();
+            assert_eq!(&text[span], "Old");
             let mut p = crate::refs::rename_proposal(
                 text,
                 org,

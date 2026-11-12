@@ -245,6 +245,8 @@ impl TextTrace {
 
     /// Check `TraceValid` against the actual proposed output and substitution.
     pub fn check(&self, output: &str, m: &HashMap<usize, String>) -> Result<(), TraceError> {
+        #[cfg(feature = "test-counters")]
+        work::certificate_check();
         let mut offsets = vec![0; self.inputs.len()];
         for p in &self.pieces {
             let at = offsets.get_mut(p.file).ok_or(TraceError::Partition)?;
@@ -319,6 +321,30 @@ impl TextTrace {
 
 fn alias_key(s: &str) -> bool {
     matches!(s, "alias:: " | "aliases:: " | "#+alias: " | "#+aliases: ")
+}
+
+/// Process-global counts of rename text work, for downstream cost tests of a
+/// whole host operation (its work runs on the host's threads): reference
+/// span walks of one page's text (`refs` rewrite and proposal), and
+/// certificate checks ([`TextTrace::check`]). Callers serialize measurements.
+#[cfg(feature = "test-counters")]
+pub mod work {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static PAGE_WALKS: AtomicU64 = AtomicU64::new(0);
+    static CERTIFICATE_CHECKS: AtomicU64 = AtomicU64::new(0);
+    pub(crate) fn page_walk() {
+        PAGE_WALKS.fetch_add(1, Relaxed);
+    }
+    pub(super) fn certificate_check() {
+        CERTIFICATE_CHECKS.fetch_add(1, Relaxed);
+    }
+    /// Take and reset (reference span walks, certificate checks).
+    pub fn take() -> (u64, u64) {
+        (
+            PAGE_WALKS.swap(0, Relaxed),
+            CERTIFICATE_CHECKS.swap(0, Relaxed),
+        )
+    }
 }
 
 #[cfg(test)]

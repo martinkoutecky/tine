@@ -112,30 +112,16 @@ fn org_meta_line(trimmed: &str) -> bool {
     directive || drawer
 }
 
-/// Rewrite the preamble title that [`page_title_from_preamble`] reads to
-/// `new_name`, when that title still names `old_name` (`refs::same_page`). A
-/// `title::` property, Org `#+title:` directive or `:title:` drawer line
-/// keeps its own spelling and only its name value changes.
-/// Line endings and every other byte are kept. `None`: no title, or a title
-/// naming another page (user content a rename must not touch). Cost
-/// O(content bytes); no I/O or error.
-pub fn rebind_page_title(
-    content: &str,
-    format: Format,
-    old_name: &str,
-    new_name: &str,
-) -> Option<String> {
+/// The span of the preamble title's name value (as [`page_title_from_preamble`]
+/// reads it: a `title::` property, Org `#+title:` directive or `:title:`
+/// drawer line) when that title still names `old` (`refs::same_page`). `None`:
+/// no title, or a title naming another page (user content a rename must not
+/// touch). The renamed title's bytes have one producer,
+/// `refs::RenameProposal::rebind_title`; this only answers whether the title
+/// is the page's own. Cost O(content bytes); no I/O or error.
+pub fn own_title_span(content: &str, format: Format, old: &str) -> Option<std::ops::Range<usize>> {
     let line = page_title_line(content, format)?;
-    if !crate::refs::same_page(&content[line.value.clone()], old_name) {
-        return None;
-    }
-    let replaced = line.value;
-    Some(format!(
-        "{}{}{}",
-        &content[..replaced.start],
-        new_name,
-        &content[replaced.end..]
-    ))
+    crate::refs::same_page(&content[line.value.clone()], old).then_some(line.value)
 }
 
 /// The preamble title's value. Both title readers and the rebind share it.

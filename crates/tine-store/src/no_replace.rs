@@ -7,6 +7,8 @@ use std::path::Path;
 
 /// Move an absolute or caller-resolved path atomically if its destination is absent.
 pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::file_rename();
     #[cfg(test)]
     if let Some(kind) = MOVE_ERRORS.with(|errors| errors.borrow_mut().pop_front()) {
         return Err(io::Error::new(kind, "injected no-replace move failure"));

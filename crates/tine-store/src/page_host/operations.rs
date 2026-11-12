@@ -341,9 +341,17 @@ impl<F: HostIo> Host<F> {
             let Some(raw) = bytes else { return Ok(None) };
             let text = std::str::from_utf8(raw).map_err(|_| ())?;
             let syntax = Format::from_path(std::path::Path::new(source));
-            Ok(tine_core::model::rebind_page_title(text, syntax, from, to)
-                .map(|text| Some(Arc::from(text.into_bytes())))
-                .unwrap_or_else(|| bytes.clone()))
+            if tine_core::model::own_title_span(text, syntax, from).is_none() {
+                return Ok(bytes.clone());
+            }
+            // The title's one producer, with no reference edits: the title
+            // only, as a move rebinds it.
+            let org = syntax == Format::Org;
+            let none = std::collections::HashMap::new();
+            let mut proposal =
+                tine_core::refs::rename_proposal(text, org, &none, &none, format).map_err(drop)?;
+            proposal.rebind_title(org, to).map_err(drop)?;
+            Ok(Some(Arc::from(proposal.text.into_bytes())))
         })
     }
 }

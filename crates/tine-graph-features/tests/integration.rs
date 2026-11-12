@@ -98,6 +98,9 @@ mod cm_conformance_rename;
 #[path = "cm_merge_rules.rs"]
 mod cm_merge_rules;
 
+#[path = "cm_operation_cost.rs"]
+mod cm_operation_cost;
+
 #[path = "cm_conformance_names.rs"]
 mod cm_conformance_names;
 
