@@ -289,7 +289,15 @@ fn crlf_and_blank_lines_beside_the_rows_keep_the_task() {
     // Tine adds an id. (The drawer's own line endings are a separate matter of
     // the edit door: a one-line block carries no CRLF evidence.)
     let graph = Graph::new("pages/o.org", "* TODO\r\n* other\r\n");
-    assert_eq!(tasks(&graph.open()), set(&["TODO\r"]));
+    // The task's raw may or may not keep the line's CR (the CRLF Org fix strips
+    // it); the user outcome is one task whose text is the bare marker.
+    let bare = |store: &Store| -> BTreeSet<String> {
+        tasks(store)
+            .into_iter()
+            .map(|raw| raw.trim_end_matches('\r').to_string())
+            .collect()
+    };
+    assert_eq!(bare(&graph.open()), set(&["TODO"]));
     let after = graph.apply(&[0], id(Some("6679-abc")));
     assert!(after.starts_with("* TODO\r\n:PROPERTIES:"), "{after:?}");
     assert_eq!(tasks(&graph.open()).len(), 1, "{after:?}");
