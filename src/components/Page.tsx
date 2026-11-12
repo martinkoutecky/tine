@@ -15,7 +15,7 @@ import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed } from "../changeKeys";
-import { PageLoadError, createPinnedPathRecovery, pageOpenMismatch, recordPageOpenRefusal, type PinnedPathRefusal } from "./pageLoadRecovery";
+import { PageLoadError, createPinnedPathRecovery, pageOpenMismatch, recordPageOpenRefusal, routeAdoptsRead, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableResource } from "../tagTable";
@@ -547,14 +547,15 @@ export function PageView(): JSX.Element {
           if (result.kind === "stale") return;
           const dto = result.value;
           // A saved path can use another case spelling on a case-insensitive
-          // volume. Adopt the file's disk spelling in tabs, Recent, and the
-          // route before loading it into the exact-path working set.
-          if (r.path && dto?.id && dto.id !== r.path && dto.kind === r.pageKind
-            && dto.id.toLowerCase() === r.path.toLowerCase()) {
-            const from = { name: r.name, pageKind: r.pageKind, path: r.path };
+          // volume, and a route can guess the wrong kind (GH #863: whether a file
+          // is a journal day is the store's answer for its path). Adopt the file's
+          // spelling and kind in tabs, Recent, and the route before loading it.
+          if (dto?.id && routeAdoptsRead(r, dto, r.path ?? loadedPath)) {
+            const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
-            router.rewritePageTarget(from, to);
+            // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
+            if (!r.path) { renamePageInNavigation(from, to, { favorites: false, exactPath: true }); rewritePageTargetAcrossPanes(from, to); }
+            else { renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) }); router.rewritePageTarget(from, to); }
             return;
           }
           if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name

@@ -86,6 +86,13 @@ Network filesystem/peer clock skew can also defeat the age test; filesystems wit
 raced replacement at the named aside path for recovery (see the storage contract's refusal/limit table).
 Sync additionally needs the graph root to be the work tree root: a fast-forward of a bigger repository changes
 files outside the graph, which Tine does not own.
+The work tree is the one git reports (`git rev-parse --show-toplevel`): the folder holding the `.git` entry, a
+directory or a `gitdir:` file naming a separate git directory (`git init --separate-git-dir`, which Logseq's version
+control runs into `~/.logseq/git/<graph>/.git`; GH #872), unless `core.worktree` names another. One function answers
+it (`git_run::discover`, then `git_run::graph_prefix`). Tine writes only git's own metadata into a separate git
+directory and never converts the layout (no `.git` rewrite, no `core.worktree`). A `.git` file naming no repository
+(missing or moved) or a malformed one refuses by name; Tine never removes it (Logseq deletes a dangling one that
+points into its own folder and re-initialises).
 
 ### 2. What an autocommit is
 Follow-up D-20261026-GI: with autocommit enabled, at binding start and when enabling it,
@@ -281,6 +288,7 @@ Refusals (contract refusal table rows, each with its in-scope threat):
 | `diverged` (the remote is not a descendant of `HEAD`, a force push replaced a pending target, the captured branch changed, or a push is rejected) | multi-device divergence or another git program | phase 1 stops and says so; a mid-apply branch race may leave earlier file updates in place; phase 2 merges with Concord |
 | `refused: conversion` | `core.autocrlf` or attributes would rewrite checkout bytes | For truthy autocrlf, hash each tracked regular file without filters against its index oid. Missing/unreadable/nonregular files or gitlinks count as differing paths, with a count and sample in the notice. If all match and no `text`/`eol`/`crlf`/filter/encoding conversion remains, offer **Turn off line-ending conversion for this repository**. Under `RUN_LOCK` and `index.lock`, repeat the probe and write only `core.autocrlf=false` at local config level; no graph files change. A higher-level worktree override refuses the fix. Otherwise link to Guide **Git line endings on Windows**: commit edits, verify a clean status, set local autocrlf false, then `git reset --hard HEAD` to re-check out that saved commit. Sync still refuses conversion. |
 | `refused: sparse / precompose / bare / detached / mid-merge` | user's repository configuration | Settings explains; commit-only where possible |
+| `refused: git` (the graph's `.git` file names no repository, or is malformed; `core.worktree` puts the work tree outside the graph) | sync delivery or another device left the `.git` file without its git directory (Syncthing carries the graph, not `~/.logseq`); the user's repository configuration | Settings names the file or git's work tree; the user repairs or removes the file, nothing is written |
 
 Push never forces and never rebases.
 

@@ -3,7 +3,8 @@
 // #863 lifecycle cases: 863-created, 863-created-blur,
 // 863-created-unreferenced, 863-external, 863-external-alternate,
 // 863-external-alternate-blur, 863-external-sync, 863-external-alternate-sync,
-// 863-custom, 863-sync-gap and 863-page-sync-gap.
+// 863-custom, 863-sync-gap, 863-page-sync-gap, 863-template and
+// 863-template-sync.
 // Each starts a fresh fixture.
 // Fixture data only. A passing Linux run does not establish a Windows fix.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -36,6 +37,10 @@ const syncDelivery = external && journalCase.endsWith("-sync");
 const custom = journalCase === "863-custom";
 const syncGap = journalCase.endsWith("sync-gap");
 const ordinaryGap = journalCase === "863-page-sync-gap";
+// GH #863 c13: the reporter's config also names a daily template and the
+// triple-lowbar file names. 863-template lets the template create today's
+// file; 863-template-sync then delivers another device's version of it.
+const templated = journalCase.startsWith("863-template");
 const virtual = creates || external;
 const referenced = virtual && journalCase !== "863-created-unreferenced";
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
@@ -49,8 +54,10 @@ const pageName = "Probe Alpha";
 const pageFile = path.join(graph, `pages/${pageName}.md`);
 const gapFile = ordinaryGap ? pageFile : journalFile;
 const gapTemp = path.join(path.dirname(gapFile), `.syncthing.${path.basename(gapFile)}.tmp`);
-fs.writeFileSync(path.join(graph, "logseq/config.edn"), `{:journal/page-title-format "yyyy-MM-dd"${custom ? ' :journal/file-name-format "yyyy-MM-dd"' : ""}}\n`);
-if (!virtual) fs.writeFileSync(journalFile, journalBytes);
+fs.writeFileSync(path.join(graph, "logseq/config.edn"), `{:journal/page-title-format "yyyy-MM-dd"${custom ? ' :journal/file-name-format "yyyy-MM-dd"' : ""}${templated
+  ? ' :file/name-format :triple-lowbar :date-formatter "yyyy-MM-dd" :default-templates {:journals "MR-每日笔记模板"}' : ""}}\n`);
+if (templated) fs.writeFileSync(path.join(graph, "pages/MR-每日笔记模板.md"), "- 每日\n  template:: MR-每日笔记模板\n  template-including-parent:: false\n\t- GH863 template task\n\t- GH863 template note\n");
+if (!virtual && !templated) fs.writeFileSync(journalFile, journalBytes);
 fs.writeFileSync(pageFile, "- GH809 original page body\n");
 if (referenced) fs.writeFileSync(path.join(graph, "pages/Journal mentions.md"), `- [[${day}]]\n`);
 const fixture = accountHomeFixture(run, out);
@@ -165,6 +172,26 @@ try {
     let openedFile = ordinaryGap ? pageFile : journalFile;
     let expectedBytes = journalBytes;
     let expectedBody = "GH863 existing journal body";
+    if (templated) {
+      expectedBytes = await waitForFileText(journalFile, text => text.includes("GH863 template note"));
+      expectedBody = "GH863 template note";
+      step("863-template-created", { expectedBytes });
+      if (journalCase === "863-template-sync") {
+        const before = (await diagnostics()).sessions.current.filter(event => event.event === "watcher.batch").length;
+        expectedBody = "GH863 other device template note";
+        expectedBytes = "- 每日\n\t- GH863 template task\n\t- GH863 other device template note\n";
+        const temp = path.join(path.dirname(journalFile), `.syncthing.${path.basename(journalFile)}.tmp`);
+        fs.writeFileSync(temp, expectedBytes);
+        const past = new Date(Date.now() - 60_000);
+        fs.utimesSync(temp, past, past);
+        fs.renameSync(temp, journalFile);
+        await browser.waitUntil(async () =>
+          (await diagnostics()).sessions.current.filter(event => event.event === "watcher.batch").length > before,
+        { timeout: 15_000, interval: 500, timeoutMsg: "Sync delivery was not observed by the watcher" });
+        step("863-template-sync-delivery", { expectedBytes });
+      }
+      fs.writeFileSync(path.join(out, "before-click-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
+    }
     if (virtual) {
       // References finishing proves the native completion that admits virtual
       // referenced days has arrived, rather than just frontend withToday().

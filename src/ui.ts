@@ -694,10 +694,13 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
 /** After backend rename, re-key favorite, recent and sidebar entries in order,
  * deduplicating destinations even if source is absent. Only changed stores
  * schedule persistence; writes need not finish before a later openPage. Does
- * not rename or open a page. O(favorites + recents² + sidebar items). */
-export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: { favorites?: boolean }): void;
-export function renamePageInNavigation(from: string, to: string, opts?: { favorites?: boolean }): void;
-export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: { favorites?: boolean } = {}) {
+ * not rename or open a page. O(favorites + recents² + sidebar items).
+ * A pathless `from` matches every file of that name, unless `exactPath`
+ * restricts it to entries without a path (other files' entries keep their owner). */
+type NavigationRenameOptions = { favorites?: boolean; exactPath?: boolean };
+export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: NavigationRenameOptions): void;
+export function renamePageInNavigation(from: string, to: string, opts?: NavigationRenameOptions): void;
+export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: NavigationRenameOptions = {}) {
   const from: PageTarget = typeof fromOrName === "string"
     ? { name: fromOrName, pageKind: "page" }
     : fromOrName;
@@ -708,7 +711,7 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
 
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const matches = item.kind === from.pageKind && item.name === from.name
-      && (from.path === undefined || item.path === from.path);
+      && ((from.path === undefined && !opts.exactPath) || item.path === from.path);
     const next = matches
       ? { name: to.name, kind: to.pageKind, ...(to.path ? { path: to.path } : {}) }
       : item;
@@ -724,8 +727,8 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
   const nextSidebar: SidebarItem[] = [];
   for (const item of rightSidebar()) {
     const matches = item.kind === "page"
-      ? item.name === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path)
-      : item.page === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path);
+      ? item.name === from.name && item.pageKind === from.pageKind && ((from.path === undefined && !opts.exactPath) || item.path === from.path)
+      : item.page === from.name && item.pageKind === from.pageKind && ((from.path === undefined && !opts.exactPath) || item.path === from.path);
     const next: SidebarItem = !matches ? item : item.kind === "page"
       ? { ...item, name: to.name, pageKind: to.pageKind, path: to.path }
       : { ...item, page: to.name, pageKind: to.pageKind, path: to.path };
