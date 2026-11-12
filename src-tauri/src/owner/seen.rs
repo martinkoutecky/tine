@@ -106,8 +106,8 @@ fn relative(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Mirror git_run's discovery and canonical worktree-prefix convention, without
-/// its write-side checks (detached HEAD and index.lock do not prevent a read).
+/// git_run's discovery and graph prefix, without its write-side checks
+/// (detached HEAD and index.lock do not prevent a read).
 fn open(root: &Path) -> Result<(Repository, PathBuf), String> {
     open_if_repository(root)?.ok_or_else(|| "The graph is not in a git repository.".into())
 }
@@ -118,13 +118,7 @@ fn open_if_repository(root: &Path) -> Result<Option<(Repository, PathBuf)>, Stri
         Err(e) if e.code() == ErrorCode::NotFound => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
-    let work = repo.workdir().ok_or("The graph's repository is bare.")?;
-    let work = work.canonicalize().map_err(|e| e.to_string())?;
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
-    let prefix = root
-        .strip_prefix(work)
-        .map_err(|_| "The graph is outside its repository work tree.")?
-        .to_owned();
+    let prefix = super::git_run::graph_prefix(&repo, root)?;
     Ok(Some((repo, prefix)))
 }
 
