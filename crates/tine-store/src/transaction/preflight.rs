@@ -297,6 +297,9 @@ impl<'a> PagePlan<'a> {
                 if prepared.as_ref().is_some_and(|p| p.is_merge()) {
                     refuse_marker_rewrite(&new, &old, Format::from_path(&path))?;
                 }
+                // A rewrite (a merge survivor, a referrer, a retitled page) can
+                // grow: publish only bytes the store will open again, as a save does.
+                validation::page_bytes(&file, &new)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -340,6 +343,9 @@ impl<'a> PagePlan<'a> {
                 };
                 if let (Some(old), Some(new)) = (&old, &new) {
                     refuse_marker_rewrite(old, new, Format::from_path(&self.path(file)?))?;
+                    if renames.is_some() {
+                        validation::page_bytes(to, new)?;
+                    }
                 }
                 Ok(Prepared {
                     src: file.clone(),

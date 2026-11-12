@@ -942,7 +942,8 @@ fn native_valid_merges_with_org_head_drawers_are_admitted() {
 /// declarations (model question Q2); and a source `title::` in a first-root
 /// header, whose shadow this harness does not rebind (follow-up F1). Fused
 /// endings (Q4), Org head-drawer refusals (Q5, Q6, Q7 of RECEIPT-cm-b4-fix4)
-/// and lsdoc's debug span tripwire are reported the same way.
+/// lsdoc's debug span tripwire and two spellings of one name (Q8 of
+/// RECEIPT-cm-b4-fix5) are reported the same way.
 fn native_generated(seed: u64, count: usize) {
     let Ok(bridge) = std::env::var("CM_NATIVE_BRIDGE") else {
         assert!(std::env::var_os("CM_REQUIRE_BRIDGE").is_none());
@@ -1033,6 +1034,10 @@ fn native_generated(seed: u64, count: usize) {
                 && crate::merge_generated::leftover_delimiters(&case)
             {
                 Some("Q7 leftover drawer delimiters")
+            } else if matches!(&verdict, Err(e) if e.contains("mergeBodyOccurrences"))
+                && crate::merge_generated::same_name_spellings(&case)
+            {
+                Some("Q8 same-name spellings")
             } else if matches!(&verdict, Err(e) if e.contains(crate::merge_generated::LSDOC_TRIPWIRE))
             {
                 Some("lsdoc tripwire")

@@ -74,6 +74,17 @@ pub(super) fn header_of(page: &PageDto) -> Option<(HeaderAt, &str)> {
     ))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Drawer-ownership and delimiter comparisons, for the cost test.
+    static DRAWER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[inline]
+fn drawer_step() {
+    #[cfg(test)]
+    DRAWER_STEPS.with(|n| n.set(n.get() + 1));
+}
+
 struct Line {
     range: Range<usize>,
     content: Range<usize>,
@@ -149,17 +160,21 @@ impl Header {
         let regions = tine_core::block_regions::parse_document(&logical, org);
         let properties: HashMap<_, _> = regions.page_properties().map(|p| (p.line.0, p)).collect();
         let boxes = regions.property_drawer_boundaries(&logical);
+        debug_assert!(boxes.windows(2).all(|w| w[0].1 < w[1].0));
+        // Lines and drawers both run in source order: one forward cursor
+        // assigns each line its drawer, O(lines + drawers).
+        let mut cursor = 0;
         let (has_properties, prose) = page.pre_block.as_deref().map_or((first_root, None), |pre| {
             let (properties, prose) = tine_core::page_properties::pre_block_parts(pre, org);
             let prose = prose.map(|r| {
+                // Both models are LF-canonical: each CRLF before the prose
+                // is one byte the parser's offset does not count.
                 let mut extra = 0;
-                if !org {
-                    for (at, _) in text[..end].match_indices("\r\n") {
-                        if at - extra >= r.start {
-                            break;
-                        }
-                        extra += 1;
+                for (at, _) in text[..end].match_indices("\r\n") {
+                    if at - extra >= r.start {
+                        break;
                     }
+                    extra += 1;
                 }
                 r.start + extra..end
             });
@@ -187,9 +202,17 @@ impl Header {
                     });
                 Line {
                     property: found.map(|p| (p.key.to_ascii_lowercase(), p.value.clone())),
-                    drawer: boxes
-                        .iter()
-                        .position(|&(open, close)| open <= at && at <= close),
+                    drawer: {
+                        while boxes.get(cursor).is_some_and(|&(_, close)| close < at) {
+                            drawer_step();
+                            cursor += 1;
+                        }
+                        drawer_step();
+                        boxes
+                            .get(cursor)
+                            .filter(|&&(open, _)| open <= at)
+                            .map(|_| cursor)
+                    },
                     range,
                     content,
                     alias,
@@ -219,11 +242,13 @@ impl Header {
         }
     }
 
-    /// Whether line `n` opens or closes a head drawer.
+    /// Whether line `n` opens or closes a head drawer: its own drawer's
+    /// first or last line. O(1).
     fn delimiter(&self, n: usize) -> bool {
-        self.drawers
-            .iter()
-            .any(|&(open, close)| n == open || n == close)
+        drawer_step();
+        self.lines[n]
+            .drawer
+            .is_some_and(|d| n == self.drawers[d].0 || n == self.drawers[d].1)
     }
 
     fn cuts(&self, text: &str) -> Vec<usize> {
@@ -286,16 +311,23 @@ impl Alias {
         let mut plain = key.is_some();
         let mut movable = true;
         // Reader-owned member parsing; never split a bracketed comma again.
-        tine_core::property_refs::for_each_linkable_member(value, org, |name, token| {
-            let Some(offset) = body[at..].find(&name) else {
+        // A plain member's bytes are the parser's (escapes included); the
+        // decoded name travels beside them for the reader comparison.
+        tine_core::property_refs::for_each_linkable_member(value, org, |name, token, bare| {
+            let token = token.map(|r| value_start + r.start..value_start + r.end);
+            let found = if bare {
+                token
+                    .clone()
+                    .filter(|r| at <= r.start && r.end <= body.len())
+            } else {
+                body[at..].find(&name).map(|o| at + o..at + o + name.len())
+            };
+            let Some(Range { start, end }) = found else {
                 plain = false;
                 movable = false;
                 return;
             };
-            let start = at + offset;
-            let end = start + name.len();
             let token = token
-                .map(|r| value_start + r.start..value_start + r.end)
                 .filter(|r| {
                     at <= r.start && r.start <= start && end <= r.end && r.end <= body.len()
                 })
@@ -389,6 +421,19 @@ impl Writer {
             );
         }
         Ok(text)
+    }
+    /// The name the reader takes from a member as written: the parser's
+    /// decoded `name`, or the name the rename wrote over its bytes.
+    fn decoded(&self, file: usize, name: &str, range: Range<usize>) -> Result<String, TraceError> {
+        let ids = self.trace.interval(file, range.clone())?;
+        if ids
+            .iter()
+            .any(|id| self.trace.substitution.contains_key(id))
+        {
+            self.value(file, range)
+        } else {
+            Ok(name.to_owned())
+        }
     }
     fn insert(&mut self, syntax: &str) {
         place(
@@ -608,10 +653,12 @@ pub fn propose(
     for file in 0..2 {
         for (n, line) in headers[file].lines.iter().enumerate() {
             if let Some(a) = &line.alias {
-                for (_, range) in &a.names {
+                // Deduplicated by rendered bytes (SPEC §5.1); the reader
+                // sees each kept member's decoded name.
+                for (decoded, range) in &a.names {
                     let name = w.value(file, range.clone())?;
-                    if seen.insert(name.clone()) {
-                        expected_aliases.push(name);
+                    if seen.insert(name) {
+                        expected_aliases.push(w.decoded(file, decoded, range.clone())?);
                     } else if retained == Some((file, n)) && !a.plain {
                         rebuild_retained = true;
                     }
@@ -1191,6 +1238,106 @@ pub fn propose(
         unrealized,
         rewritten,
     })
+}
+
+#[cfg(test)]
+mod drawer_cost_tests {
+    use super::{propose, Header, DRAWER_STEPS};
+
+    /// A survivor head of `drawers` three-line Org property drawers.
+    fn survivor(drawers: usize) -> String {
+        let mut text = String::new();
+        for k in 0..drawers {
+            text.push_str(&format!(":PROPERTIES:\n:K{k}: v\n:END:\n"));
+        }
+        text + "* target\n"
+    }
+
+    fn merge(target: &str) -> usize {
+        // The store reads the given bytes; this crate's sources touch no path.
+        let dir = tempfile::tempdir().unwrap();
+        let store = tine_store::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let source = ":PROPERTIES:\n:S: w\n:END:\n* source\n";
+        let page = |p: &str, bytes: &str| {
+            let id = tine_core::model::PageId::from(p);
+            store.page_of(&id, bytes.as_bytes()).unwrap().doc
+        };
+        let (dst, src) = (page("pages/dst.org", target), page("pages/src.org", source));
+        DRAWER_STEPS.with(|n| n.set(0));
+        let _ = propose(
+            &dst,
+            target,
+            &src,
+            source,
+            &Default::default(),
+            &Default::default(),
+            true,
+            store.config().file_name_format,
+        );
+        DRAWER_STEPS.with(|n| n.get())
+    }
+
+    /// Lower bound: every header line's drawer is decided once, from a cursor
+    /// that only moves forward, so the comparisons are O(lines + drawers);
+    /// every delimiter test is O(1).
+    #[test]
+    fn drawer_classification_is_linear_in_lines_and_drawers() {
+        for drawers in [1, 64, 1024, 8192] {
+            let target = survivor(drawers);
+            let lines = 3 * drawers + 1 + 4;
+            let steps = merge(&target);
+            eprintln!("{drawers} drawers, {lines} lines: {steps} comparisons");
+            assert!(
+                steps <= 2 * (lines + drawers),
+                "{drawers} drawers, {lines} lines: {steps} comparisons"
+            );
+        }
+    }
+
+    /// Timing: classifying the head costs a small multiple of parsing it once
+    /// (the parser's answer it maps), with 8,192 drawers in a 261 KB head.
+    #[test]
+    fn drawer_classification_stays_within_a_parse_of_the_head() {
+        let target = survivor(8192);
+        let page = tine_core::model::PageDto {
+            name: "dst".into(),
+            title: "dst".into(),
+            kind: tine_core::model::PageKind::Page,
+            pre_block: Some(target[..target.len() - "* target\n".len()].into()),
+            blocks: Vec::new(),
+            rev: None,
+            format: tine_core::model::Format::Org,
+            read_only: false,
+            guide: false,
+        };
+        let best = |f: &mut dyn FnMut()| {
+            (0..3)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    f();
+                    t.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let parse = best(&mut || {
+            std::hint::black_box(tine_core::block_regions::parse_document(&target, true));
+        });
+        let classify = best(&mut || {
+            let header = Header::read(&page, &target, true);
+            let delimiters = (0..header.lines.len())
+                .filter(|&n| header.delimiter(n))
+                .count();
+            assert_eq!(delimiters, 2 * 8192);
+        });
+        eprintln!("classification {classify:?} vs one head parse {parse:?}");
+        assert!(
+            classify <= parse * 6 + std::time::Duration::from_millis(50),
+            "classification {classify:?} vs one head parse {parse:?}"
+        );
+    }
 }
 
 #[cfg(test)]

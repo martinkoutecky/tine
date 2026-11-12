@@ -63,6 +63,7 @@ impl Case {
 }
 
 const POOL: [&str; 5] = ["a", "A", "b", "c d", "ns/e"];
+const PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 fn alias_line(rng: &mut Rng, org: bool) -> String {
     let key = if org {
@@ -215,6 +216,31 @@ fn page(rng: &mut Rng, org: bool, name: &str) -> Vec<GenLine> {
             }
         }
     }
+    // Escaped plain members (REG-CM-MERGE-ESCAPED-ALIAS), from their own
+    // stream: a backslash before any ASCII punctuation, which Markdown
+    // decodes and Org keeps, and one unescaped twin of an escaped spelling.
+    // A wholly quoted value stays memberless: appending would turn its quoted
+    // text into a member, a different case than the one drawn.
+    let mut e = Rng::new(rng.0 ^ 0xE5CA_9E00);
+    for l in lines.iter_mut().filter(|l| l.header) {
+        let lower = l.content.to_ascii_lowercase();
+        let alias = ["alias::", "aliases::", "#+alias:", "#+aliases:", ":alias:"]
+            .iter()
+            .any(|k| lower.starts_with(k));
+        let quoted = l.content.trim_end().ends_with('"');
+        if alias && e.chance(1, 3) && !quoted {
+            let c = char::from(e.pick(PUNCTUATION));
+            let member = match e.below(4) {
+                0 => "C\\#".to_owned(),
+                1 => "C#".to_owned(),
+                2 => format!("p\\{c}q"),
+                _ => format!("\\{c}x"),
+            };
+            let bare = l.content.trim_end().ends_with(':');
+            l.content.push_str(if bare { " " } else { ", " });
+            l.content.push_str(&member);
+        }
+    }
     // A CR before an empty LF line is one CRLF on disk, not two lines: give
     // that empty line the CR too, so each generated line is a physical one.
     for n in 1..lines.len() {
@@ -265,6 +291,10 @@ pub fn cases(seed: u64, count: usize) -> Vec<Case> {
 /// One alias declaration as the parser reads its own line.
 pub struct Decl {
     pub names: Vec<String>,
+    /// Each member's rendered spelling, the union's deduplication key
+    /// (SPEC §5.1): a plain member's own bytes, escapes included, else its
+    /// name.
+    pub spellings: Vec<String>,
     pub end: &'static str,
     pub quoted: Option<String>,
 }
@@ -342,7 +372,7 @@ pub fn drawer_leftover(case: &Case) -> bool {
         header_entries(&case.src, case.org),
     );
     let alias = |e: &Entry| tine_core::page_header::is_alias_key(&e.key);
-    let members = |e: &Entry| tine_core::property_refs::linkable_names(&e.value, case.org);
+    let members = |e: &Entry| spellings(&e.value, case.org);
     let all: Vec<_> = target
         .iter()
         .map(|e| (false, e))
@@ -405,10 +435,34 @@ pub fn retained_in_drawer(case: &Case) -> bool {
         .is_some_and(|e| e.drawer)
 }
 
+/// Two member spellings with different bytes that read as one name (`C#`,
+/// `C\#`): §5.1 keeps both, Native15c rejects the survivor
+/// (`mergeBodyOccurrences`; model question Q8 of RECEIPT-cm-b4-fix5).
+pub fn same_name_spellings(case: &Case) -> bool {
+    let mut seen = BTreeMap::<String, String>::new();
+    decls(&case.dst, case.org)
+        .into_iter()
+        .chain(decls(&case.src, case.org))
+        .flat_map(|d| d.names.into_iter().zip(d.spellings))
+        .any(|(name, spelling)| seen.entry(name).or_insert(spelling.clone()) != &spelling)
+}
+
 /// lsdoc's debug-build span tripwire on a CRLF quote holding an empty drawer
 /// and a spaced tag (follow-up, not a merge defect: rendering such a block
 /// trips it too).
 pub const LSDOC_TRIPWIRE: &str = "OriginCursor queried backwards";
+
+/// A value's member spellings, in [`Decl::spellings`]'s sense.
+pub fn spellings(value: &str, org: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    tine_core::property_refs::for_each_linkable_member(value, org, |name, range, plain| {
+        out.push(match range.filter(|_| plain) {
+            Some(r) => value[r].to_owned(),
+            None => name,
+        })
+    });
+    out
+}
 
 pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
     header_entries(lines, org)
@@ -418,6 +472,7 @@ pub fn decls(lines: &[GenLine], org: bool) -> Vec<Decl> {
             let trimmed = value.trim();
             Decl {
                 names: tine_core::property_refs::linkable_names(&value, org),
+                spellings: spellings(&value, org),
                 end: lines[line].end,
                 quoted: (trimmed.len() > 1 && trimmed.starts_with('"') && trimmed.ends_with('"'))
                     .then(|| trimmed.to_owned()),
@@ -457,9 +512,12 @@ pub fn expected(case: &Case) -> Expected {
     let target = decls(&case.dst, case.org);
     let source = decls(&case.src, case.org);
     let mut aliases = Vec::new();
-    for name in target.iter().chain(&source).flat_map(|d| &d.names) {
-        if !aliases.contains(name) {
-            aliases.push(name.clone());
+    let mut seen = std::collections::HashSet::new();
+    for d in target.iter().chain(&source) {
+        for (name, spelling) in d.names.iter().zip(&d.spellings) {
+            if seen.insert(spelling) {
+                aliases.push(name.clone());
+            }
         }
     }
     Expected {
@@ -581,9 +639,17 @@ fn count(haystack: &str, needle: &str) -> usize {
         .count()
 }
 
+/// Tag marks: a `#` opening a token. A `#` inside a plain member (`C#`, an
+/// escaped `\#`) is member text, which §5.1 deduplicates with its member.
 fn hashes(text: &str) -> usize {
     text.match_indices('#')
         .filter(|(at, _)| !text[at + 1..].starts_with('+'))
+        .filter(|(at, _)| {
+            text[..*at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| c.is_whitespace() || c == ',')
+        })
         .count()
 }
 

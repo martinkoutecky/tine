@@ -52,17 +52,21 @@ pub fn plain_segments(nodes: &[Inline], out: &mut Vec<String>) {
 /// Quoted values have no references. Cost O(value bytes), no I/O.
 pub fn linkable_names(value: &str, is_org: bool) -> Vec<String> {
     let mut names = Vec::new();
-    for_each_linkable_member(value, is_org, |name, _| names.push(name));
+    for_each_linkable_member(value, is_org, |name, _, _| names.push(name));
     names
 }
 
-/// Visit native members and their complete token ranges, including wrappers.
-/// Ranges are absent when the parser cannot map decoded text to source bytes.
-/// Names share the same producer as [`linkable_names`]. O(value bytes), no I/O.
+/// Visit native members, each with its source byte range in `value` and
+/// whether it is a plain member. A reference's range is its complete token,
+/// wrappers included. A plain member's range is exactly the bytes its name
+/// was decoded from, Markdown escapes included (`C\#` reads `C#`), from the
+/// parser's text-to-source map. Ranges are absent when the parser cannot map
+/// decoded text to source bytes. Names share the same producer as
+/// [`linkable_names`]. O(value bytes), no I/O.
 pub fn for_each_linkable_member(
     value: &str,
     is_org: bool,
-    mut visit: impl FnMut(String, Option<Range<usize>>),
+    mut visit: impl FnMut(String, Option<Range<usize>>, bool),
 ) {
     let leading = value.len() - value.trim_start().len();
     let value = value.trim();
@@ -82,25 +86,131 @@ pub fn for_each_linkable_member(
         };
         ref_from_inline(&node, &mut names);
         for name in names.drain(..) {
-            visit(name, token.clone());
+            visit(name, token.clone(), false);
         }
-        if let Inline::Plain { text, span, .. } = node {
-            let start = span
-                .filter(|s| value.get(s.0..s.1) == Some(text.as_str()))
-                .map(|s| leading + s.0);
+        if let Inline::Plain {
+            text,
+            span,
+            span_map,
+        } = node
+        {
+            // lsdoc keeps the segment type crate-private; its fields are public.
+            let map: Option<Vec<_>> = span_map.map(|m| m.iter().map(|s| (s.0, s.1, s.2)).collect());
+            let source = PlainSource::new(value, &text, span, map.as_deref());
+            let mut source = source.map(|s| (s, 0));
             let mut at = 0;
             for segment in text.split(crate::block_regions::is_linkable_property_separator) {
                 let name = segment.trim();
                 if !name.is_empty() {
                     let offset = at + segment.len() - segment.trim_start().len();
+                    let range = source
+                        .as_mut()
+                        .and_then(|(s, cursor)| s.range(offset..offset + name.len(), cursor));
                     visit(
                         name.to_owned(),
-                        start.map(|s| s + offset..s + offset + name.len()),
+                        range.map(|r| leading + r.start..leading + r.end),
+                        true,
                     );
                 }
                 at += segment.len();
                 at += text[at..].chars().next().map_or(0, char::len_utf8);
             }
         }
+    }
+}
+
+/// Where a plain node's decoded text came from in the parsed value.
+enum PlainSource<'a> {
+    /// The text is its source slice, starting here.
+    Verbatim(usize),
+    /// The parser's segments `(text offset, source offset, length)`, in order;
+    /// bytes outside them (an escape's backslash) belong to no text byte.
+    Mapped(usize, &'a [(usize, usize, usize)]),
+}
+
+impl<'a> PlainSource<'a> {
+    fn new(
+        value: &str,
+        text: &str,
+        span: Option<lsdoc::ast::Span>,
+        map: Option<&'a [(usize, usize, usize)]>,
+    ) -> Option<Self> {
+        let span = span?;
+        if value.get(span.0..span.1) == Some(text) {
+            return Some(Self::Verbatim(span.0));
+        }
+        map.map(|map| Self::Mapped(span.0, map))
+    }
+
+    /// Source bytes of decoded text bytes `range` (non-empty, after any
+    /// earlier range): from the end of the byte before it (the node start
+    /// for the first) through the end of its last byte, so a leading escape
+    /// is included. `cursor` only moves forward: O(1) amortized per call.
+    fn range(&self, range: Range<usize>, cursor: &mut usize) -> Option<Range<usize>> {
+        let (start, map) = match self {
+            Self::Verbatim(start) => return Some(start + range.start..start + range.end),
+            Self::Mapped(start, map) => (*start, *map),
+        };
+        let mut end_of = |byte: usize| {
+            while map.get(*cursor).is_some_and(|s| s.0 + s.2 <= byte) {
+                *cursor += 1;
+            }
+            map.get(*cursor)
+                .filter(|s| s.0 <= byte)
+                .map(|s| s.1 + byte - s.0 + 1)
+        };
+        let from = match range.start {
+            0 => start,
+            byte => end_of(byte - 1)?,
+        };
+        Some(from..end_of(range.end - 1)?)
+    }
+}
+
+#[cfg(test)]
+mod member_range_tests {
+    use super::for_each_linkable_member;
+
+    fn members(value: &str, org: bool) -> Vec<(String, Option<&str>, bool)> {
+        let mut out = Vec::new();
+        for_each_linkable_member(value, org, |name, range, plain| {
+            out.push((name, range.map(|r| &value[r]), plain))
+        });
+        out
+    }
+
+    #[test]
+    fn plain_members_carry_the_bytes_the_parser_decoded_them_from() {
+        let m = |name: &str, raw: &str| (name.to_owned(), Some(raw.to_owned()), true);
+        let owned = |v: Vec<(String, Option<&str>, bool)>| {
+            v.into_iter()
+                .map(|(n, r, p)| (n, r.map(str::to_owned), p))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(owned(members("C\\#", false)), [m("C#", "C\\#")]);
+        assert_eq!(
+            owned(members("foo\\*bar", false)),
+            [m("foo*bar", "foo\\*bar")]
+        );
+        assert_eq!(
+            owned(members(" a, \\#x, b\\,c, x\\\\", false)),
+            [
+                m("a", "a"),
+                m("#x", "\\#x"),
+                m("b", "b"),
+                m("c", "c"),
+                m("x\\", "x\\\\")
+            ]
+        );
+        // Org keeps the backslash: the bytes are the name.
+        assert_eq!(owned(members("C\\#", true)), [m("C\\#", "C\\#")]);
+        // A reference's range is its whole token.
+        assert_eq!(
+            owned(members("[[C\\#]], b", false)),
+            [
+                ("C#".to_owned(), Some("[[C\\#]]".to_owned()), false),
+                m("b", "b")
+            ]
+        );
     }
 }

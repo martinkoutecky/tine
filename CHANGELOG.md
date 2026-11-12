@@ -72,6 +72,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Pages whose lines end in a lone CR (alone or mixed with LF and CRLF) can be merged in Markdown and Org, keeping every line's own ending; before, the merge refused, or kept the alias line out of the header or put the source body first (REG-CM-MERGE-LONE-CR).
 - Page merges no longer turn a CRLF survivor's own alias line into LF or add LF-only Markdown lines to a CRLF page, and accept a page with a wholly quoted or empty alias value (REG-CM-MERGE-LINE-ENDINGS, REG-CM-MERGE-MEMBERLESS-ALIAS).
 - Page merges accept retained aliases with duplicate wrapped, tag or unusually spaced members, and source property headers with children, preserving protected text and child depth (REG-CM-MERGE-RETAINED-ALIAS-DUPLICATES, REG-CM-MERGE-SOURCE-HEADER-CHILDREN).
+- A page merge or rename that would write a page too large for Tine to open again is refused before anything is written, and pages whose aliases use a Markdown backslash escape such as `alias:: C\#` can be merged, keeping the escape (REG-CM-MERGE-UNOPENABLE-SURVIVOR, REG-CM-MERGE-ESCAPED-ALIAS).
 - Merging pages keeps equal clashing header properties, blank header lines, original body layout and mixed line endings (REG-CM-MERGE-COMPLETE-TEXT).
 - Merging Org pages keeps the survivor's title in Logseq by containing leftover source directives as body text (REG-CM-ORG-MERGE-DIRECTIVE-TITLE).
 - Saving an empty merge survivor again keeps the old source title as block text and preserves the survivor's name (REG-CM-MERGE-SAVE-CLOSURE).

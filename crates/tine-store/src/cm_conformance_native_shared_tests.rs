@@ -118,23 +118,20 @@ pub fn decorate(file: &mut Value, config: &Config) {
         let projections = tine_core::page_properties::pre_block_projections(pre, org);
         let split =
             tine_core::page_properties::preamble_content_range(pre, org).map_or(first, |r| {
-                // The reader normalizes Markdown CRLF. Convert its parser offset
-                // to physical bytes; Org preambles retain their original endings.
-                if org {
-                    r.start
-                } else {
-                    let mut lf = 0;
-                    for (at, c) in text[..first].char_indices() {
-                        if lf == r.start {
-                            return at;
-                        }
-                        // A CRLF's CR is dropped; a lone CR reads as LF.
-                        if !text[at..].starts_with("\r\n") {
-                            lf += c.len_utf8();
-                        }
+                // The reader normalizes CRLF in both formats
+                // (REG-ORG-CRLF-EMPTY-HEADLINE). Convert its parser offset to
+                // physical bytes.
+                let mut lf = 0;
+                for (at, c) in text[..first].char_indices() {
+                    if lf == r.start {
+                        return at;
                     }
-                    first
+                    // A CRLF's CR is dropped; a lone CR reads as LF.
+                    if !text[at..].starts_with("\r\n") {
+                        lf += c.len_utf8();
+                    }
                 }
+                first
             });
         let count = projections.len();
         for (i, (kind, block)) in projections.into_iter().enumerate() {

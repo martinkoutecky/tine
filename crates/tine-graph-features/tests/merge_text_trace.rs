@@ -589,7 +589,17 @@ fn preamble_prose_keeps_its_body_row_through_merge_and_saves() {
         pages::merge_pages(&store, &host, &source, &target).unwrap();
         let id = tine_core::model::PageId::from(target.as_str());
         let bytes = fs::read_to_string(dir.path().join(&target)).unwrap();
-        let raw = |s: &str| format!("{s}{}", if org && ending == "\r\n" { "\r" } else { "" });
+        // Both models are LF-canonical (REG-ORG-CRLF-EMPTY-HEADLINE); the
+        // file keeps its own endings.
+        let raw = |s: &str| s.to_owned();
+        assert!(
+            bytes.contains(&format!("target prose{ending}")),
+            "{bytes:?}"
+        );
+        assert!(
+            bytes.contains(&format!("{{{{query [[A]]}}}}{ending}")),
+            "{bytes:?}"
+        );
         for _ in 0..2 {
             let loaded = store.page(&id).unwrap();
             assert_eq!(loaded.doc.blocks[0].raw, raw("target prose"));
@@ -1526,4 +1536,215 @@ fn org_drawer_merges_the_model_does_not_settle_refuse_unchanged() {
         let error_text = valid_merge(&src, &dst, true, |_, _| {}).unwrap_err();
         assert!(error_text.ends_with(error), "{error_text}");
     }
+}
+
+/// Graph with `files` in `pages/`, a host, and a snapshot check that every
+/// file is byte-for-byte unchanged and still opens.
+fn unchanged_after(
+    files: &[(&str, String)],
+    operation: impl FnOnce(&Arc<Store>, &tine_store::PageHost) -> std::io::Result<()>,
+) -> std::io::Error {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    for (name, text) in files {
+        fs::write(dir.path().join("pages").join(name), text).unwrap();
+    }
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let ids: Vec<_> = files
+        .iter()
+        .map(|(name, _)| tine_core::model::PageId::from(format!("pages/{name}").as_str()))
+        .collect();
+    for id in &ids {
+        store.page(id).expect("every input page opens");
+    }
+    let error = operation(&store, &host).expect_err("an output the store cannot open is refused");
+    // A host operation that could not confirm in time keeps running: wait
+    // for it to publish or give up, then restart and look.
+    let changed = || {
+        files.iter().any(|(name, text)| {
+            fs::read(dir.path().join("pages").join(name))
+                .ok()
+                .as_deref()
+                != Some(text.as_bytes())
+        })
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    while error.kind() == std::io::ErrorKind::TimedOut
+        && !changed()
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    drop(host);
+    drop(store);
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    for ((name, text), id) in files.iter().zip(&ids) {
+        let now = fs::read(dir.path().join("pages").join(name)).unwrap_or_default();
+        assert!(
+            now == text.as_bytes(),
+            "{name} changed ({} bytes): {error}",
+            now.len()
+        );
+        store.page(id).expect("every page still opens");
+    }
+    drop(host);
+    error
+}
+
+#[test]
+fn a_merge_never_publishes_a_survivor_the_store_cannot_open() {
+    let _guard = crate::integration_lock();
+    // Each page opens; together they exceed the page size limit.
+    let half = tine_store::PARSE_INPUT_MAX_BYTES as usize / 2 + 1024;
+    let page = |name: &str| format!("- {name} {}\n", "x".repeat(half));
+    let files = [("src.md", page("source")), ("dst.md", page("target"))];
+    let error = unchanged_after(&files, |store, host| {
+        pages::merge_pages(store, host, "pages/src.md", "pages/dst.md")
+    });
+    assert!(error.to_string().contains("byte parse limit"), "{error}");
+    let error = unchanged_after(&files, |store, host| {
+        pages::rename_page_as(
+            store,
+            host,
+            "src",
+            "dst",
+            None,
+            pages::RenameChoice::MergeInto("pages/dst.md"),
+            &[],
+        )
+        .map(drop)
+    });
+    assert!(error.to_string().contains("byte parse limit"), "{error}");
+}
+
+#[test]
+fn a_rename_never_publishes_a_page_the_store_cannot_open() {
+    let _guard = crate::integration_lock();
+    // A rename's growth carries a page across the size limit: a referrer
+    // (rewritten in place) and the renamed page itself (moved and rewritten).
+    let long = "n".repeat(200);
+    let refs = "[[a]] ".repeat(64);
+    let filler = |used: usize| "x".repeat(tine_store::PARSE_INPUT_MAX_BYTES as usize - used - 16);
+    let body = format!("- {refs}\n- ");
+    let referrer = format!("{body}{}\n", filler(body.len()));
+    for files in [
+        vec![("a.md", "- a\n".to_string()), ("r.md", referrer.clone())],
+        vec![("a.md", referrer)],
+    ] {
+        let error = unchanged_after(&files, |store, host| {
+            pages::rename_page_expected(store, host, "a", &long, None)
+        });
+        assert!(error.to_string().contains("byte parse limit"), "{error}");
+    }
+}
+
+/// Markdown decodes a backslash before ASCII punctuation in a plain alias
+/// member (`C\#` is the alias `C#`); Org keeps the backslash. A member moves
+/// with its own bytes, escapes included, deduplicates by those bytes (SPEC
+/// §5.1) and reads back as the parser's decoded name.
+#[test]
+fn escaped_alias_members_move_with_their_bytes() {
+    let _guard = crate::integration_lock();
+    let punctuation: String = (b'!'..=b'~')
+        .filter(u8::is_ascii_punctuation)
+        .map(char::from)
+        .collect();
+    let mut cases: Vec<(String, String, String, Vec<String>)> = vec![
+        (
+            "C\\#".into(),
+            "kept".into(),
+            "kept, C\\#".into(),
+            vec!["kept".into(), "C#".into()],
+        ),
+        (
+            "foo\\*bar".into(),
+            "kept".into(),
+            "kept, foo\\*bar".into(),
+            vec!["kept".into(), "foo*bar".into()],
+        ),
+        (
+            "\\#x, a\\[b".into(),
+            "C\\#".into(),
+            "C\\#, \\#x, a\\[b".into(),
+            vec!["C#".into(), "#x".into(), "a[b".into()],
+        ),
+        (
+            "C\\#, b".into(),
+            "C\\#".into(),
+            "C\\#, b".into(),
+            vec!["C#".into(), "b".into()],
+        ),
+        (
+            "b".into(),
+            "x\\\\, C\\#, C\\#".into(),
+            "x\\\\, C\\#, b".into(),
+            vec!["x\\".into(), "C#".into(), "b".into()],
+        ),
+        // Different bytes are different spellings, even when they read the same.
+        (
+            "C\\#".into(),
+            "C#".into(),
+            "C#, C\\#".into(),
+            vec!["C#".into(), "C#".into()],
+        ),
+    ];
+    let mut other = Vec::new();
+    for c in punctuation.chars() {
+        // Only where the parser reads one decoded plain member.
+        let member = format!("p\\{c}q");
+        if tine_core::property_refs::linkable_names(&member, false) != [format!("p{c}q")] {
+            other.push(member);
+            continue;
+        }
+        cases.push((
+            format!("p\\{c}q"),
+            "kept".into(),
+            format!("kept, p\\{c}q"),
+            vec!["kept".into(), format!("p{c}q")],
+        ));
+    }
+    let mut failures = Vec::new();
+    for (source, target, field, aliases) in &cases {
+        let src = format!("alias:: {source}\n- source\n");
+        let dst = format!("alias:: {target}\n- target\n");
+        let result = valid_merge(&src, &dst, false, |doc, proof| {
+            assert!(
+                proof.text.starts_with(&format!("alias:: {field}\n")),
+                "{source:?} into {target:?}: {:?}",
+                proof.text
+            );
+            assert_eq!(
+                &header_aliases(doc, false),
+                aliases,
+                "{source:?} into {target:?}"
+            );
+        });
+        if let Err(error) = result {
+            failures.push(error);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    // A decoded separator splits the member (OG splits the decoded text).
+    assert_eq!(
+        other,
+        ["p\\,q"],
+        "escapes the parser does not read as one member"
+    );
+    // Org keeps the backslash: the same bytes are the name.
+    valid_merge(
+        "#+alias: C\\#\n* source\n",
+        "#+alias: kept\n* target\n",
+        true,
+        |doc, proof| {
+            assert!(
+                proof.text.starts_with("#+alias: kept, C\\#\n"),
+                "{:?}",
+                proof.text
+            );
+            assert_eq!(header_aliases(doc, true), ["kept", "C\\#"]);
+        },
+    )
+    .unwrap();
 }
