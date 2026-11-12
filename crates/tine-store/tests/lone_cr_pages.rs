@@ -274,3 +274,247 @@ fn mixed_crlf_and_cr_org_page_keeps_each_untouched_terminator() {
     });
     assert_eq!(edited, original.replace("* three", "* three!"));
 }
+
+/// A CRLF org page with the constructs that can sit next to a line ending: page
+/// keywords, a blank line, a body and a list item, a keyword-only headline, a
+/// property drawer, and an empty headline (`*`, as OG writes an empty block)
+/// with a tags-only child.
+const ORG_CENSUS: &[&str] = &[
+    "#+title: Fix",
+    "#+filetags: :x:",
+    "",
+    "* one",
+    "body line",
+    "- item",
+    "",
+    "** child",
+    "* TODO",
+    "* two",
+    ":PROPERTIES:",
+    ":id: 6679-abc",
+    ":END:",
+    "*",
+    "** :tag:",
+    "* three",
+];
+
+fn census_source(ending: &str) -> String {
+    ORG_CENSUS
+        .iter()
+        .map(|line| format!("{line}{ending}"))
+        .collect()
+}
+
+#[test]
+fn crlf_org_page_with_an_empty_headline_is_editable_like_its_lf_twin() {
+    let _integration_guard = crate::integration_lock();
+    let lf = Page::at("pages/p.org", &census_source("\n"));
+    let crlf = Page::at("pages/p.org", &census_source("\r\n"));
+    let (lf_doc, crlf_doc) = (lf.doc(), crlf.doc());
+    assert!(!lf_doc.read_only);
+    assert!(!crlf_doc.read_only, "a CRLF org page with `*` is editable");
+    assert_eq!(shape(&crlf_doc), shape(&lf_doc));
+    assert_eq!(crlf_doc.pre_block, lf_doc.pre_block);
+    assert!(
+        shape(&crlf_doc).iter().all(|(raw, _)| !raw.contains('\r')),
+        "no stray CR in the model: {:?}",
+        shape(&crlf_doc)
+    );
+    // A CRLF file Tine cannot reproduce stays read-only, like its LF twin.
+    let skipped = Page::at("pages/p.org", "* a\r\n*** c\r\n");
+    assert!(skipped.doc().read_only);
+}
+
+#[test]
+fn crlf_and_lf_org_pages_keep_their_bytes_through_saves() {
+    let _integration_guard = crate::integration_lock();
+    for e in ["\n", "\r\n"] {
+        let original = census_source(e);
+        let page = Page::at("pages/p.org", &original);
+        for _ in 0..3 {
+            assert_eq!(page.save(EditKind::ReplacePage, |_| {}), original, "{e:?}");
+        }
+        let edited = page.save(EditKind::SaveBlock, |doc| {
+            doc.blocks[4].raw = "three!".into();
+        });
+        let mut want = original.replace("* three", "* three!");
+        assert_eq!(edited, want, "{e:?}");
+        let filled = page.save(EditKind::SaveBlock, |doc| {
+            doc.blocks[3].raw = "filled".into();
+        });
+        want = want.replace(&format!("{e}*{e}"), &format!("{e}* filled{e}"));
+        assert_eq!(filled, want, "{e:?}: the empty headline is editable");
+        // A line typed into a block takes the file's convention (K01a).
+        let typed = page.save(EditKind::SaveBlock, |doc| {
+            doc.blocks[0].raw = doc.blocks[0]
+                .raw
+                .replace("body line", "body line\nsecond body line");
+        });
+        want = want.replace(
+            &format!("body line{e}"),
+            &format!("body line{e}second body line{e}"),
+        );
+        assert_eq!(typed, want, "{e:?}");
+        let props = page.save(EditKind::SaveBlock, |doc| {
+            doc.pre_block = doc.pre_block.as_ref().map(|p| p.replace(":x:", ":x:y:"));
+        });
+        want = want.replace(":x:", ":x:y:");
+        assert_eq!(props, want, "{e:?}");
+
+        let page = Page::at("pages/p.org", &original);
+        let inserted = page.save(EditKind::InsertBlocks, |doc| {
+            doc.blocks.insert(4, block("new"));
+        });
+        assert_eq!(
+            inserted,
+            original.replace("* three", &format!("* new{e}* three")),
+            "{e:?}: a new block takes the file's convention"
+        );
+    }
+}
+
+#[test]
+fn crlf_org_page_without_a_final_terminator_keeps_its_last_line() {
+    let _integration_guard = crate::integration_lock();
+    let original = "* a\r\n*\r\n* b";
+    let page = Page::at("pages/p.org", original);
+    assert!(!page.doc().read_only);
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a!".into();
+    });
+    assert_eq!(edited, "* a!\r\n*\r\n* b");
+    let appended = page.save(EditKind::InsertBlocks, |doc| {
+        doc.blocks.push(block("d"));
+    });
+    assert_eq!(appended, "* a!\r\n*\r\n* b\r\n* d");
+    // A body still carrying CRLF (pasted text, a draft saved before the org
+    // model was LF-canonical) is written with single CRLF terminators.
+    let pasted = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a!\r\npasted\r".into();
+    });
+    assert_eq!(pasted, "* a!\r\npasted\r\n*\r\n* b\r\n* d");
+}
+
+/// Review r1 (DS-4): a block that moves keeps its own lines' terminators in a
+/// mixed-ending file; only edited and new lines take positional or convention
+/// endings. Duplicate block texts each keep their own.
+#[test]
+fn mixed_ending_org_page_keeps_moved_blocks_terminators() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\n* b\n* c\r\n");
+    let moved = page.save(EditKind::ReplacePage, |doc| doc.blocks.swap(0, 1));
+    assert_eq!(moved, "* b\n* a\r\n* c\r\n");
+
+    let page = Page::at("pages/p.org", "* x\r\n* x\n* y\r\n");
+    let front = page.save(EditKind::ReplacePage, |doc| {
+        let y = doc.blocks.remove(2);
+        doc.blocks.insert(0, y);
+    });
+    assert_eq!(front, "* y\r\n* x\r\n* x\n");
+
+    // A moved block's body lines move with it; an indent change keeps them too.
+    let page = Page::at("pages/p.org", "* a\r\nbody\n* b\n* c\r\n");
+    let nested = page.save(EditKind::ReplacePage, |doc| {
+        let a = doc.blocks.remove(0);
+        doc.blocks[0].children.push(a);
+    });
+    assert_eq!(nested, "* b\n** a\r\nbody\n* c\r\n");
+}
+
+/// The Markdown sibling of the review r1 case.
+#[test]
+fn mixed_ending_markdown_page_keeps_moved_blocks_terminators() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::new("- a\r\n- b\n- c\r\n");
+    let moved = page.save(EditKind::ReplacePage, |doc| doc.blocks.swap(0, 1));
+    assert_eq!(moved, "- b\n- a\r\n- c\r\n");
+}
+
+/// Review r2: inside a changed block, an untouched line keeps its own
+/// terminator and an inserted line takes the file's convention; a pasted lone
+/// `\r` in block text is a line break that shifts no other block's endings.
+#[test]
+fn mixed_ending_org_page_keeps_untouched_lines_of_a_changed_block() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\nbody\n* b\r\n");
+    let inserted = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\nnew\nbody".into();
+    });
+    assert_eq!(inserted, "* a\r\nnew\r\nbody\n* b\r\n");
+}
+
+#[test]
+fn mixed_ending_org_page_with_a_pasted_lone_cr_keeps_other_blocks_terminators() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\n* b\n* c\r\n");
+    let pasted = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\rpasted".into();
+    });
+    assert_eq!(pasted, "* a\r\npasted\r\n* b\n* c\r\n");
+}
+
+/// Every untouched line of a changed pre-block or block keeps its own ending,
+/// wherever it sits; an inserted line takes the convention, an edited one the
+/// ending of the line it replaces.
+#[test]
+fn mixed_ending_org_page_keeps_each_untouched_line_of_a_changed_preamble() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "#+title: T\r\n#+filetags: :x:\n* a\r\n");
+    let directive = page.save(EditKind::SaveBlock, |doc| {
+        doc.pre_block = Some("#+title: T\n#+author: A\n#+filetags: :x:".into());
+    });
+    assert_eq!(
+        directive,
+        "#+title: T\r\n#+author: A\r\n#+filetags: :x:\n* a\r\n"
+    );
+}
+
+#[test]
+fn mixed_ending_org_page_keeps_each_untouched_line_of_a_changed_block() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\nx\ny\r\nz\n* b\r\n");
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\nnew\nx\ny\nz!".into();
+    });
+    assert_eq!(edited, "* a\r\nnew\r\nx\ny\r\nz!\n* b\r\n");
+}
+
+/// A block too long for the line LCS cap still keeps each untouched line's own
+/// terminator (review r4).
+#[test]
+fn mixed_ending_org_page_keeps_untouched_lines_of_a_long_changed_block() {
+    let _integration_guard = crate::integration_lock();
+    let ending = |i: usize| if i % 2 == 0 { "\n" } else { "\r\n" };
+    let body: String = (0..100).map(|i| format!("line{i}{}", ending(i))).collect();
+    let page = Page::at("pages/p.org", &format!("* a\r\n{body}* b\r\n"));
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        let mut lines: Vec<String> = (0..100).map(|i| format!("line{i}")).collect();
+        lines.insert(0, "new".into());
+        *lines.last_mut().unwrap() = "line99!".into();
+        doc.blocks[0].raw = format!("a\n{}", lines.join("\n"));
+    });
+    let kept: String = (0..99).map(|i| format!("line{i}{}", ending(i))).collect();
+    assert_eq!(edited, format!("* a\r\nnew\r\n{kept}line99!\r\n* b\r\n"));
+}
+
+/// A block draft's own trailing newline is folded into the file's trailing run
+/// by the serializer, so the untouched blank lines at end of file keep their
+/// terminators (review r5 and the develop review).
+#[test]
+fn mixed_ending_org_page_keeps_its_eof_blank_lines_when_the_last_block_draft_ends_in_a_newline() {
+    let _integration_guard = crate::integration_lock();
+    for (source, draft, expected) in [
+        ("* a\r\n\n\r\n", "a!\n", "* a!\r\n\n\r\n"),
+        ("* a\r\n* b\n\n", "b\n", "* a\r\n* b\n\n"),
+    ] {
+        let page = Page::at("pages/p.org", source);
+        let edited = page.save(EditKind::SaveBlock, |doc| {
+            let last = doc.blocks.len() - 1;
+            doc.blocks[last].raw = draft.into();
+        });
+        assert_eq!(
+            edited, expected,
+            "{source:?} with the last block saved as {draft:?}"
+        );
+    }
+}
