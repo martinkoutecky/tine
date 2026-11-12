@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Org pages: Linked References now mark a link inside emphasis (`*[[page]]*`) or inside a `#[[…]]` tag where it stands, also inside quote and other `#+BEGIN_…` blocks, instead of missing it or marking the start of the block (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 - Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).
 - An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).
