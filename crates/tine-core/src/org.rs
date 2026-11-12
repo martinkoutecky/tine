@@ -15,7 +15,7 @@
 //! with every line terminator read as `\n` (`doc::normalize_line_endings`, the
 //! one owner Markdown shares), `serialize_org_with(parse_org(content), trailing)
 //! == that text` byte-for-byte (see [`org_editable`]); the store writer then
-//! restores each line's own terminator (`line_endings::restore_org`). Files that fail that check are loaded
+//! restores each line's own terminator (`tine-store` `layout_retention::restore_org`). Files that fail that check are loaded
 //! **read-only** — Tine never writes org it cannot reproduce exactly. Headline
 //! detection is lsdoc's (`crate::outline`): a `*`-line inside a closed
 //! `#+BEGIN_…`/`#+END_…` block is content, as mldoc reads it for OG. The
@@ -145,7 +145,7 @@ fn emit_org(block: &DocBlock, level: usize, out: &mut Vec<String>) {
 /// Serialize a [`Document`] to org text, reproducing `existing`'s
 /// trailing-newline run (default one newline for a new file). The org analogue
 /// of `doc::serialize_with(&doc, &SerializeOpts::detect(existing))`. Every line
-/// ends in `\n`; the store writer (`line_endings::restore_org`) puts the file's
+/// ends in `\n`; the store writer (`tine-store` `layout_retention::restore_org`) puts the file's
 /// own terminators back.
 pub fn serialize_org_detect(doc: &Document, existing: Option<&str>) -> String {
     serialize_org_with(

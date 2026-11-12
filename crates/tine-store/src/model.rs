@@ -4533,8 +4533,8 @@ impl Graph {
                 // editor blocks edits), but defend the write path too — a stale
                 // editor or a direct save must not rewrite it. The org model is
                 // LF-canonical and its bodies are verbatim, so the serializer is
-                // byte-exact up to line terminators, which `restore_org` puts
-                // back line by line (K01a).
+                // byte-exact up to line terminators, which
+                // `layout_retention::restore_org` puts back line by line (K01a).
                 if let Some(e) = existing {
                     if tine_core::org::serialize_org_detect(old.as_ref().unwrap(), Some(e))
                         != tine_core::doc::normalize_line_endings(e)
@@ -4546,7 +4546,12 @@ impl Graph {
                     }
                 }
                 let content = tine_core::org::serialize_org_detect(&doc, existing);
-                let content = line_endings::restore_org(content, existing);
+                let content = match existing.zip(old.as_ref()) {
+                    Some((source, old)) => {
+                        layout_retention::restore_org(content, &doc, source, old)
+                    }
+                    None => content,
+                };
                 let parsed = parse_doc(&path, &content);
                 (content, parsed)
             }

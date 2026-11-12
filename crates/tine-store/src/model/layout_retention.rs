@@ -1,4 +1,5 @@
-//! Per-block physical retention: a Markdown save rewrites only what it changed.
+//! Per-block physical retention: a Markdown save rewrites only what it changed,
+//! and an Org save keeps each reused line's own terminator ([`restore_org`]).
 //!
 //! The DTO carries each block's semantic text, not the file's layout: base
 //! indentation offsets, depth jumps, continuation indentation, whitespace-only
@@ -106,6 +107,88 @@ pub(super) fn serialize(
             &doc::serialize_with(doc, opts),
         ))
     .then_some((result, reparsed))
+}
+
+/// Give an Org save's LF-separated `serialized` text (`org::serialize_org_detect`
+/// of `doc`) the line terminators of `source` (K01a). `old` is `source` parsed:
+/// the Org firewall has proved `serialized`'s rule reproduces it, so `source`'s
+/// lines are `old`'s pre-block lines, then each block's lines in pre-order, then
+/// the trailing newline run. Blocks pair as Markdown's do ([`match_blocks`]): a
+/// block whose text is unchanged, wherever it moved and at whatever depth,
+/// keeps each of its lines' own terminators; a changed block takes the old
+/// terminators of the block it replaces line by line; a new line, and a reused
+/// line that was the file's unterminated last line, take the file's
+/// [`line_endings::convention`]. An unchanged pre-block keeps its own, a changed
+/// one positionally. LF-only sources are returned unchanged. Pure. Cost:
+/// O(lines) plus `match_blocks`' LCS over the changed middle of the block
+/// sequence (as a Markdown save).
+pub(super) fn restore_org(
+    serialized: String,
+    doc: &Document,
+    source: &str,
+    old: &Document,
+) -> String {
+    if !source.contains('\r') {
+        return serialized;
+    }
+    let (lines, ends) = line_endings::pieces(source);
+    let pre_len = |d: &Document| d.pre_block.as_ref().map_or(0, |p| p.split('\n').count());
+    let mut flat = Vec::new();
+    flatten(&old.roots, &mut flat);
+    let mut start = pre_len(old);
+    let olds: Vec<OldBlock> = flat
+        .iter()
+        .map(|block| {
+            let len = block.raw().split('\n').count();
+            start += len;
+            OldBlock {
+                raw: block.raw(),
+                start: start - len,
+                len,
+                bulleted: true,
+            }
+        })
+        .collect();
+    let old_content = start;
+    let mut news = Vec::new();
+    flatten(&doc.roots, &mut news);
+    let (keep, hint) = match_blocks(&olds, &news);
+
+    let new: Vec<&str> = serialized.split('\n').collect();
+    let mut origin: Vec<Option<usize>> = vec![None; new.len()];
+    let (new_pre, old_pre) = (pre_len(doc), pre_len(old));
+    for (k, slot) in origin.iter_mut().enumerate().take(new_pre) {
+        *slot = (k < old_pre).then_some(k);
+    }
+    let mut at = new_pre;
+    for (j, block) in news.iter().enumerate() {
+        let from = keep[j].or(hint[j]).map(|o| &olds[o]);
+        for k in 0..block.raw().split('\n').count() {
+            if let Some(slot) = origin.get_mut(at + k) {
+                *slot = from.filter(|o| k < o.len).map(|o| o.start + k);
+            }
+        }
+        at += block.raw().split('\n').count();
+    }
+    // The trailing newline run aligns with the old run from the end.
+    for (t, slot) in origin.iter_mut().enumerate().skip(at) {
+        *slot = (lines.len() + t)
+            .checked_sub(new.len())
+            .filter(|&i| i >= old_content);
+    }
+    let convention = line_endings::convention(Some(source));
+    let mut out = String::with_capacity(serialized.len() + new.len());
+    for (k, line) in new.iter().enumerate() {
+        out.push_str(line);
+        if k + 1 < new.len() {
+            out.push_str(
+                origin[k]
+                    .and_then(|i| ends.get(i).copied())
+                    .unwrap_or(convention),
+            );
+        }
+    }
+    out
 }
 
 /// mldoc's layout whitespace (tine-core `strip_layout_ws`): what lsdoc skips
@@ -463,5 +546,65 @@ impl Emitter<'_> {
                 (doc::continuation_raw(line, indent) == b[j]).then_some((j, start + k))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod org_terminator_tests {
+    use super::restore_org;
+    use tine_core::org::{parse_org, serialize_org_detect};
+
+    /// Save `edit` of `source`'s model the way the store does.
+    fn save(source: &str, edit: impl FnOnce(&mut tine_core::doc::Document)) -> String {
+        let old = parse_org(source);
+        let mut doc = old.clone();
+        edit(&mut doc);
+        restore_org(serialize_org_detect(&doc, Some(source)), &doc, source, &old)
+    }
+
+    #[test]
+    fn each_line_keeps_its_own_terminator() {
+        assert_eq!(
+            save("* a\n", |d| d.roots.push(d.roots[0].clone())),
+            "* a\n* a\n"
+        );
+        assert_eq!(save("* a\r\n", |_| {}), "* a\r\n");
+        assert_eq!(save("* a\r* b\r", |_| {}), "* a\r* b\r");
+        assert_eq!(
+            save("* a\r* b", |d| d.roots[0].set_raw("a!".to_string())),
+            "* a!\r* b"
+        );
+        let added = |d: &mut tine_core::doc::Document| {
+            let mut n = d.roots[0].clone();
+            n.set_raw("n".to_string());
+            d.roots.insert(1, n);
+        };
+        assert_eq!(save("* a\r\n* b\r\n", added), "* a\r\n* n\r\n* b\r\n");
+        assert_eq!(
+            save("* a\n* b\r", added),
+            "* a\n* n\r* b\r",
+            "convention: lone CR"
+        );
+        assert_eq!(
+            save("* a\n* b\r", |d| d.roots[0].set_raw("x".to_string())),
+            "* x\n* b\r",
+            "an edited line keeps its own terminator"
+        );
+        assert_eq!(save("* a\r\n*\r\n\r\n* b", |_| {}), "* a\r\n*\r\n\r\n* b");
+        assert_eq!(save("* a\r\r\n* b\n", |_| {}), "* a\r\r\n* b\n");
+    }
+
+    #[test]
+    fn a_moved_block_keeps_its_terminators() {
+        assert_eq!(
+            save("* a\r\n* b\n* c\r\n", |d| d.roots.swap(0, 1)),
+            "* b\n* a\r\n* c\r\n"
+        );
+        assert_eq!(
+            save("#+title: T\r\n\n* a\r\nbody\n* b\n\r\n", |d| d
+                .roots
+                .swap(0, 1)),
+            "#+title: T\r\n\n* b\n* a\r\nbody\n\r\n"
+        );
     }
 }
