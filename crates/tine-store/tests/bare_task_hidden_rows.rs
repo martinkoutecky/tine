@@ -619,3 +619,85 @@ fn r6_an_empty_headline_keeps_its_id_drawer_through_a_fold_and_a_schedule() {
     );
     assert_eq!(id_of(&graph).as_deref(), Some("x"), "{after:?}");
 }
+
+// R8 (review of c68ad5e4f): a title's trailing blanks and line terminator
+// belong to the headline, so a row added after it never splits the title line
+// and the task survives: Org, Markdown, a Markdown heading task, a trailing
+// space or tab, LF and CRLF.
+#[test]
+fn r8_org_bare_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() {
+    run_witnesses(&[(
+        "pages/o.org",
+        "* TODO \nbody\n",
+        &[0],
+        scheduled,
+        "* TODO \nSCHEDULED: <2026-11-12 Thu>\nbody\n",
+        &["TODO \nbody"],
+        &["TODO \nSCHEDULED: <2026-11-12 Thu>\nbody"],
+    )]);
+}
+
+#[test]
+fn r8_org_bare_task_with_a_trailing_tab_keeps_its_marker_through_a_schedule() {
+    run_witnesses(&[(
+        "pages/o.org",
+        "* TODO \t\nbody\n",
+        &[0],
+        scheduled,
+        "* TODO \t\nSCHEDULED: <2026-11-12 Thu>\nbody\n",
+        &["TODO \t\nbody"],
+        &["TODO \t\nSCHEDULED: <2026-11-12 Thu>\nbody"],
+    )]);
+}
+
+#[test]
+fn r8_org_crlf_bare_task_with_a_trailing_space_keeps_its_marker_through_an_id() {
+    run_witnesses(&[(
+        "pages/o.org",
+        "* TODO \r\nbody\r\n",
+        &[0],
+        || id(Some("x")),
+        "* TODO \r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\nbody\r\n",
+        &["TODO \nbody"],
+        &["TODO \n:PROPERTIES:\n:id: x\n:END:\nbody"],
+    )]);
+}
+
+#[test]
+fn r8_markdown_bare_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() {
+    run_witnesses(&[(
+        "pages/m.md",
+        "- TODO \n  body\n",
+        &[0],
+        scheduled,
+        "- TODO \n  SCHEDULED: <2026-11-12 Thu>\n  body\n",
+        &["TODO \nbody"],
+        &["TODO \nSCHEDULED: <2026-11-12 Thu>\nbody"],
+    )]);
+}
+
+#[test]
+fn r8_markdown_crlf_bare_task_with_a_trailing_tab_keeps_its_marker_through_a_schedule() {
+    run_witnesses(&[(
+        "pages/m.md",
+        "- TODO \t\r\n  body\r\n",
+        &[0],
+        scheduled,
+        "- TODO \t\r\n  SCHEDULED: <2026-11-12 Thu>\r\n  body\r\n",
+        &["TODO \t\nbody"],
+        &["TODO \t\nSCHEDULED: <2026-11-12 Thu>\nbody"],
+    )]);
+}
+
+#[test]
+fn r8_markdown_bare_heading_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() {
+    run_witnesses(&[(
+        "pages/m.md",
+        "- ## TODO \n  body\n",
+        &[0],
+        scheduled,
+        "- ## TODO \n  SCHEDULED: <2026-11-12 Thu>\n  body\n",
+        &["## TODO \nbody"],
+        &["## TODO \nSCHEDULED: <2026-11-12 Thu>\nbody"],
+    )]);
+}

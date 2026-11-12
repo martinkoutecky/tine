@@ -508,9 +508,9 @@ pub(crate) fn first_line_end(raw: &str) -> usize {
 /// lsdoc reads at the title position (`*` then `:PROPERTIES:`, `- id:: x`),
 /// where the block's metadata begins. Other nodes at the title position (a
 /// quote, `#+TITLE: x`) are the block's first line, so that line stays its
-/// title line. A CR at the
-/// very end of the raw is the block's own line terminator (a CRLF page keeps it;
-/// lsdoc reads a separate break), so it stays on the title's line.
+/// title line. A nonempty headline owns the rest of its line when only blanks
+/// follow (lsdoc ends a bare `TODO ` before its trailing blanks, and a CRLF
+/// page keeps each line's CR in the raw), so rows never split the title line.
 pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     let (Block::Bullet { span, .. } | Block::Heading { span, .. }) = blocks.first()? else {
         return None;
@@ -523,8 +523,14 @@ pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
     if at == block_lead(raw) && !drawer {
         return None;
     }
-    if !raw.is_char_boundary(at) || &raw[at..] == "\r" {
+    if !raw.is_char_boundary(at) {
         at = raw.len();
+    }
+    if at > block_lead(raw) {
+        let line_end = raw[at..].find('\n').map_or(raw.len(), |p| at + p + 1);
+        if raw[at..line_end].trim().is_empty() {
+            at = line_end;
+        }
     }
     (at != first_line_end(raw)).then_some(at)
 }
@@ -1020,13 +1026,22 @@ mod preparation_tests {
             "title\nbody",
             "\nTODO",
             "TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:",
+            // A title's trailing blanks and terminator are its own (R8).
+            "TODO \nbody",
+            "TODO \t\r\nbody",
+            "TODO \r",
             // A node at the title position is the title line.
             "#+TITLE: t\n:PROPERTIES:\n:id: x\n:END:",
             "> q\n:PROPERTIES:\n:id: x\n:END:",
         ] {
             assert_eq!(parse(raw, true).headline_end, None, "{raw:?}");
         }
-        for raw in ["#+TITLE: t\nid:: x", "> q\nid:: x"] {
+        for raw in [
+            "#+TITLE: t\nid:: x",
+            "> q\nid:: x",
+            "TODO \nbody",
+            "## TODO \r\nbody",
+        ] {
             assert_eq!(parse(raw, false).headline_end, None, "{raw:?}");
         }
         assert_eq!(
