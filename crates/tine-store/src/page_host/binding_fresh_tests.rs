@@ -685,6 +685,18 @@ impl Run<'_> {
                 "the watcher never drained\n{}",
                 self.log.join("\n")
             );
+            // The watcher hands a held page's change to the driver as a
+            // queued notice (`binding_launch.rs`, the forward): a state read
+            // alone can run before a busy driver applies it and miss the owed
+            // observation. A round trip through the driver's inbox answers
+            // only after every notice queued before it, as
+            // `PageHost::quiescent_for_tests` reads.
+            let caught_up = (live.host.driver.shared).read_by(Deadline::At(deadline), |_| ());
+            assert!(
+                caught_up.is_ok(),
+                "the driver never applied the watcher's notices\n{}",
+                self.log.join("\n")
+            );
             loop {
                 let (unsettled, wake) = {
                     let state = live.host.driver.shared.state_for_tests();
@@ -1010,6 +1022,69 @@ fn live_equals_fresh_under_mixed_host_and_watcher_sequences() {
 #[test]
 fn live_equals_fresh_under_mixed_host_and_poll_sequences() {
     run_all(crate::WatchMode::Poll, &[4, 5, 6], 10);
+}
+
+/// The barrier above, seed 4 Poll step 9 (a gate under load, 2026-11-12):
+/// with a conflict holding the host (so no lag check), an outside write of
+/// another held page reached the driver as a queued watcher notice the
+/// preempted driver had not applied, and the barrier read its state first.
+/// Here the driver pauses after an idle step, before reading its inbox,
+/// while the page is rewritten: the barrier must still see the change.
+#[test]
+fn the_barrier_waits_for_a_watcher_notice_the_driver_has_not_applied() {
+    use std::sync::atomic::Ordering;
+    let live = Live::watching(
+        &[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")],
+        crate::WatchMode::Poll,
+    );
+    live.submits_wait();
+    let (a, _) = live.open("pages/a.md");
+    let (b, page) = live.open("pages/b.md");
+    let id = live.submit(&b, "- mine\n", page.version, None).unwrap();
+    live.answer(&b, id);
+    fs::write(live.root.join(&b), "- theirs, longer\n").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let page_is = |key: &str, test: fn(&crate::page_host::Page) -> bool| {
+        let state = live.host.driver.shared.state_for_tests();
+        state.progress.host.pages.get(key).is_some_and(test)
+    };
+    while !page_is(&b, |page| page.conflict) {
+        assert!(Instant::now() < deadline, "b never reached its conflict");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let run = Run {
+        live: &live,
+        r: Rng::new(0),
+        open: vec![a.clone(), b],
+        created: 0,
+        renamed: 0,
+        log: Vec::new(),
+        counts: Counts::default(),
+    };
+    run.settle();
+    // Park the driver: kick it and wait for its idle step, after which it
+    // sleeps `plan_pause` without the state lock and without its inbox.
+    let shared = &live.host.driver.shared;
+    shared.plan_pause.store(3_000, Ordering::SeqCst);
+    let polls = shared.state_for_tests().polls;
+    shared.with_state_for_tests(|_| {});
+    while shared.state_for_tests().polls == polls {
+        std::thread::yield_now();
+    }
+    let rewrite = "- a rewritten outside\n";
+    let temp = live.root.join(".outside");
+    fs::write(&temp, rewrite).unwrap();
+    fs::rename(&temp, live.root.join(&a)).unwrap();
+    run.settle();
+    let held = page_is(&a, |page| {
+        page.buf.as_deref() == Some(&b"- a rewritten outside\n"[..])
+    });
+    shared.plan_pause.store(0, Ordering::SeqCst);
+    assert!(
+        held,
+        "the barrier passed before the host observed the rewrite"
+    );
+    live.host.stop();
 }
 
 /// Found by the harness above (seed 4, Notify and Poll): a store save that
