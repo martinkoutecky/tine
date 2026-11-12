@@ -108,13 +108,15 @@ try {
       }), { timeout: 10000, timeoutMsg: "zoomed block did not come into view" });
       if (method === "button") await browser.$('button[title="Go back"]').click();
       else await browser.keys(["Alt", "ArrowLeft"]);
-      const state = () => browser.execute(text => {
+      // The reading block by its id, not its whole text: a hovered bullet's tooltip is part of the row's text.
+      const label = before.text.match(/Reading row \d+$/)[0];
+      const state = () => browser.execute((id, label) => {
         const sc = document.querySelector(".main-content"), box = sc.getBoundingClientRect();
-        const row = [...sc.querySelectorAll(".ls-block > .block-main")].find(el => el.textContent === text);
-        const r = row?.getBoundingClientRect();
+        const row = sc.querySelector(`.ls-block[data-block-id="${id}"] > .block-main`);
+        const r = row?.textContent.endsWith(label) ? row.getBoundingClientRect() : undefined;
         return { zoom: !!sc.querySelector(".zoomed-page"), scroll: sc.scrollTop, height: sc.scrollHeight,
           visible: !!r && r.bottom > box.top && r.top < box.bottom, top: r?.top };
-      }, before.text);
+      }, before.id, label);
       let passed = true;
       try { await browser.waitUntil(async () => { const s = await state(); return !s.zoom && s.visible; },
         { timeout: 5000, interval: 100, timeoutMsg: `${stage}: reading position was lost` }); }
