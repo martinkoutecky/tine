@@ -16,7 +16,7 @@ vi.mock("../debug", async (importOriginal) => ({
   },
 }));
 
-import { EDITOR_FOCUS_MISS_INTERVAL_MS, endEdit, registerEditEntryGuard, registerEditExitGuard, startEditing } from "../editorController";
+import { EDITOR_FOCUS_MISS_INTERVAL_MS, endEdit, registerEditEntryGuard, registerEditExitGuard, registerHistoryEditorTarget, startEditing } from "../editorController";
 import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
@@ -195,5 +195,44 @@ describe("editor_focus_missed (GH #939)", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("does not scan the mounted editors when the requested editor holds focus", async () => {
+    const { editor, dispose } = mountEditor();
+    let reads = 0;
+    const unregister = registerHistoryEditorTarget({
+      get blockId() { reads++; return "other-939"; },
+      owner: null,
+      surface: "probe",
+      selection: () => ({ start: 0, end: 0 }),
+    });
+    try {
+      await settle();
+      await pressEnter(editor);
+      // The split itself captures history context synchronously; only the
+      // frame-later focus check is counted.
+      reads = 0;
+      await settle();
+      expect(misses()).toEqual([]);
+      expect(reads).toBe(0);
+    } finally {
+      unregister();
+      dispose();
+    }
+  });
+
+  it("counts a focused CodeMirror editor as a block editor when the window has no focus", async () => {
+    const cm = document.createElement("div");
+    cm.setAttribute("data-cm6-editor", "cm-939");
+    cm.tabIndex = 0;
+    document.body.append(cm);
+    cm.focus();
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    startEditing("cm-939", 0);
+    await settle();
+    expect(misses()).toHaveLength(1);
+    expect(misses()[0].fields).toMatchObject({ editorFocus: {
+      documentHasFocus: false, activeTag: "div", activeIsBlockEditor: true,
+    } });
   });
 });
