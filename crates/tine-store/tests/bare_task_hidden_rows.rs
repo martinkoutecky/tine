@@ -5,7 +5,7 @@
 //! Logseq-written file of that shape (`* TODO` + `:PROPERTIES:`) opens as a task.
 //!
 //! Each case goes through the real path: the parser-owned edit door every writer
-//! uses (`block_regions::edit`), `Store::save`, the bytes on disk, a fresh
+//! uses (`block_regions::edit`), the page plan and host, the bytes on disk, a fresh
 //! `Store::open`, and the `(task ...)` query the user sees.
 use std::collections::BTreeSet;
 use std::fs;
@@ -14,7 +14,7 @@ use tine_core::block_regions::{edit, Edit};
 use tine_core::query::ir::{ExecutionContext, QueryRows};
 use tine_core::query::registry::Registry;
 use tine_core::query::{parse_query_input, QueryInput};
-use tine_store::{EditKind, IrAnswer, IrRequest, PageId, SaveBase, SaveOutcome, Store};
+use tine_store::{EditKind, IrAnswer, IrRequest, PageId, SaveBase, Store};
 
 const TASKS: &str = "(task TODO DONE)";
 
@@ -77,9 +77,10 @@ impl Graph {
     }
 
     /// Apply `request` to the block at `index` (depth-first) through the shared
-    /// edit door, save the page through `Store::save`, and return the file bytes.
+    /// edit door, save the page through the page host, and return the file bytes.
     fn apply(&self, index: &[usize], request: Edit) -> String {
-        let store = self.open();
+        let store = std::sync::Arc::new(self.open());
+        let writer = crate::test_host_writer::HostWriter::start(&store);
         let id = PageId::from(self.path);
         let read = store.page(&id).expect("the page opens");
         let mut doc = read.doc;
@@ -89,16 +90,14 @@ impl Graph {
             block = &mut block.children[i];
         }
         block.raw = edit(&block.raw, org, request).unwrap();
-        let outcome = store.save(
+        let outcome = writer.save(
             EditKind::ReplacePage,
             &id,
             SaveBase::Existing(read.rev),
             &doc,
         );
-        assert!(
-            matches!(outcome, SaveOutcome::Saved(_)),
-            "save failed: {outcome:?}"
-        );
+        assert!(outcome.is_ok(), "save failed: {outcome:?}");
+        drop(writer);
         store.close();
         self.bytes()
     }
