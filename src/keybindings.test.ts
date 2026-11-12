@@ -643,15 +643,16 @@ describe("block-selection commands", () => {
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
 
-    // Defaults are selected-only + strip-collapsed, exactly as before CB1.
+    // Defaults are selected-only + strip-collapsed; a selected COLLAPSED parent still
+    // carries the children it hides in the public text (GH #943, D-20261112-SU941).
     expect(write).toHaveBeenCalledWith(
-      "- Parent",
-      "<ul><li>Parent</li></ul>",
+      "- Parent\n\t- Child",
+      "<ul><li>Parent<ul><li>Child</li></ul></li></ul>",
     );
     expect(peekClipboardPayload()).toMatchObject({
       op: "copy",
       graph: "/plugin-test",
-      text: "- Parent",
+      text: "- Parent\n\t- Child",
       blocks: [{
         raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111",
         sourceFormat: "md",

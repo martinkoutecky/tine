@@ -533,7 +533,7 @@ settings-ui-reset-ranking = 重置排序
 
 settings-ui-copy-a-parent-block-s-sub-blocks = 复制父块的子块
 
-settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块。Tine 默认关闭，避免仅选中父块却复制整个子树。
+settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块，以及已折叠块或表格视图所隐藏的子块。Tine 默认关闭，避免仅选中父块却复制整个子树。
 
 settings-ui-strip-collapsed-when-copying = 复制时去除 collapsed::
 
