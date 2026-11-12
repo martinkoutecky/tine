@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   adjustPaneSize,
   closeLayoutPane,
@@ -366,7 +366,15 @@ describe("pane layout mutations", () => {
       activeIndex: 0,
     });
     const target = splitPane("main", "row")!;
-    paneRouter("main").setScrollerElement({ scrollTop: 73, isConnected: true } as HTMLElement);
+    const scroller = { scrollTop: 0, scrollHeight: 1000, clientHeight: 500, isConnected: true } as HTMLElement;
+    paneRouter("main").setScrollerElement(scroller);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    try {
+      paneRouter("main").restoreScrollFor(paneRouter("main").route());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    scroller.scrollTop = 73;
 
     expect(moveActiveTabToPane("main", target)).toBe(true);
 
