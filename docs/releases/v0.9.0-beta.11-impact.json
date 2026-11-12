@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.11",
+  "baseTag": "v0.9.0-beta.10",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-ORG-CRLF-EMPTY-HEADLINE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-ORG-CRLF-EMPTY-HEADLINE. Fail-before: Proven on 1f18ea95c (release/0.9 line). Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/tests/lone_cr_pages.rs::crlf_org_page_with_an_empty_headline_is_editable_like_its_lf_twin",
+          "crates/tine-store/tests/lone_cr_pages.rs::crlf_and_lf_org_pages_keep_their_bytes_through_saves",
+          "crates/tine-store/tests/lone_cr_pages.rs::crlf_org_page_without_a_final_terminator_keeps_its_last_line",
+          "crates/tine-core/src/org.rs::tests::crlf_org_is_editable_exactly_when_its_lf_twin_is"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH129-GUIDES",
+        "UI-GH129-FRACTIONAL-DPR",
+        "UI-GH129-ACTIVE-THREAD"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH129-GUIDES, UI-GH129-FRACTIONAL-DPR, UI-GH129-ACTIVE-THREAD. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/shot-bullet-threading-guides.mjs",
+          "scripts/shot-bullet-threading-dpr.mjs",
+          "src/components/Block.pluginDecorations.test.tsx",
+          "scripts/shot-bullet-threading.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH872-SEPARATE-GIT-DIR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH872-SEPARATE-GIT-DIR. Fail-before: Proven on release/0.9 base 1f18ea95c. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/owner/git_separate_dir_tests.rs::gh872_a_graph_made_by_git_init_separate_git_dir_commits_and_syncs",
+          "src-tauri/src/owner/git_separate_dir_tests.rs::gh872_a_graph_with_an_absolute_gitdir_file_commits_and_syncs",
+          "src-tauri/src/owner/git_separate_dir_tests.rs::gh872_a_graph_with_a_relative_gitdir_file_commits_and_syncs",
+          "src-tauri/src/owner/git_separate_dir_tests.rs::gh872_a_graph_inside_a_separate_dir_work_tree_commits_only_itself",
+          "src-tauri/src/owner/git_separate_dir_tests.rs::gh872_a_broken_separate_git_dir_refuses_by_name_and_writes_nothing"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-RENAME-READ-AFTER-WRITE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-RENAME-READ-AFTER-WRITE. Fail-before: Beta 417843c03 plus this regression. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/src/page_host/binding_rename_tests.rs::a_completed_move_stays_visible_when_the_receiver_closes_first",
+          "src-tauri/src/owner/owner_tests/page_tests.rs::page_create_rename_delete_and_lazy_reference_helpers",
+          "src-tauri/src/owner/owner_tests/page_tests.rs::non_case_rename_then_delete",
+          "src-tauri/src/owner/owner_tests/page_tests.rs::namespace_rename_then_delete",
+          "src-tauri/src/owner/owner_tests/page_tests.rs::case_namespace_rename_then_delete"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Find in a long Journals feed counts loaded matches once as days retire and reload; the total agrees with the loaded days and the omitted-day hint (internal: UI-L10-03-FIND-RETIRED-DAYS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-L10-03-FIND-RETIRED-DAYS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-L10-03-FIND-RETIRED-DAYS. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/InPageFind.retirement.test.tsx",
+          "scripts/e2e-feed-retirement.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "With a default journal template, today's journal again shows as a journal day, and clicking its title opens it instead of reporting that the page is no longer available at that path. A tab or link that remembered the wrong kind of page for a file now opens that file (GH #863).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH863-TEMPLATE-JOURNAL-KIND",
+        "UI-GH863-JOURNAL-PHYSICAL-OPEN",
+        "UI-GH863-PINNED-ROUTE-RECOVERY",
+        "UI-GH863-UNREADABLE-PINNED-ROUTE",
+        "REG-GH863-UNINDEXED-DAY-OTHER-NAME",
+        "REG-GH863-HELD-READ-ERROR-NOT-ABSENT",
+        "REG-GH863-HELD-READ-OBSERVES-FRESH",
+        "UI-GH863-REFUSAL-DIAGNOSTICS",
+        "REG-GH863-HELD-OPEN-COST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH863-TEMPLATE-JOURNAL-KIND, UI-GH863-JOURNAL-PHYSICAL-OPEN, UI-GH863-PINNED-ROUTE-RECOVERY, UI-GH863-UNREADABLE-PINNED-ROUTE, REG-GH863-UNINDEXED-DAY-OTHER-NAME, REG-GH863-HELD-READ-ERROR-NOT-ABSENT, REG-GH863-HELD-READ-OBSERVES-FRESH, UI-GH863-REFUSAL-DIAGNOSTICS, REG-GH863-HELD-OPEN-COST. Fail-before: Beta 4785d8bb8, Beta 4785d8bb8 with inert test scaffold, proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-beta-win-863-809.mjs",
+          "src/components/Page.templateJournalKind.test.tsx",
+          "src/components/Page.virtualJournalTarget.test.tsx",
+          "src/components/Page.pathRecovery.test.tsx",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::an_absent_day_opens_a_file_delivered_unobserved_under_another_accepted_name",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_pinned_fileless_day_never_answers_its_twin",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_absent_day_opens_by_name_a_missed_delivery_its_busy_owner_observes",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::an_absent_day_opens_an_unpadded_delivery_and_proposes_no_duplicate",
+          "crates/tine-core/src/date.rs::fmt_tests::accepted_stems_cover_the_parsers_numeric_widths",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_whose_owner_read_fails_answers_the_error_not_an_absence",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_after_repeated_owner_read_failures_answers_the_error_within_its_wait",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_fileless_held_journal_reads_a_late_sync_delivery_without_a_watcher_event",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_page_removed_then_restored_without_a_watcher_event_reads_each_state",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_page_with_unsaved_input_reads_a_missed_write_and_keeps_the_input",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::two_surfaces_reading_a_missed_write_share_one_owner_publication",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_trusts_an_equal_stamp_unless_its_observation_was_racy",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_answers_the_indexed_page_when_its_owner_is_busy_past_the_bound",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::store_page_never_runs_on_the_page_host_driver_thread",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::reads_racing_an_own_save_of_a_held_page_answer_in_host_order",
+          "crates/tine-store/tests/held_open_cost.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Opening a journal or page now checks for a sync delivery its watcher missed before answering from held content. Journals delivered under another accepted filename are found without creating a duplicate day; unreadable files show their read error and recover when readable again (GH #863).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH863-UNINDEXED-DAY-OTHER-NAME",
+        "UI-GH863-JOURNAL-PHYSICAL-OPEN",
+        "UI-GH863-PINNED-ROUTE-RECOVERY",
+        "REG-GH863-HELD-READ-OBSERVES-FRESH",
+        "UI-GH863-TEMPLATE-JOURNAL-KIND",
+        "REG-GH863-HELD-READ-ERROR-NOT-ABSENT",
+        "UI-GH863-UNREADABLE-PINNED-ROUTE",
+        "REG-GH863-HELD-OPEN-COST",
+        "UI-GH863-REFUSAL-DIAGNOSTICS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH863-UNINDEXED-DAY-OTHER-NAME, UI-GH863-JOURNAL-PHYSICAL-OPEN, UI-GH863-PINNED-ROUTE-RECOVERY, REG-GH863-HELD-READ-OBSERVES-FRESH, UI-GH863-TEMPLATE-JOURNAL-KIND, REG-GH863-HELD-READ-ERROR-NOT-ABSENT, UI-GH863-UNREADABLE-PINNED-ROUTE, REG-GH863-HELD-OPEN-COST, UI-GH863-REFUSAL-DIAGNOSTICS. Fail-before: Beta 4785d8bb8, Beta 4785d8bb8 with inert test scaffold, proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/src/page_host/binding_path_tests.rs::an_absent_day_opens_a_file_delivered_unobserved_under_another_accepted_name",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_pinned_fileless_day_never_answers_its_twin",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_absent_day_opens_by_name_a_missed_delivery_its_busy_owner_observes",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::an_absent_day_opens_an_unpadded_delivery_and_proposes_no_duplicate",
+          "crates/tine-core/src/date.rs::fmt_tests::accepted_stems_cover_the_parsers_numeric_widths",
+          "scripts/e2e-beta-win-863-809.mjs",
+          "src/components/Page.virtualJournalTarget.test.tsx",
+          "src/components/Page.pathRecovery.test.tsx",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_fileless_held_journal_reads_a_late_sync_delivery_without_a_watcher_event",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_page_removed_then_restored_without_a_watcher_event_reads_each_state",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_page_with_unsaved_input_reads_a_missed_write_and_keeps_the_input",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::two_surfaces_reading_a_missed_write_share_one_owner_publication",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_trusts_an_equal_stamp_unless_its_observation_was_racy",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_answers_the_indexed_page_when_its_owner_is_busy_past_the_bound",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::store_page_never_runs_on_the_page_host_driver_thread",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::reads_racing_an_own_save_of_a_held_page_answer_in_host_order",
+          "src/components/Page.templateJournalKind.test.tsx",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_whose_owner_read_fails_answers_the_error_not_an_absence",
+          "crates/tine-store/src/page_host/binding_path_tests.rs::a_held_read_after_repeated_owner_read_failures_answers_the_error_within_its_wait",
+          "crates/tine-store/tests/held_open_cost.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Bullet threading connectors remain continuous where parent rows meet child elbows at fractional display scaling (GH #129, bullet-threading #2).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH129-FRACTIONAL-DPR",
+        "UI-GH129-ACTIVE-THREAD",
+        "UI-GH129-GUIDES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH129-FRACTIONAL-DPR, UI-GH129-ACTIVE-THREAD, UI-GH129-GUIDES. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/shot-bullet-threading-dpr.mjs",
+          "src/components/Block.pluginDecorations.test.tsx",
+          "scripts/shot-bullet-threading.mjs",
+          "scripts/shot-bullet-threading-guides.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "CLI writes trim author names and refuse an empty `--author`; blank `TINE_AUTHOR` uses the default `agent` instead of creating an empty author property (GH #930).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH930-EMPTY-CLI-AUTHOR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH930-EMPTY-CLI-AUTHOR. Fail-before: Proven on 4785d8bb8. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/owner/owner_tests.rs::gh930_add_refuses_blank_authors_without_writing",
+          "src-tauri/src/owner/owner_tests.rs::gh930_author_property_set_refuses_blank_and_remove_still_works",
+          "src-tauri/src/owner/owner_tests.rs::add_resolves_author_environment_and_explicit_override",
+          "src-tauri/src/owner/owner_tests/git_run_tests.rs::gh930_run_authors_trim_and_blank_revert_preserves_files_and_head",
+          "scripts/e2e-cli-writes.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}
