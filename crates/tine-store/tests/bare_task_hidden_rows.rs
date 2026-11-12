@@ -258,3 +258,39 @@ fn prose_after_a_bare_marker_stays_prose_when_an_id_is_added() {
     );
     assert!(tasks(&graph.open()).is_empty());
 }
+
+/// Review r1: a CRLF Org page, and blank lines beside the rows, keep the task
+/// through open, an id edit and a reopen.
+#[test]
+fn crlf_and_blank_lines_beside_the_rows_keep_the_task() {
+    for (path, source) in [
+        (
+            "pages/o.org",
+            "* TODO\r\n:PROPERTIES:\r\n:id: 6679-abc\r\n:END:\r\n* other\r\n",
+        ),
+        (
+            "pages/o.org",
+            "* TODO\n:PROPERTIES:\n:id: 6679-abc\n:END:\n\n\n* other\n",
+        ),
+        ("pages/m.md", "- TODO\n\n  id:: 6679-abc\n- other\n"),
+    ] {
+        let graph = Graph::new(path, source);
+        let store = graph.open();
+        let page = store.page(&PageId::from(path));
+        assert!(page.is_ok(), "opens: {source:?}: {:?}", page.err());
+        assert_eq!(tasks(&store).len(), 1, "a task: {source:?}");
+        store.close();
+        // A fold is the edit that keeps the existing rows and adds one more.
+        let after = graph.apply(&[0], fold());
+        assert!(after.contains("collapsed"), "{after:?}");
+        assert_eq!(tasks(&graph.open()).len(), 1, "after: {after:?}");
+    }
+    // CRLF: a bare `* TODO` line is a task as its LF twin is, before and after
+    // Tine adds an id. (The drawer's own line endings are a separate matter of
+    // the edit door: a one-line block carries no CRLF evidence.)
+    let graph = Graph::new("pages/o.org", "* TODO\r\n* other\r\n");
+    assert_eq!(tasks(&graph.open()), set(&["TODO\r"]));
+    let after = graph.apply(&[0], id(Some("6679-abc")));
+    assert!(after.starts_with("* TODO\r\n:PROPERTIES:"), "{after:?}");
+    assert_eq!(tasks(&graph.open()).len(), 1, "{after:?}");
+}
