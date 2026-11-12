@@ -245,6 +245,8 @@
   "command-seen-previous-change": "1d1df515d6d06b95",
   "command-select-copy-block-ref": "395a1b9a7b0e8c8b",
   "command-sidebar-grow-width": "d42dbccdb7c6894e",
+  "command-sidebar-open-current-page": "bd2395b0830234fe",
+  "command-sidebar-open-today": "35392e10410ea890",
   "command-sidebar-shrink-width": "be16a8eef15070a7",
   "command-tab-activate-last": "2c59996599b253cf",
   "command-tab-activate-n": "af923a3363f31883",

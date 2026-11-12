@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Open current page in right sidebar** and **Open today's journal in right sidebar** are command-palette commands with no default key; bind them in Settings → Keyboard shortcuts. The first does what the page menu's **Open in sidebar** does (it is offered while a page is shown); the second is Logseq's "open today in the sidebar" and works from any page, even before today's journal has a file (GH #928; UI-GH928-SIDEBAR-COMMANDS).
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
 - `tine add --under` a comment or one of its replies dates each message it inserts (a creation-only UTC minute `tine.date`); lines nested under a message stay undated body text, and ordinary outline insertion gets no date (D-20261108-MC5; GH #891).
 - Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).

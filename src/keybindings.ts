@@ -9,6 +9,7 @@ import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { showWorkspaces } from "./navSettings";
 import { adjustSidebarWidth } from "./sidebarSizing";
+import { openTodayInSidebar } from "./journalsNavigation";
 import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
 import { isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
@@ -23,7 +24,7 @@ import { browserPlatform } from "./browserPlatform";
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
+import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer, openPageInSidebar } from "./ui";
 import { pushToast } from "./toasts";
 import { msg, render, renderEnglish, type UiText, type Msg } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
@@ -40,6 +41,7 @@ import {
   openAllGraphs,
   openQueryInNewTab,
   openPage,
+  pageTargetFromRoute,
   goBack,
   goForward,
   closeActiveTab,
@@ -226,6 +228,12 @@ function seenRoutedPage(): string | null {
   return route.kind === "page" ? route.name : null;
 }
 
+/** The page menu's "Open in sidebar" (`openPageInSidebar(target)`) for the focused pane's page. */
+function openCurrentPageInSidebar(): void {
+  const target = pageTargetFromRoute(route());
+  if (target) openPageInSidebar(target);
+}
+
 function firstVisibleBlockInFocusedPane(): string | null {
   const currentRoute = paneRouter(focusedPaneId()).route();
   return currentRoute.kind === "page"
@@ -347,6 +355,10 @@ const COMMANDS: CommandDef[] = [
   // textarea itself and is a no-op when nothing is being edited.
   { id: "editor/follow-link", binding: "mod+o", label: msg("command-editor-follow-link"), scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: msg("command-editor-open-link-in-sidebar"), scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
+  // GH #928, unbound by decision. "Today" is OG's `:sidebar/open-today-page` (config.cljs:396, alt+shift+j,
+  // mod+shift+j on mac, which is Toggle devtools here); "current page" is the page menu's "Open in sidebar".
+  { id: "sidebar/open-today", binding: "", label: msg("command-sidebar-open-today"), scope: "global", run: openTodayInSidebar, global: true },
+  { id: "sidebar/open-current-page", binding: "", label: msg("command-sidebar-open-current-page"), scope: "global", available: () => pageTargetFromRoute(route()) !== null, run: openCurrentPageInSidebar, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => { rememberEditorSelectionForPalette(); openCommandPalette(pluginFocusedBlock() ?? null); }, global: true },
   // Margin dialogue (vision §3.7): the palette form of Ctrl/Cmd+R. Opening the
   // palette blurs the editor, so the selection is remembered as it opens.
