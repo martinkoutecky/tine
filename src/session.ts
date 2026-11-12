@@ -116,6 +116,13 @@ function intentToken(): string {
   return JSON.stringify([sessionIntentRevision, ...allPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
 }
 
+// Initial layout records zero where an unpositioned view had no scroll offset.
+// Both mean the top; only an actual position change should veto recovery.
+function sessionSnapshotToken(): string {
+  return JSON.stringify(buildPersistedSession(), (key, value) =>
+    key === "scrolls" ? value.map((offset: number | null) => offset ?? 0) : value);
+}
+
 export function setSessionWorkspaceId(id: string | null): void { currentWorkspaceId = id; }
 export function discardWorkspaceRestoreEvidence(): void { restoreEvidence = null; restoredWorkspaceId = null; restoredSessionPresent = null; }
 
@@ -128,14 +135,14 @@ export function discardWorkspaceRestoreEvidence(): void { restoreEvidence = null
 export function prepareWorkspaceRecovery(): (activeId: string, parked: PersistedSession) => PersistedSession {
   const evidence = restoreEvidence;
   restoreEvidence = null;
-  const beforeClear = JSON.stringify(buildPersistedSession());
+  const beforeClear = sessionSnapshotToken();
   const beforeClearIntent = intentToken();
   const intervened = !!evidence && (!evidence.owner() || evidence.snapshot !== beforeClear || evidence.intent !== beforeClearIntent);
   setSessionWorkspaceId(null);
-  const startSnapshot = JSON.stringify(buildPersistedSession());
+  const startSnapshot = sessionSnapshotToken();
   const startIntent = intentToken();
   return (activeId, parked) => {
-    const changed = JSON.stringify(buildPersistedSession()) !== startSnapshot || intentToken() !== startIntent
+    const changed = sessionSnapshotToken() !== startSnapshot || intentToken() !== startIntent
       || intervened;
     const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
     if (changed && wantsParked) {
@@ -719,7 +726,8 @@ export function scheduleSessionSave() {
 /** Best-effort load of this graph's saved session; never rejects. Saved tabs,
  * layout, sidebar and recents apply together only while the UI is the pristine
  * one-pane Journals default and no route or session intent changed during the
- * read. A missing file restores legacy recents; invalid or unreadable data
+ * read. Initial layout at scroll zero is unchanged from an unset offset.
+ * A missing file restores legacy recents; invalid or unreadable data
  * leaves the live UI. Load failure, graph change, or a live change skips registry
  * initialization. Otherwise registry initialization may apply its parked active
  * workspace and schedule a save; a refused recovery or registry error shows a
@@ -728,9 +736,9 @@ export function scheduleSessionSave() {
 export async function restoreSession(): Promise<void> {
   const owner = bindingOwner();
   discardWorkspaceRestoreEvidence();
-  const initialSession = JSON.stringify(buildPersistedSession());
+  const initialSession = sessionSnapshotToken();
   const initialIntent = intentToken();
-  const mayApply = () => owner() && JSON.stringify(buildPersistedSession()) === initialSession && intentToken() === initialIntent;
+  const mayApply = () => owner() && sessionSnapshotToken() === initialSession && intentToken() === initialIntent;
   let initializeRegistry = true;
   try {
     let raw: string | null = null;
@@ -767,7 +775,7 @@ export async function restoreSession(): Promise<void> {
     // like the existing session restore; a bad registry must not block the app.
     try {
       if (!initializeRegistry) return;
-      restoreEvidence = { owner, snapshot: JSON.stringify(buildPersistedSession()), intent: intentToken(), present: restoredSessionPresent, workspaceId: restoredWorkspaceId };
+      restoreEvidence = { owner, snapshot: sessionSnapshotToken(), intent: intentToken(), present: restoredSessionPresent, workspaceId: restoredWorkspaceId };
       const { initializeWorkspaces } = await import("./workspaces");
       if (!owner()) return;
       await initializeWorkspaces();
