@@ -1387,3 +1387,7 @@ mod tests;
 #[cfg(test)]
 #[path = "git_mobile_tests.rs"]
 mod mobile_tests;
+
+#[cfg(test)]
+#[path = "git_separate_dir_tests.rs"]
+mod separate_dir_tests;

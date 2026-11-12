@@ -259,7 +259,9 @@ fn run_graph_search_after_scope(
     transliteration: bool,
     #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<QueryExecution, SearchError> {
-    let view = store.whole_graph().map_err(SearchError::Load)?;
+    // A search answer is final on screen: never one from the launch
+    // checkpoint, which lacks pages made while Tine was closed.
+    let view = store.whole_graph_reconciled().map_err(SearchError::Load)?;
     let lease = lanes.begin_sequenced(lane, lane_seq);
     let within = scope.map(|scope| match scope.path {
         Some(path) => PageId::from(path),
@@ -408,6 +410,68 @@ mod tests {
     use super::*;
     use crate::test_host_writer::HostWriter;
     use tine_store::SaveBase;
+
+    /// A page added while Tine was closed is found by a search typed while
+    /// the launch checkpoint is still served (switcher-warm-1111 review r1).
+    #[test]
+    fn a_search_during_the_launch_diff_finds_a_page_the_checkpoint_lacks() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        let cp = tempfile::tempdir().unwrap();
+        let cp = cp.path().join("graph.bin");
+        let open = || {
+            Store::open(
+                temp.path(),
+                tine_store::OpenOptions {
+                    watch: tine_store::WatchMode::Poll,
+                    launch_checkpoint: Some(cp.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0
+        };
+        std::fs::write(temp.path().join("pages/Old.md"), "- old\n").unwrap();
+        let store = open();
+        store.whole_graph_reconciled().unwrap();
+        assert!(matches!(
+            store.write_checkpoint_now(),
+            Some(tine_store::CheckpointWrite::Written { .. })
+        ));
+        store.close();
+        std::fs::write(temp.path().join("pages/Freshpage.md"), "- new\n").unwrap();
+        let pause = temp.path().join(".tine-test-pause-launch-diff");
+        std::fs::write(&pause, b"").unwrap();
+        let store = open();
+        assert!(
+            matches!(store.is_graph_ready(), Ok(false)),
+            "the store serves its checkpoint"
+        );
+        let resume = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::fs::remove_file(&pause).unwrap();
+        });
+        let found = run_graph_search(
+            &store,
+            &SearchLanes::default(),
+            "Freshpage".into(),
+            10,
+            10,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap_or_else(|_| panic!("search failed"));
+        resume.join().unwrap();
+        let hits = serde_json::to_string(&found.hits).unwrap();
+        assert!(
+            hits.contains("Freshpage"),
+            "the page made while closed is found: {hits}"
+        );
+    }
 
     #[test]
     fn search_and_advanced_scope_keep_one_generation_during_write() {

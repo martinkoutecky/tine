@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { dismissToasts } from "./lib/e2e-notifications.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -50,6 +51,7 @@ async function withApp(index, fn) {
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+    await dismissToasts(browser);
     await fn(browser);
     await sleep(650);
   } finally {

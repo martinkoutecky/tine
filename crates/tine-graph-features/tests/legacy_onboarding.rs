@@ -296,6 +296,14 @@ fn guide_explains_margin_comments() {
     assert!(tips
         .markdown
         .contains("**In a popup** works the same at every width, including Wide mode"));
+    // DESIGN §12: the open-threads review is a sidebar query; unread is the change mark.
+    assert!(tips.markdown.contains("**Review all open comments.**"));
+    assert!(tips.markdown.contains("Review open comments on this page"));
+    assert!(tips
+        .markdown
+        .contains("(and (property tine.quote) (not (property tine.resolved true)))"));
+    assert!(tips.markdown.contains("**N below, M changed**"));
+    assert!(tips.markdown.contains("Graphs without git show no marks."));
     assert!(tips.markdown.contains("live popover"));
     assert!(tips.markdown.contains("bottom sheet"));
     assert!(tips.markdown.contains("swipe between passages"));

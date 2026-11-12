@@ -7,6 +7,7 @@ import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 
 ensurePrivateSessionBus();
@@ -71,13 +72,13 @@ try {
     await openPageByName(browser, "Other");
     await openPageByName(browser, f.name);
     if ((await browser.$$('.main-content .block-checkbox[aria-checked="true"]')).length !== 1) throw new Error("Reopen lost checked state");
-    await browser.saveScreenshot(path.join(TMP, `${f.ext}-checked.png`));
+    await saveJourneyScreenshot(browser, path.join(TMP, `${f.ext}-checked.png`));
     const id = await browser.execute(() => document.querySelector(".main-content .block-checkbox").closest(".ls-block").getAttribute("data-block-id"));
     await browser.$(`[data-block-id="${id}"] .collapse-toggle`).click();
     if ((await browser.$$(".main-content .block-checkbox")).length !== 2) throw new Error("Collapse hid the block's own inline content");
     const child = await browser.$(`[data-block-id="${id}"] .block-children .block-content`);
     if (await child.isDisplayed()) throw new Error("Collapse left child block visible");
-    await browser.saveScreenshot(path.join(TMP, `${f.ext}-collapsed.png`));
+    await saveJourneyScreenshot(browser, path.join(TMP, `${f.ext}-collapsed.png`));
     await browser.$(`[data-block-id="${id}"] .collapse-toggle`).click();
     await browser.$$(".main-content .block-checkbox").then(items => items[1].click());
     await browser.waitUntil(() => fs.readFileSync(file, "utf8") === f.raw, { timeout: 15000, timeoutMsg: "Untick/expand did not restore original file bytes" });
@@ -89,7 +90,7 @@ try {
   proof.error = String(error);
   proof.classification = "ambiguous; inspect native log and DOM";
   if (browser) {
-    await browser.saveScreenshot(path.join(TMP, "failure.png")).catch(() => {});
+    await saveJourneyScreenshot(browser, path.join(TMP, "failure.png")).catch(() => {});
     fs.writeFileSync(path.join(TMP, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
   }
   throw error;

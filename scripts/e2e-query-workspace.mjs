@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { dismissToasts } from "./lib/e2e-notifications.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -102,6 +103,7 @@ async function withApp(index, fn) {
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
     await browser.$(".query-workspace, .ls-block, .page-title").waitForExist({ timeout: 20_000 });
+    await dismissToasts(browser);
     await fn(browser);
     await sleep(750);
   } catch (error) {
@@ -597,7 +599,9 @@ await withApp(2, async (browser) => {
   const depthProof = await browser.execute(() => {
     const source = [...document.querySelectorAll(".linked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source");
-    const roots = [...(source?.querySelectorAll(".live-ref-group > .ls-block") ?? [])];
+    // Secondary outlines have a CommentSurface wrapper. Identify the two
+    // backlink roots by their own text, independently of presentation nesting.
+    const roots = [...(source?.querySelectorAll(".live-ref-group .ls-block") ?? [])];
     const ownText = (block) => block.querySelector(":scope > .block-main .block-content")?.textContent ?? "";
     const nested = roots.find((block) => ownText(block).includes("appears explicitly"));
     const stored = roots.find((block) => ownText(block).includes("source-collapsed witness"));
@@ -743,7 +747,7 @@ await withApp(2, async (browser) => {
   // current label so both linked and unlinked groups prove each transition.
   async function bulkReferenceAction(section, label) {
     // Persistent toasts sit bottom-right and now cover the header-row button (UI-LP-FIX moved it there).
-    await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach((b) => b.click()));
+    await dismissToasts(browser);
     const controls = await browser.$(`${section} .reference-bulk-controls`);
     const action = await controls.$(`button=${label}`);
     await action.waitForDisplayed({ timeout: 5_000 });
@@ -803,6 +807,14 @@ await withApp(2, async (browser) => {
     timeout: 5_000, timeoutMsg: "Expand all did not restore unlinked reference bodies",
   });
 
+  // Expand all mounts group wrappers; offscreen reference bodies hydrate only
+  // when shown. Reach the source before using its occurrence control.
+  await browser.$(".unlinked-references").$("button=Unlinked source").scrollIntoView({ block: "center" });
+  await browser.waitUntil(() => browser.execute(() => {
+    const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
+      .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
+    return !!source?.querySelectorAll(".reference-excerpt-mark")[1];
+  }), { timeout: 5_000, timeoutMsg: "expanded source did not expose its second mention" });
   const jumped = await browser.execute(() => {
     const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");

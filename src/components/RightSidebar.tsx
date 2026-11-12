@@ -3,8 +3,8 @@ import { rootIsRtl } from "../render/textDirection";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
 import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
-import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, openBlockInSidebar, type SidebarBlock, type SidebarItem } from "../ui";
+import { For, Match, Show, Switch, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, openBlockInSidebar, type SidebarBlock, type SidebarItem, type SidebarQuery } from "../ui";
 import { replaceSidebarItem } from "../sidebarReplace";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
@@ -34,6 +34,8 @@ import { endEditForSurface } from "../editorController";
 import { FailureBoundary } from "./FailureBoundary";
 import { isHTMLElementNode, mainWindow } from "../windowRealm";
 import { rightSidebarFocusRequest } from "../ui";
+import { QueryMacro } from "./Macro";
+import { openThreadsMacroBody, setCommentReviewAuthor } from "../commentReviewQuery";
 
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
@@ -294,13 +296,19 @@ function SidebarItemView(props: {
   onClose: () => void;
   row: Row;
 }): JSX.Element {
+  const shared = () => ({ surfaceKey: props.surfaceKey, collapsed: props.collapsed, onToggle: props.onToggle, onClose: props.onClose, row: props.row });
   return (
-    <Show
-      when={props.item.kind === "page"}
-      fallback={<BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} row={props.row} />}
-    >
-      <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onToggle={props.onToggle} onClose={props.onClose} row={props.row} />
-    </Show>
+    <Switch>
+      <Match when={props.item.kind === "page"}>
+        <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} {...shared()} />
+      </Match>
+      <Match when={props.item.kind === "query"}>
+        <QueryItem item={props.item as SidebarQuery} {...shared()} />
+      </Match>
+      <Match when={props.item.kind === "block"}>
+        <BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} {...shared()} />
+      </Match>
+    </Switch>
   );
 }
 
@@ -583,6 +591,51 @@ function BlockItem(props: {
             </div>
           )}
         </Show>
+      </Show>
+    </div>
+  );
+}
+
+/** The open-threads review (DESIGN §12): an unsaved query run without a block. Its rows are the
+ * ordinary live result blocks (edits, replies and Resolve write the real comment blocks through
+ * the usual door). The head carries the author filter; the scope is the item's identity. */
+function QueryItem(props: {
+  item: SidebarQuery;
+  surfaceKey: string;
+  collapsed: boolean;
+  onToggle: (control: HTMLButtonElement) => void;
+  onClose: () => void;
+  row: Row;
+}): JSX.Element {
+  const bodyId = `rs-item-body-${createUniqueId()}`;
+  const title = () => props.item.scope === "graph"
+    ? t("comment-review-title-graph")
+    : t("comment-review-title-page", { page: props.item.page });
+  const commit = (input: HTMLInputElement) => setCommentReviewAuthor(props.item, input.value);
+  return (
+    <div class="rs-item rs-query-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} data-comment-review={props.item.scope}
+      classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
+      <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
+        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? t("right-sidebar-expand-sidebar-item") : t("right-sidebar-collapse-sidebar-item")} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
+          <span aria-hidden="true">▸</span>
+        </button>
+        <span class="rs-item-title" title={title()}>{title()}</span>
+        <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onClose={props.onClose} />
+      </div>
+      <Show when={!props.collapsed}>
+        <div id={bodyId} class="rs-item-body">
+          <label class="rs-review-author">
+            <span>{t("comment-review-author-label")}</span>
+            <input type="text" value={props.item.author ?? ""} placeholder={t("comment-review-author-placeholder")}
+              data-comment-review-author
+              onChange={(event) => commit(event.currentTarget)}
+              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(event.currentTarget); } }} />
+          </label>
+          {/* Keyed by the query text: a new scope or author is a new question. */}
+          <Show when={openThreadsMacroBody(props.item)} keyed>
+            {(body) => <QueryMacro body={body} currentPage={props.item.scope === "page" ? props.item.page : undefined} />}
+          </Show>
+        </div>
       </Show>
     </div>
   );

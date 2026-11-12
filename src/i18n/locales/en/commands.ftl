@@ -175,3 +175,5 @@ command-seen-next-change = Next change since you last looked
 command-seen-previous-change = Previous change since you last looked
 command-comment-next = Next comment
 command-comment-previous = Previous comment
+command-comment-review = Review open comments on this page
+command-comment-review-graph = Review open comments in the graph

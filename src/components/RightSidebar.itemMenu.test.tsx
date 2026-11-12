@@ -58,7 +58,7 @@ function openMenu(root: HTMLElement, index: number) {
 function choose(action: string) {
   document.querySelector<HTMLButtonElement>(`[data-right-sidebar-item-action="${action}"]`)!.click();
 }
-const names = () => rightSidebar().map((item) => (item.kind === "page" ? `page:${item.name}` : `block:${item.uuid}`));
+const names = () => rightSidebar().map((item) => (item.kind === "page" ? `page:${item.name}` : item.kind === "block" ? `block:${item.uuid}` : `query:${item.scope}`));
 const collapsed = () => rightSidebar().map((item) => !!item.collapsed);
 
 describe("right sidebar per-item menu (GH #462)", () => {

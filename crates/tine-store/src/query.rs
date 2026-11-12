@@ -600,92 +600,8 @@ pub(crate) fn referenced_day_keys<'a>(
         .collect()
 }
 
-/// The panel's resolver for many targets of one snapshot: the reads
-/// [`graph_equivalent_page_names_with`] needs, gathered once, so a bulk
-/// driver resolves each target as the Linked References panel does without a
-/// per-target scan. The one setup the link table (`LinkGraph::build`) and the
-/// All pages counter (`page_counts::referring_block_counts`) share.
-///
-/// Built in O(P + R) for P listed pages and R explicit reference names; holds
-/// one name per journal day and the referenced day spellings, dropped with
-/// it (nothing cached past the caller, D-10).
-///
-/// The day's journal is the FIRST journal page of the day in page-list order.
-/// This agrees with batch 2's duplicate-day keeper: the snapshot's page list
-/// is built from `dedup_journal_days` (claimant order `compare_page_claimants`,
-/// launch build and incremental upsert alike), so it holds one journal per day,
-/// the keeper, and "first" has nothing to choose between. It would disagree
-/// only if the list ever held two journals of one day: then this pick follows
-/// list order, not the claimant order. The panel itself asks
-/// `ReadSnapshot::reference_journal_name` (claimants of the day's title key),
-/// which over the same deduplicated list names the same page.
-pub(crate) struct PanelResolver {
-    real: RealPageOwners,
-    edges: std::sync::Arc<AliasEdges>,
-    format: JournalFormat,
-    first_journal: std::collections::HashMap<i64, String>,
-    referenced_by_day: std::collections::HashMap<i64, Vec<String>>,
-}
-
-impl PanelResolver {
-    pub(crate) fn new(graph: &ReadSnapshot) -> Self {
-        let format = graph.config().journal_format();
-        // The panel's `find` over the page list, once: the FIRST journal page
-        // of each day in page-list order.
-        let mut first_journal = std::collections::HashMap::new();
-        for entry in graph.page_list_arc().iter() {
-            if entry.kind == PageKind::Journal {
-                if let Some(day) = format.parse(&entry.name) {
-                    first_journal
-                        .entry(day.ordinal_key())
-                        .or_insert_with(|| entry.name.clone());
-                }
-            }
-        }
-        // Referenced names by the day they denote (the one date answerer),
-        // once: what `referenced_day_keys` finds per target.
-        let mut referenced_by_day: std::collections::HashMap<i64, Vec<String>> =
-            std::collections::HashMap::new();
-        for name in explicit_reference_spellings(graph) {
-            if let Some(day) = eval::reference_day(name, &format) {
-                referenced_by_day
-                    .entry(day)
-                    .or_default()
-                    .push(refs::page_key(name));
-            }
-        }
-        PanelResolver {
-            real: real_page_names(graph),
-            edges: graph.alias_edges(),
-            format,
-            first_journal,
-            referenced_by_day,
-        }
-    }
-
-    /// The graph's journal format, as the resolver reads dates.
-    pub(crate) fn format(&self) -> &JournalFormat {
-        &self.format
-    }
-
-    /// `(canonical, names, self_page)` for `target`, exactly
-    /// [`graph_equivalent_page_names`] with `explicit` set.
-    pub(crate) fn resolve(&self, target: &str) -> (String, Vec<String>, String) {
-        graph_equivalent_page_names_with(
-            &self.real,
-            &self.edges,
-            &self.format,
-            target,
-            |day| self.first_journal.get(&day.ordinal_key()).cloned(),
-            |day| {
-                self.referenced_by_day
-                    .get(&day.ordinal_key())
-                    .cloned()
-                    .unwrap_or_default()
-            },
-        )
-    }
-}
+pub(crate) use panel_resolver::PanelResolver;
+mod panel_resolver;
 
 /// [`graph_equivalent_page_names`] with its graph reads supplied: the real
 /// page names, the alias relation, the journal format, the FIRST journal
@@ -1051,7 +967,17 @@ fn collect_reference_occurrences_bounded(
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
     // Folded once per query, shared by every block (GH #623, I-25).
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(names_norm);
-    let candidate_pages = graph.reference_candidate_pages(names_norm, kind);
+    let membership =
+        (kind == ReferenceKind::Explicit).then(|| graph.scan_all_backlink_memberships());
+    let panel = membership.and_then(|answer| answer.selection(names_norm, self_page));
+    // A spelling with no exact panel (a property key folding to another title)
+    // takes the parser-evidence path rather than an empty selection.
+    let membership = membership.filter(|_| panel.is_some());
+    let candidate_pages = if membership.is_some() {
+        graph.explicit_panel_candidate_pages(panel)
+    } else {
+        graph.reference_candidate_pages(names_norm, kind)
+    };
     let groups = {
         let pages = candidate_pages.pages.as_slice();
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
@@ -1067,10 +993,10 @@ fn collect_reference_occurrences_bounded(
             let mut evidence = Vec::new();
             // Both pre-blocks (header, then the preamble's prose) share
             // signature slot 0.
-            for mut block in doc
+            for (pre_ordinal, mut block) in doc
                 .pre_block
                 .as_deref()
-                .filter(|_| candidate_pages.admits(page, 0))
+                .filter(|_| membership.is_some() || candidate_pages.admits(page, 0))
                 .into_iter()
                 .flat_map(|pre| {
                     pre_blocks_with_config(
@@ -1079,7 +1005,15 @@ fn collect_reference_occurrences_bounded(
                         &tine_core::query::atom::ParseConfig::from_config(config),
                     )
                 })
+                .enumerate()
             {
+                if let Some(answer) = membership {
+                    let slot = *graph.pages.positions.get(entry.rel_path_str()).unwrap();
+                    if !panel.is_some_and(|panel| answer.contains(slot, panel, pre_ordinal as u32))
+                    {
+                        continue;
+                    }
+                }
                 if budget.closed() {
                     if block_has_reference(&block, &needles, kind, config) {
                         budget.deny_match();
@@ -1108,7 +1042,15 @@ fn collect_reference_occurrences_bounded(
                 &mut path,
                 &mut |block, _| {
                     ordinal.set(ordinal.get() + 1);
-                    if !candidate_pages.admits(page, ordinal.get()) {
+                    let admitted = if let Some(answer) = membership {
+                        let slot = *graph.pages.positions.get(entry.rel_path_str()).unwrap();
+                        panel.is_some_and(|panel| {
+                            answer.contains(slot, panel, ordinal.get() as u32 + 1)
+                        })
+                    } else {
+                        candidate_pages.admits(page, ordinal.get())
+                    };
+                    if !admitted {
                         None
                     } else if construction_closed.get() {
                         block_has_reference(block, &needles, kind, config).then_some(None)
@@ -1195,10 +1137,7 @@ pub(crate) fn backlinks(graph: &ReadSnapshot, target: &str) -> Vec<RefGroup> {
 
 /// The Linked References panel's blocks for `target`.
 ///
-/// I-12 exception (CM step 2, D-20261102-CM4 CM-COUNT): this walk and the All
-/// pages counter (`query::page_counts::referring_block_counts`, whose count is
-/// the size of this panel unfiltered) are two drivers of one reference rule;
-/// the conformance harness compares them. Retire: one forward target map (D3).
+/// Selection and CM-COUNT cardinalities share the snapshot membership owner.
 pub(crate) fn backlinks_bounded(
     graph: &ReadSnapshot,
     target: &str,

@@ -424,3 +424,109 @@ fn definitions_query_at_scale() {
     drop(whole);
     store.close();
 }
+
+/// The open-threads review (DESIGN §12, `src/commentReviewQuery.ts`): the printed queries in
+/// `tests/fixtures/comment-review-queries.json` list open margin-comment roots, leave out
+/// resolved threads and replies, filter by page and author, and ride the `tine.quote` key
+/// table: the pages handed to the row loop are the pages holding comments, not the graph.
+#[test]
+fn open_threads_review_lists_open_roots_and_visits_only_pages_with_comments() {
+    #[derive(serde::Deserialize)]
+    struct Cases {
+        cases: Vec<Case>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Case {
+        scope: String,
+        page: String,
+        author: Option<String>,
+        query: String,
+    }
+    let cases: Cases = serde_json::from_str(include_str!(
+        "../../tests/fixtures/comment-review-queries.json"
+    ))
+    .unwrap();
+    let query_for = |scope: &str, author: Option<&str>| {
+        cases
+            .cases
+            .iter()
+            .find(|c| c.scope == scope && c.author.as_deref() == author && c.page != "Say \"hi\"")
+            .unwrap_or_else(|| panic!("fixture case {scope} {author:?}"))
+            .query
+            .clone()
+    };
+    let notes = "- Alpha passage\n  - Open thread by Ada\n    tine.quote:: Alpha\n    tine.author:: Ada\n    tine.date:: 2026-11-07T13:37Z\n    - Reply from Ben\n      tine.author:: Ben\n      tine.date:: 2026-11-08T09:00Z\n  - Resolved thread by Ada\n    tine.quote:: passage\n    tine.author:: Ada\n    tine.resolved:: true\n- Another passage\n  - Open thread by Bob\n    tine.quote:: Another\n    tine.author:: Bob\n";
+    let other =
+        "- Beta\n  - Other page thread by Ada\n    tine.quote:: Beta\n    tine.author:: Ada\n";
+    let mut visited_by_size = Vec::new();
+    for unrelated in [30, 120] {
+        let (dir, store) = open(unrelated);
+        std::fs::write(dir.path().join("pages/Notes.md"), notes).unwrap();
+        std::fs::write(dir.path().join("pages/Other.md"), other).unwrap();
+        drop(store);
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let whole = store.whole_graph().unwrap();
+        let graph: &ReadSnapshot = &whole.graph;
+        let listed = |answer: &str| -> Vec<&'static str> {
+            [
+                "Open thread by Ada",
+                "Open thread by Bob",
+                "Other page thread by Ada",
+                "Resolved thread by Ada",
+                "Reply from Ben",
+                "unrelated",
+            ]
+            .into_iter()
+            .filter(|text| answer.contains(text))
+            .collect()
+        };
+        let (everything, graph_visits) =
+            run(graph, &query_for("graph", None), QueryDialect::Og, true);
+        assert_eq!(
+            listed(&everything),
+            [
+                "Open thread by Ada",
+                "Open thread by Bob",
+                "Other page thread by Ada"
+            ],
+            "graph scope lists open roots only (no resolved thread, no reply)"
+        );
+        let (on_page, page_visits) = run(graph, &query_for("page", None), QueryDialect::Og, true);
+        assert_eq!(
+            listed(&on_page),
+            ["Open thread by Ada", "Open thread by Bob"]
+        );
+        let (by_ada, _) = run(
+            graph,
+            &query_for("graph", Some("Ada")),
+            QueryDialect::Og,
+            true,
+        );
+        assert_eq!(
+            listed(&by_ada),
+            ["Open thread by Ada", "Other page thread by Ada"]
+        );
+        let (page_by_ada, _) = run(
+            graph,
+            &query_for("page", Some("Ada")),
+            QueryDialect::Og,
+            true,
+        );
+        assert_eq!(listed(&page_by_ada), ["Open thread by Ada"]);
+        // The narrowing is an evaluation-order change only: the full scan answers the same.
+        let (scanned, scan_visits) = run(graph, &query_for("graph", None), QueryDialect::Og, false);
+        assert_eq!(scanned, everything);
+        assert!(
+            scan_visits > graph_visits,
+            "the scan would have walked {scan_visits} pages"
+        );
+        visited_by_size.push((graph_visits, page_visits));
+        drop(whole);
+        store.close();
+    }
+    // Pages holding comments (Notes, Other), and Notes alone for the page scope, whatever
+    // the graph holds: 30 or 120 comment-free pages add no candidate.
+    assert_eq!(visited_by_size, [(2, 1), (2, 1)]);
+}

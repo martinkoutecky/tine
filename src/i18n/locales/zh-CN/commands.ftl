@@ -309,3 +309,5 @@ command-seen-next-change = 下一处自上次查看以来的更改
 command-seen-previous-change = 上一处自上次查看以来的更改
 command-comment-next = 下一条评论
 command-comment-previous = 上一条评论
+command-comment-review = 查看此页面上未解决的评论
+command-comment-review-graph = 查看整个图谱中未解决的评论

@@ -157,3 +157,5 @@ command-seen-next-change = تغییر بعدی از آخرین بازدید
 command-seen-previous-change = تغییر قبلی از آخرین بازدید
 command-comment-next = دیدگاه بعدی
 command-comment-previous = دیدگاه قبلی
+command-comment-review = مرور دیدگاه‌های باز این صفحه
+command-comment-review-graph = مرور دیدگاه‌های باز در کل گراف

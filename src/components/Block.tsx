@@ -70,7 +70,7 @@ import { openJournalDatePicker } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { insertYoutubeTimestamp } from "./youtubeTimestampEdit";
 import { Rendered, detectMacro } from "./Rendered";
-import { SeenRemoved, useSeenRow } from "../seen/SeenHeader";
+import { SeenRemoved, useSeenRow, useSeenThread } from "../seen/SeenHeader";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { workflow, zoomInto, openContextMenu, openDatePicker, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock } from "../ui";
 import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
@@ -121,13 +121,16 @@ import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenu
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { bindRowHost, bindRowPosition, type RowHost } from "./block/embedRowHost";
 import { beginEditGesture, dragId, dropInd, renderedClickOffset } from "./blockGestures";
-import { bodyNeighbor, rawToWrite, threadRootOf, type PendingEdit } from "../document";
+import { bodyNeighbor, rawToWrite, type PendingEdit } from "../document";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { isBlockEmbedMacro, listLineAt, nearestScrollableY, resizeBlockEditor } from "./blockParts";
 import { commentFromEditor } from "../commentActions";
+import { setCollapsedBlocks } from "../document";
+import { CommentMessages } from "./CommentMessages";
 import { commentKey } from "../editor/commentKeys";
+import { bodyScopeOf } from "../document";
 import { quoteInGroup } from "./CommentGroup";
 import { CommentBelowChip } from "./CommentBelowChip";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
@@ -212,6 +215,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const viewCollapseSurface = () => viewFoldSurface(props.id, collapseSurface);
   const bulletOpen = useContext(BulletOpenContext);
   const seenRow = useSeenRow(props.id);
+  const seenThread = useSeenThread();
   const editing = () => {
     if (!isEditingId(props.id)) return false;
     const owner = editingOwner();
@@ -250,7 +254,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
       key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
-  // Share first-line heading/bullet alignment with Rendered: one depthOf walk.
   const headingLevel = createMemo(() => effectiveHeadingLevel(blockFacets(), depthOf(props.id)));
   // Editor-only: page load never runs splitProps over every block's text.
   const editorVisibleValue = () => {
@@ -280,15 +283,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
-  let mainEl: HTMLDivElement | undefined;
-  // One conditional owner for identity chrome across the row's separate slots.
+  let mainEl: HTMLDivElement | undefined; const expandThread = () => { const surface = viewCollapseSurface(); if (surface) surface.setMany([props.id], false); else setCollapsedBlocks([props.id], false); };
   const commentPresentation = createMemo(() => hasCommentIdentity() ? {
-    quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() ? null : commentSelector()} />,
-    header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} /></Show>,
+    quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() || !bulletless() ? null : commentSelector()} />,
+    header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} folded={collapsed()} toggleFold={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())} /></Show>,
     gutter: <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />,
-    composer: <Show when={commentClasses()["comment-card"]}><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} /></Show>,
+    composer: <Show when={commentClasses()["comment-card"]}><CommentMessages id={props.id} collapsed={collapsed()} expand={expandThread} /><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} collapsed={collapsed} expand={expandThread} /></Show>,
   } : null);
-  // A page-embed host pins its own bullet while its embedded page scrolls (GH #898).
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
 
   return (
@@ -303,6 +304,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
             ...commentClasses(),
+            // The card of a thread with a message changed since the user last looked (DESIGN §12),
+            // also while the thread is folded to "N replies" and its message rows are not drawn.
+            "comment-seen-changed": !!commentClasses()["comment-card"] && seenThread(props.id),
             ...rowDecorationClasses(thread),
           },
         };
@@ -413,7 +417,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <BlockReferences id={props.id} />
         </div>
       </Show>
-      <Show when={(bulletless() || props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
           <Match when={sheet().view === "grid"}>
             <SheetContainer>
@@ -1551,7 +1555,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const end = ref.selectionEnd;
     const raw = ref.value;
     // Empty code payloads can leave their wrapper through the existing delete door.
-    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0 && threadRootOf(props.id) === null) {
+    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0 && bodyScopeOf(props.id) !== undefined) {
       e.preventDefault();
       const adjacent = [bodyNeighbor(props.id, -1, structuralScope), bodyNeighbor(props.id, 1, structuralScope)].find(id => id && docNode(id)?.page === node().page);
       if (adjacent) {
@@ -1823,7 +1827,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         // Never merge a highlight, calc, or body-only code block away (their
         // structure must stay; a merge would smuggle raw wrapper bytes into the
         // previous block's text).
-        if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
+        if (isAnnot() || isCalc() || codeShown() || bodyScopeOf(props.id) === undefined) return;
         // Own-numbered state is a block property, never an in-block `1.` marker.
         // At offset zero OG removes only that property and preserves the text
         // (`src/main/frontend/handler/editor.cljs:2752-2764`, 6e7afa8eb).
@@ -1849,7 +1853,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     } else if (e.key === "Delete" && end === start && start === raw.length) {
       // Delete merges with the next body block (GH #213, #891); annotations,
       // calc and code wrappers keep their structure, as on Backspace.
-      if (isAnnot() || isCalc() || codeShown() || threadRootOf(props.id) !== null) return;
+      if (isAnnot() || isCalc() || codeShown() || bodyScopeOf(props.id) === undefined) return;
       const next = bodyNeighbor(props.id, 1, structuralScope);
       if (next) {
         const nextRaw = docNode(next)?.raw ?? "";

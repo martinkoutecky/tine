@@ -227,11 +227,10 @@ pub enum ChangeKind {
 /// `Change` is `Send + Sync` and can cross worker-thread boundaries.
 /// Its Serialize implementation emits a bounded derived-answer wire: `rev`,
 /// `inventoryChanged` (name/alias/reference-name or unreadable inventory inputs),
-/// `blockRefCounts` (final changed-target counts, zero for removal), and a
-/// transport-only `summary` of changed page/block/reference/property keys. Save
+/// `blockRefCounts`, timestamp/count row deltas, and the transport-only summary. Save
 /// results and notifications use this same signal. Serialization costs O(changed
 /// targets and summary keys); publication computes it from changed parsed pages without inventory
-/// materialization. Initial publication may include all counts.
+/// materialization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     /// Graph revision after this change.
@@ -279,14 +278,14 @@ pub struct WatchBatch {
     pub event_paths: usize,
 }
 
-/// One publication's derived answers: inventory changed, final changed-target
-/// block-reference counts, the change summary, and the inventory delta when
-/// the change is expressible as one (`None` with `inventory_changed`: refetch).
+/// One publication's inventory, block counts, summary, inventory delta and
+/// page metrics. An unexpressible inventory delta requires refetch.
 type Answers = (
     bool,
     BTreeMap<String, usize>,
     change_summary::ChangeSummary,
     Option<Arc<InventoryDelta>>,
+    page_metrics::MetricDelta,
 );
 
 impl Change {
@@ -396,6 +395,7 @@ pub(crate) mod change_summary;
 pub(crate) mod checkpoint;
 mod diagnostics;
 mod first_view;
+mod page_metrics;
 pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries};
 #[cfg(test)]
 mod fold_save_tests;

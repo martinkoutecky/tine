@@ -10,6 +10,7 @@ import type { PageInventoryEntry } from "../types";
 import { noteQueryInput, QUERY_QUIET_MS } from "../querySubscription";
 import { AllPages, ALL_PAGES_ROW_HEIGHT } from "./AllPages";
 import { Sidebar } from "./Sidebar";
+import { applyGraphAnswers } from "../graphAnswers";
 
 // GH #335: the full All Pages view. The user outcomes: every page is reachable
 // in a sortable, filterable list on a graph of thousands of pages, opening the
@@ -65,7 +66,7 @@ async function mountAllPages(entries = inventory(), modified: [string, number][]
   const readModified = vi.spyOn(backend(), "pageModified");
   if (modified === "fail") readModified.mockRejectedValue(new Error("no times"));
   else readModified.mockResolvedValue({ rev: "1", modified });
-  const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([backlinks, references]);
+  const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([backlinks, references, "1"]);
   const otherCalls = spyOnEverythingElse();
   const icons = vi.spyOn(backend(), "pageIcons").mockImplementation(async (names: string[]) =>
     Object.fromEntries(names.filter((name) => name === "Page 00001").map((name) => [name, "🚩"])));
@@ -88,6 +89,74 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
+  it("repairs the cold seed/publication race when its notification arrives after the seed", async () => {
+    const { host, readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")], [], [["pages/Alpha.md", 1]]);
+    try {
+      await vi.waitFor(() => expect(host.querySelector(".all-pages-backlinks")!.textContent).toBe("1"));
+      readCounts.mockResolvedValue([[["pages/Alpha.md", 4]], [], "2"]);
+      applyGraphAnswers({ rev: "2", inventoryChanged: false, blockRefCounts: {}, pageModified: [], pageBacklinkCounts: null });
+      await vi.waitFor(() => expect(host.querySelector(".all-pages-backlinks")!.textContent).toBe("4"));
+      expect(readCounts).toHaveBeenCalledTimes(2);
+      expect(readModified).toHaveBeenCalledTimes(1);
+    } finally { dispose(); }
+  });
+  it("rejects previous-graph late metrics and replays rows newer than a seed", async () => {
+    let finishTimes!: (value: import("../types").PageModified) => void;
+    let finishCounts!: (value: import("../types").PageBacklinkCounts) => void;
+    const inventoryRead = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [existing("Old")] });
+    vi.spyOn(backend(), "pageIcons").mockResolvedValue({});
+    const times = vi.spyOn(backend(), "pageModified").mockImplementationOnce(() => new Promise(resolve => { finishTimes = resolve; }));
+    const counts = vi.spyOn(backend(), "pageBacklinkCounts").mockImplementationOnce(() => new Promise(resolve => { finishCounts = resolve; }));
+    bumpGraphEpoch();
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <AllPages router={stubRouter()} />, host);
+    try {
+      await vi.waitFor(() => expect(counts).toHaveBeenCalledTimes(1));
+      inventoryRead.mockResolvedValue({ rev: "1", entries: [existing("New"), existing("Other")] });
+      times.mockResolvedValue({ rev: "1", modified: [["pages/New.md", 1]] });
+      let finishNew!: (value: import("../types").PageBacklinkCounts) => void;
+      counts.mockImplementationOnce(() => new Promise(resolve => { finishNew = resolve; }));
+      bumpGraphEpoch();
+      await vi.waitFor(() => expect(counts).toHaveBeenCalledTimes(2));
+      applyGraphAnswers({ rev: "2", inventoryChanged: false, blockRefCounts: {},
+        pageModified: [["pages/Other.md", 2]], pageBacklinkCounts: [["pages/New.md", 8]] });
+      finishNew([[["pages/New.md", 1], ["pages/Other.md", 3]], [], "1"]);
+      column(host, "Backlinks").click();
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["New", "Other"]));
+      expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["8", "3"]);
+      finishTimes({ rev: "99", modified: [["pages/Other.md", 99]] });
+      finishCounts([[["pages/Other.md", 99]], [], "99"]);
+      await settle();
+      expect(rowNames(host)).toEqual(["New", "Other"]);
+      expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["8", "3"]);
+      expect(counts).toHaveBeenCalledTimes(2);
+      expect(times).toHaveBeenCalledTimes(2);
+    } finally { dispose(); }
+  });
+  it("shares metrics between panes and patches publications without full reads", async () => {
+    const { host, readModified, readCounts, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
+    const other = document.createElement("div"); document.body.append(other);
+    const disposeOther = render(() => <AllPages router={stubRouter()} />, other);
+    try {
+      await settle();
+      expect(readModified).toHaveBeenCalledTimes(1);
+      expect(readCounts).toHaveBeenCalledTimes(1);
+      column(host, "Backlinks").click(); column(other, "Backlinks").click();
+      applyGraphAnswers({ rev: "2", inventoryChanged: false, blockRefCounts: {},
+        pageModified: [["pages/Alpha.md", 1781553600]], pageBacklinkCounts: [] } as Parameters<typeof applyGraphAnswers>[0]);
+      bumpDataRev();
+      await settle();
+      expect(readModified).toHaveBeenCalledTimes(1);
+      expect(readCounts).toHaveBeenCalledTimes(1);
+      expect(host.querySelector(".all-pages-updated")!.textContent).toBe("—"); // Beta still sorts first.
+      applyGraphAnswers({ rev: "3", inventoryChanged: false, blockRefCounts: {},
+        pageModified: [["pages/Alpha.md", 1781553601]], pageBacklinkCounts: [["pages/Alpha.md", 9]] } as Parameters<typeof applyGraphAnswers>[0]);
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]));
+      expect(rowNames(other)).toEqual(["Alpha", "Beta"]);
+      expect(readModified).toHaveBeenCalledTimes(1);
+      expect(readCounts).toHaveBeenCalledTimes(1);
+    } finally { disposeOther(); dispose(); }
+  });
   it("lists and opens the virtual journal beside a same-title ordinary file", async () => {
     const name = "2026_10_23";
     const { host, router, dispose } = await mountAllPages([
@@ -108,10 +177,9 @@ describe("the All Pages view", () => {
     } finally { dispose(); }
   });
 
-  // A9 / HK3 (D-20261024): counts are a graph-wide read. They re-run only
-  // once the graph is quiet (QUERY_QUIET_MS after the latest input), the idle
-  // rule mounted queries use, with one read in flight; never while typing.
-  it("rereads counts only once typing has paused, one read in flight, and stops on unmount", async () => {
+  // Publications patch the shared answer even while typing. Neither the
+  // typing pause nor a disposed pane schedules another graph-wide read.
+  it("keeps one metric seed through typing, quiet, and unmount", async () => {
     const { readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")]);
     await settle();
     expect(readCounts).toHaveBeenCalledTimes(1);
@@ -123,25 +191,19 @@ describe("the All Pages view", () => {
         await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS / 3);
       }
       expect(readCounts).toHaveBeenCalledTimes(1);
-      expect(readModified.mock.calls.length).toBeGreaterThan(3);
+      expect(readModified).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(QUERY_QUIET_MS);
-      expect(readCounts).toHaveBeenCalledTimes(2);
-      // A change during a read in flight asks for one more read, after it.
-      let finish!: (counts: [[string, number][], [string, number][]]) => void;
-      readCounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      expect(readCounts).toHaveBeenCalledTimes(1);
       bumpDataRev();
       await vi.advanceTimersByTimeAsync(0);
-      expect(readCounts).toHaveBeenCalledTimes(3);
+      expect(readCounts).toHaveBeenCalledTimes(1);
       bumpDataRev(); bumpDataRev();
       await vi.advanceTimersByTimeAsync(2 * QUERY_QUIET_MS);
-      expect(readCounts).toHaveBeenCalledTimes(3);
-      finish([[], []]);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(readCounts).toHaveBeenCalledTimes(4);
+      expect(readCounts).toHaveBeenCalledTimes(1);
       noteQueryInput(); bumpDataRev();
       dispose();
       await vi.advanceTimersByTimeAsync(2 * QUERY_QUIET_MS);
-      expect(readCounts).toHaveBeenCalledTimes(4);
+      expect(readCounts).toHaveBeenCalledTimes(1);
     } finally {
       // The typing clock is app-wide and the fake clock ran ahead of the real
       // one: leave the last input far in the past for the tests after this.
@@ -157,11 +219,12 @@ describe("the All Pages view", () => {
     try {
       column(host, "Backlinks").click();
       await vi.waitFor(() => expect(rowNames(host)).toEqual(["Beta", "Alpha"]));
-      readModified.mockResolvedValue({ rev: "2", modified: [] });
-      readCounts.mockResolvedValue([[["pages/Alpha.md", 9], ["pages/Beta.md", 7]], []]);
+      applyGraphAnswers({ rev: "2", inventoryChanged: false, blockRefCounts: {},
+        pageModified: [], pageBacklinkCounts: [["pages/Alpha.md", 9]] });
       bumpDataRev();
       await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]), { timeout: 2000 });
-      expect(readModified).toHaveBeenCalledTimes(2);
+      expect(readModified).toHaveBeenCalledTimes(1);
+      expect(readCounts).toHaveBeenCalledTimes(1);
     } finally { dispose(); }
   });
   it("shows backend backlink counts and sorts them in either direction", async () => {
@@ -354,6 +417,8 @@ describe("the All Pages view", () => {
 
 describe("the sidebar entry", () => {
   it("opens the full view directly from the All pages entry", async () => {
+    const times = vi.spyOn(backend(), "pageModified").mockResolvedValue({ rev: "1", modified: [] });
+    const counts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([[], [], "1"]);
     vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [existing("Alpha")] });
     bumpGraphEpoch();
     const host = document.createElement("div");
@@ -364,6 +429,8 @@ describe("the sidebar entry", () => {
       expect(el).not.toBeNull();
       return el!;
     });
+    expect(times).not.toHaveBeenCalled();
+    expect(counts).not.toHaveBeenCalled();
     entry.click();
     expect(route()).toEqual({ kind: "all-pages" });
     dispose();

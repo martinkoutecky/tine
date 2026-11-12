@@ -9,11 +9,13 @@ use std::collections::BTreeSet;
 // inventoryChanged invalidates names when their source contributions change.
 impl serde::Serialize for Change {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut wire = serializer.serialize_struct("GraphAnswers", 4)?;
+        let mut wire = serializer.serialize_struct("GraphAnswers", 6)?;
         wire.serialize_field("rev", &self.graph_rev.0.to_string())?;
         wire.serialize_field("inventoryChanged", &self.answers.0)?;
         wire.serialize_field("blockRefCounts", &self.answers.1)?;
         wire.serialize_field("summary", &self.answers.2)?;
+        wire.serialize_field("pageModified", &self.answers.4.modified)?;
+        wire.serialize_field("pageBacklinkCounts", &self.answers.4.counts)?;
         wire.end()
     }
 }

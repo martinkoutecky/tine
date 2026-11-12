@@ -1,4 +1,5 @@
-//! Per-block physical retention: a Markdown save rewrites only what it changed.
+//! Per-block physical retention: a Markdown save rewrites only what it changed,
+//! and an Org save keeps each reused line's own terminator ([`restore_org`]).
 //!
 //! The DTO carries each block's semantic text, not the file's layout: base
 //! indentation offsets, depth jumps, continuation indentation, whitespace-only
@@ -108,6 +109,124 @@ pub(super) fn serialize(
     .then_some((result, reparsed))
 }
 
+/// Give an Org save's LF-separated `serialized` text (`org::serialize_org_detect`
+/// of `doc`) the line terminators of `source` (K01a). `old` is `source` parsed:
+/// the Org firewall has proved `serialized`'s rule reproduces it, so `source`'s
+/// lines are `old`'s pre-block lines, then each block's lines in pre-order, then
+/// the trailing newline run.
+///
+/// Rule: a source whose terminators are all one kind gives every line that
+/// kind. Otherwise each new line takes the terminator of the old line it comes
+/// from, and a line from no old line takes [`line_endings::convention`]. Blocks
+/// pair as Markdown's do ([`match_blocks`]: unchanged ones wherever they moved,
+/// changed ones with the old block in their place), the pre-block with the old
+/// pre-block; within a pair, lines pair by [`pair_lines`]. The trailing newline
+/// run aligns from the end. Pure. Cost: O(lines) for a uniform or LF-only
+/// source; otherwise O(lines) plus capped LCS over the changed middles.
+pub(super) fn restore_org(
+    serialized: String,
+    doc: &Document,
+    source: &str,
+    old: &Document,
+) -> String {
+    if !source.contains('\r') {
+        return serialized;
+    }
+    let (lines, ends) = line_endings::pieces(source);
+    if let Some(&end) = ends.first().filter(|&&e| ends.iter().all(|&x| x == e)) {
+        return serialized.replace('\n', end);
+    }
+    let pre_len = |d: &Document| {
+        d.pre_block
+            .as_ref()
+            .map_or(0, |p| emitted_lines(p).split('\n').count())
+    };
+    let mut flat = Vec::new();
+    flatten(&old.roots, &mut flat);
+    let mut start = pre_len(old);
+    let olds: Vec<OldBlock> = flat
+        .iter()
+        .map(|block| {
+            let len = block.raw().split('\n').count();
+            start += len;
+            OldBlock {
+                raw: block.raw(),
+                start: start - len,
+                len,
+                bulleted: true,
+            }
+        })
+        .collect();
+    let old_content = start;
+    let mut news = Vec::new();
+    flatten(&doc.roots, &mut news);
+    let (keep, hint) = match_blocks(&olds, &news);
+
+    let new: Vec<&str> = serialized.split('\n').collect();
+    let mut origin: Vec<Option<usize>> = vec![None; new.len()];
+    let new_pre = pre_len(doc);
+    let mut place = |at: usize, start: usize, a: &str, b: &[&str]| {
+        let a: Vec<&str> = a.split('\n').collect();
+        for (k, i) in pair_lines(&a, b).into_iter().enumerate() {
+            if let Some(slot) = origin.get_mut(at + k) {
+                *slot = i.map(|i| start + i);
+            }
+        }
+    };
+    if let (Some(a), Some(b)) = (&old.pre_block, &doc.pre_block) {
+        let b = emitted_lines(b);
+        place(0, 0, &emitted_lines(a), &b.split('\n').collect::<Vec<_>>());
+    }
+    let mut at = new_pre;
+    for (j, block) in news.iter().enumerate() {
+        let text = emitted_lines(block.raw());
+        let b: Vec<&str> = text.split('\n').collect();
+        if let Some(o) = keep[j].or(hint[j]).map(|o| &olds[o]) {
+            place(at, o.start, o.raw, &b);
+        }
+        at += b.len();
+    }
+    // The trailing newline run aligns with the old run from the end. It starts
+    // where `serialized`'s content ends, not at `at`: the serializer folds a
+    // last block's own trailing newlines (a draft's `b\n`) into that run.
+    let content = serialized.trim_end_matches('\n');
+    let tail = if content.is_empty() {
+        0
+    } else {
+        content.split('\n').count()
+    };
+    for (t, slot) in origin.iter_mut().enumerate().skip(tail) {
+        *slot = (lines.len() + t)
+            .checked_sub(new.len())
+            .filter(|&i| i >= old_content);
+    }
+    let convention = line_endings::convention(Some(source));
+    let mut out = String::with_capacity(serialized.len() + new.len());
+    for (k, line) in new.iter().enumerate() {
+        out.push_str(line);
+        if k + 1 < new.len() {
+            out.push_str(
+                origin[k]
+                    .and_then(|i| ends.get(i).copied())
+                    .unwrap_or(convention),
+            );
+        }
+    }
+    out
+}
+
+/// `text` as the Org serializer emits it before a following line: every
+/// terminator one `\n`, a trailing lone `\r` merged with the joining `\n`.
+/// Borrows when `text` has no `\r`. O(text).
+fn emitted_lines(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return text.into();
+    }
+    let mut lf = doc::normalize_line_endings(&format!("{text}\n")).into_owned();
+    lf.pop();
+    lf.into()
+}
+
 /// mldoc's layout whitespace (tine-core `strip_layout_ws`): what lsdoc skips
 /// before a dash bullet and in a block's indentation.
 const LAYOUT_WS: [char; 3] = [' ', '\t', '\x0c'];
@@ -193,6 +312,8 @@ fn subtree_len(block: &DocBlock) -> usize {
 type Matches = (Vec<Option<usize>>, Vec<Option<usize>>);
 
 fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
+    #[cfg(test)]
+    BLOCK_MATCHES.with(|n| n.set(n.get() + 1));
     let (n, m) = (olds.len(), news.len());
     let mut keep = vec![None; m];
     let mut head = 0;
@@ -208,29 +329,9 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
     let (a, b) = (&olds[head..n - tail], &news[head..m - tail]);
     // Quadratic LCS only over the changed middle; a huge middle keeps the
     // unchanged prefix/suffix and re-renders the rest.
-    if !a.is_empty() && !b.is_empty() && a.len() * b.len() <= 4_000_000 {
-        let w = b.len() + 1;
-        let mut dp = vec![0u32; (a.len() + 1) * w];
-        for i in (0..a.len()).rev() {
-            for j in (0..b.len()).rev() {
-                dp[i * w + j] = if a[i].raw == b[j].raw() {
-                    dp[(i + 1) * w + j + 1] + 1
-                } else {
-                    dp[(i + 1) * w + j].max(dp[i * w + j + 1])
-                };
-            }
-        }
-        let (mut i, mut j) = (0, 0);
-        while i < a.len() && j < b.len() {
-            if a[i].raw == b[j].raw() {
-                keep[head + j] = Some(head + i);
-                i += 1;
-                j += 1;
-            } else if dp[(i + 1) * w + j] >= dp[i * w + j + 1] {
-                i += 1;
-            } else {
-                j += 1;
-            }
+    if a.len() * b.len() <= 4_000_000 {
+        for (i, j) in lcs(a.len(), b.len(), |i, j| a[i].raw == b[j].raw()) {
+            keep[head + j] = Some(head + i);
         }
     }
     // Changed blocks: pair unmatched old and new blocks positionally inside
@@ -259,6 +360,94 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
         }
     }
     (keep, hint)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// [`match_blocks`] calls on this thread, for the uniform-ending fast path test.
+    static BLOCK_MATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The index pairs `(i, j)` of a longest common subsequence of two sequences
+/// of lengths `n` and `m`, where `eq(i, j)` compares their items, in order.
+/// O(n·m) time and table; callers cap the product.
+fn lcs(n: usize, m: usize, eq: impl Fn(usize, usize) -> bool) -> Vec<(usize, usize)> {
+    let w = m + 1;
+    let mut dp = vec![0u32; (n + 1) * w];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i * w + j] = if eq(i, j) {
+                dp[(i + 1) * w + j + 1] + 1
+            } else {
+                dp[(i + 1) * w + j].max(dp[i * w + j + 1])
+            };
+        }
+    }
+    let (mut pairs, mut i, mut j) = (Vec::new(), 0, 0);
+    while i < n && j < m {
+        if eq(i, j) {
+            pairs.push((i, j));
+            i += 1;
+            j += 1;
+        } else if dp[(i + 1) * w + j] >= dp[i * w + j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    pairs
+}
+
+/// For each line of `b`, the line of `a` it comes from: equal lines pair by
+/// LCS (after the common head and tail; a middle over 4,096 line pairs pairs
+/// them greedily in order, [`greedy_anchors`]), and inside each gap between equal pairs the unpaired lines pair by
+/// position (an edit in place); a new line past its gap's old lines is `None`.
+fn pair_lines(a: &[&str], b: &[&str]) -> Vec<Option<usize>> {
+    let head = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let room = a.len().min(b.len()) - head;
+    let tail = (a.iter().rev().zip(b.iter().rev()))
+        .take(room)
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (am, bm) = (&a[head..a.len() - tail], &b[head..b.len() - tail]);
+    let mut out: Vec<Option<usize>> = (0..head).map(Some).collect();
+    let anchors = match am.len() * bm.len() <= 4_096 {
+        true => lcs(am.len(), bm.len(), |i, j| am[i] == bm[j]),
+        false => greedy_anchors(am, bm),
+    };
+    let (mut pi, mut pj) = (0, 0);
+    for (i, j) in anchors.into_iter().chain([(am.len(), bm.len())]) {
+        out.extend((pj..j).map(|k| (pi + k - pj < i).then_some(head + pi + k - pj)));
+        out.extend((j < bm.len()).then_some(Some(head + i)));
+        (pi, pj) = (i + 1, j + 1);
+    }
+    out.extend((a.len() - tail..a.len()).map(Some));
+    out
+}
+
+/// An increasing run of equal-line pairs, O(lines): each new line takes the
+/// first unused equal old line after the previous pair. The over-cap stand-in
+/// for [`lcs`], so untouched lines of a long block still keep their origin.
+fn greedy_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
+    let mut at: std::collections::HashMap<&str, std::collections::VecDeque<usize>> =
+        std::collections::HashMap::new();
+    for (i, line) in a.iter().enumerate() {
+        at.entry(line).or_default().push_back(i);
+    }
+    let (mut pairs, mut next) = (Vec::new(), 0);
+    for (j, line) in b.iter().enumerate() {
+        let Some(queue) = at.get_mut(line) else {
+            continue;
+        };
+        while queue.front().is_some_and(|&i| i < next) {
+            queue.pop_front();
+        }
+        if let Some(i) = queue.pop_front() {
+            pairs.push((i, j));
+            next = i + 1;
+        }
+    }
+    pairs
 }
 
 /// Emit the preamble and, once, the separator before the first root: the old
@@ -463,5 +652,83 @@ impl Emitter<'_> {
                 (doc::continuation_raw(line, indent) == b[j]).then_some((j, start + k))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod org_terminator_tests {
+    use super::restore_org;
+    use tine_core::org::{parse_org, serialize_org_detect};
+
+    /// Save `edit` of `source`'s model the way the store does.
+    fn save(source: &str, edit: impl FnOnce(&mut tine_core::doc::Document)) -> String {
+        let old = parse_org(source);
+        let mut doc = old.clone();
+        edit(&mut doc);
+        restore_org(serialize_org_detect(&doc, Some(source)), &doc, source, &old)
+    }
+
+    /// A source with one kind of terminator is restored without block or
+    /// line matching (a 2,000-block reversal would otherwise run the LCS).
+    #[test]
+    fn a_uniform_ending_save_does_no_matching() {
+        let matches = || super::BLOCK_MATCHES.with(std::cell::Cell::get);
+        let reversed = |d: &mut tine_core::doc::Document| d.roots.reverse();
+        let lines: Vec<String> = (0..2_000).map(|i| format!("* b{i}")).collect();
+        let before = matches();
+        let saved = save(&(lines.join("\r\n") + "\r\n"), reversed);
+        assert_eq!(matches(), before, "uniform CRLF matched blocks");
+        assert!(saved.starts_with("* b1999\r\n* b1998\r\n"));
+        assert_eq!(saved.matches("\r\n").count(), saved.matches('\n').count());
+        assert_eq!(save("* a\r* b\r", reversed), "* b\r* a\r");
+        assert_eq!(matches(), before, "uniform lone CR matched blocks");
+        assert_eq!(save("* a\r\n* b\n", reversed), "* b\n* a\r\n");
+        assert_eq!(matches(), before + 1, "a mixed source pairs blocks");
+    }
+
+    #[test]
+    fn each_line_keeps_its_own_terminator() {
+        assert_eq!(
+            save("* a\n", |d| d.roots.push(d.roots[0].clone())),
+            "* a\n* a\n"
+        );
+        assert_eq!(save("* a\r\n", |_| {}), "* a\r\n");
+        assert_eq!(save("* a\r* b\r", |_| {}), "* a\r* b\r");
+        assert_eq!(
+            save("* a\r* b", |d| d.roots[0].set_raw("a!".to_string())),
+            "* a!\r* b"
+        );
+        let added = |d: &mut tine_core::doc::Document| {
+            let mut n = d.roots[0].clone();
+            n.set_raw("n".to_string());
+            d.roots.insert(1, n);
+        };
+        assert_eq!(save("* a\r\n* b\r\n", added), "* a\r\n* n\r\n* b\r\n");
+        assert_eq!(
+            save("* a\n* b\r", added),
+            "* a\n* n\r* b\r",
+            "convention: lone CR"
+        );
+        assert_eq!(
+            save("* a\n* b\r", |d| d.roots[0].set_raw("x".to_string())),
+            "* x\n* b\r",
+            "an edited line keeps its own terminator"
+        );
+        assert_eq!(save("* a\r\n*\r\n\r\n* b", |_| {}), "* a\r\n*\r\n\r\n* b");
+        assert_eq!(save("* a\r\r\n* b\n", |_| {}), "* a\r\r\n* b\n");
+    }
+
+    #[test]
+    fn a_moved_block_keeps_its_terminators() {
+        assert_eq!(
+            save("* a\r\n* b\n* c\r\n", |d| d.roots.swap(0, 1)),
+            "* b\n* a\r\n* c\r\n"
+        );
+        assert_eq!(
+            save("#+title: T\r\n\n* a\r\nbody\n* b\n\r\n", |d| d
+                .roots
+                .swap(0, 1)),
+            "#+title: T\r\n\n* b\n* a\r\nbody\n\r\n"
+        );
     }
 }

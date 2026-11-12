@@ -200,8 +200,9 @@ fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit
         );
         assert_eq!(
             after,
-            format!("{literal}* edited\n"),
-            "I-4: a save changes only the edited block, preserving LF/CRLF example bytes"
+            format!("{literal}* edited{newline}"),
+            "I-4: a save changes only the edited block, preserving LF/CRLF example bytes \
+             and the edited line's own terminator (K01a)"
         );
     }
 }

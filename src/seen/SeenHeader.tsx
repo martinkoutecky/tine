@@ -6,6 +6,8 @@ import { For, Show, createContext, createSignal, onMount, onCleanup, useContext,
 import { newResizeObserver } from "../windowRealm";
 import { t } from "../i18n";
 import type { PageSeen } from "./pageSeen";
+import { threadHasChange } from "./threads";
+import { node } from "../document";
 import { markPageSeenNow } from "./seenState";
 import { registerSeenStepper } from "./stepper";
 import "../styles/seen.css";
@@ -21,6 +23,13 @@ export function SeenRows(props: { seen: PageSeen; children: JSX.Element }): JSX.
 export function useSeenRow(id: string): { changed: () => boolean } {
   const seen = useContext(SeenContext);
   return { changed: () => seen?.changed(id) ?? false };
+}
+
+/** Has this margin-comment thread changed since the user last looked? Reads the routed page's
+ * existing marks only; false outside a tracking surface (sidebar, references, a graph without git). */
+export function useSeenThread(): (root: string) => boolean {
+  const seen = useContext(SeenContext);
+  return (root) => !!seen && threadHasChange(root, seen.changed, (id) => node(id)?.children);
 }
 
 function RemovedMarker(props: { text: string; child: boolean; item: string }): JSX.Element {

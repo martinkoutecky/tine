@@ -1,5 +1,34 @@
 # 0075. Margin dialogue: a comment is an ordinary child block with `quote::`
 
+Amendment D-20261109-MC9, D-20261111-CSL, DESIGN §12 (0.10): three
+conveniences sit on the same blocks and add nothing to the graph. (1) Two
+commands, **Next comment** and **Previous comment**, step through a page's open
+threads in the order the margin draws them, from the one ordering the cards
+already use; the current thread is a view signal, never saved, and the commands
+ship with no default key. (2) Reviewing all open comments is the existing query
+engine given a `query` right-sidebar item that runs
+`(and (property tine.quote) (not (property tine.resolved true)))` (plus an author
+filter) without a block; the query text is derived and only the item's scope and
+author filter are kept, in the sidebar item lists that already exist. (3) A
+comment is unread by the existing "changed since you last looked" marks (ADR
+0079), so there is no second unread store. The classes comments draw with,
+`data-author` and two colour tokens are a public styling surface
+(`docs/contracts/theme-tokens.md` §7). Not done: a bespoke comments panel (a
+second list and a second result renderer) and an unread flag written to the file
+(churn, and wrong after any external edit). Unit cost of all three: zero bytes
+per edit in the graph, zero files and zero transport. Page-level discussion
+threads (design §13) are not built.
+
+Amendment D-20261108-MC5/MC6: a root with `tine.date` marks a thread whose
+dated blocks are messages and whose undated descendants are ordinary editable
+body outlines inside those messages. The existing block renderer supplies the
+tree, including in hover previews. Undated threads retain their flat display
+and are never migrated: old nesting cannot distinguish a reply from its body.
+Writers date only message roots. Folding uses Logseq's `collapsed:: true`,
+shared on disk and undone through the existing property path; all thread roots
+on one passage fold in a single undo. This reuses the existing date and fold
+properties rather than adding a marker, container, viewer-only fold or writer.
+
 Amendment D-20261107-MC3 §§4,9 (0.10): resolution is `tine.resolved:: true`
 on the root only, removed by Reopen or a new reply; it is never a task marker.
 Resolved cards are hidden by default, revealed greyed by a per-page count, and
@@ -75,8 +104,9 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   also offer **Comment**. Within a thread this creates a direct child of its root,
   whose selection is a compact quote inside that thread.
   Each thread offers a local **Reply…** draft at its bottom on hover or focus
-  (also while active in the margin). Focus expands it; Enter submits, Shift+Enter
-  adds a line, Escape/Cancel discards. No block or save exists until a nonempty
+  (also while active in the margin). Focus expands it; Enter and Shift+Enter add
+  a line, Ctrl/Cmd+Enter or the visible Send button submits, Escape/Cancel
+  discards (D-20261107-MC3 §5). No block or save exists until a nonempty
   draft is submitted. The selection toolbar's speech bubble is rightmost on
   desktop and touch. A top-right delete control on each comment/reply removes
   that block and its replies as one document undo step
@@ -91,14 +121,21 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   it as a chip. Ordinary blocks keep these properties in their editor buffer,
   as on OG. Page-level property editing retains its own projection.
 - **Presentation** (`render only`): a comment draws as a tinted card with the
-  quote above it, and the quoted words are marked in the parent. On a wide main
-  pane (scroller at least 960 px, not split) a page that holds comments draws the
-  threads in a right-hand column beside their passages; elsewhere they stay inline
-  under the commented block. Threads follow passage order, retaining file order
-  for ties. Focus pins a thread to its anchor line; neighbors cascade above and
-  below it without overlap. Comments and their replies draw **no bullet** and
-  read at one level in file pre-order, whatever their stored depth. Hand-nested
-  files stay unchanged. The badge counts thread roots, never replies.
+  quote above it, and the quoted words are marked in the parent. Where the pane
+  is at least 960 px wide a page that holds comments draws the threads in a
+  right-hand column beside their passages; in any narrower pane, or when the
+  viewer chooses **In a popup**, nothing sits beside the text and the highlight
+  opens its thread in the hover-preview popover (a bottom sheet on phones). Inline
+  cards are not a fallback anywhere, and the same width rule applies to journal
+  days, splits, the sidebar and embeds (D-20261108-MC7/MC8, DESIGN §6). Threads
+  follow passage order, retaining file order for ties; threads on one passage share
+  a card. Focus pins a thread to its anchor line; neighbors cascade above and below
+  it without overlap. Comment blocks draw **no bullet**. In a thread whose root has
+  no `tine.date` every block reads at one level in file pre-order, whatever its
+  stored depth; in a dated thread dated blocks are the messages (still one level)
+  and undated descendants are each message's editable bullet outline (amendment
+  above). Hand-nested files stay unchanged. No count badge sits on an expanded
+  block; a collapsed block with open threads below shows an "N below" chip.
   The visibility command and Settings label are **Show/Hide comments**; the
   command id and shortcut remain unchanged.
 - The question "does this page hold a comment" follows the page's **structure**,

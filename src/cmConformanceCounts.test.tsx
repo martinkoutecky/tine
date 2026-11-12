@@ -91,7 +91,7 @@ const show = (p: ModelPage) => `("${p.kind}", "${p.key}")`;
  *  row, which has none: `ref:` and its name's key) and Backlinks cell. */
 async function allPagesRows(c: Case): Promise<{ rows: Map<string, string>; hidden: string[] }> {
   vi.spyOn(backend(), "pageModified").mockResolvedValue({ rev: "1", modified: [] });
-  vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(c.counts);
+  vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue([...c.counts, "1"]);
   vi.spyOn(backend(), "pageIcons").mockResolvedValue({});
   const router = { openPageTarget: vi.fn(), openPageTargetInNewTab: vi.fn() } as unknown as PaneRouter;
   const host = document.createElement("div");
@@ -122,7 +122,7 @@ async function allPagesRows(c: Case): Promise<{ rows: Map<string, string>; hidde
     // A file All Pages leaves out as an OG built-in page (batch 5) keeps its
     // count checked: the cell its row would show, by the row's own key
     // (`countKey`) over the view's own count map (`backlinkCountsByRow`).
-    const counts = backlinkCountsByRow(c.counts);
+    const counts = backlinkCountsByRow([...c.counts, "1"]);
     const hidden: string[] = [];
     for (const page of allPages() ?? []) {
       if (!hiddenFromAllPages(page) || shown.has(page.path)) continue;

@@ -7,6 +7,7 @@ import { getTemplates, templateToOutline, type AcItem } from "./completionItems"
 import { node, insertEditorOutline, setHeading, withUndoUnit, type PendingEdit } from "../document";
 import { editingId, editingOwner, editingSurface, startEditing, endEdit } from "../editorController";
 import { pinyinMatchingEnabled } from "../launcherRanking";
+import { graphEpoch } from "../graphSession";
 import { graphOwner, latestOwner, ownedWhen, readOwned } from "../owned";
 import { navigationName } from "../pageIndex";
 import { formatForBlockId, timeStamp } from "../components/blockParts";
@@ -471,6 +472,13 @@ export function editorCompletions(props: CompletionAdapter) {
       if (!pinyinMatchingEnabled()) releaseCompletionLease();
       void updateAutocomplete();
     }
+  }, { defer: true }));
+  // The page/tag read is owned by `graphOwner`, which retires with the display
+  // epoch (graph open, config or title-format change). An open list whose
+  // answer the epoch outran would stay empty until the next keystroke: ask again.
+  createEffect(on(graphEpoch, () => {
+    const trigger = untrack(ac);
+    if (trigger?.kind === "page" || trigger?.kind === "tag") void updateAutocomplete();
   }, { defer: true }));
   const openLanguagePicker = (raw: string, position: number, write = true) => {
     props.languagePicker(true);

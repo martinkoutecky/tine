@@ -24,6 +24,7 @@ const OTHER_TEXTAREAS = new Map<string, string>([
   ["src/components/MarginTiers.test.tsx", "Standalone comment-reply-draft in the live preview; block-editor access uses editorIn."],
   ["src/commentNamePrompt.test.tsx", "Standalone comment-reply-draft (CommentParts.tsx) of the reply composer; no block editor is mounted or driven."],
   ["src/commentMargin.test.tsx", "Standalone comment-reply-draft (CommentParts.tsx); no block editor is touched."],
+  ["src/components/CommentMessages.test.tsx", "Standalone comment-reply-draft (CommentParts.tsx) for the fold/draft checks; message body editing uses editorIn in both editors."],
   ["src/assetLanding.test.ts", "Inert AssetEditorToken identity fixture; no mounted editor or textarea state is accessed."],
   ["src/components/QueryCrossingNotice.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
   ["src/components/QueryWorkspace.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],

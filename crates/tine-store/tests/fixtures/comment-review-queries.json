@@ -1,0 +1,10 @@
+{
+  "note": "The open-threads review queries (DESIGN §12). src/commentReviewQuery.ts must print exactly these; crates/tine-store/src/query/exec_key_tests.rs runs them over a graph. Page and author are fixture inputs.",
+  "cases": [
+    { "scope": "graph", "page": "", "author": null, "query": "(and (property tine.quote) (not (property tine.resolved true)))" },
+    { "scope": "page", "page": "Notes", "author": null, "query": "(and (property tine.quote) (not (property tine.resolved true)) (page \"Notes\"))" },
+    { "scope": "graph", "page": "", "author": "Ada", "query": "(and (property tine.quote) (not (property tine.resolved true)) (property tine.author \"Ada\"))" },
+    { "scope": "page", "page": "Notes", "author": "Ada", "query": "(and (property tine.quote) (not (property tine.resolved true)) (page \"Notes\") (property tine.author \"Ada\"))" },
+    { "scope": "page", "page": "Say \"hi\"", "author": "A\\B", "query": "(and (property tine.quote) (not (property tine.resolved true)) (page \"Say \\\"hi\\\"\") (property tine.author \"A\\\\B\"))" }
+  ]
+}

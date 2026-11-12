@@ -22,8 +22,15 @@ comment-reopen = Reopen
 comment-resolved-count = { NUMBER($count, useGrouping: 0) } resolved
 comment-below = { NUMBER($count, useGrouping: 0) } below
 comment-below-expand = Expand to show { NUMBER($count, useGrouping: 0) } comment threads below
+comment-below-changed = { NUMBER($count, useGrouping: 0) } below, { NUMBER($changed, useGrouping: 0) } changed
+comment-below-changed-expand = Expand to show { NUMBER($count, useGrouping: 0) } comment threads below, { NUMBER($changed, useGrouping: 0) } changed since you last looked
 comment-show = Show comments
 comment-hide = Hide comments
+# $page (string): the page the review is limited to.
+comment-review-title-page = Open comments on { $page }
+comment-review-title-graph = Open comments in the graph
+comment-review-author-label = Author
+comment-review-author-placeholder = Any author
 comment-reply-placeholder = Reply…
 comment-delete = Delete comment and replies
 comment-select-first = Select text in a block first, then choose Comment on selection (or press Ctrl+R while editing)
@@ -56,3 +63,10 @@ comment-prev-thread = Previous passage
 comment-next-thread = Next passage
 comment-close-threads = Close comments
 comment-review-position = Comment { $current } of { $count }
+comment-collapse = Collapse
+comment-expand = Expand
+comment-collapse-all = Collapse all comments on this block
+comment-replies = { $count ->
+    [one] { $count } reply
+   *[other] { $count } replies
+    }

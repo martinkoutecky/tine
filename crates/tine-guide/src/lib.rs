@@ -1136,6 +1136,13 @@ mod rename_guide_tests {
             "Steps stop at either end",
             "review stays on the day you last used",
             "Both commands have no default key",
+            "If comments were hidden with **Show/Hide comments**, a step shows them again",
+            "**Review open comments on this page**",
+            "**Review open comments in the graph**",
+            "**Collapse all comments on this block**",
+            "**N below, M changed**",
+            "Older undated threads stay flat and are never rewritten",
+            "both see each other's unsigned comments as **you**, because Tine cannot tell them apart",
         ] {
             assert!(include_str!("templates/tips.md").contains(fact));
         }

@@ -6,6 +6,7 @@
 
 import { createMemo, type Accessor } from "solid-js";
 import { createCommentIndexFor } from "./commentIndex";
+import { useSeenThread } from "./seen/SeenHeader";
 
 /** Open thread roots hidden below `id`'s direct children, counted once per
  * thread (never its replies); 0 when `active` is false or `id` is itself in a
@@ -13,4 +14,12 @@ import { createCommentIndexFor } from "./commentIndex";
 export function createFoldedThreadCount(id: Accessor<string>, active: Accessor<boolean>): Accessor<number> {
   const index = createCommentIndexFor(() => (active() ? id() : null));
   return createMemo(() => index()?.openBelow(id()) ?? 0);
+}
+
+/** How many of those threads hold a message changed since the user last looked (ADR 0079): the
+ * same roots as the count, read against the routed page's existing seen marks. */
+export function createFoldedChangedThreadCount(id: Accessor<string>, active: Accessor<boolean>): Accessor<number> {
+  const index = createCommentIndexFor(() => (active() ? id() : null));
+  const changedThread = useSeenThread();
+  return createMemo(() => (index()?.openRootsBelow(id()) ?? []).filter(changedThread).length);
 }

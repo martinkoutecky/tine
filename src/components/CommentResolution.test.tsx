@@ -19,6 +19,8 @@ import { editorIn } from "../tests/editorDriver";
 import { setActiveLocale } from "../i18n";
 import { pageByName, setDoc } from "../document/model";
 import { utf8ByteLength } from "../render/spans";
+import { collapseComments } from "../commentActions";
+import { setCollapsed, insertEmptyChildBlock } from "../document";
 
 let dispose: (() => void) | undefined;
 beforeAll(async () => {
@@ -238,4 +240,25 @@ it.each((["md", "org"] as const).flatMap(format => [1, 60].map(bodyBlocks => ({ 
   expect(submit).toHaveBeenCalledOnce();
   console.log(JSON.stringify({ measurement: "MC010 local page_submit JSON payload, excluding Tauri framing", format, bodyBlocks,
     resolveRequests: 1, resolveRequestBytes, replyAndReopenRequests: 1, replyAndReopenRequestBytes: bytes(), featureSpecificTransportRecords: 0 }));
+});
+
+it.each((["md", "org"] as const).flatMap(format => [1, 60].map(bodyBlocks => ({ format, bodyBlocks }))))("MC5 folds $format comments with one save on $bodyBlocks body blocks", async ({ format, bodyBlocks }) => {
+  mount(format);
+  const second = createComment("p", "some words", 5, 10)!;
+  submitReply(second, "Reply");
+  for (let i = 1; i < bodyBlocks; i++) setRaw(insertEmptyChildBlock("p", 0)!, `Filler ${i}`);
+  expect(await flushPage("Dates")).toBe(true);
+  const submit = vi.spyOn(backend(), "pageSubmit");
+  const before = node("c")!.raw;
+  collapseComments("p");
+  expect(node("c")!.raw).toContain(format === "md" ? "collapsed:: true" : ":collapsed: true");
+  expect(node(second)!.collapsed).toBe(true);
+  expect(await flushPage("Dates")).toBe(true);
+  expect(submit).toHaveBeenCalledOnce();
+  console.log(JSON.stringify({ operation: "collapse passage comments", format, bodyBlocks, requests: submit.mock.calls.length, bytes: utf8ByteLength(JSON.stringify(submit.mock.calls[0])) }));
+  undo();
+  expect(node("c")!.raw).toBe(before);
+  expect(node(second)!.collapsed).toBe(false);
+  setCollapsed("r", true); // a leaf has no body to fold
+  expect(node("r")!.raw).toBe("Legacy reply");
 });

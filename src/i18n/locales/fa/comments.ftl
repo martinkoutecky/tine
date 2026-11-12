@@ -17,4 +17,15 @@ comment-stale-write-what = نظر
 comment-name-label = نام شما
 comment-name-hint = نظرها و پاسخ‌هایی که در حاشیه می‌نویسید با این نام به‌صورت <code>author::</code> ذخیره می‌شوند، تا در گرافی که با دیگران مشترک است معلوم باشد چه کسی چه نوشته. برای ننوشتن نویسنده خالی بگذارید؛ نظرهای خودتان آن‌وقت با «شما» نمایش داده می‌شوند. روی همین دستگاه ذخیره می‌شود، نه در گراف.
 comment-name-placeholder = نام شما
+# $page (string): the page the review is limited to.
+comment-review-title-page = دیدگاه‌های باز در { $page }
+comment-review-title-graph = دیدگاه‌های باز در کل گراف
+comment-review-author-label = نویسنده
+comment-review-author-placeholder = هر نویسنده‌ای
+comment-below-changed = { NUMBER($count, useGrouping: 0) } در پایین، { NUMBER($changed, useGrouping: 0) } تغییر کرده
+comment-below-changed-expand = نمایش { NUMBER($count, useGrouping: 0) } رشتهٔ دیدگاه در پایین، { NUMBER($changed, useGrouping: 0) } مورد از آخرین بازدید تغییر کرده است
 comment-review-position = دیدگاه { $current } از { $count }
+comment-collapse = جمع کردن
+comment-expand = باز کردن
+comment-collapse-all = جمع کردن همهٔ دیدگاه‌های این بلوک
+comment-replies = { $count } پاسخ

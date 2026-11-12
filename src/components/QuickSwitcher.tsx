@@ -10,7 +10,7 @@ import { coalescedRead } from "../coalescedRead";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPrefill, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
 import { paletteCommands } from "../keybindings";
@@ -115,11 +115,16 @@ export function QuickSwitcher(): JSX.Element {
   // zero limit skips the other branch, so pages never wait for block ranking.
   // Separate cancellation lanes keep the two requests from cancelling each
   // other. Presentation paging below only slices these already-ranked pools.
+  // The request owner is `graphOwner` (it retires with the display epoch), so
+  // the epoch is part of the key: an answer the epoch outran is asked again
+  // instead of staying on screen as the final, empty one. Epochs move at graph
+  // open and on a config, title-format or typography change, never per keystroke.
   const searchResource = (target: "pages" | "blocks") => createResource(
     () => (!switcherOpen() || commandsOnly() || !(target === "pages" ? pagesWanted() : blocksWanted()) ? null : {
       q: target === "pages" ? query() : debouncedQuery(),
       scope: currentPageScope(),
       graphRoot: graphMeta()?.root ?? "",
+      epoch: graphEpoch(),
       binding: bindingIdentity(),
       transliteration: pinyinMatchingEnabled(),
     }),

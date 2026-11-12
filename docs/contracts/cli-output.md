@@ -339,6 +339,10 @@ or is killed while its write stands in line does not cancel it: the write can la
   page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. Names are trimmed for both block attribution and run commits. An explicit blank `--author` is refused; blank or whitespace-only `TINE_AUTHOR` counts as unset. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
+  When `--under` targets a comment or any descendant of its thread, each
+  inserted fragment root also gets a creation-only UTC minute `tine.date`;
+  its body descendants get no implicit date (D-20261108-MC5). Ordinary outline
+  insertion gets no date. Existing threads and their nesting stay unchanged.
   When creating a page, a properties-only leading pre-block, or qualifying first Markdown
   properties-only bullet, becomes the page header. It receives no implicit `tine.author`;
   outline blocks still do. Existing pages keep add's outline-insertion behavior.

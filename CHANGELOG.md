@@ -12,12 +12,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
+- `tine add --under` a comment or one of its replies dates each message it inserts (a creation-only UTC minute `tine.date`); lines nested under a message stay undated body text, and ordinary outline insertion gets no date (D-20261108-MC5; GH #891).
 - Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).
+- **Review open comments on this page** and **Review open comments in the graph** (command palette) open a live list of every unresolved thread in the right sidebar. Filter by author, edit a comment right in the list, and the item comes back after a restart. It reads only the pages that hold comments and writes nothing to your graph (GH #891; UI-MC12-REVIEW-QUERY).
+- In a git graph, a comment whose message changed since you last looked shows the same change bar as other changed blocks, and a collapsed block's **N below** chip reads **N below, M changed** (GH #891; UI-MC12-UNREAD).
 - **Next comment** and **Previous comment** review a page in margin order, revealing each passage and focusing its live thread. Popovers and phone sheets offer the same page-wide controls; bind shortcuts in Settings (GH #891; UI-MC9-REVIEW).
 - Settings → Editor → Advanced has a **Reference previews** switch, Logseq's `:ui/enable-tooltip?` in the graph's `config.edn` (on when absent). Off, page links, tags and block references open no preview on mouse hover, and on a touch screen holding a page link or tag opens its page menu again instead of a preview. The **Hover preview delay** stays as it is (GH #824).
 
 ### Changed
 
+- All Pages stays fast while you type: panes share timestamps and backlink counts, updated from publication deltas (internal: REG-ALLPAGES-METRICS-PUBLICATION-COST).
 - Pages open with less work when checking whether a tag table is available (REG-TAG-TABLE-AVAILABILITY).
 - Page merges use the selected page's spelling consistently in aliases, links, namespace children and queries, including when selected through an alias or another date spelling (REG-CM-B4-CHOSEN-ALIAS, REG-CM-B4-CHOSEN-NAMESPACE, REG-CM-B4-CHOSEN-DATE).
 - Large pages defer author and comment controls until a row needs them, and bullet history state until the first hover (REG-BIGLOAD-ROW-WORK).
@@ -54,7 +59,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+- An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 
+- Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading (internal: UI-ZOOM-BACK-SCROLL).
+- Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).
+- A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).
+- With a default journal template, today's journal again shows as a journal day, and clicking its title opens it instead of reporting that the page is no longer available at that path. A tab or link that remembered the wrong kind of page for a file now opens that file (GH #863).
+- Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).
+- Ctrl+K typed while the window was still taking in the graph could offer only **Create page** for a page that exists; the switcher now asks again and lists the page without retyping (UI-SWITCHER-SEARCH-OUTLIVES-EPOCH-1111).
 - Page merges no longer refuse (or, for some Org pages, crash) when moved header bytes such as an outline bullet or alias remainders would have opened an extra block or hidden a protected occurrence, or when a survivor header with children starts with an empty alias line (REG-CM-MERGE-LEFTOVER-LAYOUT, REG-CM-MERGE-TARGET-BULLET, REG-CM-MERGE-ORG-LEFTOVER-PANIC, REG-CM-MERGE-ORG-HIDDEN-OCCURRENCE).
 - Org pages whose page properties sit in a head `:PROPERTIES:` drawer can be merged: before, the merge refused when either page had one. A source drawer entry whose key the other page's header already has, or a drawer alias with a duplicate member, still refuses, leaving both files unchanged; so does a merge whose leftover would turn the source's `#+title:` line into a tag, which an empty source drawer used to cause (REG-CM-MERGE-ORG-DRAWER).
 - Pages whose lines end in a lone CR (alone or mixed with LF and CRLF) can be merged in Markdown and Org, keeping every line's own ending; before, the merge refused, or kept the alias line out of the header or put the source body first (REG-CM-MERGE-LONE-CR).
