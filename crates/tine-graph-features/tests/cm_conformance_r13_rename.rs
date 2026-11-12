@@ -2,6 +2,62 @@
 //! exercised as-is; missing candidates become attributed diagnostic rows.
 use super::*;
 use tine_core::model::PageId;
+use tine_graph_features::pages::merge_payload::{self, MergeProposal, Origin};
+#[path = "cm_conformance_native_rename.rs"]
+mod native;
+
+fn merge_proof(
+    store: &Store,
+    spec: &GraphSpec,
+    old: &str,
+    _requested: &str,
+    choice: &Choice,
+) -> Option<(
+    String,
+    String,
+    Result<MergeProposal, merge_payload::RealizationError>,
+)> {
+    let Choice::Merge(path) = choice else {
+        return None;
+    };
+    let view = store.whole_graph().unwrap();
+    let Resolved::Existing { id: source, .. } = view.resolve(old, false) else {
+        return None;
+    };
+    let target = PageId::from(path.as_str());
+    let src = &spec.files[source.as_str()];
+    let dst = &spec.files[path];
+    let a = store.page_of(&source, src.as_bytes()).unwrap().doc;
+    let b = store.page_of(&target, dst.as_bytes()).unwrap().doc;
+    // Independent reader spelling, rather than the planner's map or the
+    // typed alias. Ambiguous display labels cannot identify a journal day.
+    let mut selected = b.name.clone();
+    if path.starts_with("journals/") {
+        if let Some(day) = spec
+            .journal_format()
+            .parse(Path::new(path).file_stem()?.to_str()?)
+        {
+            if spec.journal_format().parse(&selected) != Some(day) {
+                selected = day.file_stem();
+            }
+        }
+    }
+    let links = std::collections::HashMap::from([(tine_core::refs::page_key(old), selected)]);
+    Some((
+        path.clone(),
+        source.as_str().to_owned(),
+        merge_payload::propose(
+            &b,
+            dst,
+            &a,
+            src,
+            &links,
+            &links,
+            path.ends_with(".org"),
+            spec.name_format(),
+        ),
+    ))
+}
 
 #[derive(Clone)]
 enum Choice {
@@ -230,9 +286,194 @@ fn compare_outputs(
     root: &Path,
     candidate: &Value,
     original_input: &Value,
+    writer: Option<&(
+        String,
+        String,
+        Result<MergeProposal, merge_payload::RealizationError>,
+    )>,
+    diffs: &mut Vec<String>,
+) -> Value {
+    if let (Ok(native_bridge), Some((target, source, Ok(proof)))) =
+        (std::env::var("CM_NATIVE_BRIDGE"), writer)
+    {
+        let mut historical = Vec::new();
+        let mut evidence = compare_historical_outputs(
+            bridge,
+            spec,
+            old,
+            requested,
+            contract,
+            root,
+            candidate,
+            original_input,
+            writer,
+            &mut historical,
+        );
+        let files = read_graph(root);
+        let store = Store::open(root, Default::default()).unwrap().0;
+        let chosen = candidate["candidate"]["destination"].as_str().unwrap();
+        let packet = native::packet(
+            &store,
+            spec,
+            old,
+            chosen,
+            source,
+            target,
+            proof,
+            &files,
+            original_input["queries"].clone(),
+        );
+        let result = shared::run_bridge(Path::new(&native_bridge), &packet).unwrap();
+        if result["checks"]["selection"] == false && spec.journal_format().parse(old).is_some() {
+            assert_eq!(
+                result["accepted"], false,
+                "fixed-day sources have no ordinary native merge certificate"
+            );
+            diffs.push(format!("G4/B3 fixed-day source: {old:?} was executed as an ordinary merge; Native15c rejects source selection (day-content moves are separate)"));
+            evidence["historicalR13Diagnostics"] = json!(historical);
+            evidence["nativePacket"] = packet;
+            evidence["nativeAdmission"] = result;
+            return evidence;
+        }
+        native::admit(Path::new(&native_bridge), &packet);
+        if chosen != requested {
+            let corrected_dir = tempfile::tempdir().unwrap();
+            spec.write(corrected_dir.path());
+            let corrected_store = Arc::new(
+                Store::open(corrected_dir.path(), Default::default())
+                    .unwrap()
+                    .0,
+            );
+            let corrected_proof = merge_proof(
+                &corrected_store,
+                spec,
+                old,
+                chosen,
+                &Choice::Merge(target.clone()),
+            )
+            .unwrap()
+            .2
+            .unwrap();
+            execute(
+                &corrected_store,
+                old,
+                chosen,
+                Some(&Choice::Merge(target.clone())),
+            )
+            .unwrap();
+            let corrected_files = read_graph(corrected_dir.path());
+            assert_eq!(
+                files, corrected_files,
+                "typed and selected requests must produce the same graph"
+            );
+            let corrected = native::packet(
+                &corrected_store,
+                spec,
+                old,
+                chosen,
+                source,
+                target,
+                &corrected_proof,
+                &corrected_files,
+                original_input["queries"].clone(),
+            );
+            evidence["chosenControl"] = native::admit(Path::new(&native_bridge), &corrected);
+        }
+        // Favorites are outside native admission; keep their existing checks.
+        diffs.extend(
+            historical
+                .iter()
+                .filter(|row| row.starts_with("G10/B4a"))
+                .cloned(),
+        );
+        evidence["historicalR13Diagnostics"] = json!(historical);
+        evidence["nativePacket"] = packet;
+        evidence["nativeAdmission"] = result;
+        return evidence;
+    }
+    compare_historical_outputs(
+        bridge,
+        spec,
+        old,
+        requested,
+        contract,
+        root,
+        candidate,
+        original_input,
+        writer,
+        diffs,
+    )
+}
+
+fn compare_historical_outputs(
+    bridge: &Path,
+    spec: &GraphSpec,
+    old: &str,
+    requested: &str,
+    contract: &Value,
+    root: &Path,
+    candidate: &Value,
+    original_input: &Value,
+    writer: Option<&(
+        String,
+        String,
+        Result<MergeProposal, merge_payload::RealizationError>,
+    )>,
     diffs: &mut Vec<String>,
 ) -> Value {
     let files = read_graph(root);
+    if let Some((path, _, proof)) = writer {
+        let proof = proof
+            .as_ref()
+            .expect("an applied merge has a realizable writer proposal");
+        proof
+            .trace
+            .check(&files[path], &proof.trace.substitution)
+            .expect("production TraceValid, against disk bytes");
+    }
+    let links = std::collections::HashMap::from([(
+        tine_core::refs::page_key(old),
+        candidate["candidate"]["destination"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    )]);
+    let mut referrer_traces = 0;
+    for (path, after) in &files {
+        if writer.is_some_and(|(survivor, _, _)| survivor == path) {
+            continue;
+        }
+        let Some(before) = spec.files.get(path).filter(|before| *before != after) else {
+            continue;
+        };
+        let org = path.ends_with(".org");
+        let mut proposal =
+            tine_core::refs::rename_proposal(before, org, &links, &links, spec.name_format())
+                .unwrap();
+        if proposal.text != *after {
+            let format = if org {
+                tine_core::model::Format::Org
+            } else {
+                tine_core::model::Format::Md
+            };
+            let name = tine_core::model::decode_page_name(
+                Path::new(path).file_stem().unwrap().to_str().unwrap(),
+                spec.name_format(),
+            );
+            if let Some(title) = tine_core::model::page_title_from_preamble(before, format) {
+                if let Some(new) = tine_core::refs::renamed_page_name(&title, &links)
+                    .filter(|new| tine_core::refs::same_page(new, &name))
+                {
+                    proposal.rebind_title(org, &new).unwrap();
+                }
+            }
+        }
+        proposal
+            .trace
+            .check(after, &proposal.trace.substitution)
+            .expect("production referrer certificate against disk bytes");
+        referrer_traces += 1;
+    }
     for fragment in contract["protectedText"].as_array().into_iter().flatten() {
         let text = fragment.as_str().unwrap();
         let before: usize = spec.files.values().map(|s| s.matches(text).count()).sum();
@@ -258,7 +499,69 @@ fn compare_outputs(
         .collect();
     let store = Store::open(root, Default::default()).unwrap().0;
     let view = store.whole_graph().unwrap();
-    let mut input = shared::model_input_r13(&view, &after_spec);
+    let mut input = shared::model_input_r13(&after_spec);
+    if let Some((path, source_path, Ok(proof))) = writer {
+        let file = input["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["path"] == *path)
+            .unwrap();
+        assert_eq!(
+            proof.origins.len(),
+            file["blocks"].as_array().unwrap().len(),
+            "production origins cover every parsed output block"
+        );
+        assert!(proof.origins.iter().all(|origins| !origins.is_empty()));
+        let before = original_input["files"].as_array().unwrap();
+        let target = before.iter().find(|f| f["path"] == *path).unwrap();
+        // Byte-identical source files of the same format have the same block count. The
+        // trace binds the actual merge input; no model-side image is used.
+        let source = before.iter().find(|f| f["path"] == *source_path).unwrap();
+        let org = path.ends_with(".org");
+        let parsed = if org {
+            tine_core::org::parse_org(&proof.trace.inputs[0])
+        } else {
+            tine_core::doc::parse(&proof.trace.inputs[0])
+        };
+        let header = parsed.pre_block.as_deref().map_or_else(
+            || {
+                usize::from(
+                    tine_core::page_header::page_header_text(
+                        None,
+                        parsed.roots.first().map(|b| b.raw()),
+                    )
+                    .is_some(),
+                )
+            },
+            |pre| tine_core::page_properties::pre_block_projections(pre, org).len(),
+        );
+        let mut target = vec![false; target["blocks"].as_array().unwrap().len()];
+        let mut source = vec![false; source["blocks"].as_array().unwrap().len()];
+        for origins in &proof.origins {
+            for origin in origins {
+                match origin {
+                    Origin::TargetHeader => {
+                        assert!(header > 0);
+                        for slot in &mut target[..header] {
+                            *slot = true;
+                        }
+                    }
+                    Origin::Target(j) => {
+                        target[*j] = true;
+                    }
+                    Origin::Source(j) => {
+                        source[*j] = true;
+                    }
+                    Origin::Leftover => {}
+                }
+            }
+        }
+        assert!(
+            target.into_iter().chain(source).all(|image| image),
+            "every input block has a production origin image"
+        );
+    }
     input["favorites"] = json!(actual_config.favorites);
     let actual: BTreeMap<_, _> = input["files"]
         .as_array()
@@ -506,7 +809,11 @@ fn compare_outputs(
     }
     // Whole bytes are retained as evidence. Symbolic predictions cannot certify
     // protected text/layout or true writer origins (G7), even when projections agree.
-    let evidence = json!({"files": files, "parsed": input["files"], "meaning": model_after,
+    let writer=writer.map(|(path,source,proof)| match proof {
+        Ok(p)=>json!({"path":path,"source":source,"pieces":p.trace.pieces.len(),"consumed":p.trace.consumed,"origins":format!("{:?}",p.origins),"unrealized":format!("{:?}",p.unrealized),"traceValid":true}),
+        Err(e)=>json!({"path":path,"unrealizable":format!("{e:?}")}),
+    });
+    let evidence = json!({"files": files, "parsed": input["files"], "meaning": model_after, "writer":writer,"referrerTraces":referrer_traces,
         "causalRepairs": repaired});
     drop(view);
     store.close();
@@ -514,6 +821,10 @@ fn compare_outputs(
 }
 
 pub fn run(bridge: &Path) {
+    assert!(
+        std::env::var_os("CM_NATIVE_BRIDGE").is_some(),
+        "r13 describes offers; native merge conformance requires CM_NATIVE_BRIDGE (accepted 15c)"
+    );
     let manifest = env!("CARGO_MANIFEST_DIR");
     let mut section = Section::default();
     let mut report = BTreeMap::new();
@@ -548,7 +859,7 @@ pub fn run(bridge: &Path) {
         let initial_config = fs::read(seed.path().join("logseq/config.edn")).ok();
         let initial = Arc::new(Store::open(seed.path(), Default::default()).unwrap().0);
         let view = initial.whole_graph().unwrap();
-        let input = shared::model_input_r13(&view, &spec);
+        let input = shared::model_input_r13(&spec);
         let model = shared::run_bridge(bridge, &input).unwrap();
         shared::r13::assert_contract(spec, &model, expected);
         drop(view);
@@ -571,6 +882,7 @@ pub fn run(bridge: &Path) {
                     spec.write(dir.path());
                     let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
                     let before = read_graph(dir.path());
+                    let writer=merge_proof(&store,spec,old,new,choice);
                     let result = execute(&store, old, new, Some(choice));
                     let allowed = result.is_ok();
                     if allowed != (candidate["safe"] == true) {
@@ -578,7 +890,7 @@ pub fn run(bridge: &Path) {
                     }
                     store.close();
                     if allowed {
-                        compare_outputs(bridge, &spec, old, new, expected, dir.path(), candidate, &input, &mut rows)
+                        compare_outputs(bridge, &spec, old, new, expected, dir.path(), candidate, &input, writer.as_ref(), &mut rows)
                     } else {
                         assert_eq!(before, read_graph(dir.path()), "refusal must not write page bytes");
                         json!({"refused": result.err()})
@@ -648,6 +960,6 @@ pub fn run(bridge: &Path) {
         findings.is_empty(),
         "unexplained r13 mutation discrepancies: {findings:#?}"
     );
-    shared::check_expected(manifest, "renameR13", &section, "CM_REFRESH=1 CM_BRIDGE=<r13> cargo test -p tine-graph-features --test integration conceptual_model_rename_conformance");
+    shared::check_expected(manifest, "renameNative15c", &section, "CM_REFRESH=1 CM_BRIDGE=<r13-offers> CM_NATIVE_BRIDGE=<15c> cargo test -p tine-graph-features --test integration conceptual_model_rename_conformance");
     eprintln!("r13 evaluated {candidates_run} candidates; zero skipped graphs");
 }

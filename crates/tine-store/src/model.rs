@@ -7711,10 +7711,10 @@ mod tests {
             refs.contains("[[Archive/Alpha]]"),
             "descendant inline ref: {refs:?}"
         );
-        // `Archive/Beta` is bare-tag-safe (`/` is a tag char), so `#[[..]]`
-        // collapses to the bare `#Archive/Beta` form, matching Logseq.
+        // CM §5.2 retains protected native wrappers, unlike OG's collapse to
+        // a bare tag when the new name is bare-tag-safe.
         assert!(
-            refs.contains("#Archive/Beta"),
+            refs.contains("#[[Archive/Beta]]"),
             "descendant tag ref: {refs:?}"
         );
         assert!(

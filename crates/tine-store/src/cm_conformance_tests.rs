@@ -69,7 +69,6 @@ fn preamble_projection_keeps_prose_and_outline_positions() {
     let view = store.whole_graph().unwrap();
     for (rel, text) in &spec.files {
         let file = shared::file_json(
-            &view,
             rel,
             text,
             document_alias_spellings,
@@ -488,7 +487,7 @@ fn run_graph(
             ));
         }
     }
-    let input = shared::model_input(&view, spec, document_alias_spellings, &[]);
+    let input = shared::model_input(spec, document_alias_spellings, &[]);
     let model = match shared::run_bridge(bridge, &input) {
         Ok(m) => m,
         Err(e) => {

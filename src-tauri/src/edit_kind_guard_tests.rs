@@ -169,7 +169,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             PAGES,
             "merge_pages",
-            "tx.save_page(&[tine_store::EditKind::InsertBlocks",
+            "page_plan(Some(tine_store::EditKind::InsertBlocks))",
         ),
         (
             GUIDE,

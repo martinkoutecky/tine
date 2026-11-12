@@ -222,8 +222,10 @@ mod og_c5_p2_bad_file;
 #[path = "og_c5_p2_merge_rename.rs"]
 mod og_c5_p2_merge_rename;
 
+mod merge_generated;
 #[path = "merge_keeps_aliases.rs"]
 mod merge_keeps_aliases;
+mod merge_text_trace;
 
 #[path = "og_dupal2_format.rs"]
 mod og_dupal2_format;

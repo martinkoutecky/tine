@@ -212,6 +212,12 @@ impl Graph {
     fn peer_pushes(&self, text: &str) -> Oid {
         let dir = self._private.path().join("peer");
         let peer = Repository::clone(&self.url, &dir).unwrap();
+        // The peer is a plain checkout like the graph: a host-wide
+        // `core.autocrlf` (Windows runners set it) must not make its push refuse.
+        peer.config()
+            .unwrap()
+            .set_bool("core.autocrlf", false)
+            .unwrap();
         fs::write(dir.join("pages/a.md"), text).unwrap();
         let oid = commit_all(&peer, "from the laptop");
         assert_eq!(operation().push_upstream(&dir), Net::UpToDate);

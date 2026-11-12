@@ -51,14 +51,10 @@ pub(super) fn pieces(source: &str) -> (Vec<&str>, Vec<&'static str>) {
     (lines, ends)
 }
 
-/// The terminator a new line gets in `existing`: CRLF when the file has any
-/// (as before K01a), else `\r` when it has a lone one, else LF (new files too).
+/// The terminator a new line gets in `existing` (`doc::line_convention`; as
+/// before K01a), LF for a new file.
 pub(super) fn convention(existing: Option<&str>) -> &'static str {
-    match existing {
-        Some(e) if e.contains("\r\n") => "\r\n",
-        Some(e) if e.contains('\r') => "\r",
-        _ => "\n",
-    }
+    existing.map_or("\n", tine_core::doc::line_convention)
 }
 
 /// Give a whole-page rewrite's LF `content` the existing file's convention

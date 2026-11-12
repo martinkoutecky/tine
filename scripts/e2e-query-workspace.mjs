@@ -807,6 +807,14 @@ await withApp(2, async (browser) => {
     timeout: 5_000, timeoutMsg: "Expand all did not restore unlinked reference bodies",
   });
 
+  // Expand all mounts group wrappers; offscreen reference bodies hydrate only
+  // when shown. Reach the source before using its occurrence control.
+  await browser.$(".unlinked-references").$("button=Unlinked source").scrollIntoView({ block: "center" });
+  await browser.waitUntil(() => browser.execute(() => {
+    const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
+      .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
+    return !!source?.querySelectorAll(".reference-excerpt-mark")[1];
+  }), { timeout: 5_000, timeoutMsg: "expanded source did not expose its second mention" });
   const jumped = await browser.execute(() => {
     const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");

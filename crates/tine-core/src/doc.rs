@@ -899,6 +899,48 @@ pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// The terminator a new line gets in `existing` text: CRLF when it has any,
+/// else `\r` when it has a lone one, else LF. Reused lines keep their own.
+/// One answer for the Markdown writers (store saves, page merge). O(n).
+pub fn line_convention(existing: &str) -> &'static str {
+    if existing.contains("\r\n") {
+        "\r\n"
+    } else if existing.contains('\r') {
+        "\r"
+    } else {
+        "\n"
+    }
+}
+
+/// The physical lines of page text, each with its terminator (CRLF, LF or a
+/// lone CR, as [`normalize_line_endings`] reads them; the last may have none).
+/// The one answer to "which bytes end a line" for the physical writers (page
+/// merge, outline offsets). Concatenated, they are `text`. O(n), no copy.
+pub fn physical_lines(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        let end = rest.find(['\r', '\n']).map_or(rest.len(), |at| {
+            at + if rest[at..].starts_with("\r\n") { 2 } else { 1 }
+        });
+        let (line, tail) = rest.split_at(end);
+        rest = tail;
+        (!line.is_empty()).then_some(line)
+    })
+}
+
+/// The terminator `line` ends with: `"\r\n"`, `"\n"`, `"\r"` or `""`. O(1).
+pub fn line_terminator(line: &str) -> &'static str {
+    if line.ends_with("\r\n") {
+        "\r\n"
+    } else if line.ends_with('\n') {
+        "\n"
+    } else if line.ends_with('\r') {
+        "\r"
+    } else {
+        ""
+    }
+}
+
 /// Parse Markdown page text into a [`Document`]: a pre-block plus a block
 /// forest. lsdoc decides which lines open a block and how blocks nest
 /// (`crate::outline`, the outline authority): dash bullets and unbulleted ATX
@@ -1122,6 +1164,10 @@ fn emit_block(block: &DocBlock, level: usize, unit: &str, out: &mut Vec<String>)
 #[cfg(test)]
 #[path = "doc/property_fence_tests.rs"]
 mod property_fence_tests;
+
+#[cfg(test)]
+#[path = "doc/line_layout_tests.rs"]
+mod line_layout_tests;
 
 #[cfg(test)]
 #[path = "doc/unclosed_fence_tests.rs"]

@@ -98,6 +98,16 @@ pub fn linkable_property_names<'a>(
     projection: ReferenceSource<'a>,
     regions: &'a crate::block_regions::BlockRegions,
 ) -> impl Iterator<Item = &'a str> {
+    linkable_property_references(projection, regions).map(|reference| reference.name.as_str())
+}
+
+/// Parser-owned references inside applicable tags/alias/aliases values,
+/// including explicit native wrappers. Quoted values stay literal.
+/// O(properties + references), zero parses or allocation.
+pub fn linkable_property_references<'a>(
+    projection: ReferenceSource<'a>,
+    regions: &'a crate::block_regions::BlockRegions,
+) -> impl Iterator<Item = &'a ProjectedPageRef> {
     let mut properties = regions
         .properties
         .iter()
@@ -121,7 +131,7 @@ pub fn linkable_property_names<'a>(
             .filter(|p| {
                 p.value_range.0 <= reference.range.start && reference.range.end <= p.value_range.1
             })
-            .map(|_| reference.name.as_str())
+            .map(|_| reference)
     })
 }
 

@@ -375,8 +375,16 @@ fn generated_semantic_rename_merge_matches_independent_bytes_and_fresh_indexes()
                     expected.insert(
                         dest.clone(),
                         format!(
-                            "{}{bullet} kept-{seed}\n{bullet} source-{seed} [[{after}]]\n",
-                            aliases(&format!("Shared, Kept, {alias}"))
+                            "{}{bullet} kept-{seed}\n{}{bullet} source-{seed} [[{after}]]\n",
+                            aliases(&format!("Shared, Kept, {alias}")),
+                            if org {
+                                // The uppercase key/separator stay protected;
+                                // unique names move and duplicate Shared is
+                                // consumed under its retained member witness.
+                                "*\n#+BEGIN_QUOTE\n#+ALIAS: , \n#+END_QUOTE\n".to_owned()
+                            } else {
+                                "- \n".into()
+                            }
                         )
                         .into_bytes(),
                     );

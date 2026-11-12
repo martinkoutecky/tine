@@ -67,12 +67,17 @@ fn namespace_and_merge_renames_keep_each_files_parent() {
         )
         .unwrap();
         assert!(!root.path().join("pages/source/Old.md").exists());
+        let selected = if survivor.is_some() { "New" } else { new };
         let child = root
             .path()
-            .join(format!("pages/children/{new}___Child.org"));
+            .join(format!("pages/children/{selected}___Child.org"));
         assert!(fs::read_to_string(child)
             .unwrap()
-            .contains(&format!("[[{new}]]")));
+            .contains(&format!("[[{selected}]]")));
+        assert_eq!(
+            fs::read_to_string(root.path().join("pages/Ref.md")).unwrap(),
+            format!("- [[{selected}]] [[{selected}/Child]]\n")
+        );
         let root_result = survivor.unwrap_or("pages/source/New.md");
         let body = fs::read_to_string(root.path().join(root_result)).unwrap();
         assert!(body.contains("source"));

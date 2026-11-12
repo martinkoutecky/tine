@@ -121,9 +121,9 @@ pub enum TrashIf {
 /// raw-text rewriter scans those regions too.
 ///
 /// The second list overrides the first for a query's page-name arguments
-/// only (`tine_core::refs::rename_rewrite_with_queries`): a merge through an
-/// alias writes the survivor's own name there (ruling (a) of D-20261103-CMA);
-/// empty for every other rename.
+/// only (`tine_core::refs::rename_rewrite_with_queries`). The page planner
+/// supplies the selected-member substitution in the first list and leaves
+/// overrides empty, so every site follows the same destination.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>, pub Vec<(String, String)>);
 
@@ -204,6 +204,8 @@ pub enum StepResult {
 /// A transaction step rejected without authorization to overwrite user data.
 #[derive(Debug)]
 pub enum Refusal {
+    /// Malformed writer evidence could lose imported/externally edited text.
+    TextRealization(tine_core::text_trace::TraceError),
     /// Source page cannot be round-tripped safely; reason is for display.
     ReadOnly(String),
     /// Invalid or unsafe destination or page content; reason is for display.
@@ -629,12 +631,7 @@ impl<'a> PagePlan<'a> {
         base: SaveBase,
         doc: &PageDto,
     ) -> &mut Self {
-        assert!(!kinds.is_empty(), "OG-RULES Rule 8: page save needs a kind; exemplar crates/tine-graph-features/src/pages.rs");
-        for kind in kinds {
-            if !self.kinds.contains(kind) {
-                self.kinds.push(*kind);
-            }
-        }
+        self.record_kinds(kinds);
         let (base, markers) = match base {
             SaveBase::ResolvingMarkers(rev) => (SaveBase::Existing(rev), Markers::Resolve),
             other => (other, Markers::Refuse),
@@ -810,14 +807,30 @@ impl<'a> PagePlan<'a> {
                 let name_format = self.store.config().file_name_format;
                 let is_org = tine_core::model::Format::from_path(Path::new(file.as_str()))
                     == tine_core::model::Format::Org;
-                let new = tine_core::refs::rename_rewrite_with_queries(
+                let keyed = |pairs: &[(String, String)]| {
+                    pairs
+                        .iter()
+                        .map(|(a, b)| (tine_core::refs::page_key(a), b.clone()))
+                        .collect()
+                };
+                let proposal = tine_core::refs::rename_proposal(
                     text,
                     is_org,
-                    &renames.0,
-                    &renames.1,
+                    &keyed(&renames.0),
+                    &keyed(&renames.1),
                     name_format,
-                    None,
                 );
+                let Ok(proposal) = proposal else {
+                    self.steps.push(Step::Rewrite {
+                        id: id.clone(),
+                        expected,
+                        renames: renames.clone(),
+                        rebind_title: title == TitleRebind::Own,
+                        prepared: None,
+                    });
+                    return RewriteEffect::Changes;
+                };
+                let new = proposal.text;
                 if new == text {
                     RewriteEffect::Unchanged
                 } else {
@@ -827,6 +840,8 @@ impl<'a> PagePlan<'a> {
                             text.to_owned(),
                             new,
                             name_format,
+                            proposal.trace,
+                            false,
                         )));
                     }
                     RewriteEffect::Changes
@@ -843,31 +858,6 @@ impl<'a> PagePlan<'a> {
             });
         }
         effect
-    }
-
-    /// Reuse the shared rewriter's `(old, new)` text from a feature's planning read.
-    /// Preflight still checks the revision, exact old bytes and filename
-    /// format, and applies the ordinary Org and conflict-marker firewalls.
-    pub fn rewrite_refs_prepared(
-        &mut self,
-        id: &PageId,
-        expected: FileRev,
-        text: (String, String),
-        renames: &RenameMap,
-        format: tine_core::config::FileNameFormat,
-    ) {
-        self.steps.push(Step::Rewrite {
-            id: id.clone(),
-            expected,
-            renames: renames.clone(),
-            rebind_title: false,
-            prepared: Some(Box::new(PreparedRewrite::new(
-                id.file(),
-                text.0,
-                text.1,
-                format,
-            ))),
-        });
     }
 
     /// Queue a guarded no-replace move to a different file ID. A destination

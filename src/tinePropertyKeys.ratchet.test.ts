@@ -23,6 +23,8 @@ const OG_OWNED: Record<string, string> = {
   id: "OG block identity, graph-parser block.cljs (`id::` uuid)",
   collapsed: "OG fold state, handler/editor.cljs set-blocks-collapsed!",
   title: "OG page title, graph-parser property.cljs (page rename rewrites it)",
+  alias: "OG page aliases, graph-parser extract.cljc (:alias properties)",
+  aliases: "OG built-in property, graph-parser property.cljs; accepted alias variant in Tine (D-20261018-M2, K-Q1)",
   public: "OG publishing flag, publishing/html.cljs (`public:: false`)",
   filters: "OG linked-reference filters, page property `filters`",
   template: "OG templates, handler/editor.cljs (`template::` names a template)",

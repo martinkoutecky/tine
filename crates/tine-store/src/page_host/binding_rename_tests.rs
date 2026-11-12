@@ -49,16 +49,33 @@ impl PageHost {
             };
             let new = rewrite_page(&id, &old);
             if new != old {
+                let keyed = |pairs: &[(String, String)]| {
+                    pairs
+                        .iter()
+                        .map(|(a, b)| (tine_core::refs::page_key(a), b.clone()))
+                        .collect()
+                };
+                let certificate = tine_core::refs::rename_proposal(
+                    std::str::from_utf8(&old).unwrap(),
+                    id.as_str().ends_with(".org"),
+                    &keyed(&map.0),
+                    &keyed(&map.1),
+                    view.config.file_name_format,
+                )
+                .unwrap()
+                .trace;
                 changed.push(id.clone());
                 tx.rewrite_refs_prepared(
+                    &[EditKind::RenamePage],
                     &id,
                     rev,
                     (
                         String::from_utf8(old).unwrap(),
                         String::from_utf8(new).unwrap(),
                     ),
-                    map,
+                    Some(map),
                     view.config.file_name_format,
+                    certificate,
                 );
                 writes = true;
             }

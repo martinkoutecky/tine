@@ -153,7 +153,9 @@ try {
   await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').waitForExist({ timeout: 15_000 });
   await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').click();
   await waitForFileText(path.join(graph, "pages/Owner Two.md"), (text) => text.includes("source two"), { timeoutMs: 15_000 });
-  await waitForFileText(path.join(graph, "pages/queries.md"), (text) => text.includes('(page "Owner Two")') && text.includes("[[Short Two]]"), { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "pages/queries.md"), (text) => text.includes('(page "Owner Two")') && text.includes("[[Owner Two]]") && !text.includes("Source Two"), { timeoutMs: 15_000 });
+  // CM SPEC §4.1: the chosen member spelling (here the owner, Owner Two) drives the whole substitution, links and
+  // stored queries alike; the old split (links kept the typed alias Short Two) predates B4's single substitution.
   assert.ok(!fs.existsSync(path.join(graph, "pages/Short Two.md")));
   assert.ok(!fs.existsSync(path.join(graph, "pages/Source Two.md")));
 
@@ -183,8 +185,9 @@ try {
   assert.match(aliasChoices.merge, /Alias Target Owner/);
   await browser.$('.tine-rename-alias-choice button[data-choice="merge"]').click();
   const declaration = path.join(graph, "pages/Alias Source Owner.md");
-  await waitForFileText(declaration, text => text === "alias:: Alias Target\n\n- alias owner body\n", { timeoutMs: 15_000 });
-  await waitForFileText(path.join(graph, "pages/Alias journey.md"), text => text.includes("[[Alias Target]]") && text.includes('(page "Alias Target Owner")'), { timeoutMs: 15_000 });
+  // CM SPEC §4.1: the chosen member (Alias Target Owner) is the one spelling for the alias line, links and queries.
+  await waitForFileText(declaration, text => text === "alias:: Alias Target Owner\n\n- alias owner body\n", { timeoutMs: 15_000 });
+  await waitForFileText(path.join(graph, "pages/Alias journey.md"), text => text.includes("[[Alias Target Owner]]") && text.includes('(page "Alias Target Owner")') && !text.includes("Alias Source"), { timeoutMs: 15_000 });
   assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Target.md")));
   assert.ok(!fs.existsSync(path.join(graph, "pages/Alias Source.md")));
 
@@ -193,9 +196,9 @@ try {
   await browser.$(".graph-switch-btn").waitForExist({ timeout: 30_000 });
   await openPageByName(browser, "Alias Source Owner");
   await browser.waitUntil(() => browser.execute(() =>
-    [...document.querySelectorAll('[data-alias-names] a.page-ref, [data-alias-group-pages] a.page-ref')].some(link => link.textContent.trim() === "Alias Target")),
+    [...document.querySelectorAll('[data-alias-names] a.page-ref, [data-alias-group-pages] a.page-ref')].some(link => link.textContent.trim() === "Alias Target Owner")),
   { timeout: 15_000, timeoutMsg: "renamed alias detached after reload" });
-  assert.equal(fs.readFileSync(declaration, "utf8"), "alias:: Alias Target\n\n- alias owner body\n");
+  assert.equal(fs.readFileSync(declaration, "utf8"), "alias:: Alias Target Owner\n\n- alias owner body\n");
 
   stage = "M-Q6: renaming Foo to its own used child Foo/bar is refused with the reason";
   const beforeRefusal = snapshot();

@@ -584,7 +584,7 @@ pub fn store_conformance(
             .unwrap()
             .0;
         let view = store.whole_graph().unwrap();
-        let input = model_input_r13(&view, &spec);
+        let input = model_input_r13(&spec);
         let model = run_bridge(bridge, &input).expect("r13 bridge executes for every graph");
         assert_contract(&spec, &model, &expected);
         let mut found = compare(&view, &spec, &input, &model);

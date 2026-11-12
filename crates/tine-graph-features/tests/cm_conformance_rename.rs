@@ -274,7 +274,7 @@ fn run_rename(
     let map_strings = spec.stored_query_args();
     let mut rspec = spec.clone();
     rspec.renames = vec![(old.to_owned(), new.to_owned())];
-    let input = shared::model_input(&view, &rspec, shared::alias_spellings, &map_strings);
+    let input = shared::model_input(&rspec, shared::alias_spellings, &map_strings);
     let mut diffs = Vec::new();
     let model = match shared::run_bridge(bridge, &input) {
         Ok(m) => m,
@@ -632,7 +632,7 @@ fn run_rename(
             .collect(),
         ..Default::default()
     };
-    let after_input = shared::model_input(&view2, &after_spec, shared::alias_spellings, &[]);
+    let after_input = shared::model_input(&after_spec, shared::alias_spellings, &[]);
     let after_model = match shared::run_bridge(bridge, &after_input) {
         Ok(m) => m,
         Err(e) => {
