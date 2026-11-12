@@ -25,6 +25,7 @@ import { ResourceFailure } from "./ResourceFailure";
 import { DEFAULT_JOURNAL_SECTIONS_PAGE, locateSectionsPages, sectionItems, seedSectionsPage, type SectionItem } from "../journalSections";
 import type { Format } from "../types";
 import { soleBlockMacro } from "../render/parse";
+import { createGraphResource } from "../graphResource";
 
 const classify = (raw: string, format: Format): SectionItem["kind"] | null => {
   const macro = soleBlockMacro(raw, format);
@@ -107,7 +108,7 @@ export async function customizeTodaySections(): Promise<void> {
 
 export function TodaySections(props: { today: string; upcoming?: JSX.Element }): JSX.Element {
   const [pages, { refetch: refetchPages }] = createResource(() => changedAny(markerChangeKeys(JOURNAL_SECTIONS_MARKER)), locateSectionsPages);
-  const [sections, { refetch }] = createResource(() => {
+  const [sections, { refetch }] = createGraphResource(() => {
     const names = readOr(pages, undefined, "sections pages");
     return names && { names, revision: names.map(name => changed(pageChangeKey(name))).join("\0") };
   }, async (source, info): Promise<Sections> => reuseUnchanged(info.value as Sections | undefined, await readSections(source.names)));

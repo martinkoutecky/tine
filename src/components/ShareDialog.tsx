@@ -19,6 +19,7 @@ import { trapTab } from "./focusableElements";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
 import { QUICK_SHARE_OFF } from "../quickShare/commands";
 import { pendingRecordId, shareGistId } from "../quickShare/definitions";
+import { createGraphResource } from "../graphResource";
 
 /** Quiet time before a changed selection is reviewed again (the live preview's own window). */
 export const SHARE_REVIEW_DEBOUNCE_MS = 250;
@@ -106,7 +107,7 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
 
   // ---- query mode: the builder edits the query text; the preview runs what the builder shows ----
   const edits = { n: 0 };
-  const [builderSession, { mutate }] = createResource(
+  const [builderSession, { mutate }] = createGraphResource(
     () => (mode() === "query" ? queryMacro() : null),
     async (text): Promise<BuilderSession | undefined> => {
       const owner = graphOwner(() => mounted);
