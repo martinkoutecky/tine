@@ -214,6 +214,12 @@ fn l9_all_transaction_entry_paths_refuse_a_detached_graph() {
                 Some(plan.plan().unwrap())
             };
             let moved = f.root.with_extension("moved");
+            // The Poll watcher scans the graph on its own cycles. Windows
+            // refuses to rename a directory while a scan holds a handle in
+            // it (os error 5), so join the thread first: the commit under
+            // test needs no watcher, and the rename then meets no handle of
+            // ours.
+            f.store.watch.stop_background_for_test();
             fs::rename(&f.root, &moved).unwrap();
             if replaced {
                 fs::create_dir(&f.root).unwrap();
