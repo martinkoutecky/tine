@@ -28,6 +28,15 @@ function scrollTopForAnchor(scroller: HTMLElement, anchor: ScrollAnchor): number
 
 const GESTURES = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 const MODIFIER_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta", "Shift", "OS"]);
+/** The interrupted pursuit still waiting for the reader's scroll, at most one per scroller: a newer pursuit
+ *  retires it, so interrupted visits never pile up listeners on the persistent pane scroller. */
+const waitingForScroll = new WeakMap<HTMLElement, () => void>();
+function retireWaiting(el: HTMLElement | null | undefined): void {
+  const waiting = el && waitingForScroll.get(el);
+  if (!el || !waiting) return;
+  el.removeEventListener("scroll", waiting);
+  waitingForScroll.delete(el);
+}
 
 /** Go to a saved position once the content has rendered. A deep position keeps being pursued while the page grows:
  *  blocks and linked references render and measure asynchronously, and a slow reference read can answer well after
@@ -55,6 +64,7 @@ export function pursueScroll(options: {
   let released = false;
   let listening = false;
   const doc = scroller()?.ownerDocument;
+  retireWaiting(scroller());
   let positioned = false;
   const claimPosition = () => { if (!positioned) { positioned = true; onPositioned(); } };
   // A gesture hands control to the reader, but only a scroll the gesture causes makes this the reader's position:
@@ -63,7 +73,12 @@ export function pursueScroll(options: {
   const release = (event: Event) => {
     if (isKeyboardEventValue(event) && MODIFIER_KEYS.has(event.key)) return; // any window's realm
     released = true; finish();
-    if (current()) scroller()?.addEventListener("scroll", claimOnScroll, { once: true, passive: true });
+    const el = current() ? scroller() : null;
+    if (!el) return;
+    retireWaiting(el);
+    const waiting = () => { waitingForScroll.delete(el); claimOnScroll(); };
+    waitingForScroll.set(el, waiting);
+    el.addEventListener("scroll", waiting, { once: true, passive: true });
   };
   const finish = () => { if (listening) for (const gesture of GESTURES) doc?.removeEventListener(gesture, release, true); };
   // Deferred to a frame so the page's content is laid out first; otherwise a synchronous reset races the content swap.
