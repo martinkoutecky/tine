@@ -1,11 +1,12 @@
 import { t } from "../i18n";
 import { DialogActions } from "./DialogActions";
-import { Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import type { JournalFile } from "../types";
 import { readOr } from "../resourceRead";
+import { createGraphResource } from "../graphResource";
 
 // One file in a duplicate-day conflict. Click the name to reveal its full
 // contents; the action buttons let you reach and reconcile it (#21): Open
@@ -29,7 +30,7 @@ export function ConflictFileRow(props: {
   const [open, setOpen] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
-  const [contentResource] = createResource(
+  const [contentResource] = createGraphResource(
     () => (open() ? props.file.name : null),
     // Owned by the graph that listed the file: a switch empties the list, and
     // a read landing after it shows nothing from the other graph.
