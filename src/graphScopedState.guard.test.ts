@@ -323,7 +323,9 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(calendar).toMatch(/rev: changed\("journals"\), epoch: graphEpoch\(\)/);
     expect(calendar).toMatch(/readOwned\(owner, backend\(\)\.journalContentDays\(\)\)/);
     const session = readFileSync("src/session.ts", "utf8");
-    expect(session).toMatch(/const mayApply = \(\) => owner\(\) && JSON\.stringify\(buildPersistedSession\(\)\) === initialSession/);
+    expect(session).toMatch(/function sessionSnapshotToken\(\): string \{\s*return JSON\.stringify\(buildPersistedSession\(\),/);
+    expect(session).toMatch(/const initialSession = sessionSnapshotToken\(\)/);
+    expect(session).toMatch(/const mayApply = \(\) => owner\(\) && sessionSnapshotToken\(\) === initialSession && intentToken\(\) === initialIntent/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
     expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(stampedId\) => \{\s*if \(!bindingCurrent\(binding\) \|\| ac\(\) !== trigger/);
   });
