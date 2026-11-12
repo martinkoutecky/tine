@@ -2530,15 +2530,18 @@ the renamed page's own files (`WholeGraph::inventory(InventoryScope::FilesAtOrUn
 whole-graph inventory. It queues each unmoved, marker-free referrer with
 `PagePlan::rewrite_refs_prepared` and the old/new text already selected by
 `RenamePlan::pages`; unchanged non-title referrers queue nothing. The shared
-`tine_core::refs::rename_rewrite` supplies the prepared text. Moved and
-marker-bearing referrers are asked of `rename_rewrite` directly, since a move
-rewrites inside its own step and a marker-bearing file must not be queued
-before the planner's VCS-marker skip. Preflight still stages the file against
-the expected revision and
-reuses the kept bytes only when the staged bytes are byte-identical to the
-prepared old bytes and the filename format is unchanged, otherwise it
-recomputes; the read-only Org and
-VCS-marker refusals run on the staged bytes either way. A changing reference
+`tine_core::refs::rename_rewrite` supplies the prepared text. A moved,
+marker-free page's rewrite is proposed once from the rename's read and queued
+with its move (`PagePlan::move_file` with `MoveRewrite::Prepared`); the move's preflight rebinds
+the own title (which depends on the destination) from that proposal instead
+of walking the page again. Marker-bearing pages are asked of `rename_rewrite`
+directly, since a marker-bearing file must not be queued before the planner's
+VCS-marker skip. Preflight still stages the file against the expected revision
+and reuses the kept bytes or proposal only when the staged bytes are
+byte-identical to the prepared old bytes, the filename format is unchanged
+and (for a move) the source and destination have the same syntax, and its
+certificate checks; otherwise it recomputes; the read-only Org and VCS-marker
+refusals and every move check run on the staged bytes either way. A changing reference
 rewrite has no separate stage-2 read: the final pre-rename guard compares the
 same file with the same baseline and refuses a mismatch as the same conflict
 (external-editor or sync race), after writing only a temporary file.

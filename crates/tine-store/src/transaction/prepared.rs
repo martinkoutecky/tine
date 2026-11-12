@@ -94,16 +94,16 @@ impl PreparedRewrite {
         }
     }
 
-    /// The prepared bytes when `file`'s staged `old` bytes and the filename
-    /// format still match what this rewrite was prepared from. On mismatch,
-    /// reference rewrites return `None` for recomputation; merges refuse.
-    /// O(file bytes) comparison, no parse.
+    /// The prepared text when `file`'s staged `old` bytes and the filename
+    /// format still match what this rewrite was prepared from, with its
+    /// certificate checked. On mismatch, reference rewrites return `None` for
+    /// recomputation; merges refuse. O(file bytes) comparison, no parse.
     pub(super) fn reuse(
         &self,
         file: &FileId,
         old: &[u8],
         name_format: FileNameFormat,
-    ) -> Result<Option<Vec<u8>>, Why> {
+    ) -> Result<Option<String>, Why> {
         let matches =
             self.file == *file && self.old.as_bytes() == old && self.name_format == name_format;
         if !matches {
@@ -123,6 +123,24 @@ impl PreparedRewrite {
         trace
             .check(&self.new, &trace.substitution)
             .map_err(|e| Why::Refused(Refusal::TextRealization(e)))?;
-        Ok(Some(self.new.clone().into_bytes()))
+        Ok(Some(self.new.clone()))
+    }
+
+    /// [`Self::reuse`] as the proposal a moved page's own-title rebind
+    /// continues from (its certificate is the rewrite's). Same checks.
+    pub(super) fn reuse_proposal(
+        &self,
+        file: &FileId,
+        old: &[u8],
+        name_format: FileNameFormat,
+    ) -> Result<Option<tine_core::refs::RenameProposal>, Why> {
+        Ok(self
+            .reuse(file, old, name_format)?
+            .map(|text| tine_core::refs::RenameProposal {
+                text,
+                trace: self.certificate.clone(),
+                unrealized: Vec::new(),
+                rewritten: Default::default(),
+            }))
     }
 }

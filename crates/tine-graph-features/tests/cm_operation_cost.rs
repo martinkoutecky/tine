@@ -288,10 +288,12 @@ const REFERRER_BOUND: [u64; 10] = [2, 1, 2, 1, 1, 1, 1, 1, 0, 0];
 /// trash step, with their syncs (file, directory, trash directory); one
 /// reference walk; one parse; one input check; one certificate check.
 /// Actual: the destination plus the source's custody marker (none on
-/// Windows), three renames, ten syncs, and two reference walks: the
-/// planner's walk for `changed` and the report's names, then preflight's
-/// `rewrite_move` walks the same bytes again (follow-up, see the receipt).
-const CHILD_PINNED: [u64; 10] = [5, 2, 10, 3, 1, 3, 2, 1, 1, 0];
+/// Windows), three renames, ten syncs (the recoverable move protocol,
+/// D-20261021-GQ3), one reference walk (the planner's proposal, carried
+/// into the move step: `MoveRewrite::Prepared` on `PagePlan::move_file`) and, as for a
+/// referrer, two certificate checks (the proposal's own, the store's at
+/// preflight reuse) and no in-transaction rewrite.
+const CHILD_PINNED: [u64; 10] = [5, 2, 10, 3, 1, 3, 1, 2, 0, 0];
 const CHILD_BOUND: [u64; 10] = [2, 1, 3, 2, 1, 1, 1, 1, 0, 0];
 
 #[test]
@@ -305,10 +307,11 @@ fn a_rename_costs_a_bounded_constant_per_referrer() {
         REFERRER_PINNED,
         REFERRER_BOUND,
     );
-    // The moved source's own work, once: its two walks (planner, preflight
-    // `rewrite_move`) and the five reads and certificate of a referrer.
+    // The moved source's own work, once: one walk (the planner's proposal,
+    // carried into its move step) and the five reads and two certificate
+    // checks of a referrer.
     assert!(
-        few.walks <= 4 && few.certificates <= 5 && few.reads() <= 16,
+        few.walks <= 3 && few.certificates <= 6 && few.reads() <= 16,
         "{few:?}"
     );
 }

@@ -29,6 +29,8 @@ mod move_file;
 mod plan;
 mod preflight;
 mod prepared;
+#[cfg(test)]
+mod prepared_move_tests;
 use prepared::PreparedRewrite;
 #[cfg(test)]
 #[path = "transaction_environment_tests.rs"]
@@ -126,6 +128,39 @@ pub enum TrashIf {
 /// overrides empty, so every site follows the same destination.
 #[derive(Clone, Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>, pub Vec<(String, String)>);
+
+/// What a page move does to the moved file's bytes: keep them, rewrite its
+/// references and own title for a [`RenameMap`], or the same rewrite with the
+/// reference proposal the caller already made from its planning read of
+/// `old` (so preflight does not walk the page again). An `Option<&RenameMap>`
+/// converts: `None` keeps the bytes, `Some` rewrites.
+#[derive(Debug)]
+pub enum MoveRewrite<'a> {
+    /// Move the bytes unchanged.
+    Verbatim,
+    /// Rewrite the moved file for this rename.
+    Rewrite(&'a RenameMap),
+    /// Rewrite for `renames`, reusing `proposal`, made from `old` under
+    /// `format`. Preflight reuses it only when the staged bytes equal `old`,
+    /// the configured format is `format`, the source and destination have
+    /// the same syntax and the certificate checks; otherwise it recomputes.
+    Prepared {
+        /// The rename the proposal was made for.
+        renames: &'a RenameMap,
+        /// The planning read's text.
+        old: String,
+        /// Its reference rewrite and certificate.
+        proposal: tine_core::refs::RenameProposal,
+        /// The filename format it was made under.
+        format: tine_core::config::FileNameFormat,
+    },
+}
+
+impl<'a> From<Option<&'a RenameMap>> for MoveRewrite<'a> {
+    fn from(renames: Option<&'a RenameMap>) -> Self {
+        renames.map_or(MoveRewrite::Verbatim, MoveRewrite::Rewrite)
+    }
+}
 
 /// I/O error with a stable kind for handling and a message for display.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -385,6 +420,7 @@ enum Step {
         expected: FileRev,
         to: FileId,
         renames: Option<RenameMap>,
+        prepared: Option<Box<PreparedRewrite>>,
     },
     Trash {
         file: FileId,
@@ -883,18 +919,39 @@ impl<'a> PagePlan<'a> {
     /// trash is refused; use [`Self::trash`] for that operation. Commit hashes
     /// source bytes and may rewrite/sync the destination, plus O(P) metadata
     /// for publication.
-    pub fn move_file(
+    pub fn move_file<'m>(
         &mut self,
         file: &FileId,
         expected: FileRev,
         to: &FileId,
-        renames: Option<&RenameMap>,
+        rewrite: impl Into<MoveRewrite<'m>>,
     ) -> &mut Self {
+        let (renames, prepared) = match rewrite.into() {
+            MoveRewrite::Verbatim => (None, None),
+            MoveRewrite::Rewrite(renames) => (Some(renames.clone()), None),
+            MoveRewrite::Prepared {
+                renames,
+                old,
+                proposal,
+                format,
+            } => (
+                Some(renames.clone()),
+                Some(Box::new(PreparedRewrite::new(
+                    file.clone(),
+                    old,
+                    proposal.text,
+                    format,
+                    proposal.trace,
+                    false,
+                ))),
+            ),
+        };
         self.steps.push(Step::Move {
             file: file.clone(),
             expected,
             to: to.clone(),
-            renames: renames.cloned(),
+            renames,
+            prepared,
         });
         self
     }

@@ -61,8 +61,15 @@ pub(crate) fn rewrite_move(
     path: &Path,
     map: &RenameMap,
     name_format: tine_core::config::FileNameFormat,
+    proposed: Option<tine_core::refs::RenameProposal>,
 ) -> Result<Vec<u8>, Why> {
-    let mut proposal = rewrite_proposal(old, path, map, name_format)?;
+    // `proposed`: the reference rewrite already proposed for these `old`
+    // bytes (carried from the caller's planning read and checked by
+    // `PreparedRewrite::reuse_proposal`), so the page is not walked again.
+    let mut proposal = match proposed {
+        Some(proposal) => proposal,
+        None => rewrite_proposal(old, path, map, name_format)?,
+    };
     refuse_read_only_org(
         old,
         proposal.text.as_bytes(),
