@@ -258,9 +258,18 @@ let editRequest = 0;
 
 const FOCUS_TAGS = new Set<string>(["textarea", "input", "button", "select", "iframe", "a", "div", "span", "body"]);
 
+/** The block whose editor `el` is (a textarea editor or a CodeMirror one), else null. */
+function blockEditorId(el: Element | null): string | null {
+  if (isElementTag(el, "textarea") && el.classList.contains("block-editor")) {
+    return el.closest("[data-block-id]")?.getAttribute("data-block-id") ?? "";
+  }
+  return el?.getAttribute("data-cm6-editor") ?? null;
+}
+
 /** GH #939: one frame after an edit request, record (content-free) why no
  * editor of `id` holds focus. A newer request supersedes this check. Cost on
- * the normal path: one frame callback and one scan of the mounted editors. */
+ * the normal path: one frame callback and one look at the focused element;
+ * the mounted editors are scanned only on a miss. */
 function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: EditorFocusGuard) {
   const request = ++editRequest;
   if (performance.now() - editorFocusMissAt < EDITOR_FOCUS_MISS_INTERVAL_MS) return;
@@ -271,6 +280,9 @@ function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: 
   requestFrame(win, () => {
     if (request !== editRequest) return;
     const documentHasFocus = doc.hasFocus();
+    const active = doc.activeElement;
+    const activeBlock = blockEditorId(active);
+    if (guard === "none" && documentHasFocus && activeBlock === id) return;
     let targetMounted = false;
     let targetFocused = false;
     for (const target of historyEditorTargets) {
@@ -280,7 +292,6 @@ function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: 
     }
     if (guard === "none" && documentHasFocus && targetFocused) return;
     editorFocusMissAt = performance.now();
-    const active = doc.activeElement;
     const tag = active?.localName ?? "none";
     void recordDiagnostic("editor_focus_missed", { editorFocus: {
       entry,
@@ -288,7 +299,7 @@ function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: 
       guard,
       targetMounted,
       activeTag: tag === "none" || FOCUS_TAGS.has(tag) ? tag as EditorFocusMissed["activeTag"] : "other",
-      activeIsBlockEditor: isElementTag(active, "textarea") && active.classList.contains("block-editor"),
+      activeIsBlockEditor: activeBlock !== null,
     } });
   });
 }
