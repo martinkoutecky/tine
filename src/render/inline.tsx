@@ -83,6 +83,7 @@ import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
 import { windowOf } from "../windowRealm";
+import { createGraphResource } from "../graphResource";
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -339,7 +340,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
   const [previewPage, setPreviewPage] = createSignal<string>();
-  const [previewResource] = createResource(
+  const [previewResource] = createGraphResource(
     // Source-page revisions include descendant folds and dataRev full refreshes.
     // An alias also follows the canonical page the backend answered with.
     () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${changedAny([
@@ -985,8 +986,8 @@ function MediaEmbed(props: {
   const external = /^(https?:|data:|blob:)/.test(props.url);
   const rel = () => assetRelPath(props.url);
   // Graph media uses native range requests; never copy a multi-GB file into a Blob.
-  const [blobResource] = createResource(
-    () => (external ? null : `${graphEpoch()}\0${rel()}`),
+  const [blobResource] = createGraphResource(
+    () => (external ? null : rel()),
     async () => {
       const r = rel();
       if (!r) return "";
@@ -1227,7 +1228,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
-  const [grpResource] = createResource(
+  const [grpResource] = createGraphResource(
     // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
     () => isBlockRefUuid(props.id) && `${props.id}\0${changed(`block:${props.id}`)}`,
     async () => {
@@ -1294,7 +1295,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // Summary resolution stays shallow and graph-lifetime cached. Fetch the
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
-  const [previewResource] = createResource(
+  const [previewResource] = createGraphResource(
     () => (peek.open() && grp() ? `${props.id}\0${changedAny([`block:${props.id}`, pageChangeKey(grp()!.page)])}` : null),
     async () => {
       const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));

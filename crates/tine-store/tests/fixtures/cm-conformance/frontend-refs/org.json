@@ -239,7 +239,9 @@
     "blocks": [
       {
         "raw": "**[[ns/Old]]** and _#ns/Old_",
-        "refs": []
+        "refs": [
+          "ns/old"
+        ]
       }
     ],
     "name": "ns/Old",
@@ -249,7 +251,9 @@
     "blocks": [
       {
         "raw": "**[[Old]]** and _#Old_",
-        "refs": []
+        "refs": [
+          "old"
+        ]
       }
     ],
     "name": "Old",
@@ -259,7 +263,9 @@
     "blocks": [
       {
         "raw": "**[[Über]]** and _#Über_",
-        "refs": []
+        "refs": [
+          "über"
+        ]
       }
     ],
     "name": "Über",
@@ -269,7 +275,9 @@
     "blocks": [
       {
         "raw": "**[[old page]]** and _#old page_",
-        "refs": []
+        "refs": [
+          "old page"
+        ]
       }
     ],
     "name": "old page",

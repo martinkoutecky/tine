@@ -791,6 +791,32 @@ describe("QueryWorkspace", () => {
     }
   });
 
+  // UI-GRAPH-RESOURCE-OUTLIVES-EPOCH-1112: the builder's parse is owned by the
+  // graph epoch; a reply the epoch outran is asked again, so the visual builder
+  // does not stay empty for a query it could show.
+  it("the Search tab's visual builder shows the query after the epoch moves under its parse", async () => {
+    const route: QueryRoute = { kind: "query", id: "builder-epoch", sourceKind: "dsl", source: "initial", presentation: "list" };
+    const initial = { anchor: "block" as const, filter: { kind: "and" as const, items: [
+      { kind: "raw" as const, text: "first", diagnostic_kind: "syntax" as const },
+      { kind: "raw" as const, text: "second", diagnostic_kind: "syntax" as const },
+    ] }, source: { kind: "builder" as const } };
+    let finishFirst: ((value: never) => void) | undefined;
+    const parse = vi.spyOn(backend(), "parseQuery")
+      .mockImplementationOnce(() => new Promise((finish) => { finishFirst = finish; }))
+      .mockResolvedValue({ query: initial, view: {} } as never);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("initial");
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={workspaceDeps()} />, root);
+    try {
+      root.querySelector<HTMLButtonElement>(".query-advanced-toggle")!.click();
+      await waitFor(() => expect(finishFirst).toBeDefined());
+      bumpGraphEpoch();
+      finishFirst!({ query: initial, view: {} } as never);
+      await waitFor(() => expect(root.querySelectorAll(".query-advanced-modal .qs-row")).toHaveLength(2));
+      expect(parse.mock.calls.filter(([text]) => text === "initial").length).toBeGreaterThanOrEqual(2);
+    } finally { finishFirst?.({ query: initial, view: {} } as never); dispose(); vi.restoreAllMocks(); }
+  });
+
   it.each(["print", "parse"])("L12:41: builder edits compose while an older %s is pending", async (phase) => {
     const route: QueryRoute = { kind: "query", id: "builder-race", sourceKind: "dsl", source: "initial", presentation: "list" };
     const initial = { anchor: "block" as const, filter: { kind: "and" as const, items: [

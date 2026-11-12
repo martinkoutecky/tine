@@ -1,5 +1,6 @@
-import { For, Show, batch, createEffect, createMemo, createResource, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
+import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
@@ -251,7 +252,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   }));
   // Load the source page only once the group is near the viewport. A string
   // source: the parent recomputing an equal group must not read again.
-  const [readyResource] = createResource(
+  const [readyResource] = createGraphResource(
     () => JSON.stringify([props.page, props.kind, props.path ?? null, acquire()]),
     async (source) => {
       const scheduled = props.schedule;

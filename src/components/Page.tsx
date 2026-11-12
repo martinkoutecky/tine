@@ -4,7 +4,7 @@ import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
@@ -69,6 +69,7 @@ import { JournalFeedDays } from "./JournalFeedDays";
 import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
 import { createPageSeen } from "../seen/pageSeen";
 import { markSeenOnLeave } from "../seen/leave";
+import { createGraphResource } from "../graphResource";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -858,7 +859,7 @@ export function PageView(): JSX.Element {
 // A directly routed today page has no journal-feed metadata yet. Read only
 // when the opted-in section mounts; Journals reuses its existing feed read.
 function UpcomingSection(props: { feed: boolean }): JSX.Element {
-  const [days, { refetch }] = createResource(
+  const [days, { refetch }] = createGraphResource(
     () => props.feed ? null : changed("days"),
     async () => {
       const result = await readOwned(graphOwner(), backend().journalFeedPage(1, null, true));

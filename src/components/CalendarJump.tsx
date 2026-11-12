@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { stepMonth } from "./primitives";
-import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle, appNow } from "../journal";
 import { graphEpoch } from "../graphSession";
@@ -11,6 +11,7 @@ import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import { readOr } from "../resourceRead";
 import { openPageInSidebar } from "../ui";
+import { createGraphResource } from "../graphResource";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -70,8 +71,8 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
 
   // Journal days that have content, fetched while the popup is open (re-fetched
   // on journal content changes). yyyymmdd keys, month 1-based.
-  const [contentDaysResource] = createResource(
-    () => (open() ? { rev: changed("journals"), epoch: graphEpoch() } : null),
+  const [contentDaysResource] = createGraphResource(
+    () => (open() ? changed("journals") : null),
     async () => {
       const owner = graphOwner();
       const epoch = graphEpoch();

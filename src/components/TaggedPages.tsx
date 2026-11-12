@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { For, Show, createEffect, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { changed } from "../changeKeys";
 import { referenceKey } from "../referenceKeys";
@@ -12,6 +12,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createCollapsedRevision } from "../collapsedRevision";
 import { StaleReferenceCount } from "./StaleReferenceCount";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
+import { createGraphResource } from "../graphResource";
 
 /** OG page.cljs tagged-pages: list pages whose page tags contain this name or,
  * unlike OG (GH #715), any name in its alias group, the same group Linked
@@ -25,7 +26,7 @@ export function TaggedPages(props: { name: string }): JSX.Element {
   const [collapsed, setCollapsed] = createSignal(sectionOverride("tagged", props.name) ?? false);
   createEffect(() => setCollapsed(sectionOverride("tagged", props.name) ?? false));
   const freshness = createCollapsedRevision(() => changed(referenceKey("tags", props.name)), collapsed, () => props.name);
-  const [answer, { refetch }] = createResource(
+  const [answer, { refetch }] = createGraphResource(
     () => isPublishedExport() ? null : freshness.revision(),
     async (token) => {
       const owner = latestOwner(owners, "tagged-pages", graphOwner());

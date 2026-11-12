@@ -8,7 +8,6 @@ import {
   Switch,
   createEffect,
   createMemo,
-  createResource,
   createSignal,
   createUniqueId,
   onCleanup,
@@ -74,6 +73,7 @@ import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
 import { t, msg, render } from "../i18n";
 import { DialogActions } from "./DialogActions";
+import { createGraphResource } from "../graphResource";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -543,7 +543,7 @@ function AdvancedModal(props: {
   onCleanup(() => { mounted = false; });
   const edits = {};
   const [printing, setPrinting] = createSignal(false);
-  const [builderSession, { mutate }] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
+  const [builderSession, { mutate }] = createGraphResource(dsl, async (text): Promise<BuilderSession | undefined> => {
     const owner = graphOwner(() => mounted && dsl() === text, revisionOwner(edits, currentRevision(edits)));
     const source = queryWorkspaceDsl(text);
     const parsed = await readOwned(owner, backend().parseQuery(source.argument, source.dialect));
