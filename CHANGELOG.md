@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Org pages: Linked References now mark a link inside emphasis (`*[[page]]*`) or inside a `#[[…]]` tag where it stands, also inside quote and other `#+BEGIN_…` blocks, instead of missing it or marking the start of the block (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 - Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).
 - Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).
