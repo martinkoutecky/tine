@@ -154,6 +154,7 @@ it("remembers deliberate user scrolling after an interrupted restore", async () 
   document.dispatchEvent(new Event("wheel"));
   height = 20_000;
   scroller.scrollTop = 2_000;
+  scroller.dispatchEvent(new Event("scroll"));
   router.goForward();
   router.restoreScrollFor(router.route());
   await runFrames(1);
@@ -174,6 +175,7 @@ it("remembers the reader's new position after a background tab closes during the
   expect(scroller.scrollTop).toBe(9_000);
   document.dispatchEvent(new Event("wheel"));
   scroller.scrollTop = 2_000;
+  scroller.dispatchEvent(new Event("scroll"));
   router.goForward();
   router.restoreScrollFor(router.route());
   await runFrames(1);
@@ -212,6 +214,25 @@ it("puts the row that was in view back when the rows above it changed height", a
   await runFrames(2);
   expect(scroller.scrollTop).toBe(9_500);
 });
+
+for (const [what, gesture] of [
+  ["Alt before Alt+Right", () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Alt" }))],
+  ["a click on a navigation control", () => document.dispatchEvent(new Event("pointerdown"))],
+] as const) {
+  it(`keeps the saved position when ${what} comes while the returning page is still loading`, async () => {
+    const router = await leaveDeepPage();
+    await runFrames(1);
+    gesture();
+    router.goForward();
+    router.restoreScrollFor(router.route());
+    await runFrames(1);
+    router.goBack();
+    height = 20_000;
+    router.restoreScrollFor(router.route());
+    await runFrames(2);
+    expect(scroller.scrollTop).toBe(9_000);
+  });
+}
 
 it("stops pursuing on the first user gesture", async () => {
   await leaveDeepPage();
