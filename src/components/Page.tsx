@@ -554,7 +554,7 @@ export function PageView(): JSX.Element {
             const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
             // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
-            if (!r.path) rewritePageTargetAcrossPanes(from, to);
+            if (!r.path) { renamePageInNavigation(from, to, { favorites: false, exactPath: true }); rewritePageTargetAcrossPanes(from, to); }
             else { renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) }); router.rewritePageTarget(from, to); }
             return;
           }
