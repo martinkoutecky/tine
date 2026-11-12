@@ -3,7 +3,7 @@
 //! The model is LF-canonical: `doc::parse` and `org::parse_org` end a line at
 //! `\r\n`, `\n` or a lone `\r` (mldoc's `eol_chars`). A save must still write
 //! the file's own terminators back: a reused line keeps its original terminator
-//! (`layout_retention`, `restore_org`), and a new line takes the file's
+//! (`layout_retention`, for Markdown and Org), and a new line takes the file's
 //! convention.
 
 /// Split `source` into lines and the terminator after each line, as the LF
@@ -28,7 +28,7 @@ pub(super) fn split(source: &str) -> (Vec<&str>, Vec<&'static str>) {
 /// `source` cut at every terminator, as `source.split('\n')` cuts its LF form:
 /// one more line than terminators (the last may be empty), and the terminator
 /// after each line but the last. Lines never contain `\r` or `\n`. O(n), no copy.
-fn pieces(source: &str) -> (Vec<&str>, Vec<&'static str>) {
+pub(super) fn pieces(source: &str) -> (Vec<&str>, Vec<&'static str>) {
     let (mut lines, mut ends) = (Vec::new(), Vec::new());
     let bytes = source.as_bytes();
     let (mut start, mut i) = (0, 0);
@@ -72,41 +72,6 @@ pub(super) fn restore(content: String, existing: Option<&str>) -> String {
     } else {
         content
     }
-}
-
-/// Put back the line terminators (`\r\n`, lone `\r`) of an org file (K01a).
-/// The org model is LF-canonical, so `serialized` is LF-separated. Lines equal
-/// to the old file's leading and trailing lines keep their own terminators; a
-/// changed stretch takes the old terminators position by position (an edited
-/// block keeps its own), and lines beyond it the file's [`convention`]. LF-only
-/// files and new files are returned unchanged. O(lines), one output copy.
-pub(super) fn restore_org(serialized: String, existing: Option<&str>) -> String {
-    let Some(existing) = existing.filter(|e| e.contains('\r')) else {
-        return serialized;
-    };
-    let (old, ends) = pieces(existing);
-    let new: Vec<&str> = serialized.split('\n').collect();
-    let fallback = convention(Some(existing));
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let room = old.len().min(new.len()) - prefix;
-    let suffix = (old.iter().rev().zip(new.iter().rev()))
-        .take(room)
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut out = String::with_capacity(serialized.len());
-    for (j, line) in new.iter().enumerate() {
-        out.push_str(line);
-        if j + 1 == new.len() {
-            break;
-        }
-        let k = if j >= new.len() - suffix {
-            Some(j + old.len() - new.len())
-        } else {
-            (j < old.len() - suffix).then_some(j)
-        };
-        out.push_str(k.and_then(|k| ends.get(k).copied()).unwrap_or(fallback));
-    }
-    out
 }
 
 #[cfg(test)]
@@ -159,40 +124,5 @@ mod tests {
         assert_eq!(restore("a\nb\n".into(), Some("x\ry")), "a\rb\r");
         assert_eq!(restore("a\nb\n".into(), Some("x\r\ny")), "a\r\nb\r\n");
         assert_eq!(restore("a\rb\n".into(), Some("x\ry")), "a\rb\n");
-    }
-
-    #[test]
-    fn restore_org_keeps_each_terminator() {
-        let lf = |s: &str| s.to_string();
-        assert_eq!(restore_org(lf("* a\n* b\n"), Some("* a\n")), "* a\n* b\n");
-        assert_eq!(
-            restore_org(lf("* a\n* b\n"), Some("* a\r\n")),
-            "* a\r\n* b\r\n",
-            "a new line takes the CRLF convention"
-        );
-        assert_eq!(
-            restore_org(lf("* a\n*\n\n* b"), Some("* a\r\n*\r\n\r\n* b")),
-            "* a\r\n*\r\n\r\n* b"
-        );
-        assert_eq!(
-            restore_org(lf("* a\n\n* b\n"), Some("* a\r\r\n* b\n")),
-            "* a\r\r\n* b\n",
-            "`\\r\\r\\n` is a lone CR then a CRLF, as the model reads it"
-        );
-        assert_eq!(
-            restore_org(lf("* a\n* b\n"), Some("* a\r* b\r")),
-            "* a\r* b\r"
-        );
-        assert_eq!(restore_org(lf("* a!\n* b"), Some("* a\r* b")), "* a!\r* b");
-        assert_eq!(
-            restore_org(lf("* a\n* n\n* b\n"), Some("* a\n* b\r")),
-            "* a\n* n\r* b\r",
-            "a new line takes the convention"
-        );
-        assert_eq!(
-            restore_org(lf("* x\n* b\n"), Some("* a\n* b\r")),
-            "* x\n* b\r",
-            "an edited line keeps its own terminator"
-        );
     }
 }

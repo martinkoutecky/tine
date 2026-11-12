@@ -394,3 +394,38 @@ fn crlf_org_page_without_a_final_terminator_keeps_its_last_line() {
     });
     assert_eq!(pasted, "* a!\r\npasted\r\n*\r\n* b\r\n* d");
 }
+
+/// Review r1 (DS-4): a block that moves keeps its own lines' terminators in a
+/// mixed-ending file; only edited and new lines take positional or convention
+/// endings. Duplicate block texts each keep their own.
+#[test]
+fn mixed_ending_org_page_keeps_moved_blocks_terminators() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\n* b\n* c\r\n");
+    let moved = page.save(EditKind::ReplacePage, |doc| doc.blocks.swap(0, 1));
+    assert_eq!(moved, "* b\n* a\r\n* c\r\n");
+
+    let page = Page::at("pages/p.org", "* x\r\n* x\n* y\r\n");
+    let front = page.save(EditKind::ReplacePage, |doc| {
+        let y = doc.blocks.remove(2);
+        doc.blocks.insert(0, y);
+    });
+    assert_eq!(front, "* y\r\n* x\r\n* x\n");
+
+    // A moved block's body lines move with it; an indent change keeps them too.
+    let page = Page::at("pages/p.org", "* a\r\nbody\n* b\n* c\r\n");
+    let nested = page.save(EditKind::ReplacePage, |doc| {
+        let a = doc.blocks.remove(0);
+        doc.blocks[0].children.push(a);
+    });
+    assert_eq!(nested, "* b\n** a\r\nbody\n* c\r\n");
+}
+
+/// The Markdown sibling of the review r1 case.
+#[test]
+fn mixed_ending_markdown_page_keeps_moved_blocks_terminators() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::new("- a\r\n- b\n- c\r\n");
+    let moved = page.save(EditKind::ReplacePage, |doc| doc.blocks.swap(0, 1));
+    assert_eq!(moved, "- b\n- a\r\n- c\r\n");
+}
