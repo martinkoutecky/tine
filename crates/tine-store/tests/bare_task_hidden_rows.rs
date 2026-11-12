@@ -352,3 +352,271 @@ fn a_bare_task_after_a_leading_blank_line_keeps_its_task_through_an_id() {
     let stripped = graph.apply(&[0], id(None));
     assert_eq!(tasks(&graph.open()), before, "{stripped:?}");
 }
+
+// Ledger witnesses (reviews r1–r6 of REG-BARE-TASK-HIDDEN-ROWS): each review
+// found one shape where the block's title/metadata boundary was computed from
+// the text instead of asked of the parser. Each case runs the real path (edit
+// door, `Store::save`, bytes on disk, fresh open, the task query), in both
+// formats and both line endings where the shape exists.
+
+/// One witness: a page, the block to edit, the edit, the bytes after, and the
+/// task raws before and after (bare titles; a CRLF raw's CR is not compared).
+type Witness = (
+    &'static str,
+    &'static str,
+    &'static [usize],
+    fn() -> Edit,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+);
+
+fn task_titles(store: &Store) -> BTreeSet<String> {
+    tasks(store)
+        .into_iter()
+        .map(|raw| raw.replace('\r', ""))
+        .collect()
+}
+
+fn run_witnesses(cases: &[Witness]) {
+    for (path, source, index, request, after, before_tasks, after_tasks) in cases {
+        let graph = Graph::new(path, source);
+        let store = graph.open();
+        let page = store.page(&PageId::from(*path));
+        assert!(page.is_ok(), "opens: {source:?}: {:?}", page.err());
+        assert_eq!(task_titles(&store), set(before_tasks), "before: {source:?}");
+        store.close();
+        assert_eq!(&graph.apply(index, request()), after, "bytes: {source:?}");
+        let reopened = graph.open();
+        let page = reopened.page(&PageId::from(*path));
+        assert!(page.is_ok(), "reopens: {after:?}: {:?}", page.err());
+        assert_eq!(task_titles(&reopened), set(after_tasks), "after: {after:?}");
+    }
+}
+
+fn unfold() -> Edit {
+    Edit::Property {
+        key: "collapsed".into(),
+        value: None,
+    }
+}
+
+fn owner() -> Edit {
+    Edit::Property {
+        key: "owner".into(),
+        value: Some("me".into()),
+    }
+}
+
+/// R1a: a CRLF page keeps each line's CR in the block's raw (`TODO\r`); the
+/// bare title is still the task its LF twin is, alone or before rows.
+#[test]
+fn r1a_a_crlf_bare_task_is_a_task_alone_and_before_rows() {
+    run_witnesses(&[
+        (
+            "pages/o.org",
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n* other\r\n",
+            &[0],
+            fold,
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:collapsed: true\r\n:END:\r\n* other\r\n",
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:"],
+            &["TODO\n:PROPERTIES:\n:id: x\n:collapsed: true\n:END:"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\r\n* other\r\n",
+            &[0],
+            scheduled,
+            "* TODO\r\nSCHEDULED: <2026-11-12 Thu>\r\n* other\r\n",
+            &["TODO"],
+            &["TODO\nSCHEDULED: <2026-11-12 Thu>"],
+        ),
+        (
+            "pages/m.md",
+            "- TODO\r\n  id:: x\r\n- other\r\n",
+            &[0],
+            fold,
+            "- TODO\r\n  id:: x\r\n  collapsed:: true\r\n- other\r\n",
+            &["TODO\nid:: x"],
+            &["TODO\nid:: x\ncollapsed:: true"],
+        ),
+    ]);
+}
+
+/// R1b: a blank line between the title and the rows, or after them, is not
+/// body text.
+#[test]
+fn r1b_blank_lines_beside_the_rows_keep_the_task() {
+    run_witnesses(&[
+        (
+            "pages/m.md",
+            "- TODO\n\n  id:: x\n- other\n",
+            &[0],
+            fold,
+            "- TODO\n\n  id:: x\n  collapsed:: true\n- other\n",
+            &["TODO\n\nid:: x"],
+            &["TODO\n\nid:: x\ncollapsed:: true"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\n:PROPERTIES:\n:id: x\n:END:\n\n\n* other\n",
+            &[0],
+            fold,
+            "* TODO\n:PROPERTIES:\n:id: x\n:collapsed: true\n:END:\n\n\n* other\n",
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n\n"],
+            &["TODO\n:PROPERTIES:\n:id: x\n:collapsed: true\n:END:\n\n"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n\r\n* other\r\n",
+            &[0],
+            fold,
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:collapsed: true\r\n:END:\r\n\r\n* other\r\n",
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n"],
+            &["TODO\n:PROPERTIES:\n:id: x\n:collapsed: true\n:END:\n"],
+        ),
+    ]);
+}
+
+/// R2: removing the last row leaves the title with only blank lines after it,
+/// which is still the task.
+#[test]
+fn r2_removing_the_last_row_before_a_blank_tail_keeps_the_task() {
+    run_witnesses(&[
+        (
+            "pages/m.md",
+            "- TODO\n\n  id:: x\n- other\n",
+            &[0],
+            || id(None),
+            "- TODO\n\n- other\n",
+            &["TODO\n\nid:: x"],
+            &["TODO\n"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\n:PROPERTIES:\n:collapsed: true\n:END:\n\n* other\n",
+            &[0],
+            unfold,
+            "* TODO\n\n* other\n",
+            &["TODO\n:PROPERTIES:\n:collapsed: true\n:END:\n"],
+            &["TODO\n"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\r\n:PROPERTIES:\r\n:collapsed: true\r\n:END:\r\n\r\n* other\r\n",
+            &[0],
+            unfold,
+            "* TODO\r\n\r\n* other\r\n",
+            &["TODO\n:PROPERTIES:\n:collapsed: true\n:END:\n"],
+            &["TODO\n"],
+        ),
+    ]);
+}
+
+/// R5: the block boundary skips leading blank lines (`*\nTODO` is titled
+/// `TODO`), so rows go after that title, not after the first physical line.
+#[test]
+fn r5_rows_go_after_a_title_that_follows_leading_blank_lines() {
+    run_witnesses(&[
+        (
+            "pages/o.org",
+            "*\nTODO\n* other\n",
+            &[0],
+            || id(Some("x")),
+            "*\nTODO\n:PROPERTIES:\n:id: x\n:END:\n* other\n",
+            &["\nTODO"],
+            &["\nTODO\n:PROPERTIES:\n:id: x\n:END:"],
+        ),
+        (
+            "pages/o.org",
+            "*\nTODO\n* other\n",
+            &[0],
+            scheduled,
+            "*\nTODO\nSCHEDULED: <2026-11-12 Thu>\n* other\n",
+            &["\nTODO"],
+            &["\nTODO\nSCHEDULED: <2026-11-12 Thu>"],
+        ),
+        (
+            "pages/o.org",
+            "*\r\nTODO\r\n* other\r\n",
+            &[0],
+            || id(Some("x")),
+            "*\r\nTODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n* other\r\n",
+            &["\nTODO"],
+            &["\nTODO\n:PROPERTIES:\n:id: x\n:END:"],
+        ),
+        (
+            "pages/m.md",
+            "- \n  TODO\n- other\n",
+            &[0],
+            scheduled,
+            "-\n  TODO\n  SCHEDULED: <2026-11-12 Thu>\n- other\n",
+            &["\nTODO"],
+            &["\nTODO\nSCHEDULED: <2026-11-12 Thu>"],
+        ),
+        (
+            "pages/m.md",
+            "- \n  TODO\n- other\n",
+            &[0],
+            owner,
+            "-\n  TODO\n  owner:: me\n- other\n",
+            &["\nTODO"],
+            &["\nTODO\nowner:: me"],
+        ),
+    ]);
+}
+
+/// R6: an empty Org headline whose first row is the id drawer. The parser
+/// reads an empty title and the drawer as the block's own; rows join that
+/// drawer and the id survives every edit.
+#[test]
+fn r6_an_empty_headline_keeps_its_id_drawer_through_a_fold_and_a_schedule() {
+    let id_of = |graph: &Graph| -> Option<String> {
+        let store = graph.open();
+        let read = store.page(&PageId::from(graph.path)).expect("opens");
+        let raw = &read.doc.blocks[0].raw;
+        tine_core::block_regions::parse(raw, graph.path.ends_with(".org"))
+            .id
+            .map(|p| p.value)
+    };
+    for (source, request, after) in [
+        (
+            "*\n:PROPERTIES:\n:id: x\n:END:\n* other\n",
+            fold as fn() -> Edit,
+            "*\n:PROPERTIES:\n:id: x\n:collapsed: true\n:END:\n* other\n",
+        ),
+        (
+            "*\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n* other\r\n",
+            fold,
+            "*\r\n:PROPERTIES:\r\n:id: x\r\n:collapsed: true\r\n:END:\r\n* other\r\n",
+        ),
+        (
+            "*\n:PROPERTIES:\n:id: x\n:END:\n* other\n",
+            owner,
+            "*\n:PROPERTIES:\n:id: x\n:owner: me\n:END:\n* other\n",
+        ),
+    ] {
+        let graph = Graph::new("pages/o.org", source);
+        assert_eq!(
+            id_of(&graph).as_deref(),
+            Some("x"),
+            "opens with its id: {source:?}"
+        );
+        assert_eq!(graph.apply(&[0], request()), after, "bytes: {source:?}");
+        assert_eq!(
+            id_of(&graph).as_deref(),
+            Some("x"),
+            "keeps its id: {after:?}"
+        );
+        assert!(tasks(&graph.open()).is_empty());
+    }
+    // A schedule goes after the (empty) title, never inside the drawer.
+    let graph = Graph::new("pages/o.org", "*\n:PROPERTIES:\n:id: x\n:END:\n* other\n");
+    let after = graph.apply(&[0], scheduled());
+    assert_eq!(after.matches(":PROPERTIES:").count(), 1, "{after:?}");
+    assert!(
+        after.find("SCHEDULED").unwrap() < after.find(":PROPERTIES:").unwrap(),
+        "{after:?}"
+    );
+    assert_eq!(id_of(&graph).as_deref(), Some("x"), "{after:?}");
+}

@@ -461,13 +461,43 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
     }
 }
 
-/// The block's title line, without its newline: it starts where the block
-/// boundary's leading trim ends (`\nTODO` is titled `TODO`). The one answer for
-/// the bare-task repair and for where structural edits put rows after the title.
-pub fn title_line(raw: &str) -> std::ops::Range<usize> {
-    let start = raw.len() - raw.trim_start().len();
-    let end = raw[start..].find('\n').map_or(raw.len(), |p| start + p);
-    start..end
+/// Where a block's parsed text starts: the block boundary's leading trim.
+pub(crate) fn block_lead(raw: &str) -> usize {
+    raw.len() - raw.trim_start().len()
+}
+/// A prepared single-block offset (after the `* `/`- ` wrapper) in raw.
+pub(crate) fn raw_offset(raw: &str, at: usize) -> usize {
+    (at.saturating_sub(2) + block_lead(raw)).min(raw.len())
+}
+/// The end of the first line after the leading trim, after its newline.
+pub(crate) fn first_line_end(raw: &str) -> usize {
+    let lead = block_lead(raw);
+    raw[lead..].find('\n').map_or(raw.len(), |p| lead + p + 1)
+}
+/// Where lsdoc's headline (the title with its line terminator) ends, when that
+/// is not [`first_line_end`]: an empty title before the properties or drawer
+/// lsdoc reads at the title position (`*` then `:PROPERTIES:`, `- id:: x`),
+/// where the block's metadata begins. Other nodes at the title position (a
+/// quote, `#+TITLE: x`) are the block's first line, so that line stays its
+/// title line. A CR at the
+/// very end of the raw is the block's own line terminator (a CRLF page keeps it;
+/// lsdoc reads a separate break), so it stays on the title's line.
+pub(crate) fn headline_end(raw: &str, blocks: &[Block]) -> Option<usize> {
+    let (Block::Bullet { span, .. } | Block::Heading { span, .. }) = blocks.first()? else {
+        return None;
+    };
+    let mut at = raw_offset(raw, span.as_ref()?.1);
+    let drawer = matches!(
+        blocks.get(1),
+        Some(Block::Properties { .. } | Block::Drawer { .. })
+    );
+    if at == block_lead(raw) && !drawer {
+        return None;
+    }
+    if !raw.is_char_boundary(at) || &raw[at..] == "\r" {
+        at = raw.len();
+    }
+    (at != first_line_end(raw)).then_some(at)
 }
 
 pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
@@ -489,10 +519,8 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
         |b: &Block| matches!(b, Block::Drawer { name, .. } if name.eq_ignore_ascii_case("LOGBOOK"));
     let rest = blocks.get(1..).unwrap_or_default();
     // Blank paragraphs beside the rows (`TODO\n\nid:: x`, trailing blank
-    // lines) do not count either: removing the last row must leave the task a
-    // task. A CRLF page keeps each line's CR in the raw body (`TODO\r`), which
-    // lsdoc does not read as end of input either, so a title alone or with
-    // blank lines reads as its LF twin does.
+    // lines, a CRLF raw's final CR) do not count either: removing the last row
+    // must leave the task a task.
     if !rest
         .iter()
         .all(|b| logbook(b) || parser_owned_row(b) || blank_paragraph(b))
@@ -500,28 +528,44 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     {
         return;
     }
-    let line = title_line(raw);
-    let body = &raw[line.start..];
-    let title = &raw[line];
-    let title = title.strip_suffix('\r').unwrap_or(title);
-    // The title alone is what lsdoc already parsed: its answer stands.
-    if title == body {
-        return;
-    }
-    let Some(Block::Bullet { marker, inline, .. } | Block::Heading { marker, inline, .. }) =
-        blocks.first_mut()
+    let Some(
+        Block::Bullet {
+            marker: marker @ None,
+            inline,
+            span: Some(Span(head, _)),
+            ..
+        }
+        | Block::Heading {
+            marker: marker @ None,
+            inline,
+            span: Some(Span(head, _)),
+            ..
+        },
+    ) = blocks.first_mut()
     else {
         return;
     };
     // Only a lone marker-shaped word can become a bare task; anything else
     // skips the second parse.
-    let marker_word =
-        |t: &str| !t.is_empty() && t.bytes().all(|c| c.is_ascii_uppercase() || c == b'-');
-    if marker.is_some()
-        || !matches!(inline.as_slice(), [Inline::Plain { text, .. }] if marker_word(text))
-    {
+    let [Inline::Plain {
+        text,
+        span: Some(Span(_, word_end)),
+        ..
+    }] = inline.as_slice()
+    else {
+        return;
+    };
+    if text.is_empty() || !text.bytes().all(|c| c.is_ascii_uppercase() || c == b'-') {
         return;
     }
+    // The headline's source up to the word, where lsdoc located them (`# TODO`
+    // stays a heading). At the end of input lsdoc has already decided it.
+    let head = raw_offset(raw, *head);
+    let end = raw_offset(raw, *word_end);
+    if end == raw.len() || !raw.is_char_boundary(head) || !raw.is_char_boundary(end) {
+        return;
+    }
+    let title = &raw[head..end];
     let title_blocks = parse_block_inner(title, is_org);
     if let Some(
         Block::Bullet {
@@ -576,7 +620,15 @@ fn blank_paragraph(block: &Block) -> bool {
     }))
 }
 
+// Parses per operation, pinned by `preparation_tests` (PC-3).
+#[cfg(test)]
+thread_local! {
+    static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn parse_block_inner(raw: &str, is_org: bool) -> Vec<Block> {
+    #[cfg(test)]
+    PARSES.with(|n| n.set(n.get() + 1));
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
@@ -604,6 +656,8 @@ pub fn parse_projection(raw: &str, is_org: bool) -> Projection {
 }
 
 fn parse_projection_inner(raw: &str, is_org: bool) -> Projection {
+    #[cfg(test)]
+    PARSES.with(|n| n.set(n.get() + 1));
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
@@ -812,6 +866,158 @@ mod preparation_tests {
         for (raw, is_org) in [("TODO\n\nbody\nid:: x", false), ("TODO\nbody\n\n", true)] {
             assert_eq!(task(raw, is_org), None, "{is_org} {raw:?}");
         }
+    }
+
+    /// PC-3 (review r3, r6 follow-up): parses per read. Every block costs one
+    /// parse; only a lone marker-shaped word that lsdoc did not see at the end
+    /// of input, with nothing but rows or blank lines after it, costs a second
+    /// parse of that word. A lone uppercase title (`INTRODUCTION`) costs one.
+    #[test]
+    fn a_read_parses_once_and_a_bare_task_repair_parses_its_word_once_more() {
+        let parses = |raw: &str, is_org: bool| {
+            super::PARSES.with(|n| n.set(0));
+            parse_block(raw, is_org);
+            let block = super::PARSES.with(|n| n.replace(0));
+            parse_projection(raw, is_org);
+            let projection = super::PARSES.with(|n| n.replace(0));
+            assert_eq!(block, projection, "{is_org} {raw:?}");
+            block
+        };
+        for is_org in [false, true] {
+            for raw in [
+                "INTRODUCTION",
+                "INTRODUCTION\nbody",
+                "TODO",
+                "TODO x\nid:: y",
+                "TODO\nbody",
+                "plain\nid:: y",
+                "\nTODO",
+                "TODO [#A]\nid:: y",
+            ] {
+                assert_eq!(parses(raw, is_org), 1, "{is_org} {raw:?}");
+            }
+            for raw in [
+                "TODO\n:PROPERTIES:\n:id: x\n:END:",
+                "TODO\r",
+                "TODO\n",
+                "\nTODO\n:PROPERTIES:\n:id: x\n:END:",
+            ] {
+                assert_eq!(parses(raw, is_org), 2, "{is_org} {raw:?}");
+            }
+        }
+    }
+
+    /// Review r6: the title/metadata boundary is lsdoc's headline, so an empty
+    /// Org title before its id drawer keeps the drawer as its own; Markdown and
+    /// CRLF twins likewise, and rows after a title go after lsdoc's headline.
+    #[test]
+    fn rows_go_after_the_parsed_headline() {
+        use crate::block_regions::{edit, parse, Edit};
+        let fold = || Edit::Property {
+            key: "collapsed".into(),
+            value: Some("true".into()),
+        };
+        for (raw, is_org, after) in [
+            (
+                "\n:PROPERTIES:\n:id: x\n:END:",
+                true,
+                "\n:PROPERTIES:\n:id: x\n:collapsed: true\n:END:",
+            ),
+            (
+                "\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r",
+                true,
+                "\r\n:PROPERTIES:\r\n:id: x\r\n:collapsed: true\r\n:END:\r",
+            ),
+            ("x\r", true, "x\r\n:PROPERTIES:\n:collapsed: true\n:END:"),
+            ("x\r", false, "x\r\ncollapsed:: true"),
+            (
+                "\nTODO",
+                true,
+                "\nTODO\n:PROPERTIES:\n:collapsed: true\n:END:",
+            ),
+            ("\nTODO", false, "\nTODO\ncollapsed:: true"),
+            (
+                "title\nbody",
+                true,
+                "title\n:PROPERTIES:\n:collapsed: true\n:END:\nbody",
+            ),
+        ] {
+            assert_eq!(
+                parse(raw, is_org).id.map(|p| p.value),
+                (raw.contains("id:")).then(|| "x".to_string()),
+                "{raw:?}"
+            );
+            assert_eq!(
+                edit(raw, is_org, fold()).unwrap(),
+                after,
+                "{is_org} {raw:?}"
+            );
+        }
+        // A titleless block's rows begin at the title: a new row joins the end
+        // of the run, a schedule goes before it, and both stay readable.
+        let owner = || Edit::Property {
+            key: "owner".into(),
+            value: Some("me".into()),
+        };
+        let scheduled = || Edit::Planning {
+            which: "Scheduled".into(),
+            value: Some("<2026-11-12 Thu>".into()),
+        };
+        for (raw, is_org) in [
+            ("id:: x\nfoo:: a", false),
+            ("\nid:: x\nfoo:: a", false),
+            (":PROPERTIES:\n:id: x\n:foo: a\n:END:", true),
+        ] {
+            let added = edit(raw, is_org, owner()).unwrap();
+            let rows = parse(&added, is_org);
+            let keys: Vec<_> = rows.properties.iter().map(|p| p.key.as_str()).collect();
+            assert_eq!(keys, ["id", "foo", "owner"], "{added:?}");
+            let planned = edit(raw, is_org, scheduled()).unwrap();
+            let rows = parse(&planned, is_org);
+            assert_eq!(rows.planning.len(), 1, "{planned:?}");
+            assert_eq!(
+                rows.id.map(|p| p.value).as_deref(),
+                Some("x"),
+                "{planned:?}"
+            );
+            assert_eq!(rows.properties.len(), 2, "{planned:?}");
+        }
+        // Most blocks carry no headline end of their own (their headline is
+        // their first line), so their empty regions stay shared.
+        for raw in [
+            "",
+            "x",
+            "x\r",
+            "title\nbody",
+            "\nTODO",
+            "TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:",
+            // A node at the title position is the title line.
+            "#+TITLE: t\n:PROPERTIES:\n:id: x\n:END:",
+            "> q\n:PROPERTIES:\n:id: x\n:END:",
+        ] {
+            assert_eq!(parse(raw, true).headline_end, None, "{raw:?}");
+        }
+        for raw in ["#+TITLE: t\nid:: x", "> q\nid:: x"] {
+            assert_eq!(parse(raw, false).headline_end, None, "{raw:?}");
+        }
+        assert_eq!(
+            parse("\nid:: x\ncollapsed:: true", false).headline_end,
+            Some(1)
+        );
+        assert_eq!(
+            parse("id:: x\ncollapsed:: true", false).headline_end,
+            Some(0)
+        );
+        // An empty title before its rows: metadata begins at the title.
+        assert_eq!(
+            parse("\n:PROPERTIES:\n:id: x\n:END:", true).headline_end,
+            Some(1)
+        );
+        assert_eq!(
+            parse(":PROPERTIES:\n:id: x\n:END:", true).headline_end,
+            Some(0)
+        );
+        assert_eq!(parse("\n:LOGBOOK:\n:END:", true).headline_end, Some(1));
     }
 
     #[test]
