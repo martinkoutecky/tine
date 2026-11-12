@@ -18,7 +18,7 @@ import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { graphEpoch, setGraphMeta } from "../graphSession";
 import { PageView, reloadJournalsFeedFromStart } from "./Page";
 import type { PageDto, PageRead } from "../types";
-import { rightSidebar, setRightSidebar } from "../ui";
+import { recentPages, rightSidebar, setRightSidebar } from "../ui";
 
 beforeAll(initParser);
 beforeEach(async () => { resetStore(); await bindTestHost(); });
@@ -106,5 +106,8 @@ it("a pathless route that remembered a loaded journal as a page opens it as a jo
     await vi.waitFor(() => expect(root.textContent).toContain("Held day body"));
     expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: file.name, pageKind: "journal", path });
     expect(rightSidebar()).toContainEqual(expect.objectContaining(twin));
+    // Recent reopens the journal, not an ordinary page of that name.
+    expect(recentPages()).toContainEqual({ name: file.name, kind: "journal", path });
+    expect(recentPages().some(i => i.name === file.name && i.kind === "page" && !i.path)).toBe(false);
   } finally { dispose(); setRightSidebar([]); }
 });

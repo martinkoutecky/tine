@@ -9,7 +9,7 @@ import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLo
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
+import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, followPagesInNavigation, adoptResolvedPageName } from "../ui";
 import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
@@ -560,7 +560,7 @@ export function PageView(): JSX.Element {
             const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
             // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
-            if (!r.path) rewritePageTargetAcrossPanes(from, to);
+            if (!r.path) { followPagesInNavigation((p) => p.name === from.name && p.pageKind === from.pageKind && !p.path ? to : null); rewritePageTargetAcrossPanes(from, to); }
             else { renamePageInNavigation(from, to); followChangedIdentity(from, to); router.rewritePageTarget(from, to); }
             return;
           }
