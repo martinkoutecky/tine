@@ -163,8 +163,8 @@ pub use store::{QueryDialect, QueryResult};
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;
 pub use transaction::{
-    Content, IoError, PagePlan, Refusal, RenameMap, RewriteEffect, Rollback, StepResult,
-    TitleRebind, Transaction, TrashIf, TxOutcome, Why,
+    Content, IoError, MoveRewrite, PagePlan, Refusal, RenameMap, RewriteEffect, Rollback,
+    StepResult, TitleRebind, Transaction, TrashIf, TxOutcome, Why,
 };
 #[cfg(test)]
 mod block_pages_work_tests;

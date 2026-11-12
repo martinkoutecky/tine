@@ -285,8 +285,8 @@ impl<'a> PagePlan<'a> {
                     .transpose()?
                     .flatten();
                 let new = if *rebind_title {
-                    rewrite_move(&old, &path, renames, name_format)?
-                } else if let Some(new) = reused {
+                    rewrite_move(&old, &path, renames, name_format, None)?
+                } else if let Some(new) = reused.map(String::into_bytes) {
                     let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
                     new
@@ -314,6 +314,7 @@ impl<'a> PagePlan<'a> {
                 expected,
                 to,
                 renames,
+                prepared,
             } => {
                 if to.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(to.as_str().into())));
@@ -331,12 +332,21 @@ impl<'a> PagePlan<'a> {
                 let absent = self.available_move_destination(file, to)?;
                 self.twin_with_absence(to, Some(file), absent)?;
                 let new = match (&old, renames) {
-                    (Some(old), Some(map)) => Some(rewrite_move(
-                        old,
-                        &self.spelled_path(to)?,
-                        map,
-                        self.store.config().file_name_format,
-                    )?),
+                    (Some(old), Some(map)) => {
+                        let path = self.spelled_path(to)?;
+                        let name_format = self.store.config().file_name_format;
+                        // The planning read's rewrite, when it was made from
+                        // these staged bytes, this format and this syntax.
+                        let same_syntax =
+                            Format::from_path(&path) == Format::from_path(Path::new(file.as_str()));
+                        let reused = match prepared {
+                            Some(prepared) if same_syntax => {
+                                prepared.reuse_proposal(file, old, name_format)?
+                            }
+                            _ => None,
+                        };
+                        Some(rewrite_move(old, &path, map, name_format, reused)?)
+                    }
                     (Some(old), None) => Some(old.clone()),
                     (None, None) => None,
                     (None, Some(_)) => unreachable!(),
