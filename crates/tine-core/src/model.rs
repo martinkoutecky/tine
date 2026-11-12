@@ -986,7 +986,7 @@ impl GraphMeta {
         journal_format: &crate::date::JournalFormat,
     ) -> Self {
         Self {
-            display_root: crate::graph_paths::normalize_graph_path(&root),
+            display_root: crate::graph_paths::display_graph_path(&root),
             root,
             default_journal_queries: config.default_journal_queries.clone(),
             disable_scheduled_and_deadline_query: config.disable_scheduled_and_deadline_query,

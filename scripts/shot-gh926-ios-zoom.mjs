@@ -50,17 +50,20 @@ try {
   page.setDefaultNavigationTimeout(60000);
   page.on("pageerror", (error) => console.error(String(error)));
   page.on("console", (message) => { if (message.type() === "error") console.error(`console: ${message.text()}`); });
-  await page.addInitScript(() => {
+  // GH926_THEME=dark shoots the dark palette (the shots are looked at in both).
+  await page.addInitScript((theme) => {
+    if (theme) localStorage.setItem("logseq-claude.theme", theme);
     globalThis.__TINE_PLATFORM__ = "ios";
     localStorage.setItem("logseq-claude.sidebarOpen", "0");
-  });
+  }, process.env.GH926_THEME);
   await page.goto(server.resolvedUrls.local[0]);
   await page.locator("[data-search-trigger]").waitFor({ timeout: 60000 });
   await page.evaluate(async () => {
     (await import("/src/spellcheckSettings.ts")).setSpellcheckEnabled(true);
     const session = await import("/src/graphSession.ts");
-    // The reporter's case: a long iOS sandbox path in Settings > Graph (synthetic).
-    session.setGraphMeta({ ...session.graphMeta(), root: "/private/var/mobile/Containers/Data/Application/0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C/Documents/Tine graph" });
+    // The reporter's case: a long iOS sandbox path (synthetic); Settings > Graph
+    // shows the backend's display_root, the folder inside Documents (IOS-PATH-926).
+    session.setGraphMeta({ ...session.graphMeta(), root: "/private/var/mobile/Containers/Data/Application/0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C/Documents/Tine graph", display_root: "Documents/Tine graph" });
     // A recorded error, twice, so Settings > Diagnostics lists a row with its
     // repeat count and Copy button (the widest such row).
     const { pushToast } = await import("/src/toasts.ts");
@@ -221,8 +224,42 @@ try {
     });
   }
   // TOOLBAR-390 (D-20261111-QP2): calendar, journals and theme stay on a 390px
-  // phone's bar wherever they fit. Without the compact workspace switcher
-  // (Workspaces hidden, #927) all four optional actions fit, with no "…".
+  // phone's bar wherever they fit. With Workspaces hidden (#927) all four optional
+  // actions fit too, with no "…".
+  // TOOLBAR-390B (D-20261111-QP2): with Workspaces shown (the default) and the
+  // drawer closed, the compact switcher would not leave room for Share, so it is
+  // not on the bar; the same four actions stay, and the drawer's switcher is the
+  // one-tap path to workspaces.
+  for (const scale of [1, 2]) {
+    await check(`${scale}: the phone bar drops the compact workspace switcher and the drawer keeps it`, async () => {
+      await openHome(scale);
+      const bar = await page.evaluate(() => {
+        const visible = (el) => el.getClientRects().length > 0;
+        return {
+          compactMounted: !!document.querySelector(".topbar [data-workspace-switcher-compact]"),
+          compactVisible: [...document.querySelectorAll(".topbar [data-workspace-switcher-compact]")].some(visible),
+          optional: [...document.querySelectorAll(".topbar .topbar-optional-action")].filter(visible).length,
+          trigger: !!document.querySelector(".topbar-overflow-trigger")?.getClientRects().length,
+        };
+      });
+      assert.equal(bar.compactMounted, true, "the compact switcher is still mounted (CSS only hides it)");
+      assert.equal(bar.compactVisible, false, "the compact switcher is not on the phone bar");
+      // At 100 % the four optional actions stay inline; at 200 % the content box
+      // is far narrower and they use the "…" menu (the zoom checks above).
+      if (scale === 1) assert.deepEqual({ optional: bar.optional, trigger: bar.trigger }, { optional: 4, trigger: false });
+      await page.screenshot({ path: `${out}/${label}-${scale}-bar-no-switcher.png` });
+      await page.evaluate(async () => (await import("/src/ui.ts")).setLeftSidebarOpen(true));
+      await page.locator("[data-workspace-switcher-sidebar] [data-workspace-switcher]").waitFor({ state: "visible" });
+      await page.waitForTimeout(500); // the drawer slides in
+      await page.screenshot({ path: `${out}/${label}-${scale}-drawer-switcher.png` });
+      const inDrawer = await page.evaluate(() => {
+        const r = document.querySelector("[data-workspace-switcher-sidebar] [data-workspace-switcher] button")?.getBoundingClientRect();
+        return !!r && r.width > 0 && r.right <= innerWidth;
+      });
+      await page.evaluate(async () => (await import("/src/ui.ts")).setLeftSidebarOpen(false));
+      assert.equal(inDrawer, true, "the drawer's workspace switcher is reachable");
+    });
+  }
   await check("1: with Workspaces hidden, the optional actions stay on the bar", async () => {
     await page.evaluate(async () => (await import("/src/navSettings.ts")).setShowWorkspaces(false));
     await openHome(1);

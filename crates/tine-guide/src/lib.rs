@@ -2108,6 +2108,8 @@ mod og_20d_guide_tests {
             "Settings → **Help & diagnostics**",
             "its last row is always **Settings**",
             "fixed **Settings** row",
+            "the toolbar has no workspace switcher",
+            "the first row of the left drawer",
         ] {
             assert!(
                 map.contains(detail),
