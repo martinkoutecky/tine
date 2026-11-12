@@ -391,8 +391,8 @@ fn lcs(n: usize, m: usize, eq: impl Fn(usize, usize) -> bool) -> Vec<(usize, usi
 }
 
 /// For each line of `b`, the line of `a` it comes from: equal lines pair by
-/// LCS (after the common head and tail; a middle over 4,096 line pairs gets
-/// no LCS), and inside each gap between equal pairs the unpaired lines pair by
+/// LCS (after the common head and tail; a middle over 4,096 line pairs pairs
+/// them greedily in order, [`greedy_anchors`]), and inside each gap between equal pairs the unpaired lines pair by
 /// position (an edit in place); a new line past its gap's old lines is `None`.
 fn pair_lines(a: &[&str], b: &[&str]) -> Vec<Option<usize>> {
     let head = a.iter().zip(b).take_while(|(x, y)| x == y).count();
@@ -405,7 +405,7 @@ fn pair_lines(a: &[&str], b: &[&str]) -> Vec<Option<usize>> {
     let mut out: Vec<Option<usize>> = (0..head).map(Some).collect();
     let anchors = match am.len() * bm.len() <= 4_096 {
         true => lcs(am.len(), bm.len(), |i, j| am[i] == bm[j]),
-        false => Vec::new(),
+        false => greedy_anchors(am, bm),
     };
     let (mut pi, mut pj) = (0, 0);
     for (i, j) in anchors.into_iter().chain([(am.len(), bm.len())]) {
@@ -415,6 +415,31 @@ fn pair_lines(a: &[&str], b: &[&str]) -> Vec<Option<usize>> {
     }
     out.extend((a.len() - tail..a.len()).map(Some));
     out
+}
+
+/// An increasing run of equal-line pairs, O(lines): each new line takes the
+/// first unused equal old line after the previous pair. The over-cap stand-in
+/// for [`lcs`], so untouched lines of a long block still keep their origin.
+fn greedy_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
+    let mut at: std::collections::HashMap<&str, std::collections::VecDeque<usize>> =
+        std::collections::HashMap::new();
+    for (i, line) in a.iter().enumerate() {
+        at.entry(line).or_default().push_back(i);
+    }
+    let (mut pairs, mut next) = (Vec::new(), 0);
+    for (j, line) in b.iter().enumerate() {
+        let Some(queue) = at.get_mut(line) else {
+            continue;
+        };
+        while queue.front().is_some_and(|&i| i < next) {
+            queue.pop_front();
+        }
+        if let Some(i) = queue.pop_front() {
+            pairs.push((i, j));
+            next = i + 1;
+        }
+    }
+    pairs
 }
 
 /// Emit the preamble and, once, the separator before the first root: the old
