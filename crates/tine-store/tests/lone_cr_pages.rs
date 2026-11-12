@@ -428,3 +428,26 @@ fn mixed_ending_markdown_page_keeps_moved_blocks_terminators() {
     let moved = page.save(EditKind::ReplacePage, |doc| doc.blocks.swap(0, 1));
     assert_eq!(moved, "- b\n- a\r\n- c\r\n");
 }
+
+/// Review r2: inside a changed block, an untouched line keeps its own
+/// terminator and an inserted line takes the file's convention; a pasted lone
+/// `\r` in block text is a line break that shifts no other block's endings.
+#[test]
+fn mixed_ending_org_page_keeps_untouched_lines_of_a_changed_block() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\nbody\n* b\r\n");
+    let inserted = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\nnew\nbody".into();
+    });
+    assert_eq!(inserted, "* a\r\nnew\r\nbody\n* b\r\n");
+}
+
+#[test]
+fn mixed_ending_org_page_with_a_pasted_lone_cr_keeps_other_blocks_terminators() {
+    let _integration_guard = crate::integration_lock();
+    let page = Page::at("pages/p.org", "* a\r\n* b\n* c\r\n");
+    let pasted = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\rpasted".into();
+    });
+    assert_eq!(pasted, "* a\r\npasted\r\n* b\n* c\r\n");
+}
