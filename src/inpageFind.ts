@@ -47,6 +47,8 @@ function findBlockTextRoot(element: HTMLElement): HTMLElement | null {
  * root with this attribute (value: its kind) plus the page it belongs to. */
 export const FIND_REFERENCES_ATTR = "data-inpage-find-references";
 export const FIND_REFERENCES_PAGE_ATTR = "data-inpage-find-references-page";
+/** Set on a panel that is known to hold no references: nothing to offer a search of. */
+export const FIND_REFERENCES_EMPTY_ATTR = "data-inpage-find-references-empty";
 const FIND_REFERENCES_SELECTOR = `[${FIND_REFERENCES_ATTR}]`;
 
 // What Find counts from the DOM. A structural memo can run before Solid removes
@@ -133,7 +135,7 @@ const state = createRoot(() => {
     const byKind = new Map<InPageFindReferenceKind, Set<string>>();
     for (const id of new Set(findScopes().map(scope => scope.id))) {
       for (const panel of findScopeElement(id)?.querySelectorAll<HTMLElement>(FIND_REFERENCES_SELECTOR) ?? []) {
-        if (!panel.querySelector(".reference-group")) continue;
+        if (panel.hasAttribute(FIND_REFERENCES_EMPTY_ATTR)) continue;
         const kind = panel.getAttribute(FIND_REFERENCES_ATTR) as InPageFindReferenceKind;
         const pages = byKind.get(kind) ?? new Set<string>();
         pages.add(panel.getAttribute(FIND_REFERENCES_PAGE_ATTR) ?? "");
@@ -557,13 +559,14 @@ function observeCurrentFindSurfaces() {
     })) return;
     for (const record of records) {
       const target = isElementNode(record.target) ? record.target : record.target.parentElement;
+      if (record.type === "attributes") { panelsChanged = true; continue; }
       surfacesChanged ||= !!target?.closest("[data-inpage-find-surface]");
       for (const node of [...record.addedNodes, ...record.removedNodes]) {
         if (!isElementNode(node)) continue;
         const contains = (selector: string) => node.matches(selector) || !!node.querySelector(selector);
         scopesChanged ||= contains("[data-sidebar-surface],[data-pane-id]");
         surfacesChanged ||= contains("[data-inpage-find-surface]");
-        panelsChanged ||= contains(`${FIND_REFERENCES_SELECTOR},.reference-group`);
+        panelsChanged ||= contains(FIND_REFERENCES_SELECTOR);
       }
     }
     if (surfaceObserverFrame) return;
@@ -581,7 +584,7 @@ function observeCurrentFindSurfaces() {
       refreshInPageFindHighlights();
     });
   });
-  surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true });
+  surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: [FIND_REFERENCES_EMPTY_ATTR] });
   state.setScopeRevision(revision => revision + 1);
   state.setSurfaceRevision((revision) => revision + 1);
   state.setPanelRevision(revision => revision + 1);

@@ -14,13 +14,13 @@ import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { createLongPress } from "../render/longPress";
-import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { matcherMatches, parseSearchQuery, searchSubstringSpans } from "../editor/searchQuery";
 import { searchFold } from "../editor/searchFold";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
 import { referenceSearchRequest, sectionOverride, setSectionOverride } from "../referenceSectionState";
-import { FIND_REFERENCES_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
+import { FIND_REFERENCES_ATTR, FIND_REFERENCES_EMPTY_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
 import { readOr } from "../resourceRead";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
@@ -206,7 +206,11 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
   const [searchQuery, setSearchQuery] = createSignal("");
+  // GH #935: Find's text arrives as a literal substring (`foo -draft` is not an
+  // exclusion); the panel grammar applies again from the first edit of the box.
+  const [literalSearch, setLiteralSearch] = createSignal(false);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let focusTimer: ReturnType<typeof setTimeout> | undefined;
   let searchInput: HTMLInputElement | undefined;
   // GH #935: Find does not count this panel; its "search linked references"
   // lands here. This search covers every group, mounted or not.
@@ -215,12 +219,15 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
     setCollapsedOverride(false);
     setFilterOpen(true);
     if (searchTimer !== undefined) clearTimeout(searchTimer);
+    setLiteralSearch(true);
     setSearchDraft(request.query);
     setSearchQuery(request.query);
-    setTimeout(() => searchInput?.focus());
+    if (focusTimer !== undefined) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => searchInput?.focus());
   }, { defer: true }));
   onCleanup(() => {
     if (searchTimer !== undefined) clearTimeout(searchTimer);
+    if (focusTimer !== undefined) clearTimeout(focusTimer);
   });
   // page name -> "in" (must also reference) | "out" (must not reference).
   const [rawFilters, setFilters] = createSignal<FilterMap>(loadFilters(savedFilterKey()));
@@ -250,6 +257,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
     setFilterOpen(false);
     setSearchDraft("");
     setSearchQuery("");
+    setLiteralSearch(false);
   });
 
   const targets = createMemo<BacklinkFilterTarget[]>(() =>
@@ -269,11 +277,12 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   // rejected `nativeContext` threw before any Show could render it.
   const nativeContext = () => readOr(nativeContextResource, undefined, "reference filter index");
   const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
+  const searchKind = () => literalSearch() ? (searchQuery().trim() ? "literal" as const : "empty" as const) : parsedSearch().kind;
   // GH #746: the filter index (folded search text, page facets) costs a wasm
   // fold per reference root and is built only while a filter or search needs
   // it. Memos run eagerly, so an ungated index was rebuilt over every result
   // (13 MB of unlinked references: 0.7 s) after each save, collapsed or not.
-  const indexNeeded = () => filterOpen() || Object.keys(filters()).length > 0 || parsedSearch().kind !== "empty";
+  const indexNeeded = () => filterOpen() || Object.keys(filters()).length > 0 || searchKind() !== "empty";
   const fallbackByRoot = createMemo(() => !indexNeeded() ? new Map<string, SearchableFilterEntry>() :
     new Map(
       mergedGroups().flatMap((group) =>
@@ -304,7 +313,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
 
   const searchError = createMemo(() => {
     const parsed = parsedSearch();
-    return parsed.kind === "invalid" ? parsed.error : null;
+    return !literalSearch() && parsed.kind === "invalid" ? parsed.error : null;
   });
   const filterGroups = (source: RefGroup[], keep: (group: RefGroup, block: BlockDto) => boolean): RefGroup[] =>
     source.map((group) => ({ ...group, blocks: group.blocks.filter((block) => keep(group, block)) }))
@@ -313,8 +322,14 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
         return { ...group, evidence: group.evidence?.filter((item) => ids.has(item.block_id)) };
       }).filter((group) => group.blocks.length > 0);
   const textMatchedGroups = createMemo<RefGroup[]>(() => {
+    const kind = searchKind();
+    if (nativeContextResource.loading || kind === "empty" || kind === "invalid") return mergedGroups();
+    if (kind === "literal") {
+      const needle = searchQuery().trim(), accents = searchRemoveAccents();
+      return filterGroups(mergedGroups(), (group, block) =>
+        searchSubstringSpans(rootEntry(group, block).text, needle, 1, accents).length > 0);
+    }
     const parsed = parsedSearch();
-    if (nativeContextResource.loading || parsed.kind === "empty" || parsed.kind === "invalid") return mergedGroups();
     return filterGroups(mergedGroups(), (group, block) => {
       const entry = rootEntry(group, block);
       return matcherMatches(parsed, entry.normalizedText, entry.text);
@@ -358,8 +373,8 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   // Once the index arrives, filtering is synchronous.
   const filterPending = () => {
     if (!nativeContextResource.loading) return false;
-    const parsed = parsedSearch();
-    return (parsed.kind !== "empty" && parsed.kind !== "invalid") || Object.keys(filters()).length > 0;
+    const kind = searchKind();
+    return (kind !== "empty" && kind !== "invalid") || Object.keys(filters()).length > 0;
   };
   const shown = createMemo<RefGroup[]>(() => {
     const f = filters();
@@ -402,12 +417,14 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   });
   const hasActiveFilter = () => searchDraft().trim() !== "" || Object.keys(filters()).length > 0;
   const updateSearch = (value: string) => {
+    setLiteralSearch(false);
     setSearchDraft(value);
     if (searchTimer !== undefined) clearTimeout(searchTimer);
     searchTimer = setTimeout(() => setSearchQuery(value), 120);
   };
   const clearAllFilters = () => {
     if (searchTimer !== undefined) clearTimeout(searchTimer);
+    setLiteralSearch(false);
     setSearchDraft("");
     setSearchQuery("");
     setFilters({});
@@ -431,7 +448,11 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
         <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
       <div ref={el => onMount(() => onCleanup(trackViewportAnchor(el)))} class={`${section}-references`}
-        {...{ [FIND_REFERENCES_ATTR]: section, [FIND_REFERENCES_PAGE_ATTR]: props.name }}>
+        {...{
+          [FIND_REFERENCES_ATTR]: section, [FIND_REFERENCES_PAGE_ATTR]: props.name,
+          // Unlinked answers only once opened; known-empty has nothing to search.
+          [FIND_REFERENCES_EMPTY_ATTR]: props.unlinked && groups() !== undefined && mergedGroups().length === 0 ? "" : undefined,
+        }}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
           {heading()} <Show when={!props.unlinked || groups() !== undefined}><span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span></Show>

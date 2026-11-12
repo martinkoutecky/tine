@@ -121,6 +121,25 @@ try {
   if (maxMounted <= first.mountedRows) throw new Error(`no reference group mounted during scroll: ${JSON.stringify({ first, maxMounted })}`);
   await browser.saveScreenshot(path.join(run, "scrolled.png"));
   proof.first = first; proof.maxMounted = maxMounted;
+
+  journey = "a folded Linked References panel is still named, and the hand-off unfolds it";
+  await browser.execute(() => {
+    const header = document.querySelector(".linked-references .references-header");
+    header.scrollIntoView({ block: "center" });
+    header.click();
+  });
+  await browser.waitUntil(async () => (await snapshot()).groups === 0, { timeout: 8000, timeoutMsg: "the panel did not fold" });
+  await frames(4);
+  const folded = await snapshot();
+  if (folded.count !== "1 / 1" || !folded.hints.some(h => h.includes("Linked references not searched")))
+    throw new Error(`a folded panel was not named: ${JSON.stringify(folded)}`);
+  await browser.$(".inpage-find-retired button").click();
+  await browser.$(".reference-filter-search").waitForExist({ timeout: 5000 });
+  await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".linked-references .reference-filter-summary").length === 1
+    && document.querySelector(".linked-references .reference-filter-summary").textContent.startsWith("80 of 80 ")
+    && document.querySelector(".reference-filter-search")?.value === "Quokka"), { timeout: 8000,
+    timeoutMsg: "the hand-off did not unfold the panel and search it" });
+  proof.folded = folded;
   proof.outcome = "passed";
   fs.writeFileSync(path.join(run, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH935: ${JSON.stringify({ first, maxMounted, handed, run })}`);
