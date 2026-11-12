@@ -273,3 +273,123 @@ fn mixed_crlf_and_cr_org_page_keeps_each_untouched_terminator() {
     });
     assert_eq!(edited, original.replace("* three", "* three!"));
 }
+
+/// A CRLF org page with the constructs that can sit next to a line ending: page
+/// keywords, a blank line, a body and a list item, a keyword-only headline, a
+/// property drawer, and an empty headline (`*`, as OG writes an empty block)
+/// with a tags-only child.
+const ORG_CENSUS: &[&str] = &[
+    "#+title: Fix",
+    "#+filetags: :x:",
+    "",
+    "* one",
+    "body line",
+    "- item",
+    "",
+    "** child",
+    "* TODO",
+    "* two",
+    ":PROPERTIES:",
+    ":id: 6679-abc",
+    ":END:",
+    "*",
+    "** :tag:",
+    "* three",
+];
+
+fn census_source(ending: &str) -> String {
+    ORG_CENSUS
+        .iter()
+        .map(|line| format!("{line}{ending}"))
+        .collect()
+}
+
+#[test]
+fn crlf_org_page_with_an_empty_headline_is_editable_like_its_lf_twin() {
+    let _integration_guard = crate::integration_lock();
+    let lf = Page::at("pages/p.org", &census_source("\n"));
+    let crlf = Page::at("pages/p.org", &census_source("\r\n"));
+    let (lf_doc, crlf_doc) = (lf.doc(), crlf.doc());
+    assert!(!lf_doc.read_only);
+    assert!(!crlf_doc.read_only, "a CRLF org page with `*` is editable");
+    assert_eq!(shape(&crlf_doc), shape(&lf_doc));
+    assert_eq!(crlf_doc.pre_block, lf_doc.pre_block);
+    assert!(
+        shape(&crlf_doc).iter().all(|(raw, _)| !raw.contains('\r')),
+        "no stray CR in the model: {:?}",
+        shape(&crlf_doc)
+    );
+    // A CRLF file Tine cannot reproduce stays read-only, like its LF twin.
+    let skipped = Page::at("pages/p.org", "* a\r\n*** c\r\n");
+    assert!(skipped.doc().read_only);
+}
+
+#[test]
+fn crlf_and_lf_org_pages_keep_their_bytes_through_saves() {
+    let _integration_guard = crate::integration_lock();
+    for e in ["\n", "\r\n"] {
+        let original = census_source(e);
+        let page = Page::at("pages/p.org", &original);
+        for _ in 0..3 {
+            assert_eq!(page.save(EditKind::ReplacePage, |_| {}), original, "{e:?}");
+        }
+        let edited = page.save(EditKind::SaveBlock, |doc| {
+            doc.blocks[4].raw = "three!".into();
+        });
+        let mut want = original.replace("* three", "* three!");
+        assert_eq!(edited, want, "{e:?}");
+        let filled = page.save(EditKind::SaveBlock, |doc| {
+            doc.blocks[3].raw = "filled".into();
+        });
+        want = want.replace(&format!("{e}*{e}"), &format!("{e}* filled{e}"));
+        assert_eq!(filled, want, "{e:?}: the empty headline is editable");
+        // A line typed into a block takes the file's convention (K01a).
+        let typed = page.save(EditKind::SaveBlock, |doc| {
+            doc.blocks[0].raw = doc.blocks[0]
+                .raw
+                .replace("body line", "body line\nsecond body line");
+        });
+        want = want.replace(
+            &format!("body line{e}"),
+            &format!("body line{e}second body line{e}"),
+        );
+        assert_eq!(typed, want, "{e:?}");
+        let props = page.save(EditKind::SaveBlock, |doc| {
+            doc.pre_block = doc.pre_block.as_ref().map(|p| p.replace(":x:", ":x:y:"));
+        });
+        want = want.replace(":x:", ":x:y:");
+        assert_eq!(props, want, "{e:?}");
+
+        let page = Page::at("pages/p.org", &original);
+        let inserted = page.save(EditKind::InsertBlocks, |doc| {
+            doc.blocks.insert(4, block("new"));
+        });
+        assert_eq!(
+            inserted,
+            original.replace("* three", &format!("* new{e}* three")),
+            "{e:?}: a new block takes the file's convention"
+        );
+    }
+}
+
+#[test]
+fn crlf_org_page_without_a_final_terminator_keeps_its_last_line() {
+    let _integration_guard = crate::integration_lock();
+    let original = "* a\r\n*\r\n* b";
+    let page = Page::at("pages/p.org", original);
+    assert!(!page.doc().read_only);
+    let edited = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a!".into();
+    });
+    assert_eq!(edited, "* a!\r\n*\r\n* b");
+    let appended = page.save(EditKind::InsertBlocks, |doc| {
+        doc.blocks.push(block("d"));
+    });
+    assert_eq!(appended, "* a!\r\n*\r\n* b\r\n* d");
+    // A body still carrying CRLF (pasted text, a draft saved before the org
+    // model was LF-canonical) is written with single CRLF terminators.
+    let pasted = page.save(EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a!\r\npasted\r".into();
+    });
+    assert_eq!(pasted, "* a!\r\npasted\r\n*\r\n* b\r\n* d");
+}

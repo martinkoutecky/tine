@@ -1,15 +1,34 @@
-//! Line terminators at the Markdown write boundary (K01a, I-4).
+//! Line terminators at the Markdown and Org write boundary (K01a, I-4).
 //!
-//! The model is LF-canonical: `doc::parse` ends a line at `\r\n`, `\n` or a
-//! lone `\r` (mldoc's `eol_chars`). A save must still write the file's own
-//! terminators back: a reused line keeps its original terminator
-//! (`layout_retention`), and a new line takes the file's convention.
+//! The model is LF-canonical: `doc::parse` and `org::parse_org` end a line at
+//! `\r\n`, `\n` or a lone `\r` (mldoc's `eol_chars`). A save must still write
+//! the file's own terminators back: a reused line keeps its original terminator
+//! (`layout_retention`, `restore_org`), and a new line takes the file's
+//! convention.
 
 /// Split `source` into lines and the terminator after each line, as the LF
 /// form's `body.split('\n')` would (one trailing terminator is not a line of
 /// its own). The last line's terminator is that trailing terminator, or `""`.
 /// Lines never contain `\r` or `\n`. O(n), no copy of the text.
 pub(super) fn split(source: &str) -> (Vec<&str>, Vec<&'static str>) {
+    let (mut lines, mut ends) = pieces(source);
+    if ends.is_empty() || lines.last() != Some(&"") {
+        ends.push("");
+    } else {
+        lines.pop();
+    }
+    if lines == [""] {
+        // An empty body (`""`, or one lone terminator) has no lines.
+        lines.clear();
+        ends.clear();
+    }
+    (lines, ends)
+}
+
+/// `source` cut at every terminator, as `source.split('\n')` cuts its LF form:
+/// one more line than terminators (the last may be empty), and the terminator
+/// after each line but the last. Lines never contain `\r` or `\n`. O(n), no copy.
+fn pieces(source: &str) -> (Vec<&str>, Vec<&'static str>) {
     let (mut lines, mut ends) = (Vec::new(), Vec::new());
     let bytes = source.as_bytes();
     let (mut start, mut i) = (0, 0);
@@ -28,15 +47,7 @@ pub(super) fn split(source: &str) -> (Vec<&str>, Vec<&'static str>) {
         i += end.len();
         start = i;
     }
-    if start < bytes.len() || lines.is_empty() {
-        lines.push(&source[start..]);
-        ends.push("");
-    }
-    if lines == [""] {
-        // An empty body (`""`, or one lone terminator) has no lines.
-        lines.clear();
-        ends.clear();
-    }
+    lines.push(&source[start..]);
     (lines, ends)
 }
 
@@ -63,34 +74,19 @@ pub(super) fn restore(content: String, existing: Option<&str>) -> String {
     }
 }
 
-/// Put back the lone `\r` terminators of an org file (K01a). The org model
-/// reads a lone `\r` as `\n` and keeps a CRLF's `\r` in the line text, so
-/// `serialized` is LF-separated. Lines equal to the old file's leading and
-/// trailing lines keep their own terminators; a changed stretch takes the old
-/// terminators position by position (an edited block keeps its own), and
-/// lines beyond it the file's convention. Files without a lone `\r` are
-/// returned unchanged. O(lines), one output copy.
+/// Put back the line terminators (`\r\n`, lone `\r`) of an org file (K01a).
+/// The org model is LF-canonical, so `serialized` is LF-separated. Lines equal
+/// to the old file's leading and trailing lines keep their own terminators; a
+/// changed stretch takes the old terminators position by position (an edited
+/// block keeps its own), and lines beyond it the file's [`convention`]. LF-only
+/// files and new files are returned unchanged. O(lines), one output copy.
 pub(super) fn restore_org(serialized: String, existing: Option<&str>) -> String {
-    let Some(existing) = existing.filter(|e| e.replace("\r\n", "").contains('\r')) else {
+    let Some(existing) = existing.filter(|e| e.contains('\r')) else {
         return serialized;
     };
-    let (mut old, mut ends, mut start) = (Vec::new(), Vec::new(), 0);
-    let bytes = existing.as_bytes();
-    for (i, &byte) in bytes.iter().enumerate() {
-        let lone = byte == b'\r' && bytes.get(i + 1) != Some(&b'\n');
-        if byte == b'\n' || lone {
-            old.push(&existing[start..i]);
-            ends.push(if lone { "\r" } else { "\n" });
-            start = i + 1;
-        }
-    }
-    old.push(&existing[start..]);
+    let (old, ends) = pieces(existing);
     let new: Vec<&str> = serialized.split('\n').collect();
-    let fallback = if existing.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\r"
-    };
+    let fallback = convention(Some(existing));
     let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
     let room = old.len().min(new.len()) - prefix;
     let suffix = (old.iter().rev().zip(new.iter().rev()))
@@ -168,7 +164,21 @@ mod tests {
     #[test]
     fn restore_org_keeps_each_terminator() {
         let lf = |s: &str| s.to_string();
-        assert_eq!(restore_org(lf("* a\n* b\n"), Some("* a\r\n")), "* a\n* b\n");
+        assert_eq!(restore_org(lf("* a\n* b\n"), Some("* a\n")), "* a\n* b\n");
+        assert_eq!(
+            restore_org(lf("* a\n* b\n"), Some("* a\r\n")),
+            "* a\r\n* b\r\n",
+            "a new line takes the CRLF convention"
+        );
+        assert_eq!(
+            restore_org(lf("* a\n*\n\n* b"), Some("* a\r\n*\r\n\r\n* b")),
+            "* a\r\n*\r\n\r\n* b"
+        );
+        assert_eq!(
+            restore_org(lf("* a\n\n* b\n"), Some("* a\r\r\n* b\n")),
+            "* a\r\r\n* b\n",
+            "`\\r\\r\\n` is a lone CR then a CRLF, as the model reads it"
+        );
         assert_eq!(
             restore_org(lf("* a\n* b\n"), Some("* a\r* b\r")),
             "* a\r* b\r"
