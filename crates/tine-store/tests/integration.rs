@@ -65,6 +65,9 @@ mod alias_groups;
 #[path = "asset_watch.rs"]
 mod asset_watch;
 
+#[path = "bare_task_hidden_rows.rs"]
+mod bare_task_hidden_rows;
+
 #[path = "b_query.rs"]
 mod b_query;
 
