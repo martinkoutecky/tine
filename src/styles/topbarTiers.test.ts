@@ -7,6 +7,8 @@
 // interface zoom), and the shared tier is now the measured 386px content box
 // (24.125rem): since Share joined the optional actions a 390px phone no longer
 // fits them inline, so they use the "…" menu there (logged in RECEIPT-fix-ios-ui-926.md).
+// TOOLBAR-390 (D-20261111-QP2): that holds only beside the compact workspace
+// switcher; without it the optional actions stay inline down to 333px (RECEIPT-og-926.md).
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -24,8 +26,15 @@ describe("og-g a006f130 responsive topbar (GH #205)", () => {
     expect(t460).not.toMatch(/\.topbar \.topbar-optional-action\s*\{\s*display:\s*none/);
     expect(t460).toMatch(/\.topbar:where\(:has\(\.win-controls, \.tab-bar\)\) \.topbar-optional-action/);
   });
-  it("collapses optional actions for every topbar only at the 386px content-box tier", () => {
-    expect(tier("24.125rem").replace(/\/\*[\s\S]*?\*\//g, "")).toMatch(/\.topbar \.topbar-optional-action\s*\{\s*display:\s*none/);
+  // GH #926 TOOLBAR-390: the 386px tier collapses them only beside the compact
+  // workspace switcher; without it they fit down to a 333px content box.
+  it("collapses optional actions at the 386px tier only beside the compact workspace switcher", () => {
+    const t386 = tier("24.125rem").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(t386).toMatch(/\.topbar:has\(\[data-workspace-switcher-compact\]\) \.topbar-optional-action\s*\{\s*display:\s*none/);
+    expect(t386).not.toMatch(/\.topbar \.topbar-optional-action\s*\{\s*display:\s*none/);
+  });
+  it("collapses optional actions for every topbar at the 332px content-box tier", () => {
+    expect(tier("20.75rem").replace(/\/\*[\s\S]*?\*\//g, "")).toMatch(/\.topbar \.topbar-optional-action\s*\{\s*display:\s*none/);
   });
   it("keeps Settings and the overflow menu on screen below the last fixed tier (GH #926)", () => {
     const floor = tier("12.125rem").replace(/\/\*[\s\S]*?\*\//g, "");

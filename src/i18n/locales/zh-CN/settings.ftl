@@ -790,3 +790,5 @@ settings-auto-embed-video-links = 自动嵌入粘贴的视频链接
 settings-auto-embed-video-links-hint = 关闭后，粘贴的 YouTube、Vimeo、Loom 和 Bilibili 网址将保留为普通链接。默认开启。粘贴时不会获取视频标题。
 settings-show-workspaces = 显示工作区
 settings-show-workspaces-hint = 在此设备上显示已保存工作区的控件和命令。关闭后仍保留现有工作区。
+settings-show-help-button = 显示帮助按钮
+settings-show-help-button-hint = 在此设备上显示角落里的“?”按钮。关闭后，可在命令面板中用“切换帮助”或在 设置 → 帮助与诊断 中打开帮助。

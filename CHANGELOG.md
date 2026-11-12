@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Settings → Appearance → Advanced → Show the help button** hides the "?" button in the corner on this device. Help stays reachable: **Toggle help** in the command palette, **Shift+?**, and a new **Help** list in Settings → Help & diagnostics (#926).
+- Settings is never more than two taps away on a phone: the left drawer ends with a fixed **Settings** row, and **Settings** is the last row of the toolbar's "…" menu (#926).
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
 - `tine add --under` a comment or one of its replies dates each message it inserts (a creation-only UTC minute `tine.date`); lines nested under a message stay undated body text, and ordinary outline insertion gets no date (D-20261108-MC5; GH #891).
 - Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).
@@ -59,6 +61,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+- A phone toolbar without the compact workspace switcher (Workspaces hidden, or the sidebar open) keeps Calendar, Journals, Share and the theme toggle on the bar down to about a 360-pixel-wide window instead of moving them into "…" on a 390-pixel phone; on Settings → Keyboard shortcuts on a phone, every command's id now starts at the same place, with Unbind and Reset at the end of the line (#926).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 - An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).
 

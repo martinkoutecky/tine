@@ -48,7 +48,10 @@
   color: var(--text-muted);
   cursor: default;
 }
-.topbar-overflow-sep {
+/* The Settings row's divider is its own class: the tiers show and hide
+   .topbar-overflow-sep together with Back/Forward (GH #926). */
+.topbar-overflow-sep,
+.topbar-overflow-settings-sep {
   height: 1px;
   margin: 4px 2px;
   background: var(--border-color);
@@ -99,8 +102,10 @@
      386px is the measured CONTENT-BOX fit boundary (28px of inline padding) of a
      phone topbar with the compact workspace switcher and Share: a 390px phone
      (362px) no longer fits them all, so its optional actions use the menu. The
-     "…" trigger is as wide as Share, so moving Share alone does not fit either. */
-  .topbar .topbar-optional-action {
+     "…" trigger is as wide as Share, so moving Share alone does not fit either.
+     Without the compact switcher (sidebar open, or Workspaces hidden, #927) the
+     same actions fit down to a 333px content box: the next tier (GH #926). */
+  .topbar:has([data-workspace-switcher-compact]) .topbar-optional-action {
     display: none;
   }
   /* The menu then holds most actions, and its trigger sits right of center:
@@ -123,10 +128,10 @@
     white-space: normal;
     overflow-wrap: anywhere;
   }
-  .topbar .topbar-right {
+  .topbar:has([data-workspace-switcher-compact]) .topbar-right {
     margin-inline-start: auto;
   }
-  .topbar .topbar-overflow {
+  .topbar:has([data-workspace-switcher-compact]) .topbar-overflow {
     display: block;
   }
   /* Back/Forward remain inline through this tier; do not duplicate them. */
@@ -134,6 +139,22 @@
   .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
   .topbar .topbar-overflow .topbar-overflow-sep {
     display: none;
+  }
+}
+
+/* A topbar without the compact workspace switcher keeps calendar, journals,
+   Share and theme inline down to a 333px content box (347px of
+   controls; the last 14px may use the inline padding, as the tier above does).
+   A 390px phone with Workspaces hidden keeps them on the bar (GH #205, #926). */
+@container topbar (max-width: 20.75rem) {
+  .topbar .topbar-optional-action {
+    display: none;
+  }
+  .topbar .topbar-right {
+    margin-inline-start: auto;
+  }
+  .topbar .topbar-overflow {
+    display: block;
   }
 }
 

@@ -34,7 +34,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces, showHelpButton, setShowHelpButton } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
 import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds, previewsEnabled, changePreviewsEnabled } from "../hoverPreviewSettings";
@@ -635,6 +635,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
       <Field setting={settings["settings-show-workspaces"]}>
         <Toggle on={showWorkspaces()} onClick={() => setShowWorkspaces(!showWorkspaces())} />
+      </Field>
+      <Field setting={settings["settings-show-help-button"]}>
+        <Toggle on={showHelpButton()} onClick={() => setShowHelpButton(!showHelpButton())} />
       </Field>
       <Field
         setting={settings["settings-ui-right-to-left-note-layout"]}

@@ -1204,6 +1204,11 @@ export function App(): JSX.Element {
               <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
             </FailureBoundary>
           </div>
+          {/* A fixed last row of the drawer, outside its scroll, so Settings is
+              two taps away whatever the toolbar shows (GH #926). */}
+          <Show when={mobileDrawerMode() && !isPublishedExport()}>
+            <button type="button" class="mobile-drawer-settings" onClick={() => { dismissDrawerAndRestore("navigation"); openSettings(); }}>{t("settings-ui-settings")}</button>
+          </Show>
           <div
             class="sidebar-resizer"
             onMouseDown={(e) => {
@@ -1308,6 +1313,7 @@ export function App(): JSX.Element {
               onForward={topbarActions.forward}
               canGoBack={canGoBack}
               canGoForward={canGoForward}
+              onSettings={isPublishedExport() ? undefined : () => openSettings()}
             /></FailureBoundary>
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}

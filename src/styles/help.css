@@ -417,4 +417,11 @@
   .help-shortcut-tail {
     justify-content: flex-start;
   }
+
+  /* One column: the command id starts every row's last line and Unbind/Reset
+     sit at its end, so ids line up whether or not a row has buttons (GH #926). */
+  .help-shortcut-tail .help-shortcut-id {
+    order: -1;
+    margin-inline-end: auto;
+  }
 }

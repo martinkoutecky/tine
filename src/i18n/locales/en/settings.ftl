@@ -529,3 +529,5 @@ settings-auto-embed-video-links = Auto-embed pasted video links
 settings-auto-embed-video-links-hint = Turn off to keep pasted YouTube, Vimeo, Loom and Bilibili URLs as plain links. On by default. Video titles are never fetched on paste.
 settings-show-workspaces = Show Workspaces
 settings-show-workspaces-hint = Show saved-workspace controls and commands on this device. Turning this off keeps your existing workspaces.
+settings-show-help-button = Show the help button
+settings-show-help-button-hint = Show the “?” button in the corner on this device. When it is off, open help with “Toggle help” in the command palette or from Settings → Help & diagnostics.

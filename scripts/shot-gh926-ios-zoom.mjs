@@ -17,8 +17,8 @@ import assert from "node:assert/strict";
 const engine = process.env.GH926_BROWSER === "webkit" ? webkit : chromium;
 const label = `${process.env.GH926_LABEL ?? "after"}-${engine.name()}`;
 const baseline = process.env.GH926_BASE;
-const out = "target/artifacts/fix-ios-ui-926/shots";
-const baselineFiles = ["src/styles/app.css", "src/styles/topbar.css", "src/styles/settingsControls.css", "src/styles/conflicts.css", "src/styles/pdf-workspace.css", "src/styles/diagnostics.css", "src/styles/settingsRows.css"];
+const out = process.env.GH926_OUT ?? "target/artifacts/fix-ios-ui-926/shots";
+const baselineFiles = ["src/styles/app.css", "src/styles/topbar.css", "src/styles/settingsControls.css", "src/styles/conflicts.css", "src/styles/pdf-workspace.css", "src/styles/diagnostics.css", "src/styles/settingsRows.css", "src/styles/help.css"];
 mkdirSync(out, { recursive: true });
 const baselinePlugin = {
   name: "gh926-baseline", enforce: "pre",
@@ -196,6 +196,45 @@ try {
       });
     }
   }
+  // Keyboard Shortcuts on a phone: every row's command id starts at the same x,
+  // whether or not the row carries Unbind/Reset (GH #926, alignment only).
+  for (const scale of [1, 1.5]) {
+    await check(`${scale}: Keyboard Shortcuts rows align their command ids`, async () => {
+      await openHome(scale);
+      const lefts = await page.evaluate(async () => {
+        const ui = await import("/src/ui.ts");
+        ui.openSettings("shortcuts");
+        for (let i = 0; i < 40 && !document.querySelector(".help-shortcut-row[data-shortcut-id]"); i++) await new Promise((r) => setTimeout(r, 50));
+        const rows = [...document.querySelectorAll(".help-shortcut-row[data-shortcut-id]")];
+        const out = { bound: new Set(), unbound: new Set() };
+        for (const row of rows) {
+          const id = row.querySelector(".help-shortcut-id");
+          if (!id?.getClientRects().length) continue;
+          out[row.querySelector(".help-shortcut-tail button") ? "bound" : "unbound"].add(Math.round(id.getBoundingClientRect().left));
+        }
+        ui.closeSettings();
+        return { bound: [...out.bound], unbound: [...out.unbound] };
+      });
+      assert.ok(lefts.bound.length && lefts.unbound.length, `both row kinds measured: ${JSON.stringify(lefts)}`);
+      const all = new Set([...lefts.bound, ...lefts.unbound]);
+      assert.equal(all.size, 1, `command ids start at different x: ${JSON.stringify(lefts)}`);
+    });
+  }
+  // TOOLBAR-390 (D-20261111-QP2): calendar, journals and theme stay on a 390px
+  // phone's bar wherever they fit. Without the compact workspace switcher
+  // (Workspaces hidden, #927) all four optional actions fit, with no "…".
+  await check("1: with Workspaces hidden, the optional actions stay on the bar", async () => {
+    await page.evaluate(async () => (await import("/src/navSettings.ts")).setShowWorkspaces(false));
+    await openHome(1);
+    const bar = await page.evaluate(() => ({
+      optional: [...document.querySelectorAll(".topbar .topbar-optional-action")].filter((b) => b.getClientRects().length).length,
+      trigger: !!document.querySelector(".topbar-overflow-trigger")?.getClientRects().length,
+      offScreen: [...document.querySelectorAll(".topbar button")].filter((b) => b.getClientRects().length && b.getBoundingClientRect().right > innerWidth + 0.5).map((b) => b.title),
+    }));
+    await page.screenshot({ path: `${out}/${label}-1-home-no-workspaces.png` });
+    await page.evaluate(async () => (await import("/src/navSettings.ts")).setShowWorkspaces(true));
+    assert.deepEqual(bar, { optional: 4, trigger: false, offScreen: [] });
+  });
 } finally {
   await browser?.close();
   await server.close();
