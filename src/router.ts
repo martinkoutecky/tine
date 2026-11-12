@@ -8,7 +8,7 @@ import { revealCommentMarginFor } from "./commentMargin";
 // focused. `route()`/`openPage()`/`openJournals()` keep their old meaning via
 // focused-pane shims, so existing call sites are unchanged.
 
-import { createSignal, type Accessor } from "solid-js";
+import { createMemo, createRoot, createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
 import { navigationTarget, ownerPath, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
@@ -377,6 +377,12 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false },
   ]);
   const [activeId, setActiveId] = createSignal<string>(tabs()[0].id);
+  // A return to the same history entry is a fresh visit even if the intermediate
+  // view never finished loading. Background tab changes retain the current visit.
+  const routeVisit = createRoot(() => createMemo<{ route: Route }>((previous) => {
+    const next = tabRoute(activeTab());
+    return previous?.route === next ? previous : { route: next };
+  }));
 
   // Recently-closed tabs (most-recent last), for Ctrl+Shift+T "reopen closed tab".
   // In-memory only - like a browser, a reopen doesn't survive a restart (the whole
@@ -395,6 +401,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   // scroll.
   const scrollByRoute = new WeakMap<Route, number>();
   const anchorByRoute = new WeakMap<Route, ScrollAnchor>();
+  // The active history entry changes before its asynchronous view is laid out.
+  // Snapshots must not save that loading view's zero over the returning entry.
+  let scrollOwner: ReturnType<typeof routeVisit> | null = routeVisit();
   let scrollerElement: HTMLElement | null = null;
 
   let mobileHistoryDepth = 0;
@@ -402,6 +411,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   let handlingMobilePopState = false;
   let pdfViewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function setScrollerElement(el: HTMLElement | null) {
+    if (scrollerElement !== el) scrollOwner = null;
     scrollerElement = el;
   }
 
@@ -410,7 +420,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   function route(): Route {
-    return tabRoute(activeTab());
+    return routeVisit().route;
   }
 
   function activateCurrentRoute(): void {
@@ -443,7 +453,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function rememberScroll() {
     const el = mainScroller();
     if (!el) return;
-    const route = tabRoute(activeTab());
+    const visit = routeVisit();
+    if ((visit.route.kind === "page" || visit.route.kind === "journals") && visit !== scrollOwner) return;
+    const route = visit.route;
     scrollByRoute.set(route, el.scrollTop);
     const anchor = captureScrollAnchor(el);
     if (anchor) anchorByRoute.set(route, anchor);
@@ -512,14 +524,18 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  the page grows (`pursueScroll`). */
   function restoreScrollFor(r: Route) {
     if (typeof requestAnimationFrame === "undefined") return; // no-DOM (unit tests)
+    const visit = routeVisit();
+    const entry = visit.route;
+    if (!sameRoute(entry, r)) return;
     const binding = captureBinding();
     const tabId = activeId();
-    const intent = intentRevision;
+    // The visit, not the intent revision: an unrelated tab change must not cancel the pursuit and leave it unowned.
     const current = () => stillBound(binding) && activeId() === tabId
-      && intentRevision === intent && sameRoute(route(), r);
-    const target = scrollByRoute.get(r) ?? 0;
-    const anchor = anchorByRoute.get(r);
-    pursueScroll({ target, anchor, scroller: mainScroller, current, extend: extendFeedForScroll });
+      && routeVisit() === visit && sameRoute(route(), r);
+    const target = scrollByRoute.get(entry) ?? 0;
+    const anchor = anchorByRoute.get(entry);
+    pursueScroll({ target, anchor, scroller: mainScroller, current, extend: extendFeedForScroll,
+      onPositioned: () => { scrollOwner = visit; } });
   }
 
   // Navigate the active tab to a new route, pushing it onto the history stack
