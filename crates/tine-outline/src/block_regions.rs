@@ -30,6 +30,7 @@ pub fn is_linkable_property_separator(ch: char) -> bool {
     ch == ',' || ch == '，'
 }
 
+use crate::lsdoc_block_parse::{block_lead, first_line_end, raw_offset};
 use crate::page_filename as reference_filename;
 pub use crate::swallowed_rows::{extend_author_facet, strip_swallowed_rows};
 
@@ -302,21 +303,25 @@ pub struct BlockRegions {
     pub literal_blocks: Vec<LiteralBlock>,
     /// A fence being typed, when no accepted container closes it.
     pub open_fence: Option<OpenFence>,
+    /// Where lsdoc's headline (the block's title with its line terminator)
+    /// ends, when that is not the end of the first line after the block's
+    /// leading trim: an empty title before the rows lsdoc reads at the title
+    /// position (`*\n:PROPERTIES:`, `- id:: x`). `None` on most blocks, so
+    /// empty regions stay shared (GH #623); [`Self::title_end`] reads it.
+    pub headline_end: Option<usize>,
 }
 
 // The only conversion from prepared single-block coordinates to raw coordinates.
 pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Option<Range> {
     let Span(start, end) = span.as_ref()?;
-    let lead = if document {
-        0
-    } else {
-        raw.len() - raw.trim_start().len()
+    let at = |at: usize| {
+        if document {
+            at.min(raw.len())
+        } else {
+            raw_offset(raw, at)
+        }
     };
-    let wrapper = if document { 0 } else { 2 };
-    let r = Range(
-        (start.saturating_sub(wrapper) + lead).min(raw.len()),
-        (end.saturating_sub(wrapper) + lead).min(raw.len()),
-    );
+    let r = Range(at(*start), at(*end));
     (r.0 < r.1 && raw.is_char_boundary(r.0) && raw.is_char_boundary(r.1)).then_some(r)
 }
 fn is_properties_drawer(raw: &str, r: &Range) -> bool {
@@ -434,6 +439,13 @@ pub fn header_tokens(raw: &str, is_org: bool) -> Header {
 fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> BlockRegions {
     let mut result = BlockRegions::default();
     result.header = header_of(raw, blocks, !document);
+    // A whole document has no headline: its page-level rows keep the first
+    // physical line as the title line.
+    result.headline_end = if document {
+        Some(raw.find('\n').map_or(raw.len(), |p| p + 1))
+    } else {
+        crate::lsdoc_block_parse::headline_end(raw, blocks)
+    };
     visit_blocks(raw, is_org, blocks, document, &mut result);
     if !document && !is_org {
         crate::swallowed_rows::add_regions(raw, blocks, &mut result);
@@ -880,8 +892,10 @@ impl BlockRegions {
         }
         splice(raw, edits)
     }
+    /// Where rows after the title go: after lsdoc's headline, or around a
+    /// container the block opens with.
     fn title_end(&self, raw: &str, org: bool) -> usize {
-        let lead = raw.len() - raw.trim_start().len();
+        let lead = block_lead(raw);
         // If the first thing is a literal container, insert after it, never into it.
         if let Some(r) = self.literals.iter().find(|r| r.0 == lead) {
             whole_line(raw, *r).1
@@ -898,7 +912,7 @@ impl BlockRegions {
             // An Org block's first line is its heading, so it stays the title.
             raw[..lead].rfind('\n').map_or(0, |p| p + 1)
         } else {
-            raw.find('\n').map_or(raw.len(), |p| p + 1)
+            self.headline_end.unwrap_or_else(|| first_line_end(raw))
         }
     }
     fn head_end(&self, raw: &str, org: bool) -> usize {

@@ -104,6 +104,8 @@ export interface BlockRegions {
   quarantined: boolean;
   literal_blocks: RegionLiteralBlock[];
   open_fence: RegionOpenFence | null;
+  /** lsdoc's headline end when it is not the first line's end (Rust `BlockRegions::headline_end`). */
+  headline_end: number | null;
 }
 /** An accepted identity value carried with the exact editor buffer that owns
  * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
@@ -117,7 +119,8 @@ function quarantine(key: string, text: string): Block[] {
   quarantined.add(blocks);
   regionCache.set(blocks, { header: { marker: null, priority: null, heading: null, marker_range: null, priority_range: null },
     literals: [[0, new TextEncoder().encode(text).length]], property_regions: [], properties: [],
-    planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null });
+    planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null,
+    headline_end: null });
   return cache.remember(key, blocks, text.length * 2 + 512);
 }
 
