@@ -520,10 +520,13 @@ fn restore_bare_task(raw: &str, is_org: bool, blocks: &mut [Block]) {
     {
         return;
     }
-    let title = raw.split_once('\n').map_or(raw, |(title, _)| title);
+    // The title starts where the block boundary's own leading trim ends
+    // (`\nTODO` is a task), so a row after it reads the same title.
+    let body = trim_block_start(raw);
+    let title = body.split_once('\n').map_or(body, |(title, _)| title);
     let title = title.strip_suffix('\r').unwrap_or(title);
     // The title alone is what lsdoc already parsed: its answer stands.
-    if title == raw {
+    if title == body {
         return;
     }
     let Some(Block::Bullet { marker, inline, .. } | Block::Heading { marker, inline, .. }) =
@@ -784,6 +787,18 @@ mod preparation_tests {
         ] {
             assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
         }
+        // Review r4: leading blank lines or spaces before the title, which the
+        // block boundary skips, are skipped by the repair too.
+        for (raw, is_org) in [
+            ("\nTODO\nid:: x", false),
+            ("\n\nTODO\ncollapsed:: true", false),
+            ("  TODO\nid:: x", false),
+            ("\nTODO\n:PROPERTIES:\n:id: x\n:END:", true),
+            ("\r\nTODO\r\nid:: x", false),
+        ] {
+            assert_eq!(task(raw, is_org), todo, "{is_org} {raw:?}");
+        }
+        assert_eq!(task("\nTODO\nbody\nid:: x", false), None);
         for (raw, is_org) in [("TODO\n\nbody\nid:: x", false), ("TODO\nbody\n\n", true)] {
             assert_eq!(task(raw, is_org), None, "{is_org} {raw:?}");
         }
