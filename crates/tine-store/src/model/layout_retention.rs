@@ -132,7 +132,11 @@ pub(super) fn restore_org(
         return serialized;
     }
     let (lines, ends) = line_endings::pieces(source);
-    let pre_len = |d: &Document| d.pre_block.as_ref().map_or(0, |p| p.split('\n').count());
+    let pre_len = |d: &Document| {
+        d.pre_block
+            .as_ref()
+            .map_or(0, |p| emitted_lines(p).split('\n').count())
+    };
     let mut flat = Vec::new();
     flatten(&old.roots, &mut flat);
     let mut start = pre_len(old);
@@ -162,13 +166,37 @@ pub(super) fn restore_org(
     }
     let mut at = new_pre;
     for (j, block) in news.iter().enumerate() {
-        let from = keep[j].or(hint[j]).map(|o| &olds[o]);
-        for k in 0..block.raw().split('\n').count() {
-            if let Some(slot) = origin.get_mut(at + k) {
-                *slot = from.filter(|o| k < o.len).map(|o| o.start + k);
+        let text = emitted_lines(block.raw());
+        let b: Vec<&str> = text.split('\n').collect();
+        if let Some(o) = keep[j].map(|o| &olds[o]) {
+            for k in 0..b.len() {
+                if let Some(slot) = origin.get_mut(at + k) {
+                    *slot = Some(o.start + k);
+                }
+            }
+        } else if let Some(o) = hint[j].map(|o| &olds[o]) {
+            // A changed block: its untouched head and tail lines keep their own
+            // terminators; the edited middle takes the old middle's
+            // terminators by position, and lines beyond it the convention.
+            let a: Vec<&str> = o.raw.split('\n').collect();
+            let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+            let room = a.len().min(b.len()) - head;
+            let tail = (a.iter().rev().zip(b.iter().rev()))
+                .take(room)
+                .take_while(|(x, y)| x == y)
+                .count();
+            for k in 0..b.len() {
+                let i = if k >= b.len() - tail {
+                    Some(a.len() - (b.len() - k))
+                } else {
+                    (k < a.len() - tail).then_some(k)
+                };
+                if let Some(slot) = origin.get_mut(at + k) {
+                    *slot = i.map(|i| o.start + i);
+                }
             }
         }
-        at += block.raw().split('\n').count();
+        at += b.len();
     }
     // The trailing newline run aligns with the old run from the end.
     for (t, slot) in origin.iter_mut().enumerate().skip(at) {
@@ -189,6 +217,18 @@ pub(super) fn restore_org(
         }
     }
     out
+}
+
+/// `text` as the Org serializer emits it before a following line: every
+/// terminator one `\n`, a trailing lone `\r` merged with the joining `\n`.
+/// Borrows when `text` has no `\r`. O(text).
+fn emitted_lines(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return text.into();
+    }
+    let mut lf = doc::normalize_line_endings(&format!("{text}\n")).into_owned();
+    lf.pop();
+    lf.into()
 }
 
 /// mldoc's layout whitespace (tine-core `strip_layout_ws`): what lsdoc skips
