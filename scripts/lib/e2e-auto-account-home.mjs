@@ -5,10 +5,9 @@
 // `owner-lock-unavailable` in a loop and, intermittently, never opens its graph ("h1.page-title still
 // not existing after 30000ms", GH #671 journey). Import it FIRST: children inherit process.env.
 // Inert under the suite runner (it has already set TINE_E2E_ACCOUNT_SHIM), on --help, and off Linux.
-// Opt-in per journey, not blanket (E2E-BASE-4): e2e-desktop-misc fails with the fixture (a click is
-// intercepted) and e2e-multigraph ends with "No app-held kernel owner lease observed"; neither is in the
-// suite runner's scenario lists, so neither had been run with it. Add it to a journey only after a
-// burn-in with and without it.
+// Opt-in per journey, not blanket (E2E-BASE-4): e2e-multigraph ends with
+// "No app-held kernel owner lease observed" and is not in the suite runner's scenario lists.
+// Add it to a journey only after a burn-in with and without it.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
