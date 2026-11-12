@@ -59,6 +59,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading (internal: UI-ZOOM-BACK-SCROLL).
 - Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).
 - Ctrl+K typed while the window was still taking in the graph could offer only **Create page** for a page that exists; the switcher now asks again and lists the page without retyping (UI-SWITCHER-SEARCH-OUTLIVES-EPOCH-1111).
 - Opening large pages skips comment setup for leaf rows and hidden quote and folded-thread views (REG-BIGLOAD-ROW-WORK).

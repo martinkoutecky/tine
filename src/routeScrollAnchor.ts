@@ -41,8 +41,10 @@ export function pursueScroll(options: {
   scroller: () => HTMLElement | null;
   current: () => boolean;
   extend: () => Promise<boolean>;
+  /** Restoration applied or finished, or the user deliberately took over scrolling. */
+  onPositioned: () => void;
 }): void {
-  const { target, anchor, scroller, current, extend } = options;
+  const { target, anchor, scroller, current, extend, onPositioned } = options;
   const deadline = performance.now() + RESTORE_SCROLL_DEADLINE_MS;
   let tries = 0;
   let extending = false;
@@ -51,7 +53,9 @@ export function pursueScroll(options: {
   let released = false;
   let listening = false;
   const doc = scroller()?.ownerDocument;
-  const release = () => { released = true; finish(); };
+  let positioned = false;
+  const claimPosition = () => { if (!positioned) { positioned = true; onPositioned(); } };
+  const release = () => { if (current()) claimPosition(); released = true; finish(); };
   const finish = () => { if (listening) for (const gesture of GESTURES) doc?.removeEventListener(gesture, release, true); };
   // Deferred to a frame so the page's content is laid out first; otherwise a synchronous reset races the content swap.
   const tick = () => {
@@ -69,11 +73,12 @@ export function pursueScroll(options: {
     const want = Math.min(anchored ?? target, max);
     const moved = Math.abs(el.scrollTop - want) >= 1;
     if (moved) el.scrollTop = want;
+    const reached = anchored !== null || el.scrollTop >= target - 1;
+    if (reached) claimPosition();
     if (target <= 0) return;
     quiet = !moved && el.scrollHeight === lastHeight ? quiet + 1 : 0;
     lastHeight = el.scrollHeight;
-    const reached = anchored !== null || el.scrollTop >= target - 1;
-    if ((reached && quiet >= RESTORE_SCROLL_QUIET_FRAMES) || performance.now() > deadline) { finish(); return; }
+    if ((reached && quiet >= RESTORE_SCROLL_QUIET_FRAMES) || performance.now() > deadline) { claimPosition(); finish(); return; }
     // Out of reach. Content genuinely too short (deeper feed days not loaded): grow it. Otherwise it is async layout
     // catching up, so wait a frame.
     if (max < target - 1 && !extending && tries < 60) {
