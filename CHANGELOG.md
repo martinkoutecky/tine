@@ -60,6 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
+- An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).
 - Find in page no longer changes its count while Linked References load on scroll: it counts the page's own content, the find bar says "Linked references not searched" (likewise Unlinked and block references), and **search linked references** opens that section's own search with your query, which covers every group (GH #935; internal: UI-GH935-FIND-REFERENCES-SCOPE).
 
 - Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).

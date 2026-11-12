@@ -14,6 +14,7 @@
 //! publication incomplete; callers inspect disk and refresh before retrying.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use faults::fault;
 #[cfg(any(test, feature = "test-faults"))]
@@ -126,27 +127,38 @@ pub enum TrashIf {
 /// only (`tine_core::refs::rename_rewrite_with_queries`). The page planner
 /// supplies the selected-member substitution in the first list and leaves
 /// overrides empty, so every site follows the same destination.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct RenameMap(pub Vec<(String, String)>, pub Vec<(String, String)>);
+
+// Copying a map is O(entries), so a plan's steps share one through an `Arc`
+// (PC-3); the count lets a test pin that no step copies it.
+impl Clone for RenameMap {
+    fn clone(&self) -> Self {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::rename_map_clone();
+        Self(self.0.clone(), self.1.clone())
+    }
+}
 
 /// What a page move does to the moved file's bytes: keep them, rewrite its
 /// references and own title for a [`RenameMap`], or the same rewrite with the
 /// reference proposal the caller already made from its planning read of
 /// `old` (so preflight does not walk the page again). An `Option<&RenameMap>`
-/// converts: `None` keeps the bytes, `Some` rewrites.
+/// converts: `None` keeps the bytes, `Some` rewrites. The map is shared, not
+/// copied, per step: a namespace rename queues one move per child.
 #[derive(Debug)]
-pub enum MoveRewrite<'a> {
+pub enum MoveRewrite {
     /// Move the bytes unchanged.
     Verbatim,
     /// Rewrite the moved file for this rename.
-    Rewrite(&'a RenameMap),
+    Rewrite(Arc<RenameMap>),
     /// Rewrite for `renames`, reusing `proposal`, made from `old` under
     /// `format`. Preflight reuses it only when the staged bytes equal `old`,
     /// the configured format is `format`, the source and destination have
     /// the same syntax and the certificate checks; otherwise it recomputes.
     Prepared {
         /// The rename the proposal was made for.
-        renames: &'a RenameMap,
+        renames: Arc<RenameMap>,
         /// The planning read's text.
         old: String,
         /// Its reference rewrite and certificate.
@@ -156,9 +168,11 @@ pub enum MoveRewrite<'a> {
     },
 }
 
-impl<'a> From<Option<&'a RenameMap>> for MoveRewrite<'a> {
-    fn from(renames: Option<&'a RenameMap>) -> Self {
-        renames.map_or(MoveRewrite::Verbatim, MoveRewrite::Rewrite)
+impl From<Option<&RenameMap>> for MoveRewrite {
+    fn from(renames: Option<&RenameMap>) -> Self {
+        renames.map_or(MoveRewrite::Verbatim, |map| {
+            MoveRewrite::Rewrite(Arc::new(map.clone()))
+        })
     }
 }
 
@@ -411,7 +425,7 @@ enum Step {
     Rewrite {
         id: PageId,
         expected: FileRev,
-        renames: RenameMap,
+        renames: Arc<RenameMap>,
         rebind_title: bool,
         prepared: Option<Box<PreparedRewrite>>,
     },
@@ -419,7 +433,7 @@ enum Step {
         file: FileId,
         expected: FileRev,
         to: FileId,
-        renames: Option<RenameMap>,
+        renames: Option<Arc<RenameMap>>,
         prepared: Option<Box<PreparedRewrite>>,
     },
     Trash {
@@ -832,7 +846,7 @@ impl<'a> PagePlan<'a> {
         id: &PageId,
         expected: FileRev,
         read: Option<&str>,
-        renames: &RenameMap,
+        renames: &Arc<RenameMap>,
         title: TitleRebind,
     ) -> RewriteEffect {
         let file = id.file();
@@ -860,7 +874,7 @@ impl<'a> PagePlan<'a> {
                     self.steps.push(Step::Rewrite {
                         id: id.clone(),
                         expected,
-                        renames: renames.clone(),
+                        renames: Arc::clone(renames),
                         rebind_title: title == TitleRebind::Own,
                         prepared: None,
                     });
@@ -888,7 +902,7 @@ impl<'a> PagePlan<'a> {
             self.steps.push(Step::Rewrite {
                 id: id.clone(),
                 expected,
-                renames: renames.clone(),
+                renames: Arc::clone(renames),
                 rebind_title: title == TitleRebind::Own,
                 prepared,
             });
@@ -919,23 +933,23 @@ impl<'a> PagePlan<'a> {
     /// trash is refused; use [`Self::trash`] for that operation. Commit hashes
     /// source bytes and may rewrite/sync the destination, plus O(P) metadata
     /// for publication.
-    pub fn move_file<'m>(
+    pub fn move_file(
         &mut self,
         file: &FileId,
         expected: FileRev,
         to: &FileId,
-        rewrite: impl Into<MoveRewrite<'m>>,
+        rewrite: impl Into<MoveRewrite>,
     ) -> &mut Self {
         let (renames, prepared) = match rewrite.into() {
             MoveRewrite::Verbatim => (None, None),
-            MoveRewrite::Rewrite(renames) => (Some(renames.clone()), None),
+            MoveRewrite::Rewrite(renames) => (Some(renames), None),
             MoveRewrite::Prepared {
                 renames,
                 old,
                 proposal,
                 format,
             } => (
-                Some(renames.clone()),
+                Some(renames),
                 Some(Box::new(PreparedRewrite::new(
                     file.clone(),
                     old,

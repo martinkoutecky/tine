@@ -47,7 +47,7 @@ fn moved(on_disk: &str, prepared_from: Option<&str>) -> String {
         Some(text) => {
             let renames = map();
             let prepared = MoveRewrite::Prepared {
-                renames: &renames,
+                renames: std::sync::Arc::new(renames),
                 old: text.to_owned(),
                 proposal: proposal(&store, text),
                 format: store.config().file_name_format,
@@ -97,7 +97,7 @@ fn a_carried_move_rewrite_planned_before_an_external_edit_is_refused() {
         if carried {
             let renames = map();
             let prepared = MoveRewrite::Prepared {
-                renames: &renames,
+                renames: std::sync::Arc::new(renames),
                 old: PAGE.to_owned(),
                 proposal: p,
                 format: store.config().file_name_format,
