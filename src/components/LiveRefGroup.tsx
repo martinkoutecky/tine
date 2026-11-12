@@ -27,7 +27,6 @@ import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGr
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
-import { inPageFindOpen } from "../inpageFind";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 import { trackRetirementPin } from "../retirementPins";
@@ -152,7 +151,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const windowed = () => props.surface === "ref" && !props.eager;
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
     || selectedIds().some(id => docNode(id)?.page === props.page);
-  const wanted = () => inWindow() || forced() || (visited() && inPageFindOpen()) || (near() && (pinned() || printingOutline()));
+  const wanted = () => inWindow() || forced() || (near() && (pinned() || printingOutline()));
   const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {
     const owner = props.heightKey ?? props.hostBlockId;
@@ -215,7 +214,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
         readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
-        sourcePinned={() => windowed() && (pinned() || forced() || inPageFindOpen())}
+        sourcePinned={() => windowed() && (pinned() || forced())}
         schedule={windowed() && hasViewport()} /></Show>
       </ReservedGroupGeometryContext.Provider>
     </div>

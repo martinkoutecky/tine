@@ -16,9 +16,12 @@ relative to the scroller height and follows viewport resizing.
 The current editor (including IME and draft), a pending header edit, native text
 selection, model block selection and drag interactions pin their content and
 source page, so working-set eviction cannot replace selected live DOM with DTOs. Pins
-may exceed the ordinary viewport bound. Find restores previously visited groups
-and suspends their retirement until Find closes; it does not load unseen groups
-to build a new full-reference search index. Large property headers use measured
+may exceed the ordinary viewport bound. Find does not count reference panels
+(Linked and Unlinked References, a block's reference panel; GH #935): it neither
+holds nor restores their groups, and loads none to build a full-reference search
+index. The find bar names the panels it leaves out and hands its query to the
+panel's own search, which covers every group (the panel root carries
+`data-inpage-find-references`). Large property headers use measured
 chunks, retaining their geometry with the occurrence. Large root lists use the
 ordinary outline windows and model-based reveal/navigation scope.
 

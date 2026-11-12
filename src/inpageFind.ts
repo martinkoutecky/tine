@@ -39,9 +39,21 @@ function findBlockTextRoot(element: HTMLElement): HTMLElement | null {
   return element.querySelector<HTMLElement>(element.matches(".sheet-title-cell") ? ".sheet-cell-body" : ".block-content");
 }
 
-// A structural memo can run before Solid removes a retired day's DOM. The
-// loaded-page lookup owns membership, including for its displayed query rows.
-function isLoadedFindSurface(element: HTMLElement): boolean {
+/** GH #935. Reference panels (Linked and Unlinked References, a block's reference
+ * panel) mount their groups while the reader scrolls, so counting what happened
+ * to be mounted made the total grow silently. They are a separate scope: Find
+ * counts the page's own content, names the panels it leaves out, and hands the
+ * query to the panel's own search, which covers every group. A panel marks its
+ * root with this attribute (value: its kind) plus the page it belongs to. */
+export const FIND_REFERENCES_ATTR = "data-inpage-find-references";
+export const FIND_REFERENCES_PAGE_ATTR = "data-inpage-find-references-page";
+const FIND_REFERENCES_SELECTOR = `[${FIND_REFERENCES_ATTR}]`;
+
+// What Find counts from the DOM. A structural memo can run before Solid removes
+// a retired day's DOM; the loaded-page lookup owns membership, including for its
+// displayed query rows. Reference panels are never counted (above).
+function countsAsFindContent(element: HTMLElement): boolean {
+  if (element.closest(FIND_REFERENCES_SELECTOR)) return false;
   const day = element.closest<HTMLElement>("[data-feed-day]")?.dataset.feedDay;
   return day === undefined || !!pageByName(day);
 }
@@ -103,6 +115,7 @@ const state = createRoot(() => {
   const [paneId, setPaneId] = createSignal<string | null>(null);
   const [surfaceRevision, setSurfaceRevision] = createSignal(0);
   const [scopeRevision, setScopeRevision] = createSignal(0);
+  const [panelRevision, setPanelRevision] = createSignal(0);
   const matches = createLiveMatches(() => open() ? query() : "", surfaceRevision, scopeRevision);
   const matchesByKey = createMemo(() => {
     const groups = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
@@ -114,6 +127,22 @@ const state = createRoot(() => {
     });
     return groups;
   });
+  const referencePanels = createMemo(() => {
+    scopeRevision(); panelRevision();
+    if (!open() || !query().trim()) return [];
+    const byKind = new Map<InPageFindReferenceKind, Set<string>>();
+    for (const id of new Set(findScopes().map(scope => scope.id))) {
+      for (const panel of findScopeElement(id)?.querySelectorAll<HTMLElement>(FIND_REFERENCES_SELECTOR) ?? []) {
+        if (!panel.querySelector(".reference-group")) continue;
+        const kind = panel.getAttribute(FIND_REFERENCES_ATTR) as InPageFindReferenceKind;
+        const pages = byKind.get(kind) ?? new Set<string>();
+        pages.add(panel.getAttribute(FIND_REFERENCES_PAGE_ATTR) ?? "");
+        byKind.set(kind, pages);
+      }
+    }
+    return (["linked", "unlinked", "block"] as const)
+      .filter(kind => byKind.has(kind)).map(kind => ({ kind, pages: [...byKind.get(kind)!] }));
+  });
   return {
     open, setOpen,
     query, setQuery,
@@ -123,7 +152,8 @@ const state = createRoot(() => {
     paneId, setPaneId,
     surfaceRevision, setSurfaceRevision,
     scopeRevision, setScopeRevision,
-    matches, matchesByKey,
+    panelRevision, setPanelRevision,
+    matches, matchesByKey, referencePanels,
   };
 });
 
@@ -195,7 +225,7 @@ function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<nu
       const shown = new Set<string>();
       for (const block of element?.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR) ?? []) {
         const id = block.dataset.blockId, root = findBlockTextRoot(block);
-        if (!id || !root || root.matches(".macro-host") || index.byId.has(id) || shown.has(id) || !isLoadedFindSurface(block)
+        if (!id || !root || root.matches(".macro-host") || index.byId.has(id) || shown.has(id) || !countsAsFindContent(block)
           || block.closest("[data-inpage-find-surface]")) continue;
         shown.add(id);
         findTextOccurrences(searchableTextForRoot(root), index.q, index.accents).forEach((match, ordinalInBlock) => {
@@ -204,7 +234,7 @@ function createLiveMatches(query: Accessor<string>, surfaceRevision: Accessor<nu
       }
       for (const surface of element?.querySelectorAll<HTMLElement>("[data-inpage-find-surface]") ?? []) {
         const surfaceId = surface.dataset.inpageFindSurface;
-        if (!surfaceId || !isLoadedFindSurface(surface)) continue;
+        if (!surfaceId || !countsAsFindContent(surface)) continue;
         findTextOccurrences(searchableTextForRoot(surface), index.q, index.accents).forEach((match, ordinalInBlock) => {
           out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
         });
@@ -231,6 +261,17 @@ export const inPageFindFocusRequest = state.focusRequest;
 export function inPageFindRetiredDays(): number {
   if (!layoutPaneIds(visibleLayoutNode()).some(id => paneRouter(id).route().kind === "journals")) return 0;
   return feedNames().reduce((count, name) => count + (pageByName(name) ? 0 : 1), 0);
+}
+
+export type InPageFindReferenceKind = "linked" | "unlinked" | "block";
+
+/** The reference panels Find leaves out of its count (GH #935), by kind, with
+ * the pages they belong to: only panels that show at least one group, and only
+ * while a query is active, since without a query there is no count to qualify.
+ * O(panels in the searched views); recomputed when a panel or a group of one
+ * mounts or unmounts, never when a group's rows change. */
+export function inPageFindReferencePanels(): { kind: InPageFindReferenceKind; pages: string[] }[] {
+  return state.referencePanels();
 }
 
 export function inPageFindPreservesEditorBlur(): boolean {
@@ -302,7 +343,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     for (const block of element.querySelectorAll<HTMLElement>(FIND_BLOCK_SELECTOR)) {
       const id = block.dataset.blockId;
       const root = findBlockTextRoot(block);
-      if (!id || !root || root.matches(".macro-host") || counted.has(id) || !isLoadedFindSurface(block) || block.closest("[data-inpage-find-surface]")) continue;
+      if (!id || !root || root.matches(".macro-host") || counted.has(id) || !countsAsFindContent(block) || block.closest("[data-inpage-find-surface]")) continue;
       counted.add(id);
       findTextOccurrences(searchableTextForRoot(root), q, removeAccents).forEach((match, ordinalInBlock) => {
         out.push({ blockId: id, scopeId: scope.id, ordinalInBlock, ...match });
@@ -310,7 +351,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     }
     for (const surface of element.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
       const surfaceId = surface.dataset.inpageFindSurface;
-      if (!surfaceId || !isLoadedFindSurface(surface)) continue;
+      if (!surfaceId || !countsAsFindContent(surface)) continue;
       findTextOccurrences(searchableTextForRoot(surface), q, removeAccents).forEach((match, ordinalInBlock) => {
         out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
       });
@@ -506,7 +547,7 @@ function observeCurrentFindSurfaces() {
   const win = findWindow();
   const pane = win.document.body;
   const Observer = (win as Window & typeof globalThis).MutationObserver ?? MutationObserver;
-  let scopesChanged = false, surfacesChanged = false;
+  let scopesChanged = false, surfacesChanged = false, panelsChanged = false;
   surfaceObserver = new Observer((records) => {
     if (records.every((record) => {
       const target = isElementNode(record.target) ? record.target : record.target.parentElement;
@@ -522,6 +563,7 @@ function observeCurrentFindSurfaces() {
         const contains = (selector: string) => node.matches(selector) || !!node.querySelector(selector);
         scopesChanged ||= contains("[data-sidebar-surface],[data-pane-id]");
         surfacesChanged ||= contains("[data-inpage-find-surface]");
+        panelsChanged ||= contains(`${FIND_REFERENCES_SELECTOR},.reference-group`);
       }
     }
     if (surfaceObserverFrame) return;
@@ -530,8 +572,9 @@ function observeCurrentFindSurfaces() {
       batch(() => {
         if (scopesChanged) state.setScopeRevision(revision => revision + 1);
         if (surfacesChanged) state.setSurfaceRevision(revision => revision + 1);
+        if (panelsChanged) state.setPanelRevision(revision => revision + 1);
       });
-      scopesChanged = surfacesChanged = false;
+      scopesChanged = surfacesChanged = panelsChanged = false;
       const matches = inPageFindMatches();
       if (!matches.length) state.setActiveIndex(-1);
       else if (state.activeIndex() < 0 || state.activeIndex() >= matches.length) state.setActiveIndex(0);
@@ -541,6 +584,7 @@ function observeCurrentFindSurfaces() {
   surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true });
   state.setScopeRevision(revision => revision + 1);
   state.setSurfaceRevision((revision) => revision + 1);
+  state.setPanelRevision(revision => revision + 1);
 }
 
 function animationFrame(): Promise<void> {

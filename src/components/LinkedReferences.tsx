@@ -19,7 +19,8 @@ import { searchFold } from "../editor/searchFold";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
-import { sectionOverride, setSectionOverride } from "../referenceSectionState";
+import { referenceSearchRequest, sectionOverride, setSectionOverride } from "../referenceSectionState";
+import { FIND_REFERENCES_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
 import { readOr } from "../resourceRead";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
@@ -206,6 +207,18 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
   const [searchDraft, setSearchDraft] = createSignal("");
   const [searchQuery, setSearchQuery] = createSignal("");
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchInput: HTMLInputElement | undefined;
+  // GH #935: Find does not count this panel; its "search linked references"
+  // lands here. This search covers every group, mounted or not.
+  createEffect(on(referenceSearchRequest, (request) => {
+    if (!request || request.section !== section || !request.pages.includes(props.name)) return;
+    setCollapsedOverride(false);
+    setFilterOpen(true);
+    if (searchTimer !== undefined) clearTimeout(searchTimer);
+    setSearchDraft(request.query);
+    setSearchQuery(request.query);
+    setTimeout(() => searchInput?.focus());
+  }, { defer: true }));
   onCleanup(() => {
     if (searchTimer !== undefined) clearTimeout(searchTimer);
   });
@@ -417,7 +430,8 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
       <Show when={exportChooserOpen()}>
         <ReferenceExportChooser subject={heading()} groups={shown()} onClose={() => setExportChooserOpen(false)} />
       </Show>
-      <div ref={el => onMount(() => onCleanup(trackViewportAnchor(el)))} class={`${section}-references`}>
+      <div ref={el => onMount(() => onCleanup(trackViewportAnchor(el)))} class={`${section}-references`}
+        {...{ [FIND_REFERENCES_ATTR]: section, [FIND_REFERENCES_PAGE_ATTR]: props.name }}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
           {heading()} <Show when={!props.unlinked || groups() !== undefined}><span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span></Show>
@@ -461,6 +475,7 @@ export function ReferenceSection(input: { name: string; unlinked?: boolean; jour
             <div class="reference-filter-panel">
               <div class="reference-filter-search-row">
                 <input
+                  ref={searchInput}
                   class="reference-filter-search"
                   type="search"
                   value={searchDraft()}
