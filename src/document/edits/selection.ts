@@ -36,6 +36,9 @@ type SelectionSurface = { parent?: SelectionSurface };
 // Ifods deliberately retires selection on every route change; Logseq comparison is in the receipt.
 const selectionSurfaces = new Map<string, SelectionSurface>();
 let selectedSurfaces: Set<SelectionSurface> | undefined;
+// The surface key the current selection was started in: a selection the owner makes
+// itself (the survivor of a delete) stays in it, never in a surface since unmounted.
+let selectedSurfaceKey: string | undefined;
 
 /** Own a rendered surface's selection lifetime. A changed route accessor or
  * unmount retires only selections initiated here or in a registered child
@@ -290,6 +293,7 @@ export function selectBlock(id: string, scope: OutlineScope | null = null, surfa
   notifyOutlineSelectionStarted(id);
   if (owner && selectionSurfaces.get(surface) !== owner) return;
   selectedSurfaces = owner ? new Set() : undefined;
+  selectedSurfaceKey = owner ? surface : undefined;
   for (let selected = owner; selected; selected = selected.parent) selectedSurfaces!.add(selected);
   activeSelectionScope = scope;
   selectAllHead = null;
@@ -299,6 +303,7 @@ export function selectBlock(id: string, scope: OutlineScope | null = null, surfa
 }
 export function clearSelection() {
   selectedSurfaces = undefined;
+  selectedSurfaceKey = undefined;
   batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); });
   activeSelectionScope = null;
   selectAllHead = null;
@@ -473,8 +478,10 @@ function selectionRemovalSurvivor(): string | null {
   return order[end[index.get(last)!] + 1] ?? order[index.get(first)! - 1] ?? doc.byId[first]?.parent ?? null;
 }
 
-function reselectSurvivingBlock(id: string | null) {
-  if (id && doc.byId[id]) selectBlock(id);
+function reselectSurvivingBlock(id: string | null, surface: string | undefined) {
+  // An unowned selection (no registered surface) reselects as before: `undefined`
+  // takes selectBlock's default surface.
+  if (id && doc.byId[id]) selectBlock(id, null, surface);
   else clearSelection();
 }
 
@@ -530,6 +537,7 @@ export function outdentSelection() {
 
 export function deleteSelection() {
   const survivor = selectionRemovalSurvivor();
+  const surface = selectedSurfaceKey;
   const ids = topSelected().filter((id) => doc.byId[id]);
   if (!ids.length) return;
   const pages = [...new Set(ids.map((id) => doc.byId[id].page))];
@@ -544,7 +552,7 @@ export function deleteSelection() {
   const ed = editingId();
   if (ed && !doc.byId[ed]) endEdit("delete-selection");
   markOutlineDirty(change);
-  reselectSurvivingBlock(survivor);
+  reselectSurvivingBlock(survivor, surface);
   notice.show();
 }
 

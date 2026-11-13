@@ -13,6 +13,7 @@ import { QuickSwitcher } from "./QuickSwitcher";
 import { SurfaceContext } from "./Block";
 import { RightSidebar } from "./RightSidebar";
 import { maybeEditorIn } from "../tests/editorDriver";
+import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 import type { PageRead } from "../types";
 import { journalTitle, localDayKey } from "../journal";
 
@@ -166,6 +167,33 @@ it("navigation retires selection made by Escape inside a nested editable page em
   pressDelete();
   expect(selectedIds()).toEqual([]);
   expect(pageToDto("Source")).toEqual(before);
+});
+
+// Merge review F1: deleting a selected embed host reselects its surviving neighbour. That
+// selection keeps the host's surface, not the unmounted inner editor's, so navigation still
+// retires it and a later Delete cannot reach the departed page.
+it("the block reselected after deleting an embed host is still retired by navigation", async () => {
+  vi.mocked(backend().getPage).mockImplementation(async name => name === "Cold"
+    ? { ...page(name), blocks: [...page(name).blocks, { id: "embed", raw: "{{embed [[Source]]}}", children: [], collapsed: false }] }
+    : page(name));
+  const { host } = await mounted();
+  const content = await vi.waitFor(() => {
+    const content = host.querySelector<HTMLElement>('.embed-block [data-block-id="Source-root"] > .block-main .block-content');
+    expect(content).not.toBeNull(); return content!;
+  });
+  content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+  document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+  await vi.waitFor(() => expect(maybeEditorIn(host, "Source-root")).not.toBeNull());
+  expect(dispatchFocusedEditorCommand("editor/select-embedding-block")).toBe(true);
+  expect(selectedIds()).toEqual(["embed"]);
+  pressDelete();
+  expect(selectedIds()).toEqual(["Cold-link"]);
+  const before = pageToDto("Cold");
+  mainPaneRouter.openPage("Other");
+  await vi.waitFor(() => expect(host.textContent).toContain("Other visible content"));
+  pressDelete();
+  expect(selectedIds()).toEqual([]);
+  expect(pageToDto("Cold")).toEqual(before);
 });
 
 it("paging and scrolling to another journal day preserves the still-visible selection", async () => {
