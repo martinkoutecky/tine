@@ -1975,10 +1975,10 @@ checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
 
 A page that starts or stops existing without a file of its own (a
 reference-only page, a namespace parent) is in no edited document, so the
-edit predicate cannot see it. The publication's inventory comparison
-(`Snapshot::answer_changes`) is its one producer: the keys whose entry moved
-(the delta's keys, or every changed own name when no delta is expressible).
-A mounted query that a fileless row of one of those keys could meet fires in
+edit predicate cannot see it. The change summary's fileless comparison
+(`fileless_changes` in `store/change_summary.rs`, described with the summary
+below) is its one producer: the fileless keys that came or left. A mounted
+query that a fileless row of one of those keys could meet fires in
 `queryTo`, and a carried memo answer it could list is dropped; the test is
 the names execution narrows fileless rows by (`Plan::may_list_fileless`), so
 a block-anchored query, a property-only query or a different exact name is
