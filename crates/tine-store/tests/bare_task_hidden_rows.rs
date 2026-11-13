@@ -768,11 +768,20 @@ fn r11_an_org_directive_beside_a_bare_task_is_a_row_through_id_edits() {
             "* TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x\n* other\n",
             &[0],
             || id(None),
-            // lsdoc folds the directive into the drawer's node, so the emptied
-            // drawer stays (follow-up card); the task reading does not move.
-            "* TODO\n:PROPERTIES:\n:END:\n#+comment: x\n* other\n",
+            // Removing the last entry removes its drawer, even when the parser
+            // folds the following directive into the same property node.
+            "* TODO\n#+comment: x\n* other\n",
             &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
-            &["TODO\n:PROPERTIES:\n:END:\n#+comment: x"],
+            &["TODO\n#+comment: x"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n#+comment: x\r\n* other\r\n",
+            &[0],
+            || id(None),
+            "* TODO\r\n#+comment: x\r\n* other\r\n",
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
+            &["TODO\n#+comment: x"],
         ),
         (
             "pages/m.md",

@@ -1,4 +1,91 @@
 use tine_core::block_regions::{parse, Edit};
+
+// OG 6e7afa8eb util/property.cljs remove-empty-properties, called after
+// remove-property by handler/editor.cljs set-block-property-aux!.
+fn assert_last_org_drawer_entry_removed(tail: &str) {
+    for nl in ["\n", "\r\n"] {
+        let tail = tail.replace('\n', nl);
+        for (entries, edit) in [
+            (
+                ":color: blue",
+                Edit::Property {
+                    key: "color".into(),
+                    value: None,
+                },
+            ),
+            (
+                ":collapsed: true",
+                Edit::Property {
+                    key: "collapsed".into(),
+                    value: None,
+                },
+            ),
+            (
+                ":id: real",
+                Edit::Property {
+                    key: "id".into(),
+                    value: None,
+                },
+            ),
+            (":id: real", Edit::StripCopy { template: false }),
+            (
+                ":id: real\n:template: reusable\n:template-including-parent: true",
+                Edit::StripCopy { template: true },
+            ),
+        ] {
+            let entries = entries.replace('\n', nl);
+            let raw = format!("Task{nl}:PROPERTIES:{nl}{entries}{nl}:END:{tail}");
+            let expected = format!("Task{tail}");
+            assert_eq!(
+                parse(&raw, true).apply(&raw, true, edit).unwrap(),
+                expected,
+                "last drawer entry in {raw:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn last_org_drawer_entry_before_directive() {
+    assert_last_org_drawer_entry_removed("\n#+OWNER: retained");
+}
+
+#[test]
+fn last_org_drawer_entry_before_quote() {
+    assert_last_org_drawer_entry_removed("\n#+BEGIN_QUOTE\nquoted body\n#+END_QUOTE");
+}
+
+#[test]
+fn last_org_drawer_entry_before_body() {
+    assert_last_org_drawer_entry_removed("\nBody text");
+}
+
+#[test]
+fn last_org_drawer_entry_before_child_headline() {
+    assert_last_org_drawer_entry_removed("\n** Child");
+}
+
+#[test]
+fn last_org_drawer_entry_at_eof() {
+    assert_last_org_drawer_entry_removed("");
+    assert_last_org_drawer_entry_removed("\n");
+}
+
+#[test]
+fn stripping_ids_keeps_nonempty_drawers_and_folded_directives() {
+    for nl in ["\n", "\r\n"] {
+        let raw = "Task\n:PROPERTIES:\n:id: first\n:color: blue\n:END:\n#+OWNER: retained\n:PROPERTIES:\n:id: second\n:END:".replace('\n', nl);
+        let expected =
+            "Task\n:PROPERTIES:\n:color: blue\n:END:\n#+OWNER: retained".replace('\n', nl);
+        assert_eq!(
+            parse(&raw, true)
+                .apply(&raw, true, Edit::StripCopy { template: false })
+                .unwrap(),
+            expected
+        );
+    }
+}
+
 #[test]
 fn visible_body_only_removes_canonical_org_properties() {
     for nl in ["\n", "\r\n"] {
