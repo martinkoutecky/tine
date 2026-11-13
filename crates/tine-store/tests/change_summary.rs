@@ -208,6 +208,109 @@ fn an_edit_that_changes_no_page_existence_drops_no_fileless_listing() {
     store.close();
 }
 
+#[test]
+fn fileless_change_producer_probes_only_changed_names() {
+    let _guard = crate::test_transactions::integration_lock();
+    for unrelated in [8, 64] {
+        let (dir, store) = fixture(3);
+        let path = "pages/Brand%2FChild.md";
+        fs::write(dir.path().join(path), "").unwrap();
+        for i in 0..unrelated {
+            fs::write(
+                dir.path().join(format!("pages/Unrelated {i}.md")),
+                "- unrelated body\n",
+            )
+            .unwrap();
+        }
+        store.refresh(crate::Depth::Stamps).unwrap();
+        crate::test_host_writer::HostWriter::for_store(&store).settle();
+        let brand = mount_fileless_query(&store, "brand-parent", "@page and name = 'Brand'");
+        let newref = mount_fileless_query(&store, "newref-page", "@page and name = 'Newref'");
+        assert!(fileless_query_names(&store, &brand, "mounted").is_empty());
+        assert!(fileless_query_names(&store, &newref, "mounted").is_empty());
+        // External batches publish on this thread, where lifecycle_work is
+        // counted; guarded saves publish on the page-host worker instead.
+        let publish = |path: &str, raw: &str| {
+            fs::write(dir.path().join(path), raw).unwrap();
+            let sub = store.subscribe();
+            let before = crate::cost_counters::lifecycle_work();
+            store.refresh(crate::Depth::Stamps).unwrap();
+            let probes = crate::cost_counters::lifecycle_work() - before;
+            crate::test_host_writer::HostWriter::for_store(&store).settle();
+            let mut changes = Vec::new();
+            while let Some(change) = sub.try_recv().unwrap() {
+                changes.push(serde_json::to_value(change).unwrap());
+            }
+            assert_eq!(changes.len(), 1, "one external publication: {changes:?}");
+            (changes.pop().unwrap(), probes)
+        };
+        let (wire, probes) = publish(path, "- child body\n");
+        eprintln!("fileless producer: unrelated={unrelated} first child text probes={probes}");
+        assert_eq!(probes, 2, "one parent looked up on both sides: {wire}");
+        assert!(strings(&wire["summary"]["queryTo"]).contains("brand-parent"));
+        assert_eq!(fileless_query_names(&store, &brand, "mounted"), ["Brand"]);
+        for (label, changed_path, raw, id, query, expected) in [
+            ("last child text", path, "", "brand-parent", &brand, vec![]),
+            (
+                "first reference",
+                "pages/A.md",
+                "- see [[Newref]]\n",
+                "newref-page",
+                &newref,
+                vec!["Newref"],
+            ),
+            (
+                "last reference",
+                "pages/A.md",
+                "- plain text\n",
+                "newref-page",
+                &newref,
+                vec![],
+            ),
+        ] {
+            let (wire, probes) = publish(changed_path, raw);
+            eprintln!("fileless producer: unrelated={unrelated} {label} probes={probes}");
+            assert_eq!(probes, 2, "{label}: {wire}");
+            assert!(
+                strings(&wire["summary"]["queryTo"]).contains(id),
+                "{label}: {wire}"
+            );
+            assert_eq!(
+                fileless_query_names(&store, query, "mounted"),
+                expected,
+                "{label}"
+            );
+        }
+        assert_eq!(publish("pages/A.md", "- more plain text\n").1, 0);
+        store.close();
+    }
+}
+
+#[test]
+fn fileless_listing_memos_refresh_for_a_full_edit_batch() {
+    let _guard = crate::test_transactions::integration_lock();
+    let (dir, store) = fixture(3);
+    let paths: Vec<_> = (0..33).map(|i| format!("pages/Batch {i}.md")).collect();
+    for path in &paths {
+        fs::write(dir.path().join(path), "- plain text\n").unwrap();
+    }
+    store.refresh(crate::Depth::Stamps).unwrap();
+    crate::test_host_writer::HostWriter::for_store(&store).settle();
+    let query = mount_fileless_query(&store, "newref-page", "@page and name = 'Newref'");
+    assert!(fileless_query_names(&store, &query, "mounted").is_empty());
+    let sub = store.subscribe();
+    for path in &paths {
+        fs::write(dir.path().join(path), "- see [[Newref]]\n").unwrap();
+    }
+    store.refresh(crate::Depth::Stamps).unwrap();
+    crate::test_host_writer::HostWriter::for_store(&store).settle();
+    let wire = serde_json::to_value(sub.try_recv().unwrap().expect("one batch")).unwrap();
+    assert!(sub.try_recv().unwrap().is_none());
+    assert_eq!(wire["summary"]["full"], true, "{wire}");
+    assert_eq!(fileless_query_names(&store, &query, "mounted"), ["Newref"]);
+    store.close();
+}
+
 const TARGETS: &[&str] = &[
     "A",
     "B",
