@@ -46,7 +46,18 @@ it("keeps cold typing, input-only Backspace and native caret movement across blo
   setCm6EditorEnabled(true);
   noteSurfaceFocused("sidebar");
   const sidebar = host.querySelector<HTMLElement>("[data-sidebar]")!;
-  startEditing("typed", 5);
+  const coldSamples: number[] = [];
+  for (let i = 0; i < 9; i++) {
+    const at = performance.now();
+    startEditing("typed", 5);
+    expect(editorIn(sidebar).kind).toBe("textarea");
+    coldSamples.push(performance.now() - at);
+    if (i < 8) endEdit("page-navigation");
+  }
+  // The asset is deliberately still pending. Budget the usable first-edit
+  // path, including real Block mounting, rather than a mocked import's delay.
+  console.log(`cold first edit ms=${coldSamples[0]}; pending-import activations ms=${JSON.stringify(coldSamples)}`);
+  expect([...coldSamples].sort((a, b) => a - b)[4]).toBeLessThan(50);
   await vi.waitFor(() => expect(chunk.requested).toHaveBeenCalledTimes(1));
   const typed = editorIn(sidebar);
   expect(typed.kind).toBe("textarea");

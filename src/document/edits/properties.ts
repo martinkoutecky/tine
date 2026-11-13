@@ -3,7 +3,7 @@ import type { PageDto } from "../../types";
 import { ordered_list_glyph, page_alias_spellings } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, pageReadOnly, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
@@ -11,6 +11,7 @@ import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
 import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty, isEditorEmpty } from "../../editor/properties";
 import { produce } from "solid-js/store";
+import { batch } from "solid-js";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { dismissToast, pushToast, toasts } from "../../toasts";
@@ -62,7 +63,7 @@ export function pageWritable(name: string): boolean {
   const page = pageByName(name);
   // A pending delete, transfer endpoint or frozen page takes no input: no
   // mutation may precede markDirty's tombstone guard (audit L9-06).
-  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide && !pageFrozen(name);
+  return !graphRewriteFrozen() && !!page && !pageReadOnly(page) && !page.guide && !pageFrozen(name);
 }
 
 export function blockWritable(id: string): boolean {
@@ -70,20 +71,29 @@ export function blockWritable(id: string): boolean {
   return !!node && pageWritable(node.page);
 }
 
-/** Set (or remove, when value is null) a `key:: value` block property. Property
- *  lines live immediately after the first line, before body text, matching OG's
- *  block-property placement and keeping every property writer on one path. */
-export function setBlockProperty(id: string, key: string, value: string | null) {
-  const node = doc.byId[id];
-  if (!node || !blockWritable(id)) return;
-  let raw: string;
+/** Set/remove a block property on one block or a batch. Read-only and unchanged
+ * blocks are skipped. Parser edits cost O(target bytes), the undo snapshot and
+ * guarded save O(affected page bytes): one snapshot and store publication per
+ * batch, one save notification per page. */
+export function setBlockProperty(target: string | readonly string[], key: string, value: string | null) {
+  const ids = typeof target === "string" ? [target] : target;
+  const changes: { id: string; page: string; raw: string }[] = [];
   try {
-    raw = editBlock(node.raw,formatForBlock(id),{kind:"property",key,value});
+    for (const id of ids) {
+      const node = doc.byId[id];
+      if (!node || !blockWritable(id)) continue;
+      const raw = editBlock(node.raw, formatForBlock(id), { kind: "property", key, value });
+      if (raw !== node.raw) changes.push({ id, page: node.page, raw });
+    }
   } catch (e) { pushToast(rawText(String(e)),"error"); return; }
-  if (raw === node.raw) return;
-  pushUndo(`prop:${id}:${key}`, [node.page]);
-  setDoc("byId",id,"raw",raw);
-  markDirty(node.page,"save-block");
+  if (!changes.length) return;
+  const pages = [...new Set(changes.map(change => change.page))];
+  pushUndo(`prop:${typeof target === "string" ? target : "selection"}:${key}`, pages);
+  // Raw-field writes only: a whole-state producer would republish the page index
+  // and advance the global structure revision, making unrelated mounted outlines
+  // rescan (merge review F1). One Solid batch keeps it one reactive publication.
+  batch(() => { for (const change of changes) setDoc("byId", change.id, "raw", change.raw); });
+  for (const page of pages) markDirty(page, "save-block");
 }
 
 /** Where a page's properties are read from and written to, in file order:

@@ -118,21 +118,25 @@ impl Plan {
     /// page-anchored and the row carries a name its required condition
     /// needs, the names execution narrows its fileless rows by. A necessary
     /// condition, never evaluation: a page that starts or stops existing
-    /// without a file changes the answer only of a plan this admits. O(keys
+    /// without a file changes the answer only of a plan this admits. `None`
+    /// means unavailable evidence and admits any possible fileless row. O(keys
     /// x log of the filter's names); no page is read.
     pub(crate) fn may_list_fileless(
         &self,
-        keys: &[String],
+        keys: Option<&[String]>,
         format: &tine_core::date::JournalFormat,
     ) -> bool {
-        if self.anchor != Anchor::Page || keys.is_empty() {
+        if self.anchor != Anchor::Page || keys.is_some_and(|keys| keys.is_empty()) {
             return false;
         }
         let Some(req) = required(&self.filter, self.anchor) else {
             return true;
         };
         let names = fileless_names(&req, format);
-        keys.iter().any(|key| names.contains(key))
+        keys.map_or_else(
+            || !names.is_empty(),
+            |keys| keys.iter().any(|key| names.contains(key)),
+        )
     }
 }
 

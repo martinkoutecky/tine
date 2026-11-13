@@ -15,6 +15,7 @@ import { rescanGraphNowFromSettings } from "../reloadOnFocus";
 import { pushToast } from "../toasts";
 import { ErrorToastHistory } from "./ErrorToastHistory";
 import { GraphVerification } from "./GraphVerification";
+import { HelpLinks } from "./HelpShortcuts";
 import { refreshEverything, setRefreshEverything } from "../changeKeys";
 import "../styles/diagnostics.css";
 
@@ -106,6 +107,7 @@ export function DiagnosticsTab(): JSX.Element {
   return (
     <section class="diagnostics-tab settings-section" {...settingAttributes(settings["diagnostics-tab-rescan-graph"])}>
       <h2 {...settingAttributes(settings["diagnostics-tab-help-diagnostics"])}>{settingLabel(settings["diagnostics-tab-help-diagnostics"])}</h2>
+      <HelpLinks />
       <label class="settings-row" {...settingAttributes(settings["diagnostics-refresh-everything"])}>
         <input type="checkbox" checked={refreshEverything()} onChange={event => setRefreshEverything(event.currentTarget.checked)} />
         <span>{settingLabel(settings["diagnostics-refresh-everything"])}</span>

@@ -10,29 +10,30 @@ const PORT = 5225;
 const OUT = path.resolve(process.env.TOPBAR_SHOT_DIR || "notes");
 // GH #205 has real-fit tiers (master a006f1308). A phone (platform "android":
 // no tab strip, no window controls) keeps calendar/journals/share/theme and the
-// right-sidebar action direct down to a 386px content box (GH #926: was 345px
-// before Share joined the optional actions; a 390px phone no longer fits them). A desktop topbar
+// right-sidebar action direct down to a 333px content box (GH #926, TOOLBAR-390B:
+// the compact workspace switcher leaves the bar at a 386px content box, since with it
+// a 390px phone cannot fit them; the drawer keeps the switcher). A desktop topbar
 // carries a tab strip, and a frameless one three window buttons: those collapse
 // optional actions at 460px so a tab pill stays readable (og H). Back/Forward
 // stay inline until the 300px floor; the sidebar action moves to overflow only
-// at the 250px last resort (or at 460px with window controls).
+// at the 250px last resort (or at 460px with window controls). Settings is the
+// menu's last row in every tier (GH #926), beside its own toolbar button.
 const CASES = [
   { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
   { name: "system-frame-collapse-440", width: 440, sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme"], separator: false, minTabWidth: 100 },
+    menuActions: ["calendar", "journals", "share", "theme", "settings"], separator: false, minTabWidth: 100 },
   { name: "system-frame-nav-collapse-400", width: 400, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true, minTabWidth: 100 },
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward", "settings"], separator: true, minTabWidth: 100 },
   { name: "custom-frame-collapse-440", width: 440, sidebar: "closed", fakeWindowControls: true, menu: true, nav: 2, optional: 0, sidebarAction: 0, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar"], separator: false },
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "settings"], separator: false },
   { name: "phone-actions-inline-420", width: 420, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false },
-  { name: "phone-optional-collapse-390", width: 390, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
-  { name: "phone-optional-collapse-360", width: 360, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme"], separator: false },
-  { name: "nav-collapse-280", width: 280, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme", "back", "forward"], separator: true },
-  { name: "last-resort-240", width: 240, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
-    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward"], separator: true },
+  { name: "phone-actions-inline-390", width: 390, platform: "android", sidebar: "closed", menu: false, nav: 2, optional: 4, sidebarAction: 1, overflow: false, switcher: false },
+  { name: "phone-optional-collapse-360", width: 360, platform: "android", sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true, switcher: false,
+    menuActions: ["calendar", "journals", "share", "theme", "settings"], separator: false },
+  { name: "nav-collapse-280", width: 280, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true, switcher: false,
+    menuActions: ["calendar", "journals", "share", "theme", "back", "forward", "settings"], separator: true },
+  { name: "last-resort-240", width: 240, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true, switcher: false,
+    menuActions: ["calendar", "journals", "share", "theme", "right-sidebar", "back", "forward", "settings"], separator: true },
 ];
 
 mkdirSync(OUT, { recursive: true });
@@ -91,6 +92,7 @@ function measureTopbar() {
     // Probe geometry, not the element's own display: a child of a
     // display:none parent still reports its specified display.
     overflowVisible: overflow ? visible(overflow) : false,
+    compactSwitcherVisible: [...topbar.querySelectorAll('[data-workspace-switcher-compact="true"]')].some(visible),
     compactFallback: Boolean(topbar.querySelector('[data-workspace-switcher-compact="true"]')),
     fullSwitcherInTopbar: Boolean(topbar.querySelector('[data-workspace-switcher]:not([data-workspace-switcher-compact="true"])')),
     fullSwitcherInSidebar: Boolean(document.querySelector("[data-workspace-switcher-sidebar] [data-workspace-switcher]")),
@@ -156,6 +158,11 @@ try {
     }
     if (testCase.sidebar === "closed" && (!before.compactFallback || before.fullSwitcherInTopbar)) {
       throw new Error(`${testCase.name}: closed-sidebar fallback state is wrong: ${JSON.stringify(before)}`);
+    }
+    // TOOLBAR-390B: the compact switcher is on the bar while it fits (default),
+    // and gone, not clipped, once it does not; the drawer's switcher stays.
+    if (testCase.sidebar === "closed" && before.compactSwitcherVisible !== (testCase.switcher ?? true)) {
+      throw new Error(`${testCase.name}: compact workspace switcher visibility is wrong: ${JSON.stringify(before)}`);
     }
     if (testCase.sidebar === "open" && (!before.fullSwitcherInSidebar || before.compactFallback || before.fullSwitcherInTopbar)) {
       throw new Error(`${testCase.name}: sidebar workspace placement is wrong: ${JSON.stringify(before)}`);

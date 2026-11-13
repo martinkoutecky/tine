@@ -16,7 +16,7 @@ function normalize(value: number): number { return Math.min(1024 * 1024, Math.ma
 export function changeQueryExportBudgetMiB(value: number | null): void {
   if (value !== null && !Number.isFinite(value)) return;
   const next = value === null ? null : normalize(value);
-  writePreference(budget, applyBudget, next, (n) => backend().setAppString(KEY, n === null ? "" : String(n)), "query export size limit");
+  writePreference(budget, applyBudget, next, (n) => backend().setAppString(KEY, n === null ? "" : String(n)), msg("toast-save-query-export-limit-failed"));
 }
 let loaded: Promise<void> | undefined;
 /** Load once before using the setting; a concurrent preference write wins. */

@@ -459,9 +459,7 @@ fn measure_the_probe_on_a_generated_graph() {
         ("every page bad", |_| true),
     ];
     for (n, (case, bad)) in cases.into_iter().enumerate() {
-        let root =
-            (std::env::temp_dir()).join(format!("tine-probe-measure-{}-{n}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir(&format!("tine-probe-measure-{n}-"));
         copy(&source, &root);
         let mut bad_pages = 0;
         for (_, rel) in files.iter().enumerate().filter(|(i, _)| bad(*i)) {

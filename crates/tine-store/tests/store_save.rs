@@ -32,6 +32,73 @@ fn open(fixture: &Fixture) -> (Arc<Store>, HostWriter) {
 }
 
 #[test]
+fn removing_last_org_drawer_entry_saves_only_the_edited_bytes() {
+    use tine_core::block_regions::{parse, Edit};
+
+    let _integration_guard = crate::test_transactions::integration_lock();
+    for nl in ["\n", "\r\n"] {
+        for tail in [
+            "\n#+OWNER: retained\n* After  ",
+            "\n#+BEGIN_QUOTE\nquoted body\n#+END_QUOTE\n* After  ",
+            "\nBody text\n* After  ",
+            "\n** Child\n:PROPERTIES:\n:id: child\n:END:\n* After  ",
+            "",
+        ] {
+            for key in ["color", "collapsed", "id"] {
+                let drawer = format!(":PROPERTIES:{nl}:{key}: true{nl}:END:{nl}");
+                let source = format!(
+                    "#+TITLE: Drawer test{nl}* Before  {nl}:PROPERTIES:{nl}:id: before{nl}:END:{nl}* Task{nl}{drawer}{}",
+                    tail.strip_prefix('\n').unwrap_or(tail).replace('\n', nl)
+                );
+                let fixture = Fixture::new();
+                fixture.write("pages/Drawer.org", &source);
+                let (store, writer) = open(&fixture);
+                let id = PageId::from("pages/Drawer.org");
+                let read = store.page(&id).unwrap();
+                assert!(!read.doc.read_only);
+                writer
+                    .save(
+                        EditKind::SaveBlock,
+                        &id,
+                        SaveBase::Existing(read.rev),
+                        &read.doc,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    fs::read_to_string(fixture.0.join(id.as_str())).unwrap(),
+                    source
+                );
+                let read = store.page(&id).unwrap();
+                let mut doc = read.doc;
+                let raw = &doc.blocks[1].raw;
+                doc.blocks[1].raw = parse(raw, true)
+                    .apply(
+                        raw,
+                        true,
+                        Edit::Property {
+                            key: key.into(),
+                            value: None,
+                        },
+                    )
+                    .unwrap();
+                writer
+                    .save(EditKind::SaveBlock, &id, SaveBase::Existing(read.rev), &doc)
+                    .unwrap();
+                let expected = source.replacen(&drawer, "", 1);
+                assert_eq!(
+                    fs::read_to_string(fixture.0.join(id.as_str())).unwrap(),
+                    expected,
+                    "key={key}, tail={tail:?}, newline={nl:?}"
+                );
+                let reopened = store.page(&id).unwrap().doc;
+                assert_eq!(reopened.blocks[1].raw, doc.blocks[1].raw);
+                store.close();
+            }
+        }
+    }
+}
+
+#[test]
 fn g6b_one_block_edit_preserves_fixture_layout() {
     let _integration_guard = crate::test_transactions::integration_lock();
     for (name, source) in [
@@ -250,12 +317,7 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "tine-store-save-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::fresh_dir("tine-store-save-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         Self(root)

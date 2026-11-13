@@ -9,6 +9,9 @@ lanes landed; this test keeps the counts from creeping back.
 pixels, and compare it with the frozen table `SURFACES` in
 `scripts/lib/ui-census-budget.mjs`. Both run under `npm test` (render config).
 
+The editor Advanced budget excludes the retired parent-copy preference and its
+Logseq revert (#941).
+
 ## What is counted, and from where
 
 - **Commands** (registries, nothing rendered): `commandDefaults()` (Shortcuts
@@ -112,6 +115,12 @@ journey (`scripts/e2e-*.mjs`), not here.
   blocks** (#764) is a palette and keymap command with no default key and no menu row. **New block after this block's
   children** (#818) is a rebindable editor command with the default key **Alt+Enter** (unbound in OG; in Tine it
   only split the block like Enter, and sheet cells keep their own Alt+Enter). It is not a palette row.
+- 2026-11-12, D-20261111-QP2 / GH #926: `settings.appearance.advanced` 17→18 for the approved
+  **Show the help button** device switch (behind Advanced; Settings search finds it);
+  `settings.diagnostics.open` 6→7 for a closed **Help** disclosure listing the help menu's entries,
+  so help stays reachable with the button hidden; `menu.topbarOverflow` 7→8 for **Settings** as the
+  "…" menu's last row (Settings two taps away at any zoom). The phone drawer's fixed Settings row is
+  drawer-only and outside the desktop census.
 - 2026-11-10, D-20261110-HF / GH #927: `settings.appearance.advanced` 16→17
   for the requested **Show Workspaces** device switch. It stays behind Advanced;
   Settings search reveals it, and the initial Appearance control count stays 29.

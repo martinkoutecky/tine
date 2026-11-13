@@ -31,6 +31,19 @@ rechecked against later owner state. Successful opens omit this refusal event.
 These events use the existing bounded buffer, persistence worker and report
 export. They add no path, title, content or timestamp field.
 
+**Editor focus misses (GH #939).** `editor.focus-missed` (frontend kind
+`editor_focus_missed`) is written when, one animation frame after
+`startEditing` asked a block to edit, no mounted editor of that block holds
+focus in a focused document, or a guard refused the request. Fields: `entry`
+(`enter-split` or `other`), boolean `documentHasFocus`, `guard`
+(`exit-guard`, `entry-guard` or `none`), boolean `targetMounted`,
+`activeTag` (`textarea`, `input`, `button`, `select`, `iframe`, `a`, `div`,
+`span`, `body`, `none` or `other`; a CodeMirror block editor is a `div`) and
+boolean `activeIsBlockEditor`. No block
+id, text, title or path. The frontend writes at most one per five minutes per
+session and schedules no check inside that window; a newer edit request
+supersedes a pending check.
+
 **Workspace-window stages (GH #809).** `workspace.open` carries a process-local
 `sequence` (the numeric popup counter, never its label), a fixed `stage`, and
 `openElapsedMs`. The usual `elapsedMs` is still time since recorder startup.

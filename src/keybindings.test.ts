@@ -30,7 +30,7 @@ const pluginGraphMeta: GraphMeta = {
   root: "/plugin-test", journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
   shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2, default_journal_template: null,
   favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
-  preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
+  preferred_format: "md", macros: {}, enable_tooltip: true, file_name_format: "legacy", doc_mode_enter_for_new_block: false, logical_outdenting: false, enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
   logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
 };
 
@@ -238,6 +238,19 @@ it("GH #428 can remap Escape to editing a single selected block", () => {
   expect(editingId()).toBeNull();
   expect(selectedIds()).toHaveLength(2);
   dispose();
+});
+
+it("editing a selected folded subtree returns to its root, not a hidden child (GH #941)", () => {
+  loadSingle({ name: "Selection", kind: "page", title: "Selection", pre_block: null, blocks: [
+    { id: "parent", raw: "Parent", collapsed: true, children: [
+      { id: "hidden", raw: "Child", collapsed: false, children: [] },
+    ] },
+  ] });
+  selectBlock("parent");
+  expect(selectedIds()).toEqual(["parent", "hidden"]);
+  paletteCommands().find(c => c.id === "editor/edit-selected-block")!.run();
+  expect(editingId()).toBe("parent");
+  expect(hasSelection()).toBe(false);
 });
 
 it("GH #587 activates visible tab slots in the focused pane, with slot nine meaning last", () => {
@@ -643,15 +656,16 @@ describe("block-selection commands", () => {
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
 
-    // Defaults are selected-only + strip-collapsed, exactly as before CB1.
+    // Defaults are selected-only + strip-collapsed; a selected COLLAPSED parent still
+    // carries the children it hides in the public text (GH #943, D-20261112-SU941).
     expect(write).toHaveBeenCalledWith(
-      "- Parent",
-      "<ul><li>Parent</li></ul>",
+      "- Parent\n\t- Child",
+      "<ul><li>Parent<ul><li>Child</li></ul></li></ul>",
     );
     expect(peekClipboardPayload()).toMatchObject({
       op: "copy",
       graph: "/plugin-test",
-      text: "- Parent",
+      text: "- Parent\n\t- Child",
       blocks: [{
         raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111",
         sourceFormat: "md",
@@ -800,6 +814,22 @@ describe("pane-select Esc cascade", () => {
 
     expect(paneSel()).toBeNull();
     dispose();
+  });
+
+  it("a folded selected subtree survives the Escape round trip through pane-select (GH #941 review F3)", () => {
+    loadSingle({ name: "Fold", kind: "page", title: "Fold", pre_block: null, blocks: [
+      { id: "parent", raw: "Parent", collapsed: true, children: [{ id: "child", raw: "Child", collapsed: false, children: [] }] },
+    ] });
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    try {
+      selectBlock("parent");
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+      expect(paneSel()).not.toBeNull();
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+      expect(paneSel()).toBeNull();
+      expect(selectedIds()).toEqual(["parent", "child"]);
+    } finally { exitPaneSelect(); clearSelection(); dispose(); }
   });
 
   it("never intercepts keys while a text field has focus (stale mode)", () => {

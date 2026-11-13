@@ -15,12 +15,12 @@ afterEach(async () => { await setActiveLocale("en"); vi.unstubAllGlobals(); invo
 const WIRE = "config-unreadable: invalid utf-8 sequence of 1 bytes from index 35";
 const SHOWN: Record<string, { sentence: string; rename: string }> = {
   en: {
-    sentence: "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
-    rename: "Rename failed: Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
+    sentence: "Couldn't read config.edn. The graph is read-only; repair the config to resume editing.",
+    rename: "Rename failed: Couldn't read config.edn. The graph is read-only; repair the config to resume editing.",
   },
   "zh-CN": {
-    sentence: "无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。",
-    rename: "重命名失败：无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。",
+    sentence: "无法读取 config.edn。图谱为只读，请修复配置以继续编辑。",
+    rename: "重命名失败：无法读取 config.edn。图谱为只读，请修复配置以继续编辑。",
   },
 };
 
@@ -52,6 +52,16 @@ it("any other refused write through the same funnel gets the same sentence", asy
   expect(errorFamily(failure)).toBe("unknown");
 });
 
+it("Hl2_0: Settings config reads use the same localized explanation as the write guard", async () => {
+  const api = await refusedBackend();
+  invoke.mockImplementation(() => Promise.reject(WIRE));
+  for (const locale of ["en", "zh-CN"]) {
+    await setActiveLocale(locale);
+    const failure = await api.setDefaultJournalTemplate("Daily").catch((error: unknown) => error);
+    expect(String(failure)).toBe(SHOWN[locale].sentence);
+  }
+});
+
 it("an unrelated rejection passes through unchanged", async () => {
   vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
   invoke.mockImplementation(() => Promise.reject("conflict"));
@@ -66,8 +76,8 @@ it("a refusal after part of the operation was saved says both, in both languages
   invoke.mockImplementation(() => Promise.reject(after));
   const { backend } = await import("./backend");
   const expected: Record<string, string> = {
-    en: "The highlights were saved, but config.edn couldn't be read. The graph is open read-only; repair the config and reopen the graph.",
-    "zh-CN": "The highlights were saved，但无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。",
+    en: "The highlights were saved, but config.edn couldn't be read. The graph is read-only; repair the config to resume editing.",
+    "zh-CN": "The highlights were saved，但无法读取 config.edn。图谱为只读，请修复配置以继续编辑。",
   };
   for (const locale of ["en", "zh-CN"]) {
     await setActiveLocale(locale);

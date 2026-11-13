@@ -154,14 +154,13 @@ fn content_days_follow_edits_duplicates_snapshots_and_warm_checkpoint() {
     } else {
         "- \n"
     };
-    write(
-        root.path(),
-        winner.strip_prefix(root.path()).unwrap().to_str().unwrap(),
-        blank,
-    );
+    // The store may report a canonical path (Windows `\\?\` prefix, macOS
+    // /private): name the file by its journals-relative name, not a prefix strip.
+    let rel = format!("journals/{}", winner.file_name().unwrap().to_str().unwrap());
+    write(root.path(), &rel, blank);
     store.refresh(crate::Depth::Stamps).unwrap();
     assert_days(&store, 0);
-    std::fs::remove_file(&winner).unwrap();
+    std::fs::remove_file(root.path().join(&rel)).unwrap();
     store.refresh(crate::Depth::Stamps).unwrap();
     assert_eq!(assert_days(&store, 1), expected);
     assert_eq!(held.graph.journal_content_days(), initial);

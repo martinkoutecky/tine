@@ -20,6 +20,7 @@ function meta(root: string): GraphMeta {
     journal_file_name_format: "yyyy_MM_dd",
     preferred_format: "md",
     macros: {},
+    enable_tooltip: true, file_name_format: "legacy", doc_mode_enter_for_new_block: false, logical_outdenting: false, enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false,
     enable_timetracking: true,
     show_brackets: true,
     logbook_with_second_support: true,

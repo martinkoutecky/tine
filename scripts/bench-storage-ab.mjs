@@ -173,8 +173,9 @@ function summarize(results, arms, noise) {
   for (const name of Object.keys(METRICS)) names.add(name);
   const seriesNames = new Set(results.flatMap((r) => Object.keys(r.series)));
   for (const name of [...names].sort()) {
-    const cells = Object.fromEntries(arms.map((a) => [a.id, describe(collect(results, a.id, name))]));
     const info = metricInfo(name);
+    const cells = Object.fromEntries(arms.map((a) => [a.id,
+      info.candidateOnly && a.id === "baseline" ? null : describe(collect(results, a.id, name))]));
     const base = cells.baseline;
     const cand = cells.candidate;
     const spread = medianSpreadPct(base, cand);
@@ -182,7 +183,7 @@ function summarize(results, arms, noise) {
     summary.metrics[name] = { unit: info.unit, candidateOnly: !!info.candidateOnly, cells, spreadPct: spread, deltaPct: deltaPct(base, cand),
       noisy: spread != null && spread > NOISY_PCT,
       absDiff: base && cand ? cand.median - base.median : null, absFloor: info.absFloor ?? null,
-      verdict: verdict({ delta: deltaPct(base, cand), floor, neutral: !!info.neutral, absDelta: base && cand ? cand.median - base.median : null, absFloor: info.absFloor }) };
+      verdict: info.candidateOnly ? "candidate-only" : verdict({ delta: deltaPct(base, cand), floor, neutral: !!info.neutral, absDelta: base && cand ? cand.median - base.median : null, absFloor: info.absFloor }) };
   }
   for (const name of [...seriesNames].sort()) {
     const cells = Object.fromEntries(arms.map((a) => [a.id, describe(collectSeries(results, a.id, name))]));
@@ -209,7 +210,7 @@ function renderMarkdown(report) {
     const c = m.cells;
     const none = !c.baseline && !c.candidate;
     if (none) { unmeasured.push(m.candidateOnly ? `${name} (candidate-only)` : name); continue; }
-    const note = m.candidateOnly && !c.baseline ? "candidate-only" : m.verdict;
+    const note = m.verdict;
     lines.push(`| ${name} | ${m.unit} | ${cell(c.baseline)} | ${cell(c.candidate)} | ${fmt(c.baseline?.p95, 2)} / ${fmt(c.candidate?.p95, 2)} | ${fmt(m.deltaPct)} | ${fmt(m.spreadPct)}${m.noisy ? (m.absFloor != null && Math.abs(m.absDiff) <= m.absFloor ? ` NOISY-relative (abs diff ${fmt(m.absDiff, 1)} <= tolerance ${m.absFloor})` : " NOISY") : ""} | ${note} |`);
   }
   lines.push("", "## Pooled samples (all keystrokes / calls across runs)", "", "| Series | baseline p50 / p95 (n) | candidate p50 / p95 (n) | spread % |", "|---|---|---|---|");

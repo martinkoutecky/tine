@@ -8,7 +8,6 @@
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
 use tine_graph_features::publish_query::{publish_live, publish_live_with_sheets};
 use tine_graph_features::SheetExport;
@@ -33,12 +32,7 @@ impl std::ops::Deref for Scratch {
 }
 
 fn open_fixture() -> (Scratch, Store) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let base = std::env::temp_dir().join(format!(
-        "tine-sheets-export-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let base = crate::test_support::fresh_dir("tine-sheets-export-");
     let graph = base.join("graph");
     fs::create_dir_all(graph.join("journals")).unwrap();
     fs::create_dir_all(base.join("output")).unwrap();

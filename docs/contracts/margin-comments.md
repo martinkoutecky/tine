@@ -85,8 +85,13 @@ the design's 0.10 scope is described below.
   folded "N below" count, and every block's comment children (outline filter,
   highlights, compact entry and popup, margin column) and margin eligibility
   read it. A structural change rescans the scope's trees once with untracked
-  reads. Each mounted block's child-list memo then compares its own list; an
-  unchanged list retains its value and does not rerun downstream comment views.
+  reads. The rescan compares old and new comment lists and notifies only the
+  parents whose lists changed; unchanged parents evaluate no child-list memo.
+  Child-list memos depend on a stable scan result for freshness while a comment's
+  structure and metadata are published in one batch. A separate rescan signal
+  notifies root readers; typing adds no scan reads to child-list accessor reads.
+  Rows and grouped passage headers use the existing node-lifetime binding
+  while deletion notifications settle, until their owners dispose them.
   Covering-index selection follows the block's ancestry rather than a global
   structural revision. A raw edit of any
   block on those pages runs one key screen (plus one facet lookup if it may
@@ -282,6 +287,22 @@ default keys, hidden comments shown by a step) and the native journey
 comment index, and makes no backend read or write other than the ancestor
 reveal's own save (none for a visible target; counted in
 `CommentReview.test.tsx`). Nothing is stored; the current thread is a view signal.
+
+## Full-text search (COMMENT-OUT-V2, D-20261113-CO2)
+
+Full-text search retains comment roots and every descendant reply as ordinary
+block hits. The palette, search workspace and search result excerpts label them
+**comment**, keeping the host block in their existing ancestor breadcrumbs.
+A page whose only matching text is a comment remains a content-search page hit;
+its matching comment also remains a labelled block hit. In-page Find and reference
+counts retain their existing inclusion of comments (V3).
+
+The result-only `QueryHit::Block.is_comment` fact comes from
+`tine_outline::editor_text::comment_quote` over parsed own properties, with a
+parent required for a thread root. The search walk carries membership to all
+descendants. Projection and rendering read that boolean in O(1) per hit, with
+zero additional file reads, writes, stats or IPC calls. Navigation uses the
+existing comment-target reveal path.
 
 ## Styling layer (D-20261111-CSL, GH #929)
 

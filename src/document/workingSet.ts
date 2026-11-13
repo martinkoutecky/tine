@@ -1,7 +1,7 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
 import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, pageFrozen, rekeyPage, releaseHolds, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
-import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, setPageKind, writeWholePages, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, setPageKind, writeWholePages, FeedPage, pageByName, pageReadOnly } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, reconcileLoadedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
@@ -29,7 +29,7 @@ import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
 import { msg, type UiText } from "../i18n";
-import { selectedIds } from "./edits/selection";
+import { topSelected } from "./edits/selection";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -399,7 +399,7 @@ export async function deletePage(
   const binding = captureBinding();
   const loaded = pageByName(name);
   if (expectedPath && loaded?.id !== expectedPath) return refused(msg("delete-reason-target"));
-  if (loaded?.readOnly || loaded?.guide) return refused(msg("delete-reason-read-only"));
+  if (pageReadOnly(loaded) || loaded?.guide) return refused(msg("delete-reason-read-only"));
   // L2-04, D-20261022-JJ6: a delete consumes local input only after Applied.
   // Every other outcome leaves the conflicted draft available for recovery.
   let deleted = false;
@@ -484,7 +484,7 @@ function pinnedPages(includeFeed = true): Set<string> {
   for (const name of unsettledPages()) pin.add(name);
   const ed = editingId();
   if (ed && doc.byId[ed]) pin.add(doc.byId[ed].page);
-  for (const id of selectedIds()) if (doc.byId[id]) pin.add(doc.byId[id].page);
+  for (const id of topSelected()) if (doc.byId[id]) pin.add(doc.byId[id].page);
   return pin;
 }
 

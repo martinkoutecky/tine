@@ -2,8 +2,7 @@ use std::{fs, path::PathBuf};
 use tine_graph_features::assets;
 use tine_store::{Area, Content, EditKind, Store};
 fn graph(tag: &str) -> (PathBuf, Store) {
-    let root = std::env::temp_dir().join(format!("tine-fail2-{tag}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-fail2-{tag}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();
@@ -19,7 +18,12 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
     assert!(config.problem.is_some());
     fs::write(root.join("pages/Existing.md"), "- still readable\n").unwrap();
     let existing = store.file_id(Area::Pages, "Existing.md").unwrap();
-    assert!(store.page(&existing.as_str().into()).unwrap().doc.read_only);
+    let read = store.page(&existing.as_str().into()).unwrap();
+    assert!(
+        read.read_only.is_some(),
+        "the graph restriction still applies"
+    );
+    assert!(!read.doc.read_only, "the Markdown file itself round-trips");
     let id = store.file_id(Area::Pages, "Wrong.md").unwrap();
     let mut tx = store.page_plan(Some(EditKind::CreatePage));
     tx.create(&id, Content::Bytes(b"- wrong\n".to_vec()));

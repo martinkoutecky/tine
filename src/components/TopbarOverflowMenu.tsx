@@ -14,6 +14,8 @@ export interface TopbarOverflowMenuProps {
   onForward: () => void;
   canGoBack: () => boolean;
   canGoForward: () => boolean;
+  /** Absent where Settings does not apply (a published export). */
+  onSettings?: () => void;
 }
 
 /**
@@ -81,6 +83,12 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
           <div class="topbar-overflow-sep" role="separator" />
           <button type="button" role="menuitem" data-topbar-overflow-action="back" disabled={!props.canGoBack()} onClick={() => run(props.onBack)}>{t("topbar-overflow-menu-back")}</button>
           <button type="button" role="menuitem" data-topbar-overflow-action="forward" disabled={!props.canGoForward()} onClick={() => run(props.onForward)}>{t("topbar-overflow-menu-forward")}</button>
+          {/* Always the last row, whatever else the toolbar has collapsed, so
+              Settings is never more than two taps away (GH #926). */}
+          <Show when={props.onSettings}>
+            <div class="topbar-overflow-settings-sep" role="separator" />
+            <button type="button" role="menuitem" data-topbar-overflow-action="settings" onClick={() => run(props.onSettings!)}>{t("settings-ui-settings")}</button>
+          </Show>
         </div>
       </Show>
     </div>

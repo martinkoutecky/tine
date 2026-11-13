@@ -2,6 +2,9 @@
 
 mod host_only_writer;
 mod search_properties;
+#[path = "../../test-support/temp_dir.rs"]
+mod test_support;
+mod test_temp_dirs;
 
 // Store cost probes are process-global: the cost counters and the process's
 // thread, file-descriptor and allocation totals. A case that reads them takes

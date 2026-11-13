@@ -49,7 +49,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -183,11 +183,11 @@ function focusPaneByNumber(n: number) {
 }
 
 function editSelectedBlock(): boolean {
-  const ids = selectedIds();
-  if (ids.length !== 1 || !docNode(ids[0])) return false;
-  if (editSelectedGridChild(ids[0], "start")) return true;
+  const id = singleSelectedId();
+  if (!id || !docNode(id)) return false;
+  if (editSelectedGridChild(id, "start")) return true;
   clearSelection();
-  startEditing(ids[0]);
+  startEditing(id);
   return true;
 }
 
@@ -508,7 +508,7 @@ const COMMANDS: CommandDef[] = [
   // GH #764 (D-20261101-L5): palette and keymap only, no default key. Acts on a block selection.
   { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
   // GH #918: the block context menu's Remove author, offered only where that menu offers it.
-  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", available: () => removeAuthorTarget() !== null, run: () => { const id = removeAuthorTarget(); if (id !== null) removeAuthor(id); }, global: true },
+  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", available: () => removeAuthorTarget() !== null, run: () => removeAuthor(), global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
@@ -1001,7 +1001,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (matchesCommand(e, "editor/move-block-down")) return moveSelectionItems(1), true;
   if (matchesCommand(e, "editor/move-block-up")) return moveSelectionItems(-1), true;
   if (e.key === "Enter" || e.key === "ArrowRight") {
-    const ids = selectedIds();
+    const ids = topSelected();
     const gridId = ids.length === 1 && blockIsGridView(ids[0]) ? ids[0] : ids.length === 0 ? outlinedGridSelectionId() : null;
     if (gridId) {
       const surface = focusedGridSurface(gridId);
@@ -1022,10 +1022,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   }
   if (mod && shortcutKey(e) === "x") {
     const ids = selectedIds();
-    // Cut deletes whole subtrees, so its public text carries them regardless of the copy preference.
-    const text = selectionMarkdown(true);
+    const text = selectionMarkdown();
     void cutBlocks(ids, text, () =>
-      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown(true) : "",
+      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
       () => deleteSelection())
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
     return true;
@@ -1034,7 +1033,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     return expandBlockSelection(), true;
   }
   if (e.key === "Enter") {
-    const ids = selectedIds();
+    const ids = topSelected();
     const last = ids[ids.length - 1];
     if (last && !editSelectedGridChild(last, "end")) startEditing(last, 1e9);
     return true;
@@ -1141,7 +1140,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         if (matchesCommand(e, "editor/edit-selected-block") && editSelectedBlock()) {
           e.preventDefault(); resetSeq(); return;
         }
-        const previous = selectedIds().at(-1) ?? null;
+        const previous = topSelected().at(-1) ?? null;
         if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();
         // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to

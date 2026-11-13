@@ -8,7 +8,7 @@ use tine_store::{Area, PageId, RestoreFile, SaveBase, Store};
 #[test]
 fn merge_source_preamble_survives_in_lsdoc_tree() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-i04-merge-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-i04-merge-");
     for area in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(area)).unwrap();
     }
@@ -68,7 +68,7 @@ fn emitted_fixture_corpus_is_accepted_by_lsdoc() {
 #[test]
 fn save_and_restore_emit_parseable_page_trees() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-i04-save-restore-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-i04-save-restore-");
     for area in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(area)).unwrap();
     }

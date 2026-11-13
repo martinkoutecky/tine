@@ -284,9 +284,7 @@ pub(crate) fn inspect_graph_access(
         wsl_rootfs: cfg!(target_os = "windows")
             && tine_core::graph_paths::is_windows_wsl_rootfs(&root.to_string_lossy()),
         graph_root: root.display().to_string(),
-        display_graph_root: tine_core::graph_paths::normalize_graph_path(
-            &root.display().to_string(),
-        ),
+        display_graph_root: tine_core::graph_paths::display_graph_path(&root.display().to_string()),
         display_external_assets_path: inspection
             .external_assets
             .as_ref()
@@ -871,7 +869,8 @@ pub(crate) struct ConfigProblem {
     kind: &'static str,
     message: String,
 }
-fn config_problem(store: &Store) -> Option<ConfigProblem> {
+/// Serialize the store's current config read problem; O(1), no disk access.
+pub(crate) fn config_problem(store: &Store) -> Option<ConfigProblem> {
     store.config().problem.map(|error| ConfigProblem {
         kind: "config-read",
         message: error.to_string(),
@@ -932,7 +931,7 @@ pub(crate) async fn create_graph(dir: String, name: String) -> Result<CreatedGra
     // Writes and fsyncs every demo page (R3): off the main thread.
     crate::state::off_ui(move || {
         create_graph_blocking(dir, name).map(|root| CreatedGraph {
-            display_root: tine_core::graph_paths::normalize_graph_path(&root),
+            display_root: tine_core::graph_paths::display_graph_path(&root),
             root,
         })
     })

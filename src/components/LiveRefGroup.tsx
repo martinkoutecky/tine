@@ -28,13 +28,12 @@ import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGr
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
-import { inPageFindOpen } from "../inpageFind";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
-import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
+import { promotePagePreamble, pageInstanceGeneration, topSelected } from "../document";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
@@ -152,8 +151,8 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   onCleanup(() => { alive = false; });
   const windowed = () => props.surface === "ref" && !props.eager;
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
-    || selectedIds().some(id => docNode(id)?.page === props.page);
-  const wanted = () => inWindow() || forced() || (visited() && inPageFindOpen()) || (near() && (pinned() || printingOutline()));
+    || topSelected().some(id => docNode(id)?.page === props.page);
+  const wanted = () => inWindow() || forced() || (near() && (pinned() || printingOutline()));
   const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {
     const owner = props.heightKey ?? props.hostBlockId;
@@ -216,7 +215,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
         readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
-        sourcePinned={() => windowed() && (pinned() || forced() || inPageFindOpen())}
+        sourcePinned={() => windowed() && (pinned() || forced())}
         schedule={windowed() && hasViewport()} /></Show>
       </ReservedGroupGeometryContext.Provider>
     </div>
@@ -750,6 +749,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
           collapsed: (id, stored) => props.surface === "preview" ? stored
             : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
           navOnly: true,
+          // Result surfaces only: embeds and previews keep the ordinary split.
+          splitAsChild: props.surface === "query" || props.surface === "ref" ? (id) => resultRootIds().has(id) : undefined,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} render={(id, authorNeighbors) => {

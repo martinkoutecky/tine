@@ -249,7 +249,6 @@ gpu-tine-is-rendering-on-the-cpu-your-gpu = Tine 正在使用 CPU 渲染：GPU �
 
 graph-open-failure-couldn-t-open-the-graph = 无法打开图谱。（{ $detail }）
 
-graph-preferences-could-not-save = 无法保存 { $label }。
 
 graph-session-couldn-t-save-the-journal-template-setting = 无法保存日记模板设置。（{ $error }）
 
@@ -279,7 +278,6 @@ launcher-ranking-could-not-load-adaptive-launcher-ranking-preference = 无法加
 
 move-notice-moved-in = 已移入 { $page }
 
-preference-writes-could-not-save = 无法保存 { $label }。
 
 preference-writes-could-not-load = 无法加载 { $label }。
 
@@ -369,9 +367,9 @@ ui-failure-export-preview = 无法为导出预览准备块，将显示未解析�
 ui-failure-sheet-export = 无法读取要导出的表格视图，将以普通大纲导出。
 ui-failure-editor-load = 无法加载 CodeMirror 编辑器。你可以继续使用经典编辑器编辑。
 
-ui-failure-config-read = 无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。
+ui-failure-config-read = 无法读取 config.edn。图谱为只读，请修复配置以继续编辑。
 
-ui-failure-config-read-after = { $done }，但无法读取 config.edn。图谱以只读方式打开，请修复配置并重新打开图谱。
+ui-failure-config-read-after = { $done }，但无法读取 config.edn。图谱为只读，请修复配置以继续编辑。
 
 ui-failure-conflict-inventory = 无法刷新冲突，保留上次成功获取的列表。
 

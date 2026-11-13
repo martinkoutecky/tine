@@ -18,6 +18,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `settings-comments-display` | `settings-comments-display` | Comments | Basic |
 | `settings-author-marks` | `settings-author-marks` | Show/Hide author marks | Basic |
 | `settings-show-workspaces` | `settings-show-workspaces` | Show Workspaces | Advanced |
+| `settings-show-help-button` | `settings-show-help-button` | Show the help button | Advanced |
 | `theme.gallery.default` | `themes-default` | Default | Basic |
 | `settings-ui-interface-size` | `settings-ui-interface-size` | Interface size | Basic |
 | `settings-mobile-navigation-label` | `settings-mobile-navigation-label` | Navigation buttons at the bottom | Basic |
@@ -100,7 +101,6 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `settings-result-destination-label` | `settings-result-destination-label` | Search results open in | Advanced |
 | `settings-pinyin-label` | `settings-pinyin-label` | Match Chinese page names by Pinyin | Advanced |
 | `settings-ui-learn-ctrl-k-choices` | `settings-ui-learn-ctrl-k-choices` | Learn Ctrl+K choices | Advanced |
-| `settings-ui-copy-a-parent-block-s-sub-blocks` | `settings-ui-copy-a-parent-block-s-sub-blocks` | Copy a parent block's sub-blocks | Advanced |
 | `settings-ui-strip-collapsed-when-copying` | `settings-ui-strip-collapsed-when-copying` | Strip collapsed:: when copying | Advanced |
 | `settings-ui-click-a-block-reference-to-zoom-in` | `settings-ui-click-a-block-reference-to-zoom-in` | Click a block reference to zoom in | Basic |
 | `links-remembered-schemes` | `links-remembered-schemes` | Remembered app links | Basic |

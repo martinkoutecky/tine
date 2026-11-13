@@ -3502,11 +3502,7 @@ mod rev5_tests {
 
     #[test]
     fn alias_index_matches_legacy_scan_for_inventory_and_name_variants() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-alias-index-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-alias-index-");
         let pages = root.join("pages");
         fs::create_dir_all(&pages).unwrap();
         fs::write(
@@ -3608,11 +3604,7 @@ mod rev5_tests {
 
     #[test]
     fn replace_detects_external_write_after_temp_sync() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-final-guard-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-final-guard-");
         fs::create_dir_all(root.join("assets")).unwrap();
         fs::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("assets/a.edn");
@@ -3638,11 +3630,7 @@ mod rev5_tests {
 
     #[test]
     fn failed_load_transaction_write_is_in_first_recovered_view() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-failed-tx-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-failed-tx-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- before\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
@@ -3691,11 +3679,7 @@ mod rev5_tests {
 
     #[test]
     fn failed_initial_load_defers_page_and_save_publication_until_recovery() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-failed-load-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-failed-load-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- before\n").unwrap();
         let pause = root.join(".tine-test-pause-load");
@@ -3789,11 +3773,7 @@ mod rev5_tests {
 
     #[test]
     fn recovery_publishes_save_attempted_after_reconcile() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-recovery-save-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-recovery-save-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- before\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -3847,11 +3827,7 @@ mod rev5_tests {
 
     #[test]
     fn recovery_does_not_report_ready_before_snapshot_exists() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-recovery-snapshot-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-recovery-snapshot-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join(".tine-test-pause-load"), "").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -3886,11 +3862,7 @@ mod rev5_tests {
 
     #[test]
     fn readiness_poll_does_not_wait_for_initial_snapshot_capture() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-ready-poll-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-ready-poll-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let hold_load = root.join(".tine-test-pause-load");
         fs::write(&hold_load, "").unwrap();
@@ -3914,11 +3886,7 @@ mod rev5_tests {
 
     #[test]
     fn own_save_during_initial_parse_does_not_restart() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-load-delta-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-load-delta-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
         fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
@@ -3966,11 +3934,7 @@ mod rev5_tests {
     fn create_during_cold_load_is_in_first_complete_view() {
         use tine_core::model::{BlockDto, PageDto};
 
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-cold-create-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-cold-create-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- existing\n").unwrap();
         let hold_load = root.join(".tine-test-pause-load");
@@ -4057,11 +4021,7 @@ mod rev5_tests {
     #[test]
     fn own_page_writes_stay_in_view_with_notify_and_poll() {
         for mode in [WatchMode::Notify, WatchMode::Poll] {
-            let unique = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!("tine-own-view-{mode:?}-{unique}"));
+            let root = crate::test_support::fresh_dir(&format!("tine-own-view-{mode:?}-"));
             fs::create_dir_all(root.join("pages")).unwrap();
             fs::create_dir_all(root.join("journals")).unwrap();
             fs::create_dir_all(root.join("assets")).unwrap();
@@ -4165,11 +4125,7 @@ mod rev5_tests {
 
     #[test]
     fn close_during_recovery_returns_closed_without_reviving_status() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-close-recovery-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-close-recovery-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         store.whole_graph().unwrap();
@@ -4194,11 +4150,7 @@ mod rev5_tests {
 
     #[test]
     fn external_write_between_direct_read_and_stamp_is_observed() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-direct-stamp-race-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-direct-stamp-race-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/A.md");
         fs::write(&path, "- before\n").unwrap();
@@ -4244,11 +4196,7 @@ mod rev5_tests {
 
     #[test]
     fn external_write_between_own_save_and_stamp_is_observed() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-save-stamp-race-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-save-stamp-race-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/A.md");
         fs::write(&path, "- before\n").unwrap();
@@ -4302,11 +4250,7 @@ mod rev5_tests {
 
     #[test]
     fn revert_and_delete_after_own_publication_are_external() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-own-race-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-own-race-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/A.md");
         fs::write(&path, "- before\n").unwrap();
@@ -4402,11 +4346,7 @@ mod rev5_tests {
 
     #[test]
     fn notify_rewatches_recreated_managed_directory() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-rewatch-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-rewatch-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::write(root.join("pages/A.md"), "- before\n").unwrap();
@@ -4477,11 +4417,7 @@ mod rev5_tests {
 
     #[test]
     fn failed_save_external_delete_is_external_and_own_trash_stays_own() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-delete-origin-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-delete-origin-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
         fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
@@ -4541,11 +4477,7 @@ mod rev5_tests {
 
     #[test]
     fn streamed_create_uses_recorded_revision_for_own_publication() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-stream-own-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-stream-own-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
         let source = root.join("stream-source.bin");
@@ -4634,11 +4566,7 @@ mod rev5_tests {
 
     #[test]
     fn page_reappearing_after_full_scan_remains_resolvable() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-page-scan-race-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-page-scan-race-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/Present.md");
         fs::write(&path, "- present\n").unwrap();
@@ -4702,11 +4630,7 @@ mod rev5_tests {
 
     #[test]
     fn own_config_replace_is_not_removed_by_page_inventory_scan() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-config-own-scan-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-config-own-scan-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("logseq")).unwrap();
         let path = root.join("logseq/config.edn");
@@ -4738,11 +4662,7 @@ mod rev5_tests {
     fn raced_approved_external_asset_is_modified_not_removed() {
         use std::os::unix::fs::symlink;
 
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-approved-asset-race-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-approved-asset-race-");
         let outside = root.with_extension("assets");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(&outside).unwrap();
@@ -4797,11 +4717,7 @@ mod rev5_tests {
 
     #[test]
     fn oversized_page_refuses_save_and_every_host_plan_writes_nothing() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-opaque-page-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-opaque-page-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let a_path = root.join("pages/A.md");
         let file = File::create(&a_path).unwrap();
@@ -4851,11 +4767,7 @@ mod rev5_tests {
 
     #[test]
     fn rollback_external_live_bytes_publish_as_external() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("tine-rollback-origin-{unique}"));
+        let root = crate::test_support::fresh_dir("tine-rollback-origin-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
         fs::write(root.join("assets/a.edn"), "old A").unwrap();
@@ -4898,11 +4810,7 @@ mod rev5_tests {
 
     #[test]
     fn partial_directory_purge_reports_deleted_bytes() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("tine-partial-purge-{unique}"));
+        let dir = crate::test_support::fresh_dir("tine-partial-purge-");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("one"), b"abc").unwrap();
         fs::write(dir.join("two"), b"def").unwrap();
@@ -4962,11 +4870,7 @@ mod rev5_tests {
 
     #[test]
     fn whole_graph_reader_completes_during_writer_and_snapshot_publication() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-d3-noblock-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-d3-noblock-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Source.md"), "- [[Target]] before\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -5021,11 +4925,7 @@ mod rev5_tests {
 
     #[test]
     fn reader_registration_during_publication_neither_waits_nor_goes_stale() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-d3-unlinked-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-d3-unlinked-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Source.md"), "- before\n").unwrap();
         fs::write(root.join("pages/Target.md"), "- target\n").unwrap();
@@ -5089,11 +4989,7 @@ mod rev5_tests {
 
     #[test]
     fn whole_graph_carries_only_unaffected_backlink_memos() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-d3-memos-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-d3-memos-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- [[Alpha]] original\n").unwrap();
         fs::write(root.join("pages/B.md"), "- [[Beta]] original\n").unwrap();
@@ -5134,11 +5030,7 @@ mod rev5_tests {
     fn whole_graph_concurrent_reader_writer_watcher_loop() {
         use std::sync::atomic::AtomicUsize;
         use std::time::Instant;
-        let root = std::env::temp_dir().join(format!(
-            "tine-d3-loop-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-d3-loop-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Writer.md"), "- [[Target]] initial\n").unwrap();
         fs::write(root.join("pages/External.md"), "- outside initial\n").unwrap();
@@ -5353,11 +5245,7 @@ mod rev5_tests {
 
     #[test]
     fn whole_graph_view_is_stable_across_external_publication() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-d3-stability-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-d3-stability-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/Source.md"), "- [[Target]] before\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
@@ -5457,11 +5345,7 @@ mod rev5_tests {
 
     #[test]
     fn page_parser_panic_is_unparseable() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-page-panic-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-page-panic-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(
             root.join("pages/Panic.md"),
@@ -5477,11 +5361,7 @@ mod rev5_tests {
 
     #[test]
     fn scan_reports_unstatable_entry_and_unlistable_directory() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-scan-faults-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-scan-faults-");
         fs::create_dir_all(root.join("pages/nested")).unwrap();
         fs::write(root.join("pages/Unreadable.md"), b"- page\n").unwrap();
         fs::write(root.join("pages/nested/Inside.md"), b"- page\n").unwrap();
@@ -5530,12 +5410,7 @@ mod rev5_tests {
     /// read is gone or being replaced, never unreadable.
     #[test]
     fn scan_treats_a_file_vanishing_mid_scan_as_gone_or_replaced() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-scan-vanish-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir("tine-scan-vanish-");
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::write(root.join("journals/2026_10_26.md"), b"- day\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
@@ -5583,8 +5458,7 @@ mod rev5_tests {
     #[test]
     fn scan_reports_non_utf8_names_for_backup_completeness() {
         use std::os::unix::ffi::OsStringExt;
-        let root = std::env::temp_dir().join(format!("tine-scan-nonutf8-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir("tine-scan-nonutf8-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let name = std::ffi::OsString::from_vec(b"lost-\xff.md".to_vec());
         let non_utf8 = root.join("pages").join(name);

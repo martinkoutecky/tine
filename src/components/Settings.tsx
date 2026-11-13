@@ -2,7 +2,7 @@ import { settings } from "./settingDefinitions";
 import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
-import { graphConfigProblem } from "../graph";
+import { graphConfigUnreadable } from "../graphConfig";
 import { JournalTemplateField } from "./JournalTemplateField";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
@@ -27,14 +27,12 @@ import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import {
-  copyIncludeSubtree,
-  setCopyIncludeSubtree,
   copyStripCollapsed,
   setCopyStripCollapsed,
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces, showHelpButton, setShowHelpButton } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
 import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds, previewsEnabled, changePreviewsEnabled } from "../hoverPreviewSettings";
@@ -318,7 +316,7 @@ export function Settings(): JSX.Element {
               </button>
             </div>
             <div class="settings-pane-body">
-              <Show when={graphConfigProblem()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
+              <Show when={graphConfigUnreadable()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={searching()}>
                 <div class="settings-search-results" aria-live="polite">
@@ -636,6 +634,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <Field setting={settings["settings-show-workspaces"]}>
         <Toggle on={showWorkspaces()} onClick={() => setShowWorkspaces(!showWorkspaces())} />
       </Field>
+      <Field setting={settings["settings-show-help-button"]}>
+        <Toggle on={showHelpButton()} onClick={() => setShowHelpButton(!showHelpButton())} />
+      </Field>
       <Field
         setting={settings["settings-ui-right-to-left-note-layout"]}
 
@@ -875,15 +876,6 @@ function EditorTab(props: { search: string }): JSX.Element {
         </Field>
 
         <OgField
-        setting={settings["settings-ui-copy-a-parent-block-s-sub-blocks"]}
-
-        ogNote={msg("settings-og-copy-subtree")}
-        ogValue={true}
-        on={copyIncludeSubtree()}
-        onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
-      />
-
-        <OgField
         setting={settings["settings-ui-strip-collapsed-when-copying"]}
 
         ogNote={msg("settings-og-copy-collapsed")}
@@ -917,7 +909,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
     captureChanged = true;
     const v = !captureEnterFiles();
     writePreference(captureEnterFiles, setCaptureEnterFiles, v,
-      (next) => backend().setCaptureEnterFiles(next), "capture Enter preference");
+      (next) => backend().setCaptureEnterFiles(next), msg("toast-save-capture-enter-failed"));
   };
   return (
     <>
@@ -1332,7 +1324,7 @@ function FilesTab(props: { search: string }): JSX.Element {
     if (m === watchMode()) return;
     watchChanged = true;
     writePreference(watchMode, setWatchMode, m,
-      (next) => backend().setWatchMode(next), "file watcher mode");
+      (next) => backend().setWatchMode(next), msg("toast-save-file-watcher-failed"));
   };
   return (
     <>

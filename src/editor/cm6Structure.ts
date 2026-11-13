@@ -2,9 +2,9 @@ import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, exitMultilineBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
-  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection,
+  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
-  selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, type OutlineScope,
+  selectBlockSubtree, setCollapsed, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
   bodyNeighbor, type PendingEdit,
@@ -33,6 +33,7 @@ import { gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
+import { splitBlockInView } from "./splitBlockInView";
 
 interface StructureContext {
   cell?: SheetCellCtx | null;
@@ -82,6 +83,16 @@ export function cm6Structure(ctx: StructureContext) {
     const end = Math.min(s.end, v.state.doc.length), start = Math.min(s.start, end);
     v.dispatch({ selection: s.direction === "backward" ? EditorSelection.single(end, start) : EditorSelection.single(start, end) });
     v.focus();
+    // A DOM reorder can clear the browser's range before its selectionchange arrives. CM still holds
+    // the old range then, so the dispatch above writes nothing, and the late selectionchange would read
+    // the cleared range back (whether it comes before or after the next frame). Write the range here.
+    const range = v.dom.ownerDocument.getSelection(), main = v.state.selection.main;
+    if (!range || !v.hasFocus) return;
+    const anchor = v.domAtPos(main.anchor), head = v.domAtPos(main.head);
+    if (range.anchorNode !== anchor.node || range.anchorOffset !== anchor.offset
+      || range.focusNode !== head.node || range.focusOffset !== head.offset) {
+      range.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+    }
   };
   const nudge = (v: EditorView, out: boolean) => {
     const s = selection(v), text = v.state.doc.toString();
@@ -129,7 +140,6 @@ export function cm6Structure(ctx: StructureContext) {
   const selectBlockAtEdge = (v: EditorView, dir: -1 | 1) => {
     if (!atEdge(v, dir > 0)) return false;
     selectBlock(position().id, position().scope);
-    moveSelection(dir, true);
     return true;
   };
   const commands = guardedCommands<[EditorView]>(v => ctx.current() && !v.compositionStarted, {
@@ -216,8 +226,7 @@ export function cm6Structure(ctx: StructureContext) {
     // a line break and Ctrl/Cmd+Enter sends (GH #891), so no reply branch here.
     const replacement = s.empty ? undefined : ctx.deleteSelection(v, s.from, s.to);
     if (!replacement) ctx.commit(raw);
-    const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
-    splitBlock(ctx.id, s.from, zoom, zoom, editSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement);
+    splitBlockInView(ctx.id, s.from, ctx.scope, navSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement, ctx.collapse);
     return true;
   };
   const vertical = (v: EditorView, forward: boolean) => {
