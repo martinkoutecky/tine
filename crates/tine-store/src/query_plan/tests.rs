@@ -5,6 +5,59 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
+fn search_marks_comment_roots_and_replies_and_keeps_comment_only_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(
+        dir.path().join("pages/Annotations.md"),
+        "- Host\n  - needle root\n    tine.quote:: Host\n    - needle reply\n- needle body\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("pages/Only.md"),
+        "- Host\n  - needle only\n    tine.quote:: Host\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("pages/Org.org"),
+        "* Host\n** needle root\n:PROPERTIES:\n:tine.quote: Host\n:END:\n*** needle reply\n* needle body\n:PROPERTIES:\n:tine.quote: top-level property\n:END:\n").unwrap();
+    let graph = snapshot_for_dir(dir.path());
+    let mut plan = QueryPlan::friendly("needle", 20, 20);
+    plan.page_match_scope = FriendlyPageMatchScope::Content;
+    COMMENT_MEMBERSHIP_VISITS.with(|count| count.set(0));
+    let result = plan.execute(&graph, || false);
+    assert_eq!(
+        COMMENT_MEMBERSHIP_VISITS.with(Cell::get),
+        20,
+        "one membership visit per block in each existing page-content/block walk"
+    );
+    let only = result
+        .hits
+        .iter()
+        .find(|hit| matches!(hit, QueryHit::Page { page, .. } if page.name == "Only"))
+        .expect("comment-only page remains a hit");
+    assert_eq!(serde_json::to_value(only).unwrap()["is_comment"], true);
+    let blocks: Vec<_> = result
+        .hits
+        .iter()
+        .filter_map(|hit| match hit {
+            QueryHit::Block {
+                display_text,
+                block,
+                ..
+            } => Some((display_text, block, serde_json::to_value(hit).unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks.len(), 7);
+    for (text, block, wire) in blocks {
+        assert_eq!(wire["is_comment"], text != "needle body", "{text}");
+        if text != "needle body" {
+            assert_eq!(block.breadcrumb.first().map(String::as_str), Some("Host"));
+        }
+    }
+}
+
+#[test]
 fn literal_block_picker_keeps_its_existing_referenceable_block_surface() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -1271,6 +1324,7 @@ fn literal_block_search_adapter_preserves_fragment_membership_and_ranked_topk() 
 #[test]
 fn query_hit_json_contract_uses_tagged_entities_and_utf16_evidence() {
     let hit = QueryHit::Page {
+        is_comment: false,
         row: None,
         page: PageEntry {
             name: "🧠 Foo".into(),
@@ -1295,6 +1349,7 @@ fn query_hit_json_contract_uses_tagged_entities_and_utf16_evidence() {
         serde_json::to_value(hit).unwrap(),
         serde_json::json!({
             "entity": "page",
+            "is_comment": false,
             "page": {
                 "name": "🧠 Foo",
                 "kind": "page",
