@@ -325,6 +325,7 @@ export function scanSource(rel, text) {
   const { names: imported, namespaces } = i18nImports(source, rel);
   const resolvers = new Set(imported.filter((name) => RESOLVERS.has(name.imported)).map((name) => name.local));
   const catalog = new Set([...imported.filter((name) => CATALOG_CALLS.has(name.imported)).map((name) => name.local), "msg", "rawText"]);
+  const messageTypes = new Set(imported.filter((name) => name.imported === "Msg").map((name) => name.local));
   const invoked = loadInvokedNames(source);
   const covered = new Set();
   const calls = [];
@@ -384,6 +385,12 @@ export function scanSource(rel, text) {
     mark(node);
   };
   const isCatalogCall = (node) => ts.isCallExpression(node) && catalog.has(calleeName(node) ?? "");
+  const isMessageParameter = (node) => {
+    const declaration = ts.isIdentifier(node) ? declarationOf(node) : null;
+    return declaration && ts.isParameter(declaration) && declaration.type
+      && ts.isTypeReferenceNode(declaration.type) && ts.isIdentifier(declaration.type.typeName)
+      && messageTypes.has(declaration.type.typeName.text);
+  };
   /** `t(…)` / `render(…)` / `renderEnglish(…)` by a named import, or `ns.t(…)` by a namespace import. */
   const resolverName = (call) => {
     const callee = call.expression;
@@ -422,7 +429,7 @@ export function scanSource(rel, text) {
       const name = calleeName(node);
       const first = node.arguments[0];
       if (queryUi && ["setError", "setSaveError", "setSaveNotice", "setPreviewError"].includes(name) && first) roots.push(first);
-      if (name && TOAST_CALLS.has(name) && first && !isCatalogCall(first)) {
+      if (name && TOAST_CALLS.has(name) && first && !isCatalogCall(first) && !isMessageParameter(first)) {
         // A dynamic argument (`String(error)`) is a site too: its text is its source.
         site("toast", literalOf(first) ?? `{${first.getText(source)}}`, node);
       } else if (name && DIALOG_CALLS.has(name) && first) {

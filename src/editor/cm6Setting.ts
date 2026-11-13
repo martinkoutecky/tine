@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 // Device-local, default-off experiment. The shipping identity is the only
 // availability gate; stable builds ignore even a previously stored opt-in.
 import { createSignal } from "solid-js";
@@ -46,7 +47,7 @@ export function setCm6EditorEnabled(on: boolean): void {
         const { emit } = await import("@tauri-apps/api/event");
         await emit(CHANGED, { origin: thisWindow });
       } catch { /* The file is written; other windows read it at their next start. */ }
-    }, "CodeMirror editor");
+    }, msg("toast-save-codemirror-failed"));
 }
 
 /** Stable builds neither read nor write this experimental preference. The

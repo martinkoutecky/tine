@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Note layout (GH #823): mirror the outline in note panes so bullets, indentation
 // and guide lines sit on the right. Device-wide, like the spell checker's switch,
 // in the existing app settings file; nothing goes into the graph. Until the user
@@ -23,7 +24,7 @@ export const noteLayoutDirAttr = (): "ltr" | "rtl" | undefined =>
 
 /** Apply at once and queue the device write; a failed write rolls back and reports. */
 export function setNoteLayoutRtl(on: boolean): void {
-  writePreference(choice, setChoice, on ? "rtl" : "ltr", next => backend().setAppString(KEY, next), "note layout");
+  writePreference(choice, setChoice, on ? "rtl" : "ltr", next => backend().setAppString(KEY, next), msg("toast-save-note-layout-failed"));
 }
 
 export function initNoteLayoutSetting(): void {

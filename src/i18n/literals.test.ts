@@ -10,6 +10,19 @@ const sitesOf = (text: string, rel = "src/components/X.tsx") => (scanSource(rel,
 // tine#107 G4 (DESIGN rev. 2 #4, #6): no NEW English reaches the UI outside the
 // catalog, and nothing resolves a message at module load.
 describe("the localization ratchet", () => {
+  it("recognizes imported catalog message parameters while retaining string and union toast sites", () => {
+    const sites = sitesOf(`
+      import type { Msg as Message } from "../i18n";
+      export function catalog(text: Message) { pushToast(text, "error"); }
+      export function literal(text: string) { pushToast(text, "error"); }
+      export function union(text: Message | string) { pushToast(text, "error"); }
+      export function shadow(text: Message) {
+        function nested(text: string) { pushToast(text, "error"); }
+      }
+    `);
+    expect(sites.map(site => site.owner)).toEqual(["literal", "union", "nested"]);
+    expect(sitesOf(`type Msg = string; function fake(text: Msg) { pushToast(text, "error"); }`)).toHaveLength(1);
+  });
   it("does not mark template substitutions as already reported literal text", () => {
     const sites = sitesOf(`export const Review = () => <>
       <button title={\`Action: \${flag ? "Collapse" : "Expand"}\`} />

@@ -9,7 +9,6 @@ import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
 import { changeGraphSetting } from "./graphPreferences";
 import { loadPreference, writePreference } from "./preferenceWrites";
-import { pushToast } from "./toasts";
 
 const KEY = "hover_preview_delay_seconds";
 const [delay, setDelay] = createSignal(1);
@@ -20,7 +19,7 @@ const valid = (value: number) => Number.isFinite(value) && value >= 0;
 /** Apply valid seconds and queue persistence. Failed writes roll back and toast. */
 export function setHoverPreviewDelaySeconds(value: number): void {
   if (!valid(value)) return;
-  writePreference(delay, setDelay, value, next => backend().setAppString(KEY, String(next)), "hover preview delay");
+  writePreference(delay, setDelay, value, next => backend().setAppString(KEY, String(next)), msg("toast-save-hover-delay-failed"));
 }
 
 /** Restore the device value; malformed stored values use the one-second default. */
@@ -48,5 +47,5 @@ export function previewsEnabled(): boolean {
 
 export function changePreviewsEnabled(on: boolean): void {
   changeGraphSetting("enable_tooltip", on, (next) => backend().setEnableTooltip(next),
-    () => pushToast(msg("toast-reference-previews-save-failed"), "error"));
+    msg("toast-reference-previews-save-failed"));
 }
