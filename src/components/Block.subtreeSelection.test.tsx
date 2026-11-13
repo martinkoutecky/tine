@@ -3,7 +3,8 @@ import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { loadSingle } from "../document/workingSet";
-import { pageByName, resetStore, selectedIds, selectionMarkdown, type OutlineScope } from "../document";
+import { pageByName, resetStore, selectBlock, selectedIds, selectionMarkdown, type OutlineScope } from "../document";
+import { persistCommentMarginHidden } from "../commentMarginPref";
 import { endEdit } from "../editorController";
 import { initParser } from "../render/parse";
 import { installKeybindings } from "../keybindings";
@@ -76,5 +77,17 @@ describe("subtree gestures in both editors (GH #941)", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true }));
       expect(selectedIds()).toEqual(["B", "B1", "B1a"]);
     } finally { dispose(); keys(); }
+  });
+
+  it("hiding the comment margin does not drop a selected parent's comment thread (review F2)", () => {
+    try {
+      loadSingle({ name: "C", title: "C", kind: "page", pre_block: null, blocks: [
+        { id: "parent", raw: "Parent", collapsed: false, children: [
+          { id: "comment", raw: "Remark\ntine.quote:: Parent", collapsed: false, children: [], properties: [["tine.quote", "Parent"]] }] }] });
+      expect(persistCommentMarginHidden(true)).toBe(true);
+      selectBlock("parent");
+      expect(selectedIds()).toEqual(["parent", "comment"]);
+      expect(selectionMarkdown()).toContain("Remark");
+    } finally { persistCommentMarginHidden(false); }
   });
 });

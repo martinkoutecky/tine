@@ -10,7 +10,7 @@ vi.mock("./document/tree", async original => {
 });
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
-import { clearSelection, deleteSelection, expandBlockSelection, extendSelectionTo, moveSelection, resetStore, selectBlock, selectedIds, selectionMarkdown, singleSelectedId, undo, type OutlineScope } from "./document";
+import { clearSelection, deleteSelection, expandBlockSelection, extendSelectionTo, moveSelection, resetStore, selectBlock, selectedIds, selectionMarkdown, singleSelectedId, topSelected, undo, type OutlineScope } from "./document";
 import { doc } from "./document/model";
 import type { BlockDto } from "./types";
 
@@ -115,4 +115,14 @@ describe("complete subtree selection units (GH #941)", () => {
     expect(doc.byId.B1a.parent).toBe("B1");
     clearSelection(); expect(selectedIds()).toEqual([]);
   });
+
+  it("query rows listing a child before its folded parent copy each block once (review F1)", () => {
+    loadSingle({ name: "Q", title: "Q", kind: "page", pre_block: null,
+      blocks: [block("parent", [block("child")], true)] });
+    const scope: OutlineScope = { roots: ["child", "parent"], navOnly: true };
+    selectBlock("child", scope); extendSelectionTo("parent", scope);
+    expect(topSelected()).toEqual(["parent"]);
+    expect(selectionMarkdown()).toBe("- parent\n\t- child");
+  });
+
 });

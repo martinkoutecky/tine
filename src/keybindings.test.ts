@@ -816,6 +816,22 @@ describe("pane-select Esc cascade", () => {
     dispose();
   });
 
+  it("a folded selected subtree survives the Escape round trip through pane-select (GH #941 review F3)", () => {
+    loadSingle({ name: "Fold", kind: "page", title: "Fold", pre_block: null, blocks: [
+      { id: "parent", raw: "Parent", collapsed: true, children: [{ id: "child", raw: "Child", collapsed: false, children: [] }] },
+    ] });
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    try {
+      selectBlock("parent");
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+      expect(paneSel()).not.toBeNull();
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+      expect(paneSel()).toBeNull();
+      expect(selectedIds()).toEqual(["parent", "child"]);
+    } finally { exitPaneSelect(); clearSelection(); dispose(); }
+  });
+
   it("never intercepts keys while a text field has focus (stale mode)", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings();

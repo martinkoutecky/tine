@@ -1140,7 +1140,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         if (matchesCommand(e, "editor/edit-selected-block") && editSelectedBlock()) {
           e.preventDefault(); resetSeq(); return;
         }
-        const previous = selectedIds().at(-1) ?? null;
+        const previous = topSelected().at(-1) ?? null;
         if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();
         // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to

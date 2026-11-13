@@ -4,7 +4,7 @@ import { prepareReferenceChangeNotice } from "./blocks";
 import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount } from "../../toasts";
 import { OutlineScope, depthOf, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder } from "../tree";
-import { visibleChildren } from "../commentOrder";
+import { commentsFirst } from "../commentOrder";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
 import { batch, createSignal, createRoot, createMemo, createComputed, untrack } from "solid-js";
@@ -94,7 +94,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
     if (fullIndex.has(id) || !doc.byId[id]) return;
     const at = fullOrder.length;
     fullIndex.set(id, at); fullOrder.push(id);
-    for (const child of visibleChildren(doc.byId[id].children)) visit(child);
+    for (const child of commentsFirst(doc.byId[id].children)) visit(child);
     fullEnd[at] = fullOrder.length - 1;
   };
   for (const id of order) visit(id);
@@ -131,7 +131,7 @@ const selectionState = createRoot(() => createMemo(() => {
   const add = (id: string) => {
     if (set.has(id) || !doc.byId[id]) return;
     set.add(id); ids.push(id);
-    for (const child of visibleChildren(doc.byId[id].children)) add(child);
+    for (const child of commentsFirst(doc.byId[id].children)) add(child);
   };
   if (i !== undefined && j !== undefined) {
     for (let at = Math.min(i, j); at <= Math.max(i, j); at = end[at] + 1) {
@@ -139,6 +139,13 @@ const selectionState = createRoot(() => createMemo(() => {
       roots.push(order[at]); add(order[at]);
     }
   }
+  // Query rows may list a child before its (folded) parent: keep only roots no
+  // selected ancestor already carries, so each block is emitted once.
+  const covered = (id: string) => {
+    for (let p = doc.byId[id]?.parent; p; p = doc.byId[p]?.parent) if (set.has(p)) return true;
+    return false;
+  };
+  if (roots.some(covered)) roots.splice(0, roots.length, ...roots.filter((id) => !covered(id)));
   return { topology, lo, hi, exact: { ids, roots, set } };
 }));
 
