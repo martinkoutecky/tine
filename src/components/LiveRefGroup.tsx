@@ -1,5 +1,6 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
+import { ownSelectionSurface } from "../document";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
 import { graphOwner, latestOwner } from "../owned";
@@ -146,6 +147,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
     initialCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
     excerptFull: createSignal({}), pendingEdits: createSignal(0), geometry: new Map(),
   };
+  ownSelectionSurface(occurrence.surface, undefined, ownerSurface);
   let alive = true;
   const [hasViewport, setHasViewport] = createSignal(false);
   onCleanup(() => { alive = false; });
@@ -548,6 +550,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // An embed's key names its host in the host's surface, so a caret kept on the
   // embed root survives the host moving (Tab, D-20261030-EMB) and remounting it.
   const surface = props.occurrence.surface;
+  const hostSurface = useContext(SurfaceContext);
   const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = props.occurrence.initialCollapsed;
   // Only ref/query results own local disclosure here. Writable inner embed folds
@@ -724,11 +727,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
             into the host page; the other rows stay surface-local. */}
         <EmbedNavExitContext.Provider value={
           props.surface === "embed" && props.hostBlockId
-            ? { hostBlockId: props.hostBlockId, firstRoot: () => groupedIds()[0], rowHost: (id) => {
+            ? { hostBlockId: props.hostBlockId, hostSurface, firstRoot: () => groupedIds()[0], rowHost: (id) => {
               // D-20261030-EMB: a whole-block host's one bullet is its root row.
               const host = props.hostBlockId!;
               return id === props.embedId && isBlockEmbedMacro(detectMacro(docNode(host)?.raw ?? "", formatForBlock(host)))
-                ? { id: host, scope: hostScope } : null;
+                ? { id: host, scope: hostScope, surface: hostSurface } : null;
             } }
             : null
         }>

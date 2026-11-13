@@ -72,6 +72,7 @@ import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
 import { createPageSeen } from "../seen/pageSeen";
 import { markSeenOnLeave } from "../seen/leave";
 import { createGraphResource } from "../graphResource";
+import { ownSelectionSurface } from "../document";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -456,6 +457,7 @@ export function PageView(): JSX.Element {
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
+  ownSelectionSurface(pane.paneId === "main" ? "main" : `pane:${pane.paneId}`, currentRoute);
   // A refused path-pinned route recovers when its exact file returns (GH #863).
   const pinnedPath = createPinnedPathRecovery(currentRoute, () => setLoadRetry(value => value + 1));
   // Leaving a routed page marks it seen (ADR 0079).

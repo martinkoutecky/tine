@@ -1,5 +1,6 @@
 import { t } from "../i18n";
 import { graphOwner } from "../owned";
+import { ownSelectionSurface } from "../document";
 import { rootIsRtl } from "../render/textDirection";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
@@ -207,6 +208,7 @@ export function RightSidebar(): JSX.Element {
             <For each={rightSidebar()}>
               {(item, i) => {
                 const key = surfaceKey(item);
+                ownSelectionSurface(key);
                 const collapse = (control: HTMLButtonElement) => {
                   const keepFocus = mainWindow.document.activeElement === control;
                   const next = !item.collapsed;

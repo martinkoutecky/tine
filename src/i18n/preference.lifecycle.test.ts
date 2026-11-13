@@ -37,7 +37,12 @@ const { setUiLanguage, startUiLanguage, uiLanguagePreference } = await import(".
 const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
 const until = (check: () => boolean) => vi.waitFor(() => { if (!check()) throw new Error("not yet"); }, { timeout: 4000, interval: 5 });
 // Each startUiLanguage() call subscribes once (one per webview in the app); use the latest.
-const broadcast = (payload: string) => listeners.at(-1)!({ payload });
+const broadcast = (payload: string) => {
+  // A broadcast follows a persisted write in the other window. Outstanding
+  // reads retain their captured promises; new reads see the new stored choice.
+  vi.spyOn(backend(), "getAppString").mockResolvedValue(payload);
+  listeners.at(-1)!({ payload });
+};
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -142,6 +147,7 @@ describe("the UI language lifecycle", () => {
 
   it("an older catalog failure after a newer success does not fall back to English (F2)", async () => {
     broadcast("zh-CN");
+    await until(() => held.length === 1);
     broadcast("zh-CN");
     await until(() => held.length === 2);
     const [older, newer] = held.splice(0);
