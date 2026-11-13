@@ -164,7 +164,7 @@ enum Command {
         #[command(flatten)]
         write: WriteArgs,
     },
-    /// Insert a page fragment, attributing every new block to its author.
+    /// Insert a page fragment, attributing new blocks unless --no-author is set.
     Add {
         /// Markdown or Org page fragment; `-` reads standard input.
         #[arg(value_name = "CONTENT", allow_hyphen_values = true)]
@@ -237,9 +237,8 @@ enum RunAction {
     Revert {
         #[arg(value_name = "RUN", env = "TINE_RUN")]
         run: String,
-        /// Name on the revert commits (default: TINE_AUTHOR, else agent).
-        #[arg(long)]
-        author: Option<String>,
+        #[command(flatten)]
+        authors: AuthorArgs,
         #[command(flatten)]
         read: ReadArgs,
     },
@@ -294,11 +293,30 @@ struct WriteArgs {
     /// `tine run begin`).
     #[arg(long, value_name = "RUN", env = "TINE_RUN")]
     run: Option<String>,
+    #[command(flatten)]
+    authors: AuthorArgs,
+}
+
+/// Shared block attribution and git identity options for CLI writes.
+#[derive(Debug, Args)]
+struct AuthorArgs {
     /// Author on created blocks and on the run's commits (default: TINE_AUTHOR,
     /// else agent; blank environment values count as unset). With
     /// `edit`, the flag (not the variable) also sets the block's tine.author::.
     #[arg(long)]
     author: Option<String>,
+    /// Skip automatic block attribution for personal scripts. Existing properties
+    /// and git run commit names stay unchanged.
+    #[arg(long, conflicts_with = "author")]
+    no_author: bool,
+}
+
+impl AuthorArgs {
+    fn args(&self, mut fields: serde_json::Value) -> serde_json::Value {
+        fields["author"] = serde_json::json!(self.author);
+        fields["no_author"] = serde_json::json!(self.no_author);
+        fields
+    }
 }
 
 impl WriteArgs {
@@ -307,9 +325,8 @@ impl WriteArgs {
         if let Some(object) = fields.as_object_mut() {
             object.insert("rev".into(), serde_json::json!(self.rev));
             object.insert("run".into(), serde_json::json!(self.run));
-            object.insert("author".into(), serde_json::json!(self.author));
         }
-        fields
+        self.authors.args(fields)
     }
 }
 
@@ -821,7 +838,7 @@ fn read_command(command: Command) -> i32 {
             };
             let mut args = write.args(json!({ "handle": handle, "text": text }));
             if edit_author_is_a_flag(std::env::args_os()) {
-                args["author_property"] = json!(write.author);
+                args["author_property"] = json!(write.authors.author);
             }
             write_verb(write.read.target(), "block.edit", args)
         }
@@ -876,10 +893,10 @@ fn read_command(command: Command) -> i32 {
                 "run.end",
                 json!({ "run": run, "message": message }),
             ),
-            RunAction::Revert { run, author, read } => write_verb(
+            RunAction::Revert { run, authors, read } => write_verb(
                 read.target(),
                 "run.revert",
-                json!({ "run": run, "author": author }),
+                authors.args(json!({ "run": run })),
             ),
         },
         _ => 2,
@@ -974,6 +991,31 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
+    }
+
+    #[test]
+    fn gh930_no_author_is_shared_by_writing_commands() {
+        for form in [
+            vec!["tine", "add", "text", "--page", "P"],
+            vec!["tine", "edit", "P/1~abcdef", "text"],
+            vec!["tine", "prop", "set", "P/1~abcdef", "status", "done"],
+            vec!["tine", "prop", "remove", "P/1~abcdef", "status"],
+            vec!["tine", "move", "P/1~abcdef", "--after", "P/2~abcdef"],
+            vec!["tine", "delete", "P/1~abcdef"],
+            vec!["tine", "ref", "P/1~abcdef"],
+            vec!["tine", "embed", "P/1~abcdef"],
+            vec!["tine", "page", "create", "P"],
+            vec!["tine", "page", "delete", "P"],
+            vec!["tine", "run", "revert", "run-id"],
+        ] {
+            let mut args = form;
+            args.push("--no-author");
+            Cli::try_parse_from(&args).unwrap();
+            args.extend(["--author", "Ada"]);
+            let error = Cli::try_parse_from(&args).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+            assert_eq!(error.exit_code(), 2);
+        }
     }
 
     #[test]

@@ -395,6 +395,11 @@ or is killed while its write stands in line does not cancel it: the write can la
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
   nothing changes. **`--author NAME`** (or `TINE_AUTHOR`, default `agent`) names the agent on created blocks'
   `tine.author::` and on the run's commits; on `block.edit`, see above.
+  **`--no-author`** skips automatic block attribution for personal scripts, including every
+  block in an added outline. It overrides `TINE_AUTHOR` for block attribution, keeps existing
+  and explicitly supplied properties as an app edit does, and leaves run commit identity unchanged.
+  It conflicts with `--author NAME` (usage error, exit 2). An explicitly empty `--author`
+  remains refused (exit 6). MCP does not expose this flag.
 
 Kind `written`. Write replies carry no page text.
 

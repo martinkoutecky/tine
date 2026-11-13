@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
