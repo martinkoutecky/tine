@@ -9,7 +9,7 @@ import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
-import { LineGutter } from "../render/LineGutter";
+import { codeGutterStyle, LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { editorCompletions, propertyNameInputCaret } from "../editor/editorCompletions";
 import { reportUiFailure } from "../uiFailure";
@@ -713,6 +713,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     return fence ? { before: raw.slice(0, fence.start), after: raw.slice(fence.end) } : null;
   });
   const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
+  const codeLines = createMemo(() => codeEditing() ? (codeShown()?.body ?? editorValue()).split("\n") : []);
   const codeWrapCommit = codeView.join;
   // One door to the fence language picker: `/Code block` and the hand-typed ```
   // scaffold both come here (GH #507). While open `codeShown` keeps the raw
@@ -2213,17 +2214,15 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   return (
     <div class="editor-wrap" dir={blockDirAttr(docNode(props.id)?.raw ?? "", pageFmt())} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
       <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></BlockRenderBoundary></div>}</Show>
-      <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
+      <div class="code-editor-region" style={codeGutterStyle(codeLines().length)} dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
         <Show when={codeShown() ?? codeBodyProjection(editorValue(), pageFmt())}>
           {code => <CopyButton text={code().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
         </Show>
-        <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
+        <LineGutter lines={codeLines()} code />
       </Show>
-      <Show when={isCalc()}>
-        <LineGutter lines={calcRows().map(row => row.input)} />
-      </Show>
+      <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>
       <textarea
         ref={ref}
         class="block-editor"
