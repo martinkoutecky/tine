@@ -188,20 +188,32 @@ createRoot(() => {
   let previous: ReturnType<typeof selectionState> | null = null;
   createComputed(() => {
     const next = selectionState();
+    // Notify only keys someone reads: walk the changed members or the registered
+    // keys, whichever is fewer, so extending past a folded parent never pays for
+    // its hidden descendants (advance() on an unread key is a no-op anyway).
+    const prev = previous;
+    const size = (state: ReturnType<typeof selectionState> | null) => !state ? 0
+      : state.exact ? state.exact.ids.length : state.hi - state.lo + 1;
+    const interval = prev && !prev.exact && !next.exact && prev.topology === next.topology;
+    // O(1): the changed source intervals of an outline selection; otherwise both member lists bound it.
+    const ranges: [number, number][] = interval ? [
+      [prev.lo, Math.min(prev.hi, next.lo - 1)], [Math.max(prev.lo, next.hi + 1), prev.hi],
+      [next.lo, Math.min(next.hi, prev.lo - 1)], [Math.max(next.lo, prev.hi + 1), next.hi]] : [];
+    const changed = interval ? ranges.reduce((n, [lo, hi]) => n + Math.max(0, hi - lo + 1), 0) : size(prev) + size(next);
     batch(() => {
-      if (previous && !previous.exact && !next.exact && previous.topology === next.topology) {
-        const advance = (lo: number, hi: number) => {
+      if (changed > selectedMembership.size) {
+        for (const id of [...selectedMembership.keys()]) {
+          if (membership(prev, id) !== membership(next, id)) selectedMembership.advance(id);
+        }
+      } else if (interval) {
+        for (const [lo, hi] of ranges) {
           for (let at = lo; at <= hi; at++) selectedMembership.advance(next.topology.fullOrder[at]);
-        };
-        advance(previous.lo, Math.min(previous.hi, next.lo - 1));
-        advance(Math.max(previous.lo, next.hi + 1), previous.hi);
-        advance(next.lo, Math.min(next.hi, previous.lo - 1));
-        advance(Math.max(next.lo, previous.hi + 1), next.hi);
+        }
       } else {
         const ids = (state: ReturnType<typeof selectionState> | null) => !state ? [] : state.exact?.ids
           ?? state.topology.fullOrder.slice(state.lo, state.hi + 1);
-        for (const id of ids(previous)) if (!membership(next, id)) selectedMembership.advance(id);
-        for (const id of ids(next)) if (!membership(previous, id)) selectedMembership.advance(id);
+        for (const id of ids(prev)) if (!membership(next, id)) selectedMembership.advance(id);
+        for (const id of ids(next)) if (!membership(prev, id)) selectedMembership.advance(id);
       }
     });
     previous = next;

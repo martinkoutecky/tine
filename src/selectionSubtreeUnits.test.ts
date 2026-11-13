@@ -13,6 +13,7 @@ import { loadSingle } from "./document/workingSet";
 import { clearSelection, deleteSelection, expandBlockSelection, extendSelectionTo, moveSelection, resetStore, selectBlock, selectedIds, selectionMarkdown, singleSelectedId, topSelected, undo, type OutlineScope } from "./document";
 import { doc } from "./document/model";
 import type { BlockDto } from "./types";
+import { ChangeKeyRegistry } from "./changeKeyRegistry";
 
 const block = (id: string, children: BlockDto[] = [], collapsed = false): BlockDto => ({ id, raw: id, children, collapsed });
 function load(collapsed = false) {
@@ -81,6 +82,22 @@ describe("complete subtree selection units (GH #941)", () => {
     expect(selectedIds()).toEqual(Array.from({ length: size - 3 }, (_, at) => `n${at + 1}`));
     expect(counts.orders).toBe(0);
     expect(elapsed).toBeLessThan(500);
+  });
+
+  it.each([32, 4096])("extending past a folded parent with %i hidden children notifies independently of them (review round 2)", hidden => {
+    loadSingle({ name: "Fold", title: "Fold", kind: "page", pre_block: null, blocks: [block("A"),
+      block("B", Array.from({ length: hidden }, (_, at) => block(`h${at}`)), true), block("C")] });
+    selectBlock("A");
+    const advance = vi.spyOn(ChangeKeyRegistry.prototype, "advance");
+    const started = performance.now();
+    moveSelection(1, true);
+    moveSelection(1, true);
+    moveSelection(-1, true);
+    const elapsed = performance.now() - started;
+    expect(selectedIds()).toHaveLength(hidden + 2);
+    expect(advance.mock.calls.length).toBeLessThanOrEqual(16);
+    expect(elapsed).toBeLessThan(50);
+    advance.mockRestore();
   });
 
   it.each(["shift-click", "drag"])("%s completes both endpoints across nesting levels", () => {
