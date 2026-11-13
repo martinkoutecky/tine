@@ -6,7 +6,7 @@ import { msg } from "./i18n";
 
 import { backend } from "./backend";
 import { readOwned, type Owner, bindingOwner } from "./owned";
-import { pageByName, admitPageFile, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove, reportPageLoadRefusal } from "./document";
+import { admitRead, pageByName, admitPageFile, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove, reportPageLoadRefusal } from "./document";
 import { journalTitle, appNow } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
@@ -14,10 +14,9 @@ import { openJournals } from "./router";
 
 async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner): Promise<boolean> {
   if (pageByName(name)) return true;
-  const result = await readOwned(owner, backend().getPage(name, kind));
-  if (result.kind === "stale" || !result.value) return false;
-  // A declined replacement is a refusal: stop, never assume it loaded.
-  const refusal = ensurePageLoaded(result.value);
+  const result = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => dto ? ensurePageLoaded(dto) : "missing");
+  if (result.kind === "stale" || result.value === "missing") return false;
+  const refusal = result.value;
   if (refusal) reportPageLoadRefusal(refusal, "Nothing was carried.");
   return !refusal && !!pageByName(name);
 }

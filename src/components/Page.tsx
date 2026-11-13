@@ -1,11 +1,12 @@
 import { PageIcon } from "./PageIcon";
+import { readJournalFeedWindow } from "../journalFeedRead";
 import { pageIcon } from "../pageIconBatch";
 import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { admitRead, mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -268,59 +269,63 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   const browserDay = localDayKey();
   loadingGeneration = generation;
   try {
-    const result = await readOwned(requestOwner, mergeReferences
+    let retryDay = false;
+    const result = await admitRead(requestOwner, () => mergeReferences
       ? backend().journalFeedPage(FEED_PAGE, null, false, oldestFeedDay())
-      : backend().journalFeedPage(FEED_PAGE, null));
-    if (result.kind === "stale") { recordFeedReason("read-stale"); return null; }
-    const response = result.value;
-    reportUnreadableJournals(response);
-    if (!responseMatches(browserDay, response)) {
-      recordFeedReason("day-mismatch");
-      if (generation === feedGeneration && ownerIsLive(owner) && !retried && (rollover || !feedHasActiveEdit())) {
-        return restartJournalFeed(owner, true, rollover);
+      : backend().journalFeedPage(FEED_PAGE, null), response => withToday(response.pages).map(page => page.name), response => {
+      reportUnreadableJournals(response);
+      if (!responseMatches(browserDay, response)) {
+        recordFeedReason("day-mismatch");
+        if (generation === feedGeneration && ownerIsLive(owner) && !retried && (rollover || !feedHasActiveEdit())) {
+          retryDay = true;
+          return null;
+        }
+        // A stale/disposed owner cannot create deferred work for a later surface.
+        if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+        return null;
       }
-      // A stale/disposed owner cannot create deferred work for a later surface.
-      if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+      // Clear the deferred flag before loadFeed synchronously updates doc.feed;
+      // otherwise the intentionally reactive pending-retry effect observes the
+      // old true value during that store write and starts a duplicate restart.
+      if (generation !== feedGeneration || !ownerIsLive(owner) || (!preserve && feedHasActiveEdit())) {
+        recordFeedReason(generation !== feedGeneration ? "generation-changed"
+          : !ownerIsLive(owner) ? "owner-retired" : "active-edit");
+        if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+        return null;
+      }
+      pendingFeedRestart = false;
+      const restoreAnchors = preserve ? [...feedViewportAnchors].map(capture => capture()) : [];
+      const loaded = loadFeed(withToday(response.pages), {
+        endEdit: false,
+        preserveExisting: preserve,
+        mergeByDay: mergeReferences,
+        isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
+      });
+      for (const restore of restoreAnchors) restore?.();
+      if (loaded === "stale") { recordFeedReason("admission-stale"); return null; }
+      // The whole window is withheld, as master defers its feed atomically: a
+      // published feed never shows another file as a requested day.
+      if (loaded !== "published") {
+        recordFeedReason("admission-refused");
+        return new FeedWithheld(feedDayRefused(loaded, owner));
+      }
+      setFeedRefusal(null);
+      setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
+      publishedFeedEpoch = owner.graphEpoch;
+      publishedFeedNames = feedNames();
+      journalAsOfDay = response.as_of_day;
+      nextBeforeDay = response.next_before_day;
+      feedDone = response.done;
+      feedReferencesPending = response.references_pending === true;
+      requestFrame(undefined, () => {
+        if (generation === feedGeneration) paintedFeedGeneration = generation;
+      });
+      if (feedReferencesPending) void completeJournalFeed(owner, generation, browserDay);
       return null;
-    }
-    // Clear the deferred flag before loadFeed synchronously updates doc.feed;
-    // otherwise the intentionally reactive pending-retry effect observes the
-    // old true value during that store write and starts a duplicate restart.
-    if (generation !== feedGeneration || !ownerIsLive(owner) || (!preserve && feedHasActiveEdit())) {
-      recordFeedReason(generation !== feedGeneration ? "generation-changed"
-        : !ownerIsLive(owner) ? "owner-retired" : "active-edit");
-      if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
-      return null;
-    }
-    pendingFeedRestart = false;
-    const restoreAnchors = preserve ? [...feedViewportAnchors].map(capture => capture()) : [];
-    const loaded = loadFeed(withToday(response.pages), {
-      endEdit: false,
-      preserveExisting: preserve,
-      mergeByDay: mergeReferences,
-      isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
     });
-    for (const restore of restoreAnchors) restore?.();
-    if (loaded === "stale") { recordFeedReason("admission-stale"); return null; }
-    // The whole window is withheld, as master defers its feed atomically: a
-    // published feed never shows another file as a requested day.
-    if (loaded !== "published") {
-      recordFeedReason("admission-refused");
-      return new FeedWithheld(feedDayRefused(loaded, owner));
-    }
-    setFeedRefusal(null);
-    setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
-    publishedFeedEpoch = owner.graphEpoch;
-    publishedFeedNames = feedNames();
-    journalAsOfDay = response.as_of_day;
-    nextBeforeDay = response.next_before_day;
-    feedDone = response.done;
-    feedReferencesPending = response.references_pending === true;
-    requestFrame(undefined, () => {
-      if (generation === feedGeneration) paintedFeedGeneration = generation;
-    });
-    if (feedReferencesPending) void completeJournalFeed(owner, generation, browserDay);
-    return null;
+    if (result.kind === "stale") { recordFeedReason("read-stale"); return null; }
+    if (retryDay) return restartJournalFeed(owner, true, rollover);
+    return result.value;
   } catch (error) {
     recordFeedReason("feed-error", error);
     // A failed refresh must leave the displayed feed and its cursor usable.
@@ -347,24 +352,23 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
   const live = () => generation === feedGeneration && !!currentOwner() && journalAsOfDay === day && localDayKey() === day;
   const names = feedNames();
   try {
-    const result = await readOwned(graphOwner(live), backend().journalFeedPage(FEED_PAGE, null, true, oldestFeedDay()));
-    if (result.kind === "stale") return;
-    if (names !== feedNames()) { void completeJournalFeed(owner, generation, day); return; }
-    const response = result.value;
-    const publicationOwner = currentOwner();
-    if (!publicationOwner) return;
-    if (!responseMatches(day, response)) { pendingFeedRestart = true; return; }
-    reportUnreadableJournals(response);
-    const restores = paintedFeedGeneration === generation ? [...feedViewportAnchors].map(capture => capture()) : [];
-    const loaded = loadFeed(withToday(response.pages), { endEdit: false, preserveExisting: true, mergeByDay: true, isRequestLive: live });
-    for (const restore of restores) restore?.();
-    if (loaded === "stale") return;
-    if (loaded !== "published") { feedDayRefused(loaded, publicationOwner); return; }
-    publishedFeedNames = feedNames();
-    setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
-    nextBeforeDay = response.next_before_day;
-    feedDone = response.done;
-    feedReferencesPending = false;
+    await admitRead(graphOwner(live), () => backend().journalFeedPage(FEED_PAGE, null, true, oldestFeedDay()), response => withToday(response.pages).map(page => page.name), response => {
+      if (names !== feedNames()) { void completeJournalFeed(owner, generation, day); return; }
+      const publicationOwner = currentOwner();
+      if (!publicationOwner) return;
+      if (!responseMatches(day, response)) { pendingFeedRestart = true; return; }
+      reportUnreadableJournals(response);
+      const restores = paintedFeedGeneration === generation ? [...feedViewportAnchors].map(capture => capture()) : [];
+      const loaded = loadFeed(withToday(response.pages), { endEdit: false, preserveExisting: true, mergeByDay: true, isRequestLive: live });
+      for (const restore of restores) restore?.();
+      if (loaded === "stale") return;
+      if (loaded !== "published") { feedDayRefused(loaded, publicationOwner); return; }
+      publishedFeedNames = feedNames();
+      setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
+      nextBeforeDay = response.next_before_day;
+      feedDone = response.done;
+      feedReferencesPending = false;
+    });
   } catch (error) {
     if (live()) {
       pendingFeedRestart = true;
@@ -549,62 +553,64 @@ export function PageView(): JSX.Element {
           // loadRoutedPage publishes loadedPage below and must not restart us.
           const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
           let readSource: PageReadSource | null = null;
-          const result = await readOwned(routeOwner, r.path
+          const result = await admitRead(routeOwner, () => r.path
             ? backend().getPageByPath(r.path, source => { readSource = source; }).catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
-            : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind));
-          if (result.kind === "stale") return;
-          const dto = result.value;
-          // A saved path can use another case spelling on a case-insensitive
-          // volume, and a route can guess the wrong kind (GH #863: whether a file
-          // is a journal day is the store's answer for its path). Adopt the file's
-          // spelling and kind in tabs, Recent, and the route before loading it.
-          if (dto?.id && routeAdoptsRead(r, dto, r.path ?? loadedPath)) {
-            const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
-            const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
-            if (!r.path) { followPagesInNavigation((p) => p.name === from.name && p.pageKind === from.pageKind && !p.path ? to : null); rewritePageTargetAcrossPanes(from, to); }
-            else { renamePageInNavigation(from, to); followChangedIdentity(from, to); router.rewritePageTarget(from, to); }
-            return;
-          }
-          if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name
-              && dto.id === (r.path ?? loadedPath)) {
-            if (!rekeyPageIdentityByPath(dto.id, dto.name, dto.rev ?? null)
-                && loadedPage(r.name)?.id === dto.id) {
-              throw new Error("The selected physical page has an active edit or conflicting identity.");
+            : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind), dto => [r.name, ...(dto ? [dto.name] : [])], dto => {
+            // A saved path can use another case spelling on a case-insensitive
+            // volume, and a route can guess the wrong kind (GH #863: whether a file
+            // is a journal day is the store's answer for its path). Adopt the file's
+            // spelling and kind in tabs, Recent, and the route before loading it.
+            if (dto?.id && routeAdoptsRead(r, dto, r.path ?? loadedPath)) {
+              const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
+              const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
+              // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
+              if (!r.path) { followPagesInNavigation((p) => p.name === from.name && p.pageKind === from.pageKind && !p.path ? to : null); rewritePageTargetAcrossPanes(from, to); }
+              else { renamePageInNavigation(from, to); followChangedIdentity(from, to); router.rewritePageTarget(from, to); }
+              return;
             }
-            const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
-            const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to);
-            followChangedIdentity(from, to);
-            rewritePageTargetAcrossPanes(from, to);
-            return;
-          }
-          if (r.path && refusedPageOpen("route", r, dto, readSource)) {
-            pathRefusal = dto ? "mismatch" : "missing";
-            throw new Error("The selected physical page is no longer available at that path.");
-          }
-          // Core page identity is Unicode-case-insensitive while display names
-          // preserve their original spelling. Alias-map warmup normally
-          // canonicalizes before navigation; this adoption also covers an early
-          // click or restored route that raced that map. Re-route once so the
-          // exact-keyed working set, tab history, Recent, and editor all own the
-          // backend's canonical display name instead of a phantom case variant.
-          if (dto && !r.path && r.pageKind === "page" && dto.name !== r.name) {
-            adoptResolvedPageName(r.name, dto.name);
-            router.replaceActiveRoute({ ...r, name: dto.name });
-            return;
-          }
-          // null = page doesn't exist yet → start a fresh empty page. A failed
-          // read throws and is caught below, so we never overwrite a page whose
-          // load errored with empty content.
-          const refusal = loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
-          if (refusal) {
-            // Ending the feed edit can leave its host close in flight: retry through the same gate (GH #863).
-            cancelRetry = whenPageReplaceable(refusal.page, retryKey, () => { if (owned()) setLoadRetry(v => v + 1); });
-            throw new Error(pageLoadRefusalMessage(refusal));
-          }
-          if (r.path && pageByName(r.name)?.id !== r.path)
-            throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
+            if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name
+                && dto.id === (r.path ?? loadedPath)) {
+              if (!rekeyPageIdentityByPath(dto.id, dto.name, dto.rev ?? null)
+                  && loadedPage(r.name)?.id === dto.id) {
+                throw new Error("The selected physical page has an active edit or conflicting identity.");
+              }
+              const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
+              const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
+              renamePageInNavigation(from, to);
+              followChangedIdentity(from, to);
+              rewritePageTargetAcrossPanes(from, to);
+              return;
+            }
+            if (r.path && refusedPageOpen("route", r, dto, readSource)) {
+              pathRefusal = dto ? "mismatch" : "missing";
+              throw new Error("The selected physical page is no longer available at that path.");
+            }
+            // Core page identity is Unicode-case-insensitive while display names
+            // preserve their original spelling. Alias-map warmup normally
+            // canonicalizes before navigation; this adoption also covers an early
+            // click or restored route that raced that map. Re-route once so the
+            // exact-keyed working set, tab history, Recent, and editor all own the
+            // backend's canonical display name instead of a phantom case variant.
+            if (dto && !r.path && r.pageKind === "page" && dto.name !== r.name) {
+              adoptResolvedPageName(r.name, dto.name);
+              router.replaceActiveRoute({ ...r, name: dto.name });
+              return;
+            }
+            // null = page doesn't exist yet → start a fresh empty page. A failed
+            // read throws and is caught below, so we never overwrite a page whose
+            // load errored with empty content.
+            const refusal = loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
+            if (refusal) {
+              // Ending the feed edit can leave its host close in flight: retry through the same gate (GH #863).
+              cancelRetry = whenPageReplaceable(refusal.page, retryKey, () => { if (owned()) setLoadRetry(v => v + 1); });
+              throw new Error(pageLoadRefusalMessage(refusal));
+            }
+            if (r.path && pageByName(r.name)?.id !== r.path)
+              throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
+            return true;
+          });
+          const current = loadedPage(r.name);
+          if (result.kind === "current" ? !result.value : !current || current.kind !== r.pageKind || (!!r.path && current.id !== r.path)) return;
         }
         if (!owned()) return;
         setLoadedRoute(r);
@@ -643,33 +649,29 @@ export function PageView(): JSX.Element {
     const includeReferences = !feedReferencesPending;
     loadingGeneration = generation;
     try {
-      let result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, includeReferences));
-      if (result.kind === "stale") return;
-      // Completion now owns a reference-inclusive window/cursor. A file-only
-      // read begun before it cannot advance that cursor or declare it done.
-      // Reissue from the authoritative cursor, retaining this pagination lock
-      // and route owner; completion may already have covered the whole range.
-      if (!includeReferences && !feedReferencesPending) {
-        if (feedDone || nextBeforeDay === null) return;
-        cursor = nextBeforeDay;
-        result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, true));
-      }
-      if (result.kind === "stale") return;
-      const response = result.value;
-      reportUnreadableJournals(response);
-      if (
-        generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
-        cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)
-      ) {
-        if (generation === feedGeneration && ownerIsLive(owner)) await refreshJournalFeedForCurrentDay(owner);
-        return;
-      }
-      if (response.pages.length) {
-        for (const refusal of appendFeed(response.pages)) feedDayRefused(refusal, owner);
-        publishedFeedNames = feedNames();
-      }
-      nextBeforeDay = response.next_before_day;
-      feedDone = response.done;
+      const readWindow = () => readJournalFeedWindow(requestOwner, FEED_PAGE, cursor, includeReferences,
+        () => !feedReferencesPending ? { done: feedDone, before: nextBeforeDay } : null);
+      let restart = false;
+      await admitRead(requestOwner, readWindow, window => window?.response.pages.map(page => page.name) ?? [], window => {
+        if (!window) return;
+        cursor = window.cursor;
+        const response = window.response;
+        reportUnreadableJournals(response);
+        if (
+          generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
+          cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)
+        ) {
+          restart = generation === feedGeneration && ownerIsLive(owner);
+          return;
+        }
+        if (response.pages.length) {
+          for (const refusal of appendFeed(response.pages)) feedDayRefused(refusal, owner);
+          publishedFeedNames = feedNames();
+        }
+        nextBeforeDay = response.next_before_day;
+        feedDone = response.done;
+      });
+      if (restart) await refreshJournalFeedForCurrentDay(owner);
     } catch (error) {
       if (requestOwner()) {
         pendingFeedRestart = true;

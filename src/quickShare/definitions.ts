@@ -7,7 +7,7 @@
 // deleteBlock) and its normal guarded save; this module adds no write path.
 import { backend } from "../backend";
 import {
-  appendQueryBlock, blockProperty, blockWritable, childIds, deleteBlock, ensurePageLoaded, flushPage, formatForPage,
+  admitRead, appendQueryBlock, blockProperty, blockWritable, childIds, deleteBlock, ensurePageLoaded, flushPage, formatForPage,
   node, pageByName, pageRoots, queryBlockRaw, reportPageLoadRefusal, setBlockProperty,
 } from "../document";
 import { SHARE_PROPERTY, ensureExportsPage, locateExportsPages } from "../exportsPage";
@@ -201,10 +201,10 @@ async function rewriteShareProperty(needle: string, matches: (value: string) => 
   for (const [name, kind] of pages) {
     if (!owner()) return changed;
     if (!pageByName(name)) {
-      const loaded = await readOwned(owner, backend().getPage(name, kind));
+      const loaded = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => dto ? ensurePageLoaded(dto) : "missing");
       if (loaded.kind === "stale") return changed;
-      if (!loaded.value) continue;
-      const refusal = ensurePageLoaded(loaded.value);
+      if (loaded.value === "missing") continue;
+      const refusal = loaded.value;
       if (refusal) { reportPageLoadRefusal(refusal, "Its share property was not changed."); failed.push(name); continue; }
     }
     const ids = pageBlocks(name).filter(carries);

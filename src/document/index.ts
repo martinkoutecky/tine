@@ -91,7 +91,11 @@
  * `applyGraphChangesBulk` applies a checkout-sized batch with one revision
  * bump, at most one feed restart and one summary toast. With "always ask"
  * (conflictPolicy.ts) the one silent case, a loaded clean page, is held for its
- * bar instead; `replayDeferredExternalReloads` is the focus-return sweep. */
+ * bar instead; `replayDeferredExternalReloads` is the focus-return sweep.
+ * Own publication summaries refresh loaded unheld physical owners through
+ * the same safe-reload gate, bypassing the outside-change policy. Working-set
+ * read admission uses local generations, with one bounded reread; see
+ * `docs/storage-contract.md`. */
 export { blockIsGridView, blockIsOpaqueSheetView, collapseEpochOf, node, onBlockRawChanged, onPageRawChanged, someBlockInTrees, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName, pageReadOnly } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { trackAssetWrite } from "./assetWrites";
@@ -99,9 +103,10 @@ export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswe
 export { pendingDataRevision } from "./host/wiring";
 export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
+export { admitRead } from "./readAdmission";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 export { evictIfNeeded } from "./workingSet";
-export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageNearViewport, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
+export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageNearViewport, pinPageWhileDrafting, registerPaneRouteProvider, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { followPageIdentity, installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, queryBlockRaw, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";

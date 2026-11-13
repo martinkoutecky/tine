@@ -2,8 +2,8 @@ import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueI
 import { nearestAncestors } from "../render/blockTrail";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
-import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
+import { graphOwner, latestOwner } from "../owned";
+import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
@@ -264,25 +264,22 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       const root = graphMeta()?.root ?? "";
       const owner = latestOwner(readScope, "page", graphOwner(() => alive && props.readCurrent() &&
         graphEpoch() === epoch && (graphMeta()?.root ?? "") === root));
-      const read = () => readOwned(owner, path ? backend().getPageByPath(path) : backend().getPage(p, k));
-      const result = scheduled ? await queueReferenceRead(read, owner, priority) : await read();
-      if (!result || !owner()) return false;
-      if (result.kind === "stale") return false;
-      const dto = result.value;
-      // The component may have unmounted while this read was in flight. Never
-      // let an old graph's DTO enter the new graph's shared working set.
-      if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
-      // Page names are not unique across kinds, while the frontend working set
-      // is name-keyed. Refuse a page/journal twin that occupied the slot during
-      // the await, and reject a mismatched backend response defensively.
-      const after = pageByName(p);
-      if (after) return after.kind === k && (!path || after.id === path);
-      if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
-      const admit = () => owner() && !ensurePageLoaded(dto);
-      const admitted = scheduled ? await queueReferenceCommit(admit, owner, priority) : admit();
-      if (!admitted || !owner()) return false; // declined: stay on the DTO path
-      const loaded = pageByName(p);
-      return loaded?.kind === k && (!path || loaded.id === path);
+      const read = () => path ? backend().getPageByPath(path) : backend().getPage(p, k);
+      const result = await admitRead(owner, () => scheduled ? queueReferenceRead(read, owner, priority) : read(), dto => [p, ...(dto ? [dto.name] : [])], dto => {
+        // The component may have unmounted while this read was in flight. Never
+        // let an old graph's DTO enter the new graph's shared working set.
+        if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
+        // Page names are not unique across kinds, while the frontend working set
+        // is name-keyed. Refuse a page/journal twin that occupied the slot during
+        // the await, and reject a mismatched backend response defensively.
+        const after = pageByName(p);
+        if (after) return after.kind === k && (!path || after.id === path);
+        if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
+        if (ensurePageLoaded(dto)) return false;
+        const loaded = pageByName(p);
+        return loaded?.kind === k && (!path || loaded.id === path);
+      }, scheduled ? commit => queueReferenceCommit(commit, owner, priority) : undefined);
+      return result.kind === "current" && result.value;
     },
     { storage: initial => {
       const [read, write] = createSignal<boolean | undefined>(initial);

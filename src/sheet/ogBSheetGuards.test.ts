@@ -15,8 +15,10 @@ it("I-12: sheet transfers use the shared hidden-key answerer, rename uses parser
   expect(rename).not.toContain("transitionFence");
   expect(rename).not.toContain("[A-Za-z0-9_./-]");
   const hydration = read("./queryHydration.ts");
-  expect(hydration).toContain("if (occupied) return;");
-  expect(hydration).toContain("if (after) return;");
+  expect(hydration).toContain("admitRead(graphOwner(() => sameGraph(root, epoch) && !pageByName(group.page))");
+  const admission = read("../document/readAdmission.ts");
+  expect(admission).toContain("attempt < 2 && owner()");
+  expect(admission).toContain('if (!owner()) return { kind: "stale" }');
   expect(hydration).toContain("identitiesByName.get(group.page)?.size === 1");
 });
 

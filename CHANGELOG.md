@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Late page reads preserve newer saved text, and merges and conflict resolutions refresh pages already on screen (Hd-bI).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
 - Block selections now include each selected block's whole subtree, folded children included. Shift+Up/Down extend by sibling subtrees, and Shift+click, dragging, select-all and bulk actions use the same selection. Copying a parent always includes its children; the parent-copy setting has been retired (#941).
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
