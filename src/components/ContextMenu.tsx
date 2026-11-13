@@ -26,7 +26,7 @@ import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, topSelected, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock, removeAuthor, removeAuthorTarget } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
@@ -1156,10 +1156,10 @@ function favoriteAction(id: string): MenuAction {
 function blockActions(id: string, x: number, y: number, commentSelection: ReturnType<typeof renderedSelectionIn> = null): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
-  const authorTarget = removeAuthorTarget(multi ? topSelected() : [id]);
   const commentRoot = threadRootOf(id);
   const commentParent = commentRoot ? docNode(commentRoot)!.parent! : id;
   const ids = multi ? selected : [id];
+  const authorActions = removeAuthorTarget(ids) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(ids) }] : [];
   const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
   const text = () => multi ? selectionMarkdown() : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
   const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), msg("context-menu-ui-copied", { count: ids.length }));
@@ -1175,6 +1175,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
   if (!writable) {
     return [
+      ...authorActions,
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
       { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
@@ -1198,7 +1199,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
-    ...(authorTarget !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(authorTarget) }] : []),
+    ...authorActions,
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).

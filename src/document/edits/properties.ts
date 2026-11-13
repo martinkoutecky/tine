@@ -70,20 +70,29 @@ export function blockWritable(id: string): boolean {
   return !!node && pageWritable(node.page);
 }
 
-/** Set (or remove, when value is null) a `key:: value` block property. Property
- *  lines live immediately after the first line, before body text, matching OG's
- *  block-property placement and keeping every property writer on one path. */
-export function setBlockProperty(id: string, key: string, value: string | null) {
-  const node = doc.byId[id];
-  if (!node || !blockWritable(id)) return;
-  let raw: string;
+/** Set/remove a block property on one block or a batch. Read-only and unchanged
+ * blocks are skipped. Parser edits cost O(target bytes), the undo snapshot and
+ * guarded save O(affected page bytes): one snapshot and store publication per
+ * batch, one save notification per page. */
+export function setBlockProperty(target: string | readonly string[], key: string, value: string | null) {
+  const ids = typeof target === "string" ? [target] : target;
+  const changes: { id: string; page: string; raw: string }[] = [];
   try {
-    raw = editBlock(node.raw,formatForBlock(id),{kind:"property",key,value});
+    for (const id of ids) {
+      const node = doc.byId[id];
+      if (!node || !blockWritable(id)) continue;
+      const raw = editBlock(node.raw, formatForBlock(id), { kind: "property", key, value });
+      if (raw !== node.raw) changes.push({ id, page: node.page, raw });
+    }
   } catch (e) { pushToast(rawText(String(e)),"error"); return; }
-  if (raw === node.raw) return;
-  pushUndo(`prop:${id}:${key}`, [node.page]);
-  setDoc("byId",id,"raw",raw);
-  markDirty(node.page,"save-block");
+  if (!changes.length) return;
+  const pages = [...new Set(changes.map(change => change.page))];
+  pushUndo(`prop:${typeof target === "string" ? target : "selection"}:${key}`, pages);
+  if (changes.length === 1) setDoc("byId", changes[0].id, "raw", changes[0].raw);
+  else setDoc(produce(state => {
+    for (const change of changes) writeRaw(state, change.id, change.raw);
+  }));
+  for (const page of pages) markDirty(page, "save-block");
 }
 
 /** Where a page's properties are read from and written to, in file order:
