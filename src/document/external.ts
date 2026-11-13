@@ -15,7 +15,7 @@ import { readLoadedPublicationPages, loadedPageByPath, pageByName } from "./mode
 import { admitRead, invalidatePageRead, invalidatePageReadKey } from "./readAdmission";
 import { acceptHeldPush, hostHolds, isConflicted } from "./host/wiring";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
-import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
+import { forgetPage, rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -176,12 +176,27 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   }
   if (pageByName(currentName) || ui?.pageOpen(c.name)) {
     const exact = c.path && loadedName && (own || loadedName !== c.name) ? c.path : null;
+    let disappeared = false;
     const result = await admitRead(owner, () => exact ? backend().getPageByPath(exact) : backend().getPage(c.name, c.kind), dto => [currentName, ...(dto ? [dto.name] : [])], dto => {
-      if (!dto || (exact && dto.id !== exact)) return;
+      if (!dto) { disappeared = !!loaded?.id; return; }
+      if (exact && dto.id !== exact) return;
       if (exact && dto.name !== currentName && !rekeyPageIdentityByPath(exact, dto.name, dto.rev ?? null)) return;
       if (!reloadPageIfStillSafe(dto.name, toLoadablePage(dto, dto.name))) deferExternalReload(currentName, c, own);
     });
     if (result.kind === "stale") return;
+    if (disappeared) {
+      if (!owner()) return;
+      // Retirement has a stricter gate than a same-file text replacement:
+      // input or a draft acquired during the read must keep its loaded owner.
+      if (reloadDisposition(currentName) !== "reload") {
+        deferExternalReload(currentName, c, own);
+        return;
+      }
+      forgetPage(currentName);
+      // A removed duplicate may leave a surviving day. Existing removal UI
+      // leaves a path-pinned route and restarts the feed to resolve that day.
+      return applyObservedChange({ ...c, name: currentName, removed: true }, ui, bypassPolicy);
+    }
   }
   restartJournalFeed();
 }

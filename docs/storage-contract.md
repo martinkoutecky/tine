@@ -201,6 +201,11 @@ the app's own result. Held pages receive host mail. Unloaded pages cause no
 page read, feed restart or loaded-page render. Dispatch visits the changed
 keys only, using the working-set membership index; feature writers issue no
 synthetic watcher notifications after a merge or resolution.
+When the loaded physical owner is gone, the consumer retires its replaceable
+copy and uses the ordinary removal/navigation/feed handling to resolve any
+survivor. Retirement rechecks the input/draft gate after the read; a hold
+defers the same publication until release. A different file returned for an
+exact-path read cannot replace or retire the loaded owner.
 Cold Capture may seed a working-set page before the parser is initialized.
 Admission initializes the parser before capturing a read. Publication-key
 lookup initializes and derives the loaded names' native keys once if needed;

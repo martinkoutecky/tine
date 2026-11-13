@@ -3,7 +3,7 @@ import { createEffect, createRoot } from "solid-js";
 import { backend, type GraphAnswersChange } from "../backend";
 import { initParser } from "../render/parse";
 import { setConflictPolicyAlwaysAsk } from "../conflictPolicy";
-import { applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
+import { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
 import { ensurePageLoaded, loadFeed, pinPageWhileDrafting, resetStore } from "./workingSet";
 import { doc, pageByName } from "./model";
 import type { PageRead } from "../types";
@@ -63,9 +63,9 @@ it("an own publication deferred by a draft still bypasses the outside-change pol
   expect(path).toHaveBeenCalledOnce();
 });
 
-it("a retired physical target's publication read cannot replace the file now holding its slot", async () => {
+it.each([false, true])("a retired physical target's publication read cannot replace or remove its new owner (missing: %s)", async missing => {
   ensurePageLoaded(page("A"));
-  let deliver!: (dto: PageRead) => void;
+  let deliver!: (dto: PageRead | null) => void;
   const read = vi.spyOn(backend(), "getPageByPath")
     .mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }))
     .mockResolvedValue(page("B"));
@@ -73,7 +73,7 @@ it("a retired physical target's publication read cannot replace the file now hol
   await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
   const replacement = { ...page("selected twin"), id: "journals/selected-twin.md" };
   expect(ensurePageLoaded(replacement)).toBeNull();
-  deliver(page("B"));
+  deliver(missing ? null : page("B"));
   await pending;
   expect(pageByName("Loaded")?.id).toBe(replacement.id);
   expect(shown()).toEqual(["selected twin"]);
@@ -88,4 +88,53 @@ it("a publication carries unchanged loaded pages' native identity keys without r
   await publish("1", ["loaded"]);
   expect(shown()).toEqual(["B"]);
   expect(normalize.mock.calls.filter(([name]) => name.startsWith("Untouched "))).toHaveLength(0);
+});
+
+it.each(["own", "external", "external-retitled"] as const)("a missing loaded physical owner uses removal handling after an %s publication", async origin => {
+  loadFeed([page("stray")]);
+  const exact = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+  const named = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+  const leave = vi.fn(), restart = vi.fn();
+  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: true, leaveRemovedPage: leave, restartJournalFeed: restart }));
+  if (origin === "own") await publish("1", ["loaded"]);
+  else await applyGraphChange({ name: origin === "external-retitled" ? "Retitled" : "Loaded", kind: "journal", path: "journals/exact.md", created: false, removed: false });
+  expect(pageByName("Loaded")).toBeUndefined();
+  expect(leave).toHaveBeenCalledExactlyOnceWith("Loaded");
+  expect(restart).toHaveBeenCalledOnce();
+  expect(exact).toHaveBeenCalledTimes(origin !== "external" ? 1 : 0);
+  expect(named).toHaveBeenCalledTimes(origin === "external" ? 1 : 0);
+});
+
+it("a draft opened during a missing-owner read preserves input until release", async () => {
+  ensurePageLoaded(page("stray"));
+  let deliver!: (dto: PageRead | null) => void;
+  const read = vi.spyOn(backend(), "getPageByPath")
+    .mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }))
+    .mockResolvedValue(null);
+  const leave = vi.fn();
+  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage: leave, restartJournalFeed: () => {} }));
+  const pending = publish("1", ["loaded"]);
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  const release = pinPageWhileDrafting(() => "Loaded");
+  try {
+    deliver(null);
+    await pending;
+    expect(shown()).toEqual(["stray"]);
+    expect(leave).not.toHaveBeenCalled();
+  } finally { release(); }
+  await vi.waitFor(() => expect(pageByName("Loaded")).toBeUndefined());
+  expect(leave).toHaveBeenCalledExactlyOnceWith("Loaded");
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("a different physical file returned for an exact publication read cannot retire or replace its owner", async () => {
+  ensurePageLoaded(page("stray"));
+  vi.spyOn(backend(), "getPageByPath").mockResolvedValue({ ...page("keeper"), id: "journals/keeper.md" });
+  const leave = vi.fn(), restart = vi.fn();
+  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: true, leaveRemovedPage: leave, restartJournalFeed: restart }));
+  await publish("1", ["loaded"]);
+  expect(shown()).toEqual(["stray"]);
+  expect(pageByName("Loaded")?.id).toBe("journals/exact.md");
+  expect(leave).not.toHaveBeenCalled();
+  expect(restart).not.toHaveBeenCalled();
 });
