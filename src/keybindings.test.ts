@@ -401,6 +401,13 @@ describe("mouse side-button navigation (#156)", () => {
       fake.dispatchMouse("mousedown", 3, 8);
       expect(back()).toMatchObject(at(0));
       fake.dispatchMouse("mouseup", 3);
+      router.goForward(); router.goForward();
+      // A cancelled press whose DOM release never arrives vetoes only its own native release.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      expect(back()).toMatchObject(at(1));
+      expect(back()).toMatchObject(at(0));
     } finally {
       dispose();
     }
