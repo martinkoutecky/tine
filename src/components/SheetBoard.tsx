@@ -1,4 +1,5 @@
 import { focusOnMount } from "../focusOnMount";
+import { ownSelectionSurface } from "../document";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { t, msg } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
@@ -88,6 +89,7 @@ export function SheetBoard(props: {
   hostProperties?: readonly [string, string][];
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
+  ownSelectionSurface(cellSurfaceKey(props.ownerId, surfaceId), undefined, surfaceId);
   const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
   /** A query's explicit "No grouping" (the engine's `Cleared`, `group_by === ""`):
    *  one column holding every result. An ordinary board has no such state. */

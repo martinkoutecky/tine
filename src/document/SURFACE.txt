@@ -138,6 +138,7 @@ orderedListMarker
 outdentBlock
 outdentSelection
 outlineFits  # why: one placement cap shared by editor paste and structural sheet paste; batch15b-followup
+ownSelectionSurface  # why: rendered surfaces retire only their own block selection on route change or unmount; batch-route-selection-1113
 pageAliasNames  # why: the page header alias list is the store answer through wasm (census Q7); batch-cm-keys
 pageByName
 pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup

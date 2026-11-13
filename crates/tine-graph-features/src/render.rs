@@ -530,10 +530,10 @@ fn take_to_close(html: &str, i: &mut usize, tag: &str) -> String {
 /// Everything else (tags, classes, escaped text, nesting, `td`/`th` `data-align`) passes
 /// through verbatim.
 ///
-/// O(n) single pass over the html: lsdoc escapes every text + attribute value, so the only
-/// raw `<` in its output opens a tag — a `<`-delimited scan is exact and can't be fooled by
-/// content. (`depth` bounds macro-expansion recursion; see `expand_macro`.)
+/// O(n) over lsdoc HTML: text and attributes are escaped, so raw `<` opens a tag.
+/// `depth` bounds macro recursion; outer bodies start the shared expansion budget.
 fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
+    crate::macro_budget::begin_body(depth);
     let refs = ctx.refs;
     let b = html.as_bytes();
     let mut out = String::with_capacity(html.len() + 64);
@@ -1224,7 +1224,7 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
     }
     let arg0 = args.first().map(|s| s.as_str()).unwrap_or("").trim();
     match name {
-        "embed" | "query" | "tine-query" => budgeted(name, depth, || match name {
+        "embed" | "query" | "tine-query" => budgeted(name, || match name {
             "embed" => render_embed(graph, arg0, ctx, depth + 1),
             _ => render_query(graph, arg0, name == "tine-query", ctx, depth + 1),
         }),

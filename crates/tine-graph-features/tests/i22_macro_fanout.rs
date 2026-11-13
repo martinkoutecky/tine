@@ -45,7 +45,18 @@ fn self_embedding_fan_out_is_cut_with_a_visible_marker() {
     );
     let started = Instant::now();
     let html = print(&root, "Hostile");
+    let expansions = html.matches("class=\"embed block-embed").count();
+    let nodes = html.matches("<li>").count();
+    eprintln!(
+        "I-22: expansions={expansions}, embedded nodes={nodes}, HTML bytes={}, elapsed={:?}",
+        html.len(),
+        started.elapsed()
+    );
     assert!(html.contains(LIMIT), "I-22: the cut must be visible");
+    assert!(
+        expansions <= 1000,
+        "I-22: sibling embeds must share the block's expansion budget: {expansions}"
+    );
     assert!(
         started.elapsed().as_secs() < 60,
         "I-22: 24^4 embeds must not all render ({:?})",
@@ -82,13 +93,13 @@ fn an_embed_chain_at_the_depth_cap_renders_in_full() {
 fn a_wide_shallow_page_renders_every_embed() {
     let _integration_guard = crate::integration_lock();
     let mut text = String::new();
-    for _ in 0..300 {
+    for _ in 0..1100 {
         text.push_str(&format!("- {{{{embed (({ID}))}}}}\n"));
     }
     text.push_str(&format!("- WIDE-LEAF\n  id:: {ID}\n"));
     let root = graph("wide", &[("Wide.md", text)]);
     let html = print(&root, "Wide");
-    assert_eq!(html.matches("WIDE-LEAF").count(), 301);
+    assert_eq!(html.matches("WIDE-LEAF").count(), 1101);
     assert!(!html.contains(LIMIT));
     let _ = fs::remove_dir_all(root);
 }
