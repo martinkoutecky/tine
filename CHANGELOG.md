@@ -62,6 +62,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+
+- Enter after text in a query or linked-reference result creates a child and keeps editing it, even when the child does not match the query (internal: UI-QUERY-REF-ENTER-EDITOR-1113).
 - A phone toolbar keeps Calendar, Journals, Share and the theme toggle on the bar down to about a 360-pixel-wide window instead of moving them into "…" on a 390-pixel phone: the small workspace switcher no longer sits on the bar at that width, and workspaces stay one tap away as the first row of the left drawer. On Settings → Keyboard shortcuts on a phone, every command's id now starts at the same place, with Unbind and Reset at the end of the line (#926).
 - On iOS, Settings → Graph and the graph lists show a graph as the folder inside Tine's Documents folder (for example `Documents/Graphs/Work notes`) instead of the long app-sandbox path; Copy path still copies the full path (#926).
 - Moving a block with Alt+Shift+Up/Down in the CodeMirror editor keeps its selected text selected; depending on timing it could collapse to the start of the block (internal: UI-CM6-MOVE-KEEPS-BROWSER-RANGE-1112).

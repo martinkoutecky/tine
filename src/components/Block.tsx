@@ -27,7 +27,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -144,6 +144,7 @@ import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { splitBlockInView } from "../editor/splitBlockInView";
 import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -491,11 +492,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const inResults = useContext(ResultWriteTargetContext);
   const resultTarget = (id: string) => inResults(id) ? liveWriteTarget(id) : undefined;
   const collapseSurface = useContext(CollapseSurfaceContext);
-  // Ref/query arrow navigation stays in the rendered result surface (master
-  // GH #341), while structural edits still target the source outline: a
-  // split/merge destination need not remain a query or backlink result. Embeds
-  // are true transclusions, so both navigation and structural destinations stay
-  // there.
+  // Ref/query navigation and Enter's child stay in the rendered occurrence.
+  // Other structural destinations may leave the results and use the source
+  // outline (GH #341). Embeds keep both in their transclusion.
   const navigationSurface = () =>
     surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:") ? surfaceKey : null;
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
@@ -1798,8 +1797,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         const newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
         if (newId) startEditing(newId, 0, null, editSurface());
       } else {
-        const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
-        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface(), hideFn(), replacement);
+        splitBlockInView(props.id, start, outlineScope, navigationSurface(), hideFn(), replacement, collapseSurface);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both

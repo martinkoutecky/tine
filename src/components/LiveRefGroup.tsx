@@ -749,6 +749,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
           collapsed: (id, stored) => props.surface === "preview" ? stored
             : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
           navOnly: true,
+          splitAsChild: (id) => (props.surface === "query" || props.surface === "ref") && resultRootIds().has(id),
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} render={(id, authorNeighbors) => {
