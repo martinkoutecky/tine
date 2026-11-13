@@ -16,7 +16,7 @@
 //! all memos for them (`ReadSnapshot::carry_memos_from`). A page that starts
 //! or stops existing without a file (a reference-only page, a namespace
 //! parent) is in no edited document: the publication drops the answers that
-//! can list it (`drop_fileless_listings`, from `Snapshot::answer_changes`).
+//! can list it (`drop_fileless_listings`, from `Snapshot::change_summary`).
 //!
 //! Persisted only inside the launch checkpoint (ADR 0070,
 //! `memo_checkpoint.rs`), as part of the generation it belongs to; memory is bounded at 64
@@ -283,11 +283,11 @@ impl QueryMemo {
     }
 
     /// Drop every answer whose plan can list a fileless page keyed by one
-    /// of `keys` ([`Plan::may_list_fileless`]). O(entries x keys); nothing
-    /// is cloned or taken when no answer goes.
+    /// of `keys` ([`Plan::may_list_fileless`]); `None` admits any fileless row.
+    /// O(entries x keys); nothing is cloned or taken when no answer goes.
     pub(crate) fn drop_fileless_listings(
         &self,
-        keys: &[String],
+        keys: Option<&[String]>,
         format: &tine_core::date::JournalFormat,
     ) {
         let mut guard = self.inner.write().unwrap();

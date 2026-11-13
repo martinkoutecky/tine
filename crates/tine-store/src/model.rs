@@ -1236,10 +1236,10 @@ impl ReadSnapshot {
     }
 
     /// Drop the carried query answers that can list one of `keys`, page
-    /// keys that started or stopped existing without a file of their own
-    /// (`Snapshot::answer_changes`): the edited documents never name them.
-    pub(crate) fn drop_fileless_listings(&self, keys: &[String]) {
-        if !keys.is_empty() {
+    /// keys from `Snapshot::change_summary`; unavailable evidence (`None`)
+    /// admits any fileless row, without building fileless inputs here.
+    pub(crate) fn drop_fileless_listings(&self, keys: Option<&[String]>) {
+        if keys.is_none_or(|keys| !keys.is_empty()) {
             self.memos
                 .query
                 .drop_fileless_listings(keys, &self.config().journal_format());

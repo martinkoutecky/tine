@@ -102,6 +102,8 @@ export interface OutlineScope {
    * mirrors what is rendered rather than the durable `node.collapsed` flags. */
   collapsed?: (id: string, stored: boolean) => boolean;
   navOnly?: boolean;
+  /** O(1) result-root membership for child splits (OG editor.cljs outliner-insert-block!); head placement stays kernel-owned. */
+  splitAsChild?: (id: string) => boolean;
 }
 
 export function scopedVisibleOrder(scope: OutlineScope): string[] {
