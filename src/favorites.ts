@@ -124,7 +124,7 @@ export function setFavorites(items: FavItem[]): void {
 }
 
 function commit(next: FavLayout): void {
-  writeGraphSignal("favorites", layout, setLayout, next, persistArrangement, "favorites");
+  writeGraphSignal("favorites", layout, setLayout, next, persistArrangement, msg("toast-save-favorites-failed"));
 }
 /** The tree without the rows `hit` selects; their children move up. */
 const dropRows = (nodes: FavNode[], hit: (node: FavNode) => boolean): FavNode[] => nodes.flatMap((node) =>

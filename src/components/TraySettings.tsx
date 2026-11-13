@@ -1,5 +1,5 @@
 import { settings } from "./settingDefinitions";
-import { msg } from "../i18n";
+import { msg, type Msg } from "../i18n";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
@@ -31,18 +31,18 @@ export function TraySettings(): JSX.Element {
   const load = () => {
     if (loaded) return;
     loaded = true;
-    toggleShow = bind(show, setShow, KEY_TRAY_SHOW, "tray icon preference");
-    toggleMinimize = bind(minimize, setMinimize, KEY_TRAY_MINIMIZE, "minimize-to-tray preference");
-    toggleStart = bind(start, setStart, KEY_TRAY_START_MINIMIZED, "start-minimized preference");
+    toggleShow = bind(show, setShow, KEY_TRAY_SHOW, "tray icon preference", msg("toast-save-tray-show-failed"));
+    toggleMinimize = bind(minimize, setMinimize, KEY_TRAY_MINIMIZE, "minimize-to-tray preference", msg("toast-save-tray-minimize-failed"));
+    toggleStart = bind(start, setStart, KEY_TRAY_START_MINIMIZED, "start-minimized preference", msg("toast-save-tray-start-failed"));
   };
   const publish = (next: TrayStatus | void) => {
     if (!alive || !next) return;
     setStatus(next);
     if (next.supported) load();
   };
-  const bind = (read: () => boolean, set: (value: boolean) => void, key: string, label: string) => {
+  const bind = (read: () => boolean, set: (value: boolean) => void, key: string, label: string, failure: Msg) => {
     loadPreference(read, set, () => backend().getAppBool(key, false), (value) => value, label, () => alive);
-    return () => writePreference(read, set, !read(), async (next) => publish(await persistTrayPreference(key, next)), label);
+    return () => writePreference(read, set, !read(), async (next) => publish(await persistTrayPreference(key, next)), failure);
   };
   let toggleShow = () => {};
   let toggleMinimize = () => {};

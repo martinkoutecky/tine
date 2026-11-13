@@ -42,18 +42,18 @@ export const refClickZoom = refZoom;
 /** Apply now and queue a device-local write. Failure rolls back and toasts;
  * return does not confirm persistence. O(1) plus backend write. */
 export function setRefClickZoom(on: boolean): void {
-  writePreference(refZoom, setRefZoomSig, on, (next) => backend().setAppBool(KEY_REF_ZOOM, next), "block reference click behavior");
+  writePreference(refZoom, setRefZoomSig, on, (next) => backend().setAppBool(KEY_REF_ZOOM, next), msg("toast-save-reference-click-failed"));
 }
 
 /** Apply now and queue a device-local write. Failure rolls back and toasts;
  * return does not confirm persistence. O(1) plus backend write. */
 export function setCopyIncludeSubtree(on: boolean): void {
-  writePreference(includeSubtree, setIncludeSubtreeSig, on, (next) => backend().setAppBool(KEY_SUBTREE, next), "copy subtree preference");
+  writePreference(includeSubtree, setIncludeSubtreeSig, on, (next) => backend().setAppBool(KEY_SUBTREE, next), msg("toast-save-copy-subtree-failed"));
 }
 /** Apply now and queue a device-local write. Failure rolls back and toasts;
  * return does not confirm persistence. O(1) plus backend write. */
 export function setCopyStripCollapsed(on: boolean): void {
-  writePreference(stripCollapsed, setStripCollapsedSig, on, (next) => backend().setAppBool(KEY_COLLAPSED, next), "copy collapsed preference");
+  writePreference(stripCollapsed, setStripCollapsedSig, on, (next) => backend().setAppBool(KEY_COLLAPSED, next), msg("toast-save-copy-collapsed-failed"));
 }
 
 /** Load device preferences at startup: include-subtree and ref-click zoom OFF,

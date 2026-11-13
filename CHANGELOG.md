@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
+- A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).
 - CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
 - Diagnostics: when a block's editor does not have the caret one frame after Tine asked it to edit (for example after Enter), the diagnostic report now records a content-free `editor.focus-missed` event (whether the window had focus, whether an edit guard held the request, whether the editor was mounted, and the focused element's kind; no note text, titles or paths), at most once every five minutes, so a report can tell the possible causes apart (GH #939).
 
@@ -63,6 +65,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- All Pages keeps timestamps and backlink counts current when updates for different pages arrive out of order (REG-ALLPAGES-METRIC-ORDER).
 - Enter after text in a query or linked-reference result creates a child and keeps editing it, even when the child does not match the query (internal: UI-QUERY-REF-ENTER-EDITOR-1113).
 - A phone toolbar keeps Calendar, Journals, Share and the theme toggle on the bar down to about a 360-pixel-wide window instead of moving them into "…" on a 390-pixel phone: the small workspace switcher no longer sits on the bar at that width, and workspaces stay one tap away as the first row of the left drawer. On Settings → Keyboard shortcuts on a phone, every command's id now starts at the same place, with Unbind and Reset at the end of the line (#926).
 - On iOS, Settings → Graph and the graph lists show a graph as the folder inside Tine's Documents folder (for example `Documents/Graphs/Work notes`) instead of the long app-sandbox path; Copy path still copies the full path (#926).
@@ -237,7 +240,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
+- **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Keyboard shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
 - **Settings → Appearance → Advanced → Show Workspaces** hides saved-workspace controls on desktop and mobile while keeping existing workspaces for when you turn it on again (#927).
 - Hover a block's bullet to see when its text last changed in git. Uncommitted edits, unavailable dates and the history limit are shown explicitly, without storing timestamp properties (GH #831).
 - Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
@@ -260,7 +263,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Persian (فارسی) is available as an interface language, Tine's first right-to-left one: menus, settings and messages mirror, and the note layout defaults to right to left. Choose it under Settings → Appearance → Language. The Guide stays in English (#823).
 - Settings → Editor → Advanced offers one **Hover preview delay**, in seconds, for page and block references (#824). The default is 1 second; large values keep previews out of the way, and touch long-press keeps its own delay.
 - `tine export query GRAPH '((UUID))'` publishes the query block's result pages, with `--name` for the output and `--force` to replace an existing export while retaining it in recovery. It uses the shared query publisher; Sheets retain the command-line plain-outline rendering.
-- **Merge selected blocks** (#764) joins a selection of two or more blocks on one page into the first one: the texts on separate lines in the order you see them, every child kept under it, in one Undo step. It is in the command palette and starts unbound; assign a key under Settings → Shortcuts. It follows Backspace's rules for block IDs and properties: a referenced block ID moves to the merged block, and if that would lose a referenced ID, Tine refuses and says why. Selections that hold a query, an embed, a sheet or a PDF highlight, or blocks from two pages, are refused.
+- **Merge selected blocks** (#764) joins a selection of two or more blocks on one page into the first one: the texts on separate lines in the order you see them, every child kept under it, in one Undo step. It is in the command palette and starts unbound; assign a key under Settings → Keyboard shortcuts. It follows Backspace's rules for block IDs and properties: a referenced block ID moves to the merged block, and if that would lose a referenced ID, Tine refuses and says why. Selections that hold a query, an embed, a sheet or a PDF highlight, or blocks from two pages, are refused.
 - **Alt+Enter** while editing adds a new block at the same level after the current block's whole subtree, and puts the caret in it (#818). It is the rebindable command **New block after this block's children**. Until now Alt+Enter in the classic editor behaved like plain Enter and split the block at the caret; in sheet cells it still adds a child.
 
 ### Fixed

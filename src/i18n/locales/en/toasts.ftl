@@ -271,7 +271,6 @@ gpu-tine-is-rendering-on-the-cpu-your-gpu = Tine is rendering on the CPU — you
 
 graph-open-failure-couldn-t-open-the-graph = Couldn't open the graph. ({ $detail })
 
-graph-preferences-could-not-save = Could not save { $label }.
 
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-session-couldn-t-save-the-journal-template-setting = Couldn't save the journal template setting. ({ $error })
@@ -305,7 +304,6 @@ launcher-ranking-could-not-load-adaptive-launcher-ranking-preference = Could not
 
 move-notice-moved-in = Moved in { $page }
 
-preference-writes-could-not-save = Could not save { $label }.
 
 preference-writes-could-not-load = Could not load { $label }.
 

@@ -17,7 +17,7 @@ let loaded: Promise<boolean> | undefined;
 
 /** Apply the device-local preference; save failure rolls back and toasts. */
 export function setCheckForUpdatesAutomatically(on: boolean): void {
-  writePreference(automatic, setAutomatic, on, (next) => backend().setAppBool(KEY, next), "automatic update preference");
+  writePreference(automatic, setAutomatic, on, (next) => backend().setAppBool(KEY, next), msg("toast-save-automatic-updates-failed"));
 }
 
 /** Load once (default ON). Resolve false after a visible read failure. */

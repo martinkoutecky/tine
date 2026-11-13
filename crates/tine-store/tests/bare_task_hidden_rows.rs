@@ -18,6 +18,126 @@ use tine_store::{EditKind, IrAnswer, IrRequest, PageId, SaveBase, Store};
 
 const TASKS: &str = "(task TODO DONE)";
 
+/// PC-3/PC-7: the literal read/edit/guarded-save path and the complete
+/// disposable checkpoint it serializes. Medians tolerate isolated host stalls;
+/// bytes are measured from the actual serialized files, never inferred from RAM.
+#[test]
+fn bare_task_read_edit_save_budget_and_checkpoint_bytes() {
+    let _guard = crate::exclusive_integration_lock();
+    use std::time::Instant;
+    for blocks in [1, 60] {
+        let graph = Graph::new(
+            "pages/m.md",
+            &"- TODO\n  owner:: synthetic\n".repeat(blocks),
+        );
+        let checkpoint = graph.dir.path().join("checkpoint.bin");
+        let store = std::sync::Arc::new(
+            Store::open(
+                graph.dir.path(),
+                tine_store::OpenOptions {
+                    launch_checkpoint: Some(checkpoint.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0,
+        );
+        let writer = crate::test_host_writer::HostWriter::start(&store);
+        let page = PageId::from(graph.path);
+        // Finish lazy graph construction before measuring a page operation.
+        store.whole_graph().unwrap();
+        let before = store.write_checkpoint_now().unwrap();
+        assert!(
+            matches!(before, tine_store::CheckpointWrite::Written { .. }),
+            "{before:?}"
+        );
+        let before_checkpoint = fs::metadata(&checkpoint).unwrap().len();
+        let mut reads = Vec::new();
+        let mut edits = Vec::new();
+        let mut saves = Vec::new();
+        let mut checkpoint_bytes = Vec::new();
+        let mut checkpoint_raw_bytes = Vec::new();
+        let mut write_costs = Vec::new();
+        for i in 0..9 {
+            let at = Instant::now();
+            let read = store.page(&page).unwrap();
+            let read_ms = at.elapsed().as_secs_f64() * 1000.0;
+            let mut doc = read.doc;
+            let at = Instant::now();
+            doc.blocks[0].raw = edit(
+                &doc.blocks[0].raw,
+                false,
+                Edit::Property {
+                    key: "collapsed".into(),
+                    value: (i % 2 == 0).then(|| "true".into()),
+                },
+            )
+            .unwrap();
+            let edit_ms = at.elapsed().as_secs_f64() * 1000.0;
+            let before = tine_store::cost_counters::snapshot();
+            let at = Instant::now();
+            writer
+                .save(
+                    EditKind::ReplacePage,
+                    &page,
+                    SaveBase::Existing(read.rev),
+                    &doc,
+                )
+                .unwrap();
+            let save_ms = at.elapsed().as_secs_f64() * 1000.0;
+            writer.settle();
+            let after = tine_store::cost_counters::snapshot();
+            let cost = (
+                after.bytes_written - before.bytes_written,
+                after.files_written - before.files_written,
+                after.fsyncs - before.fsyncs,
+                after.save_path_resolutions - before.save_path_resolutions,
+            );
+            assert_eq!(cost.1, 2, "page and guarded draft: {cost:?}");
+            let checkpoint_write = store.write_checkpoint_now().unwrap();
+            let tine_store::CheckpointWrite::Written {
+                raw_bytes,
+                file_bytes,
+            } = checkpoint_write
+            else {
+                panic!("checkpoint did not serialize: {checkpoint_write:?}");
+            };
+            assert_eq!(fs::metadata(&checkpoint).unwrap().len(), file_bytes);
+            if i > 0 {
+                reads.push(read_ms);
+                edits.push(edit_ms);
+                saves.push(save_ms);
+                checkpoint_bytes.push(file_bytes);
+                checkpoint_raw_bytes.push(raw_bytes);
+                write_costs.push(cost);
+            }
+        }
+        // Initial loaded-host debug medians: read 0.44/0.74 ms, edit
+        // 0.14/0.12 ms, save 3.89/15.36 ms (1/60 blocks). About 5x margin,
+        // as in sorted_search_budget; an isolated stall cannot decide a median.
+        for (label, mut samples, budget_ms) in [
+            ("read", reads, if blocks == 1 { 3.0 } else { 5.0 }),
+            ("edit", edits, 1.0),
+            ("save", saves, if blocks == 1 { 20.0 } else { 80.0 }),
+        ] {
+            samples.sort_by(f64::total_cmp);
+            eprintln!(
+                "bare task {blocks} blocks: {label} median_ms={} samples_ms={samples:?}",
+                samples[4]
+            );
+            assert!(
+                samples[4] < budget_ms,
+                "{blocks} blocks: {label} exceeded {budget_ms} ms: {samples:?}"
+            );
+        }
+        eprintln!("Unit cost: {blocks} blocks; page_bytes={}; checkpoint_before_bytes={before_checkpoint}; serialized_checkpoint_bytes={checkpoint_bytes:?}; raw_checkpoint_bytes={checkpoint_raw_bytes:?}; checkpoint_files_per_request=1; transport_bytes_added=0", graph.bytes().len());
+        eprintln!("HostIo cost {blocks} blocks: (bytes_written, files_written, fsyncs, path_resolutions)={write_costs:?}; checkpoint bytes/files measured separately above");
+        assert_eq!(tasks(&store).len(), if blocks == 1 { 1 } else { 2 });
+        drop(writer);
+        store.close();
+    }
+}
+
 /// Raw text of every block `(task TODO DONE)` returns, as a `{{query}}` runs it.
 fn tasks(store: &Store) -> BTreeSet<String> {
     let graph = store.whole_graph().unwrap();
@@ -768,11 +888,20 @@ fn r11_an_org_directive_beside_a_bare_task_is_a_row_through_id_edits() {
             "* TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x\n* other\n",
             &[0],
             || id(None),
-            // lsdoc folds the directive into the drawer's node, so the emptied
-            // drawer stays (follow-up card); the task reading does not move.
-            "* TODO\n:PROPERTIES:\n:END:\n#+comment: x\n* other\n",
+            // Removing the last entry removes its drawer, even when the parser
+            // folds the following directive into the same property node.
+            "* TODO\n#+comment: x\n* other\n",
             &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
-            &["TODO\n:PROPERTIES:\n:END:\n#+comment: x"],
+            &["TODO\n#+comment: x"],
+        ),
+        (
+            "pages/o.org",
+            "* TODO\r\n:PROPERTIES:\r\n:id: x\r\n:END:\r\n#+comment: x\r\n* other\r\n",
+            &[0],
+            || id(None),
+            "* TODO\r\n#+comment: x\r\n* other\r\n",
+            &["TODO\n:PROPERTIES:\n:id: x\n:END:\n#+comment: x"],
+            &["TODO\n#+comment: x"],
         ),
         (
             "pages/m.md",

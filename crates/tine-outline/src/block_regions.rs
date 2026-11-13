@@ -990,19 +990,24 @@ impl BlockRegions {
         org: bool,
         remove: impl Fn(&Property) -> bool,
     ) -> String {
-        let selected: Vec<&Property> = self.properties.iter().filter(|p| remove(p)).collect();
-        let mut edits = Vec::new();
-        for (index, r) in self.property_regions.iter().enumerate() {
-            let all: Vec<&Property> = self
-                .properties
-                .iter()
-                .filter(|p| p.region == index)
-                .collect();
-            if org && !all.is_empty() && all.iter().all(|p| remove(p)) {
-                edits.push((*r, String::new()));
-            } else {
-                for p in selected.iter().filter(|p| p.region == index) {
-                    edits.push((p.line, String::new()));
+        let mut edits: Vec<_> = self
+            .properties
+            .iter()
+            .filter(|p| remove(p))
+            .map(|p| (p.line, String::new()))
+            .collect();
+        if org {
+            // A parser region can fold directives after the drawer. Only its
+            // delimiters depend on whether the drawer's own entries survive.
+            let mut entries = self.properties.iter().peekable();
+            for (start, end) in self.property_drawer_boundaries(raw) {
+                while entries.next_if(|p| p.line.0 < start).is_some() {}
+                let mut drawer =
+                    std::iter::from_fn(|| entries.next_if(|p| p.line.0 < end)).peekable();
+                if drawer.peek().is_some() && drawer.all(|p| remove(p)) {
+                    edits.extend(
+                        [start, end].map(|at| (whole_line(raw, Range(at, at)), String::new())),
+                    );
                 }
             }
         }
@@ -1239,14 +1244,11 @@ impl BlockRegions {
                 {
                     return Err("Invalid property edit".into());
                 }
-                let own = org.then(|| self.own_org_region(raw)).flatten();
-                let matching: Vec<&Property> = self
-                    .properties
-                    .iter()
-                    .filter(|p| p.key.eq_ignore_ascii_case(&key) && (!org || Some(p.region) == own))
-                    .collect();
                 if value.is_none() {
-                    self.remove_properties(raw, org, |p| matching.contains(&p))
+                    let own = org.then(|| self.own_org_region(raw)).flatten();
+                    self.remove_properties(raw, org, |p| {
+                        p.key.eq_ignore_ascii_case(&key) && (!org || Some(p.region) == own)
+                    })
                 } else {
                     self.set_values(raw, org, vec![(key, value.unwrap())])?
                 }
