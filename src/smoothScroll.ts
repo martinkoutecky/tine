@@ -67,7 +67,7 @@ function apply(on: boolean): void {
  * the last confirmed value and scroller state and toasts. The scroller needs
  * mounted feed DOM. Return does not confirm persistence. O(1) plus write. */
 export function setSmoothScroll(on: boolean): void {
-  writePreference(enabled, apply, on, (next) => backend().setSmoothScroll(next), "smooth scrolling preference");
+  writePreference(enabled, apply, on, (next) => backend().setSmoothScroll(next), msg("toast-save-smooth-scroll-failed"));
 }
 
 /** Load the preference at startup (default OFF); read failure toasts and resolves.

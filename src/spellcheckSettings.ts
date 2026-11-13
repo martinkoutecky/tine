@@ -56,7 +56,7 @@ function apply(): void {
  * confirms neither asynchronous result. O(1) plus native and settings calls. */
 export function setSpellcheckEnabled(on: boolean): void {
   writePreference(enabled, (next) => { setEnabledSig(next); apply(); }, on,
-    (next) => backend().setAppBool(KEY_ENABLED, next), "spellcheck preference");
+    (next) => backend().setAppBool(KEY_ENABLED, next), msg("toast-save-spellcheck-failed"));
 }
 
 /** Apply immediately; native spellcheck runs without awaiting. Queue a device
@@ -64,7 +64,7 @@ export function setSpellcheckEnabled(on: boolean): void {
  * confirms neither asynchronous result. O(1) plus native and settings calls. */
 export function setSpellcheckLanguages(value: string): void {
   writePreference(languages, (next) => { setLanguagesSig(next); apply(); }, value,
-    (next) => backend().setAppString(KEY_LANGS, next), "spellcheck languages");
+    (next) => backend().setAppString(KEY_LANGS, next), msg("toast-save-spellcheck-languages-failed"));
 }
 
 /** Tick/untick one dictionary in the selection (preserving the others). */
