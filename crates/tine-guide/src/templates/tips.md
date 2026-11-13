@@ -23,6 +23,7 @@ icon:: ⌨️
 - ## Follow a link without the mouse — Ctrl+O
 	- With the caret inside a `[[link]]` or a `#tag`, **Ctrl+O** opens that page and **Ctrl+Shift+O** opens it in the right sidebar. This works while you are editing, so you can follow a name you just typed without reaching for the mouse.
 - ## Select whole blocks — Ctrl+A
+	- Leaving a page clears its block selection, so selection keys only act on the surface you are using. Scrolling between days in the Journals feed keeps the selection.
 	- A selected block includes **its whole subtree**, even when its children are folded. Copy, cut, delete, move, indent, outdent, export, block references and embeds all use that same selection. Copying a parent always includes its children.
 	- While editing, **Shift+Up** or **Shift+Down** at the block's edge leaves the editor and selects that block with its children. Further presses extend by sibling subtrees; reversing direction shrinks the selection. **Shift+click** another block's text, or drag across blocks, to select the whole range and leave the editor. The first and last blocks include all their children. Shift-click again to adjust the range from the same starting block.
 	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. In a zoomed outline, the selection stays within that outline.

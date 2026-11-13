@@ -7,11 +7,11 @@ import { OutlineScope, depthOf, scopedVisibleOrder, visibleData, visibleOrder, p
 import { commentsFirst } from "../commentOrder";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
-import { batch, createSignal, createRoot, createMemo, createComputed, untrack } from "solid-js";
+import { batch, createSignal, createRoot, createMemo, createComputed, onCleanup, untrack } from "solid-js";
 import { ChangeKeyRegistry } from "../../changeKeyRegistry";
 import { threadRootOf } from "../commentThreads";
 import { previousBodySibling } from "../bodyStructure";
-import { endEdit, editingId } from "../../editorController";
+import { activeSurface, endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
 import { blockWritable, rawWithHeading, type HeadingState } from "./properties";
@@ -32,6 +32,30 @@ installClearOutlineSelection(() => clearSelection());
 clearOnBindingInvalidated(() => clearSelection());
 
 let activeSelectionScope: OutlineScope | null = null;
+type SelectionSurface = { parent?: SelectionSurface };
+// Ifods deliberately retires selection on every route change; Logseq comparison is in the receipt.
+const selectionSurfaces = new Map<string, SelectionSurface>();
+let selectedSurfaces: Set<SelectionSurface> | undefined;
+
+/** Own a rendered surface's selection lifetime. A changed route accessor or
+ * unmount retires only selections initiated here or in a registered child
+ * surface. Call under the component's Solid owner; `parent` is its enclosing
+ * SurfaceContext key. Registration and retirement are O(1), plus existing
+ * selection notifications. Starting selection carries its O(nesting) ancestry
+ * once; no I/O or document/DOM scan is needed.
+ * Route equality belongs to the supplied accessor (PageView uses sameRoute).
+ * No failure or readiness state escapes to callers. */
+export function ownSelectionSurface(surface: string, route: () => unknown = () => null, parent?: string): void {
+  createComputed(() => {
+    route();
+    const owner: SelectionSurface = { parent: parent ? selectionSurfaces.get(parent) : undefined };
+    selectionSurfaces.set(surface, owner);
+    onCleanup(() => {
+      if (selectionSurfaces.get(surface) === owner) selectionSurfaces.delete(surface);
+      if (selectedSurfaces?.has(owner)) clearSelection();
+    });
+  });
+}
 
 export function selectionScope(): OutlineScope | null { return activeSelectionScope; }
 
@@ -260,9 +284,13 @@ let selectAllHead: string | null = null;
 let keyboardPath: number[] = [];
 let keyboardTopology: ReturnType<typeof selectionTopology> | null = null;
 
-export function selectBlock(id: string, scope: OutlineScope | null = null) {
+export function selectBlock(id: string, scope: OutlineScope | null = null, surface = activeSurface() ?? "main") {
+  const owner = selectionSurfaces.get(surface);
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
+  if (owner && selectionSurfaces.get(surface) !== owner) return;
+  selectedSurfaces = owner ? new Set() : undefined;
+  for (let selected = owner; selected; selected = selected.parent) selectedSurfaces!.add(selected);
   activeSelectionScope = scope;
   selectAllHead = null;
   keyboardPath = [];
@@ -270,6 +298,7 @@ export function selectBlock(id: string, scope: OutlineScope | null = null) {
   batch(() => { setSelectionView({ id, scope }); setSelAnchor(id); setSelFocus(id); });
 }
 export function clearSelection() {
+  selectedSurfaces = undefined;
   batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); });
   activeSelectionScope = null;
   selectAllHead = null;
@@ -340,8 +369,8 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
 /** Ctrl/Cmd+A while editing a block, with the block's text already fully
  *  selected: escalate to a block selection covering the block's whole source
  *  subtree, and mark it the head of the hierarchy ladder (GH #262). */
-export function selectBlockSubtree(id: string, scope: OutlineScope | null = null) {
-  selectBlock(id, scope);
+export function selectBlockSubtree(id: string, scope: OutlineScope | null = null, surface?: string) {
+  selectBlock(id, scope, surface);
   selectAllHead = id;
 }
 

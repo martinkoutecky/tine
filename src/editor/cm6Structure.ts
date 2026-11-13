@@ -51,7 +51,7 @@ interface StructureContext {
   annotation(): boolean;
   viewPrev(): string | null;
   viewNext(): string | null;
-  embedExit: { hostBlockId: string; firstRoot(): string | undefined; rowHost?(id: string): { id: string; scope: OutlineScope | null } | null } | null;
+  embedExit: { hostBlockId: string; hostSurface: string; firstRoot(): string | undefined; rowHost?(id: string): { id: string; scope: OutlineScope | null; surface?: string } | null } | null;
   collapse: CollapseSurfaceApi | null;
 }
 
@@ -63,8 +63,8 @@ export function cm6Structure(ctx: StructureContext) {
   const structuralScope = ctx.scope?.navOnly ? null : ctx.scope;
   // Where this row sits: a whole-block embed's root row stands for its host
   // (D-20261030-EMB), as the textarea's `position()` in Block.tsx.
-  const position = (): { id: string; scope: OutlineScope | null } =>
-    ctx.embedExit?.rowHost?.(ctx.id) ?? { id: ctx.id, scope: ctx.scope };
+  const position = (): { id: string; scope: OutlineScope | null; surface?: string } =>
+    ctx.embedExit?.rowHost?.(ctx.id) ?? { id: ctx.id, scope: ctx.scope, surface: ctx.surface };
   const selection = (v: EditorView): CaretSelection => {
     const s = v.state.selection.main;
     return { start: s.from, end: s.to, direction: s.empty ? "none" : s.anchor > s.head ? "backward" : "forward" };
@@ -138,7 +138,7 @@ export function cm6Structure(ctx: StructureContext) {
   };
   const selectBlockAtEdge = (v: EditorView, dir: -1 | 1) => {
     if (!atEdge(v, dir > 0)) return false;
-    selectBlock(position().id, position().scope);
+    const selected = position(); selectBlock(selected.id, selected.scope, selected.surface);
     return true;
   };
   const commands = guardedCommands<[EditorView]>(v => ctx.current() && !v.compositionStarted, {
@@ -157,14 +157,14 @@ export function cm6Structure(ctx: StructureContext) {
     "editor/select-embedding-block": v => {
       if (!ctx.embedExit) return false;
       const host = v.dom.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
-      selectBlock(ctx.embedExit.hostBlockId);
+      selectBlock(ctx.embedExit.hostBlockId, null, ctx.embedExit.hostSurface);
       host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
       return true;
     },
     "editor/select-all": v => {
       const s = v.state.selection.main;
       if (s.from !== 0 || s.to !== v.state.doc.length) return false;
-      selectBlockSubtree(position().id, position().scope);
+      const selected = position(); selectBlockSubtree(selected.id, selected.scope, selected.surface);
       return true;
     },
     "editor/select-block-up": v => selectBlockAtEdge(v, -1),
@@ -261,7 +261,7 @@ export function cm6Structure(ctx: StructureContext) {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     if (plain && s.empty && ctx.annotation()
       && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return false;
-    if (plain && e.key === "Escape") { selectBlock(position().id, position().scope); return true; }
+    if (plain && e.key === "Escape") { const selected = position(); selectBlock(selected.id, selected.scope, selected.surface); return true; }
     if (plain && s.empty && e.key === "Backspace") {
       if (ctx.code() && raw === "" && !node(ctx.id).children.length && bodyScopeOf(ctx.id) !== undefined) {
         const n = node(ctx.id);
