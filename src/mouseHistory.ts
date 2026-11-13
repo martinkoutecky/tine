@@ -2,7 +2,7 @@
  * 3/4, with a history default on mouseup, but no auxclick. Chromium also emits
  * auxclick. Consume a completed release once, preserving middle-click links. */
 export function installMouseHistory(win: Window, doc: Document, navigate: (direction: "back" | "forward") => void) {
-  let press: { button: number; x: number; y: number; cancelled: boolean; native?: boolean } | undefined;
+  let press: { button: number; x: number; y: number; cancelled: boolean } | undefined;
   let released: number | undefined;
   // A DOM-seen release whose native delivery has not arrived yet; cleared by the next press.
   let pendingNative: { button: number; cancelled: boolean } | undefined;
@@ -33,7 +33,7 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     const releaseCancelled = current?.button !== event.button || !!current?.cancelled || prevented || dragging || primaryHeld
       || (!!current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5);
     // Only an explicit DOM press can veto the native release; an absent one never does (#948).
-    pendingNative = current?.button === event.button && !current.native ? { button: event.button, cancelled: releaseCancelled } : undefined;
+    pendingNative = current?.button === event.button ? { button: event.button, cancelled: releaseCancelled } : undefined;
     if (!releaseCancelled)
       navigate(event.button === 3 ? "back" : "forward");
   };
@@ -61,10 +61,11 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
    * owner of the gesture: a selection, drag or cancelled press vetoes it; with no DOM press seen, native decides. */
   dispose.acceptNative = (direction: "back" | "forward") => {
     const button = direction === "back" ? 3 : 4;
-    if (primaryHeld || dragging) return false;
-    if (press?.button === button) { press.native = true; return !press.cancelled; }
-    if (pendingNative?.button === button) { const { cancelled } = pendingNative; pendingNative = undefined; return !cancelled; }
-    return true;
+    // The native release ends its gesture: consume the matching press or release, so its verdict never outlives it.
+    let cancelled = false;
+    if (press?.button === button) { cancelled = press.cancelled; press = undefined; }
+    else if (pendingNative?.button === button) { cancelled = pendingNative.cancelled; pendingNative = undefined; }
+    return !cancelled && !primaryHeld && !dragging;
   };
   return dispose;
 }
