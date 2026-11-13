@@ -45,6 +45,15 @@ try {
     const field = await browser.$('.workspace-edit-input[aria-label="New workspace name"]');
     await field.waitForDisplayed({ timeout: 5000 });
     await field.setValue(name);
+    // A displayed field can have its submit button clipped by the sidebar.
+    // Wait for the actual pointer target, without scrolling a clipped menu into
+    // place and concealing a layout defect (IcYyc).
+    await browser.waitUntil(() => browser.execute(() => {
+      const button = document.querySelector('.workspace-edit-form button[type="submit"]');
+      if (!button || button.disabled) return false;
+      const rect = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    }), { timeout: 5000, timeoutMsg: "Workspace submit button cannot receive a pointer click" });
     await browser.$('.workspace-edit-form button[type="submit"]').click();
     await browser.waitUntil(() => browser.execute((name) => document.querySelector(".workspace-switcher-btn")?.getAttribute("aria-label")?.includes(name)
       || document.querySelector(".workspace-switcher-name")?.textContent?.includes(name), name), { timeout: 10_000 });
