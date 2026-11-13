@@ -108,3 +108,54 @@ for (const surface of ["query", "ref"] as const) {
       });
   }
 }
+
+// Review round 1 of 4d465e16e (F1): a result's descendant is folded by the
+// group's default disclosure even when its source children are visible, so
+// Enter there creates a source child the view does not show unless the shared
+// split policy reveals it. Same native order as above (no publication yet).
+for (const surface of ["query", "ref"] as const) {
+  for (const properties of [false, true]) {
+    it(`${surface}, properties=${properties}: Enter in a folded descendant of a result keeps typing in the new child`, async () => {
+      const host = await bindTestHost();
+      answerOpensFromDocument(host);
+      ensurePageLoaded({ id: "pages/Source.md", name: "Source", title: "Source", kind: "page", format: "md",
+        pre_block: properties ? "tags:: [[Target]]\n" : null,
+        blocks: [{ id: "body", raw: "Body [[Target]]", collapsed: false, children: [
+          { id: "desc", raw: "Desc head tail", collapsed: false, children: [
+            { id: "grand", raw: "Grand", collapsed: false, children: [] }] }] }],
+      } as PageRead);
+      const header: BlockDto[] = properties ? [{ id: "page-property:Page:source", raw: "tags:: [[Target]]",
+        collapsed: false, children: [], page_property: true }] : [];
+      const read = vi.fn(async () => [{ page: "Source", kind: "page",
+        blocks: [...header, ...pageToDto("Source")!.blocks] }] satisfies RefGroup[]);
+      const root = document.createElement("div");
+      document.body.append(root);
+      const dispose = render(() => {
+        const [answer] = createMembershipResource(() => "Target", () => "Target", read,
+          groupsContainEdit, () => true, surface === "query", () => 0);
+        return <LiveRefGroup page="Source" kind="page" blocks={answer()?.[0]?.blocks ?? []} surface={surface} eager />;
+      }, root);
+      try {
+        const desc = await vi.waitFor(() => {
+          const el = root.querySelector('[data-block-id="desc"] .block-content');
+          expect(el).not.toBeNull();
+          return el!;
+        });
+        desc.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+        desc.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+        const editor = await vi.waitFor(() => { expect(maybeEditorIn(root, "desc")).not.toBeNull(); return editorIn(root, "desc"); });
+        editor.focus();
+        editor.select("Desc head ".length);
+        editor.keydown({ key: "Enter" });
+        const id = editingId()!;
+        expect(id).not.toBe("desc");
+        expect(node(id).parent).toBe("desc");
+        const next = await vi.waitFor(() => { expect(maybeEditorIn(root, id)).not.toBeNull(); return editorIn(root, id); });
+        expect(document.activeElement).toBe(next.element);
+        next.type("more ");
+        expect(next.value()).toBe("more tail");
+        expect(await flushAll()).toBe(true);
+      } finally { dispose(); }
+    });
+  }
+}
