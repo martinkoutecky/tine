@@ -534,13 +534,15 @@
       "stability": "burn-in"
     },
     "scripts/e2e-journals-today.mjs": {
+      "setup": "Build with custom-protocol,tine-store/test-faults; run E2E_HOLD_LOAD=1 under Xvfb. The existing pause holds graph completion until the known older journal editor has settled; baseline timing-only mode remains available.",
       "contracts": [
         {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},
         {"class":"stateful-ux","userOutcome":"When graph loading completes, referenced fileless days join the displayed date range in descending order while the focused editor, its text and the viewport position survive; browsing writes no journal files.","blocking":true,"authority":"GF4"}
       ],
       "acceptableVariations":["First-body latency varies with machine load; no fixed latency budget. Minor subpixel layout differences are acceptable while the same content remains at the viewport."],
       "nonRequirements":["Exact pixels, DOM nesting, and native platform certification outside Linux WebKitGTK."],
-      "stability":"burn-in"
+      "stability":"quarantined",
+      "quarantineReason":"IVKfg: uncontrolled setup passed 0/2 in the nightly, then the identical binary passed 3/3, including a false green with five days already merged and an empty editor. The corrected held journey needs a test-faults native build; provision that in the nightly runner before lifting quarantine. See RECEIPT-nightly-reds-1113.md."
     },
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
