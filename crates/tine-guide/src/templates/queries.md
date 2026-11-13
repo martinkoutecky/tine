@@ -3,6 +3,7 @@ icon:: 🔎
 - # Queries
 	- A **query block** is a live list of every block (or page) in your graph that matches a filter. Write it once with `{{query …}}`; Tine keeps the results current as you edit, and the file stays an ordinary Logseq query block. Where an answer can differ from Logseq's, [[Reference/Tine query model]] says how and why.
 - ## A query in action
+	- Edit a query result or Linked Reference in place. **Enter** after some text in a result's top block creates a child and keeps typing there, even when the child does not match the query, as in Logseq.
 	- Block queries also find matching prose before a page's first Markdown bullet or Org heading. In List view it appears as a row under its source page, separate from that page's properties.
 	- Queries refresh when an edit can affect their results. Queries over links, graph-wide tag targets or the property registry wait until you pause typing for 1.5 seconds, then read the latest saved publication. Continuous typing keeps the last answer visible until that pause.
 	- Every open task in this graph:

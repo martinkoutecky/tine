@@ -2,7 +2,7 @@ import { createMemo, createResource, onCleanup, untrack, type Accessor, type Res
 import { editingId } from "./editorController";
 import { graphEpoch } from "./graphSession";
 import { changed } from "./changeKeys";
-import { node as docNode, isConflicted, isDirty, isSaving, pendingDataRevision } from "./document";
+import { node as docNode, isConflicted, isDirty, isSaving, pendingDataRevision, pageInstanceGeneration } from "./document";
 import { graphOwner, readOwned } from "./owned";
 import { readOr, readLatestOr } from "./resourceRead";
 import { bindingIdentity } from "./binding";
@@ -49,7 +49,7 @@ export function createMembershipResource<S, T>(
 ) {
   let snapshot: T | undefined;
   let scope = "";
-  let retained: { id: string; page?: string; epoch: number } | undefined;
+  let retained: { id: string; page?: string; instance: number | null } | undefined;
   let snapshotEpoch = -1;
   let release = 0;
   let alive = true;
@@ -74,9 +74,18 @@ export function createMembershipResource<S, T>(
     }
     const draft = snapshot === undefined ? undefined : resultDrafts().find(draft => untrack(() => contains(snapshot!, draft.id)));
     if (draft) return { input, scope, revision, epoch, settled, guarded, release, held: true };
-    if (retained && guarded && retained.epoch !== epoch) { retained = undefined; release++; }
-    if (id && snapshot !== undefined && (!guarded || snapshotEpoch === epoch) && untrack(() => contains(snapshot!, id))) {
-      retained = { id, page: untrack(() => docNode(id)?.page), epoch };
+    // Local structure changes move the answer epoch without replacing its
+    // source. Keep the editing occurrence through an Enter handoff to a live
+    // descendant; replacement still retires it, as live-row admission does.
+    // Without a loaded source, only the answer's original epoch proves identity.
+    if (retained && guarded && (retained.page
+      ? retained.instance !== pageInstanceGeneration(retained.page) || docNode(retained.id)?.page !== retained.page
+      : snapshotEpoch !== epoch)) {
+      retained = undefined; snapshotEpoch = -1; release++;
+    }
+    if (id && snapshot !== undefined && (!guarded || snapshotEpoch === epoch || retained) && untrack(() => contains(snapshot!, id))) {
+      const page = untrack(() => docNode(id)?.page);
+      retained = { id, page, instance: guarded && page ? pageInstanceGeneration(page) : null };
     }
     if (retained) {
       const page = retained.page;
