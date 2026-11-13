@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Mouse back and forward buttons no longer drop history steps when pressed repeatedly on Windows (#948).
+
 ## [0.9.0-beta.12] - 2026-11-13
 
 ### Added
