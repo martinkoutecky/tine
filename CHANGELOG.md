@@ -8,23 +8,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
+## [0.9.0-beta.12] - 2026-11-13
 
-- Copying a collapsed block, or a block shown as a sheet (table, board or grid), with Ctrl/Cmd+C on a block selection or Copy blocks in the block menu puts the children it hides on the clipboard, nested folds included; before, with the default "Copy a parent block's sub-blocks" off, the copied text silently left them out. An expanded parent selected alone still copies alone; with the setting on, copies remain whole subtrees as in Logseq (GH #943).
 ### Added
 
 - Diagnostics: when a block's editor does not have the caret one frame after Tine asked it to edit (for example after Enter), the diagnostic report now records a content-free `editor.focus-missed` event (whether the window had focus, whether an edit guard held the request, whether the editor was mounted, and the focused element's kind; no note text, titles or paths), at most once every five minutes, so a report can tell the possible causes apart (GH #939).
+
+### Fixed
+
+- Copying a collapsed block, or a block shown as a sheet (table, board or grid), with Ctrl/Cmd+C on a block selection or Copy blocks in the block menu puts the children it hides on the clipboard, nested folds included; before, with the default "Copy a parent block's sub-blocks" off, the copied text silently left them out. An expanded parent selected alone still copies alone; with the setting on, copies remain whole subtrees as in Logseq (GH #943).
+- Org pages: Linked References now mark a link inside emphasis (`*[[page]]*`) or inside a `#[[…]]` tag where it stands, also inside quote and other `#+BEGIN_…` blocks, instead of missing it or marking the start of the block (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
+- An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).
+- Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading, and shows the block you were reading even when the long page lays out differently on return, for example after a window resize (internal: UI-ZOOM-BACK-SCROLL).
 
 ## [0.9.0-beta.11] - 2026-11-12
 
 ### Fixed
 
-- Org pages: Linked References now mark a link inside emphasis (`*[[page]]*`) or inside a `#[[…]]` tag where it stands, also inside quote and other `#+BEGIN_…` blocks, instead of missing it or marking the start of the block (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 - Bullet threading keeps ordinary guides on unrelated branches in Active ancestry only mode, and stops straight guides from extending beneath the final elbow in All nested outlines (GH #129, bullet-threading #2).
-- An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).
 - Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).
-- Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading, and shows the block you were reading even when the long page lays out differently on return, for example after a window resize (internal: UI-ZOOM-BACK-SCROLL).
 - A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).
 - Find in a long Journals feed counts loaded matches once as days retire and reload; the total agrees with the loaded days and the omitted-day hint (internal: UI-L10-03-FIND-RETIRED-DAYS).
 - With a default journal template, today's journal again shows as a journal day, and clicking its title opens it instead of reporting that the page is no longer available at that path. A tab or link that remembered the wrong kind of page for a file now opens that file (GH #863).
@@ -1115,7 +1118,6 @@ CSS theming) stay in Beta for now.
 - UI-OG-R6B-GRAPH-NOTICES / UI-OG-R6B-MIGRATION-TOAST: Query notice dismissals follow the current graph, and startup explains completed legacy app-data migration once.
 - REG-OG-R6-IDENTITY: Read released Tine’s graph notice dismissals, restore legacy desktop app data before startup, and seed desktop preview browser preferences without changing the released source.
 
-
 ### Fixed
 
 - Windows validation uses portable structural-ratchet keys and exercises page-merge races across alternate path spellings (og-W1; test harness only).
@@ -1274,7 +1276,6 @@ CSS theming) stay in Beta for now.
 - Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
 
 - Sheet formulas memoize shared references, reject inherited member names, and refuse excessive field-rename depth without crashing (UI-OG-B-W3-FORMULA-DAG, UI-OG-B-W3-FORMULA-OWN-MEMBERS, UI-OG-B-W3-FORMULA-RENAME-DEPTH).
-
 
 - **Published permalinks share page and block identity** (UI-OG-PERMALINK-IDENTITY-001, UI-OG-PERMALINK-BLOCK-ID-001): equivalent Unicode page/alias names resolve, and Markdown/Org block links ignore code examples of IDs.
 - **Expanded audio shares inline asset decoding** (UI-OG-AUDIO-ASSET-PATH-001), including normalized asset-directory case and separators. Native streams, cached images and media fallbacks use one Rust MIME answer through the existing wasm module.
@@ -3890,7 +3891,6 @@ CSS theming) stay in Beta for now.
   folded together and say so instead of offering a choice that could not be
   applied. The startup notice is gone.
 
-
 - **Copy / export names its two content choices after what you actually get.**
   The explicit *Content* option in "Copy / export as…" now reads **Plain text**
   (cleaned, as displayed) and **Markdown** — or **Org** on an Org page —
@@ -4104,7 +4104,6 @@ CSS theming) stay in Beta for now.
   is instead of having its links rewritten inside both sides of the conflict.
   The rename still completes everywhere else, and a notice tells you how many
   conflicted pages still point at the old name.
-
 
 - **Split panes whose content fits no longer show a useless vertical
   scrollbar** (GH #369 — the reporter's dashboard of short panes like "Lines"
