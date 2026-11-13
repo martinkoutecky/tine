@@ -51,6 +51,9 @@ repair asks lsdoc for the headline's source up to the title word (so a CRLF
 bare task reads as its LF twin, and `# TODO` stays a heading) and reparses only
 that, and only when lsdoc did not already see the word at the end of input.
 Body text after a bare title stays text, as in Logseq (REG-BARE-TASK-HIDDEN-ROWS).
+Logseq reference: `6e7afa8eb040686ff057156ee877193b581dd369`,
+`src/main/frontend/util/block_content.cljs` `has-title?`,
+`util/property.cljs` `insert-property`, and `util/text.cljs` `add-timestamp`.
 
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.

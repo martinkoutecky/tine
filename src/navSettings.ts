@@ -18,7 +18,7 @@ export const showWorkspaces = showWorkspacesSig;
 /** Show or hide controls without changing workspace data. One device write;
  * failure rolls back and toasts through the shared preference writer. */
 export function setShowWorkspaces(on: boolean): void {
-  writePreference(showWorkspacesSig, setShowWorkspacesSig, on, next => backend().setAppBool(KEY_SHOW_WORKSPACES, next), renderEnglish(msg("settings-show-workspaces")));
+  writePreference(showWorkspacesSig, setShowWorkspacesSig, on, next => backend().setAppBool(KEY_SHOW_WORKSPACES, next), msg("toast-save-workspaces-failed"));
 }
 
 const KEY_SHOW_HELP_BUTTON = "show_help_button";
@@ -31,7 +31,7 @@ export const showHelpButton = showHelpButtonSig;
 
 /** One device write; failure rolls back and toasts through the shared preference writer. */
 export function setShowHelpButton(on: boolean): void {
-  writePreference(showHelpButtonSig, setShowHelpButtonSig, on, next => backend().setAppBool(KEY_SHOW_HELP_BUTTON, next), renderEnglish(msg("settings-show-help-button")));
+  writePreference(showHelpButtonSig, setShowHelpButtonSig, on, next => backend().setAppBool(KEY_SHOW_HELP_BUTTON, next), msg("toast-save-help-button-failed"));
 }
 
 const KEY_QUERY_TEXT_OPEN = "query_text_open";
@@ -53,7 +53,7 @@ export const searchResultsOpenInThisTab = searchOpensHere;
 
 /** Apply now and queue a device-local write; failure rolls back and toasts. O(1) plus backend write. */
 export function setSearchResultsOpenInThisTab(on: boolean): void {
-  writePreference(searchOpensHere, setSearchOpensHereSig, on, (next) => backend().setAppBool(KEY_SEARCH_OPENS_HERE, next), "search results preference");
+  writePreference(searchOpensHere, setSearchOpensHereSig, on, (next) => backend().setAppBool(KEY_SEARCH_OPENS_HERE, next), msg("toast-save-search-results-failed"));
 }
 
 /** Test seam: set the destination without persisting. */
@@ -69,7 +69,7 @@ export const mobileNavigationAtBottom = mobileNavBottom;
 
 /** Apply now and queue a device-local write; failure rolls back and toasts. O(1) plus backend write. */
 export function setMobileNavigationAtBottom(on: boolean): void {
-  writePreference(mobileNavBottom, setMobileNavBottomSig, on, (next) => backend().setAppBool(KEY_MOBILE_NAV_BOTTOM, next), "navigation buttons preference");
+  writePreference(mobileNavBottom, setMobileNavBottomSig, on, (next) => backend().setAppBool(KEY_MOBILE_NAV_BOTTOM, next), msg("toast-save-navigation-buttons-failed"));
 }
 
 /** Test seam: set the placement without persisting. */
@@ -84,7 +84,7 @@ export const queryTextOpen = queryTextOpenSig;
 
 /** Apply now and queue a device-local write; failure rolls back and toasts. O(1) plus backend write. */
 export function setQueryTextOpen(on: boolean): void {
-  writePreference(queryTextOpenSig, setQueryTextOpenSig, on, (next) => backend().setAppBool(KEY_QUERY_TEXT_OPEN, next), "query text preference");
+  writePreference(queryTextOpenSig, setQueryTextOpenSig, on, (next) => backend().setAppBool(KEY_QUERY_TEXT_OPEN, next), msg("toast-save-query-text-failed"));
 }
 
 /** Test seam: set the remembered state without persisting. */
@@ -100,7 +100,7 @@ export const navReuseTabs = reuseTabs;
 /** Apply now and queue a device-local write. Failure rolls back and toasts;
  * return does not confirm persistence. O(1) plus backend write. */
 export function setNavReuseTabs(on: boolean): void {
-  writePreference(reuseTabs, setReuseTabsSig, on, (next) => backend().setAppBool(KEY_REUSE_TABS, next), "tab reuse preference");
+  writePreference(reuseTabs, setReuseTabsSig, on, (next) => backend().setAppBool(KEY_REUSE_TABS, next), msg("toast-save-reuse-tabs-failed"));
 }
 
 /** Load the device preference at startup (default ON); read failure toasts and resolves. */

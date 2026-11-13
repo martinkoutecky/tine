@@ -1,4 +1,4 @@
-import { msg } from "./i18n";
+import type { Msg } from "./i18n";
 /** Graph preferences. Writes apply immediately and serialize per key and graph
  * binding. A graph switch rejects queued writes with a toast; an in-flight
  * persist may finish. Failed active writes restore the last confirmed value.
@@ -27,10 +27,11 @@ export function seedGraphSignal(key: string): void {
 
 /** Apply now and queue a graph-bound write. A graph switch rejects a queued
  * write with a toast but cannot cancel one in flight; active failures roll back.
+ * Failure messages retain their catalog identity until rendered.
  * Return does not confirm persistence. O(1) plus queued backend work. */
 export function writeGraphSignal<T>(
   key: string, read: () => T, apply: (value: T) => void, value: T,
-  persist: (value: T) => Promise<unknown>, label: string,
+  persist: (value: T) => Promise<unknown>, failure: Msg,
 ): void {
   const activeScope = currentScope();
   if (activeScope !== scope) { readers.clear(); scope = activeScope; }
@@ -44,23 +45,25 @@ export function writeGraphSignal<T>(
     (next) => bound()
       ? persist(next)
       : Promise.reject(new Error("graph changed before preference write")),
-    label);
+    failure);
 }
 
 /** Change graph metadata; equal values do nothing. Without loaded metadata,
  * persist directly without a signal update or queue. Failures toast; return
  * does not confirm persistence. O(1) plus any backend write. */
 export function changeGraphSetting<K extends keyof GraphMeta>(
-  key: K, value: GraphMeta[K], persist: (value: GraphMeta[K]) => Promise<unknown>, label: string,
+  key: K, value: GraphMeta[K], persist: (value: GraphMeta[K]) => Promise<unknown>, failure: Msg,
 ): void {
   const meta = graphMeta();
   if (!meta) {
-    void persist(value).catch(() => pushToast(msg("graph-preferences-could-not-save", { label: String(label) }), "error"));
+    void persist(value).catch(() => {
+      pushToast(failure, "error");
+    });
     return;
   }
   if (meta[key] === value) return;
   writeGraphSignal(`meta:${String(key)}`, () => graphMeta()?.[key] as GraphMeta[K], (next) => {
     const current = graphMeta();
     if (current) setGraphMeta({ ...current, [key]: next });
-  }, value, persist, label);
+  }, value, persist, failure);
 }
