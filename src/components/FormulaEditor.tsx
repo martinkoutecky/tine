@@ -2,7 +2,7 @@ import { msg, render, t } from "../i18n";
 import { DialogActions } from "./DialogActions";
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { closeFormulaEditor, formulaEditor, type FormulaEditorHome, type FormulaEditorTarget } from "../ui";
-import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node as docNode } from "../document";
+import { blockPageReadOnly, pageByName, pageReadOnly, setBlockProperty, setPageProperty, node as docNode } from "../document";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
@@ -267,7 +267,7 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
     const h = home();
     if (!h) return false;
     if (h.kind === "block") return !blockPageReadOnly(h.id);
-    return !(pageByName(h.name)?.readOnly ?? false);
+    return !pageReadOnly(pageByName(h.name));
   };
   const canSave = () => writeAllowed() && !nameError() && !parseError();
 

@@ -117,6 +117,40 @@ fn setters() -> Vec<(&'static str, Setter, fn(&Config) -> bool)> {
     ]
 }
 
+#[test]
+fn unreadable_settings_use_the_config_refusal_family_without_changing_bytes() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let dir = scratch("unreadable-family", None);
+    let bytes = b"{:a \"\xff\"}\n";
+    fs::write(dir.join("logseq/config.edn"), bytes).unwrap();
+    let store = open(&dir);
+    for (key, setter, _) in setters() {
+        let before = tine_store::cost_counters::snapshot();
+        let error = setter(&store).unwrap_err();
+        let after = tine_store::cost_counters::snapshot();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{key}");
+        assert!(
+            error.to_string().starts_with("config-unreadable: "),
+            "{key}: {error}"
+        );
+        assert_eq!(
+            after.store_reads, before.store_reads,
+            "{key}: reuse the known problem"
+        );
+        assert_eq!(after.fsyncs, before.fsyncs, "{key}: refused before writes");
+        assert_eq!(
+            after.bytes_written, before.bytes_written,
+            "{key}: no bytes written"
+        );
+        assert_eq!(
+            fs::read(dir.join("logseq/config.edn")).unwrap(),
+            bytes,
+            "{key}"
+        );
+    }
+    store.close();
+}
+
 /// DUP-3 (master 4ae2f6f4f): the depth-blind keyword search found a key
 /// nested inside another map before the real top-level entry, and the setter
 /// spliced its value there. Each setter must leave the nested map

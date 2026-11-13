@@ -2,7 +2,7 @@ import { settings } from "./settingDefinitions";
 import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
-import { graphConfigProblem } from "../graph";
+import { graphConfigUnreadable } from "../graphConfig";
 import { JournalTemplateField } from "./JournalTemplateField";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
@@ -316,7 +316,7 @@ export function Settings(): JSX.Element {
               </button>
             </div>
             <div class="settings-pane-body">
-              <Show when={graphConfigProblem()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
+              <Show when={graphConfigUnreadable()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={searching()}>
                 <div class="settings-search-results" aria-live="polite">

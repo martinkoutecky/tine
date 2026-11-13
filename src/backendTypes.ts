@@ -246,7 +246,10 @@ export interface AssetChangedBatch {
   binding_generation?: number;
 }
 
+export interface ConfigProblem { kind: "config-read"; message: string }
+
 export interface GraphConfigChange {
+  config_problem?: ConfigProblem | null;
   binding_generation: number;
   meta: GraphMeta;
 }
@@ -320,7 +323,7 @@ export type PluginRegistryCacheLoad =
   | { kind: "unsafe"; reason: string };
 
 export type LoadGraphResult =
-  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number; config_problem?: { kind: "config-read"; message: string } | null;
+  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number; config_problem?: ConfigProblem | null;
       /** Crash-draft storage status (STEP3 §4); null with no page host. */
       draft_status?: import("./document").DraftStatus | null;
       /** The last publication whose events the host had already sent this
