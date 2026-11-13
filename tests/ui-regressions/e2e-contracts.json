@@ -9,6 +9,13 @@
       "nonRequirements":["No real gist upload, OS PDF dialog, release burn-in or other platform certification."],
       "stability":"burn-in"
     },
+    "scripts/e2e-search-comment-cue.mjs": {
+      "setup":"Synthetic graph, scratch HOME/XDG and account-home shim; native Linux palette on a routed page.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Palette labels comment roots and replies as comments beside an ordinary block hit, retains host breadcrumbs and opens the reply visibly without changing graph bytes.","blocking":false,"authority":"COMMENT-OUT-V2; D-20261113-CO2"}],
+      "acceptableVariations":["Result order, markup and spacing may vary."],
+      "nonRequirements":["No device certification or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-zoom-back.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Back after clicking a block bullet restores the reading position in a long routed page and Journals, using both Alt+Left and the back button.","blocking":false,"authority":"UI-ZOOM-BACK-SCROLL; Martin 2026-11-11"}],
       "acceptableVariations": ["Exact pixels and layout may vary; the previously visible reading block must return to view."],

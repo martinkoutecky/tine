@@ -492,11 +492,7 @@ fn rename_preserves_an_unchanged_unsaved_referrer() {
 
 #[test]
 fn rename_plan_keeps_its_view_during_concurrent_referrer_write() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-d3-rename-plan-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-d3-rename-plan-");
     disk::create_dir_all(root.join("pages")).unwrap();
     disk::write(root.join("pages/Old.md"), "- source\n").unwrap();
     disk::write(root.join("pages/Referrer.md"), "- [[Old]] before\n").unwrap();
@@ -587,11 +583,7 @@ fn a_referrer_delivered_after_the_plan_replans_the_rename() {
 
 #[test]
 fn delete_detects_an_external_twin_before_selecting_a_file() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-d3-delete-external-twin-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-d3-delete-external-twin-");
     disk::create_dir_all(root.join("pages")).unwrap();
     disk::write(root.join("pages/Old.md"), "- markdown\n").unwrap();
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -621,11 +613,7 @@ fn delete_detects_an_external_twin_before_selecting_a_file() {
 #[test]
 fn force_save_writes_only_the_named_twin_on_production_path() {
     // A loaded page carries its file path, so keep-mine targets that file.
-    let root = std::env::temp_dir().join(format!(
-        "tine-b22-force-save-twin-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-b22-force-save-twin-");
     disk::create_dir_all(root.join("pages")).unwrap();
     let md = root.join("pages/Foo.md");
     let org = root.join("pages/Foo.org");
@@ -654,11 +642,7 @@ fn force_save_writes_only_the_named_twin_on_production_path() {
 fn creating_a_named_page_refuses_an_existing_twin() {
     // The old unpinned DTO has no production equivalent. A create by explicit
     // file name still refuses the competing physical claimant.
-    let root = std::env::temp_dir().join(format!(
-        "tine-b22-create-twin-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-b22-create-twin-");
     disk::create_dir_all(root.join("pages")).unwrap();
     let md = root.join("pages/Foo.md");
     let org = root.join("pages/Foo.org");
@@ -689,11 +673,7 @@ fn creating_a_named_page_refuses_an_existing_twin() {
 
 #[test]
 fn force_save_keeps_guide_ephemeral_and_refuses_unknown_bytes() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-b22-force-basics-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-b22-force-basics-");
     disk::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages/A.md");
     disk::write(&path, "- original\n").unwrap();
@@ -727,11 +707,7 @@ fn force_save_refuses_non_round_trip_org_and_header_reclassification() {
         ("crlf", "A:: XX\r\nB:: XX\r\nC:: XX\r\n"),
         ("unicode", "A:: XX\nklíč:: hodnota\nC:: XX\n"),
     ] {
-        let root = std::env::temp_dir().join(format!(
-            "tine-b22-force-header-{label}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-b22-force-header-{label}-"));
         disk::create_dir_all(root.join("pages")).unwrap();
         let rel = if label == "org" {
             "Weird.org"
@@ -813,11 +789,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
             false,
         ),
     ] {
-        let root = std::env::temp_dir().join(format!(
-            "tine-b22-force-changed-{shape}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-b22-force-changed-{shape}-"));
         disk::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/Property.md");
         disk::write(&path, original).unwrap();
@@ -852,11 +824,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
         disk::remove_dir_all(root).unwrap();
     }
 
-    let root = std::env::temp_dir().join(format!(
-        "tine-b22-force-preamble-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-b22-force-preamble-");
     disk::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages/Imported.md");
     let original = "Intro before outline\n\n- Body\n";
@@ -893,12 +861,7 @@ fn force_save_refuses_changed_header_properties_and_preamble_loss() {
 /// first; and an interrupted title completion to one that refuses it.
 #[test]
 fn a_hosted_rename_routes_by_the_plan_shape() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-rename-routing-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = disk::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-rename-routing-");
     disk::create_dir_all(root.join("pages")).unwrap();
     disk::create_dir_all(root.join("logseq")).unwrap();
     disk::write(

@@ -493,11 +493,7 @@ mod config_directory_tests {
 
     #[test]
     fn restore_refuses_directory_switch_and_accepts_current_layout() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-restore-layout-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-restore-layout-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
@@ -542,11 +538,7 @@ mod config_directory_tests {
 
     #[test]
     fn restore_refuses_unloadable_config_before_retiring_pages() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-restore-invalid-config-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir("tine-restore-invalid-config-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
         fs::write(root.join("pages/A.md"), b"- keep me\n").unwrap();
@@ -618,8 +610,7 @@ mod destination_tests {
     }
 
     fn graph(tag: &str) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("tine-restore-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&base);
+        let base = crate::test_support::fresh_dir(&format!("tine-restore-{tag}-"));
         let root = base.join("graph");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- keep me\n").unwrap();
@@ -737,8 +728,7 @@ mod destination_tests {
     /// volumes fold it. A directory with nothing to probe counts as folding.
     #[test]
     fn the_probe_measures_a_directory_without_writing() {
-        let dir = std::env::temp_dir().join(format!("tine-restore-probe-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-restore-probe-");
         fs::create_dir_all(&dir).unwrap();
         assert!(folds_case(&dir), "nothing to probe: the refusing side");
         fs::create_dir(dir.join("pages")).unwrap();

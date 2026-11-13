@@ -87,9 +87,7 @@ mod tests {
 
     #[test]
     fn org_page_aliases_follow_org_syntax_through_graph_resolution() {
-        let dir =
-            std::env::temp_dir().join(format!("tine-org-page-properties-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-org-page-properties-");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         std::fs::write(
             dir.join("pages/Book.org"),

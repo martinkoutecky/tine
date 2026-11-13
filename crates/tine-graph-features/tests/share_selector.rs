@@ -5,7 +5,6 @@
 //! and, since D-20261031-CMQ, inside ordinary query blocks too.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tine_core::query::macro_text::query_macro_extent;
 use tine_core::query::wire_parse::QueryTextDialect;
@@ -14,13 +13,7 @@ use tine_graph_features::publish_query::{plan_query, publish_query, QueryExportR
 use tine_store::Store;
 
 fn graph(files: &[(&str, &str)]) -> (PathBuf, Arc<Store>) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-share-selector-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-share-selector-");
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_graph_features::publish_query::{
     plan_query, publish_live, publish_query, query_request_by_uuid, QueryExportRequest,
@@ -8,12 +7,7 @@ use tine_graph_features::publish_query::{
 use tine_store::Store;
 
 fn fixture() -> (PathBuf, PathBuf, Store) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let base = std::env::temp_dir().join(format!(
-        "tine-query-publish-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let base = crate::test_support::fresh_dir("tine-query-publish-");
     let graph = base.join("graph");
     let output = base.join("output");
     fs::create_dir_all(graph.join("pages")).unwrap();

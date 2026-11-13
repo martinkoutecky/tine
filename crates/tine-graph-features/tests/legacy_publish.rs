@@ -26,11 +26,7 @@ fn atomic_fixture_write(path: &Path, bytes: impl AsRef<[u8]>) {
 #[test]
 fn publication_snapshot_uses_live_file_runtime_identity() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-publish-runtime-identity-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-runtime-identity-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -54,8 +50,7 @@ fn publication_snapshot_uses_live_file_runtime_identity() {
 #[test]
 fn publish_emits_sidebar_search_and_block_anchors() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -158,11 +153,7 @@ fn publish_emits_sidebar_search_and_block_anchors() {
 #[test]
 fn publish_carries_nothing_of_a_private_file_that_shares_a_public_pages_name() {
     let _integration_guard = crate::integration_lock();
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("tine-publish-ambiguous-{unique}"));
+    let dir = crate::test_support::fresh_dir("tine-publish-ambiguous-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -193,11 +184,7 @@ fn publish_carries_nothing_of_a_private_file_that_shares_a_public_pages_name() {
 #[test]
 fn publish_macros_never_expand_private_graph_content() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-publish-private-macros-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-private-macros-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -239,11 +226,7 @@ fn publish_macros_never_expand_private_graph_content() {
 #[test]
 fn publish_uses_one_fresh_snapshot_after_external_visibility_rewrite() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-publish-external-visibility-snapshot-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-external-visibility-snapshot-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -299,9 +282,7 @@ fn publish_uses_one_fresh_snapshot_after_external_visibility_rewrite() {
 #[test]
 fn republish_omits_pages_that_are_no_longer_public() {
     let _integration_guard = crate::integration_lock();
-    let dir =
-        std::env::temp_dir().join(format!("tine-publish-retire-stale-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-retire-stale-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -342,8 +323,7 @@ fn republish_omits_pages_that_are_no_longer_public() {
 #[test]
 fn publish_uses_welcome_home_and_public_reverse_block_refs() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-welcome-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-welcome-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -395,8 +375,7 @@ fn publish_gives_distinct_nonempty_files_on_slug_collision() {
     // first) and `日本語` writes a degenerate `.html`. Post-fix every page must
     // get a distinct, nonempty file, and every cross-page link must point at
     // the file its target was actually written to.
-    let dir = std::env::temp_dir().join(format!("tine-publish-collide-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-collide-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -477,8 +456,7 @@ fn publish_gives_distinct_nonempty_files_on_slug_collision() {
 #[test]
 fn page_print_html_is_self_contained_with_inlined_image() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-print-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-print-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("assets")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -595,8 +573,7 @@ fn page_print_html_is_self_contained_with_inlined_image() {
 #[test]
 fn publish_begin_query_renders_authored_title_and_results() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-begin-query-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-begin-query-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -762,11 +739,7 @@ fn publish_begin_query_preserves_decoded_title_inputs_and_discards() {
 #[test]
 fn publish_begin_query_names_no_private_rows_and_leaks_nothing() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-publish-begin-query-private-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-begin-query-private-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -807,11 +780,7 @@ fn publish_begin_query_names_no_private_rows_and_leaks_nothing() {
 #[test]
 fn publish_malformed_begin_query_is_inert_and_hides_its_payload() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-publish-begin-query-malformed-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-begin-query-malformed-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -881,8 +850,7 @@ fn publish_simple_begin_query_map_returns_task_rows() {
 #[test]
 fn publish_renders_facets_queries_and_embeds() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-facets-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-facets-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -970,8 +938,7 @@ fn publish_renders_facets_queries_and_embeds() {
 #[test]
 fn publish_memoizes_repeated_query_macros() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-query-memo-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-query-memo-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -1011,8 +978,7 @@ fn publish_memoizes_repeated_query_macros() {
 #[test]
 fn publish_query_keeps_and_hydrates_a_match_below_a_nonmatching_gap() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-query-gap-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-query-gap-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -1056,8 +1022,7 @@ fn publish_query_keeps_and_hydrates_a_match_below_a_nonmatching_gap() {
 #[test]
 fn publish_reuses_pass1_docs_for_repeated_page_embeds() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-embed-reuse-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-embed-reuse-");
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -1175,8 +1140,7 @@ fn gen_sample_export() {
 #[test]
 fn publish_sees_a_same_size_rewrite_with_its_stamp_restored() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-publish-bytes-fresh-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-publish-bytes-fresh-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
     let page = dir.join("pages/Alpha.md");

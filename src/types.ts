@@ -618,6 +618,8 @@ export type QueryHit =
       page: PageEntry;
       /** Native-hydrated authored page facts for display columns; absent for references. */
       row?: import("./editor/queryIr").PageRow;
+      /** The matched content excerpt belongs to a margin-comment thread. */
+      is_comment?: boolean;
       display_text: string;
       evidence: MatchEvidence[];
       score: number;
@@ -631,6 +633,8 @@ export type QueryHit =
       /** Exact graph-root-relative file that physically owns this block hit. */
       path?: string;
       block: BlockDto;
+      /** Rust-owned thread membership, including replies. */
+      is_comment?: boolean;
       display_text: string;
       evidence: MatchEvidence[];
       score?: number;

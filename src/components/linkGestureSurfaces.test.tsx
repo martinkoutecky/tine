@@ -512,6 +512,39 @@ describe("query search-presentation rows follow the gesture contract (GH #207)",
     }
   });
 
+  it("COMMENT-OUT-V2: a saved search's page hit matched in a comment carries the comment cue; a body match does not", async () => {
+    const pageHit = (name: string, is_comment: boolean) => ({
+      entity: "page" as const,
+      page: { name, kind: "page", date_key: null, path: `pages/${name}.md` },
+      display_text: `${name} needle`,
+      evidence: [],
+      score: 1,
+      is_comment,
+    });
+    const execution = {
+      hits: [pageHit("Annotated", true), pageHit("Plain", false)],
+      diagnostics: [],
+      explanation: { branches: [] },
+      cancelled: false,
+    } as unknown as QueryExecution;
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(execution);
+    loadQueryDoc('{{query (search "needle")}}\ntine.view:: search');
+    const m = mount(() => <Block id="query" />);
+    try {
+      const rows = await vi.waitFor(() => {
+        const els = [...m.root.querySelectorAll<HTMLElement>(".query-search-page")];
+        expect(els).toHaveLength(2);
+        return els;
+      });
+      const kinds = (el: HTMLElement) => [...el.querySelectorAll(".switcher-kind")].map((k) => k.textContent);
+      expect(kinds(rows[0])).toContain("comment");
+      expect(kinds(rows[1])).not.toContain("comment");
+      expect(rows[1].textContent).toContain("Plain needle");
+    } finally {
+      m.dispose();
+    }
+  });
+
   it("legacy table page cells and list headers suppress the middle-mousedown default", async () => {
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([{
       page: "Query Owner",

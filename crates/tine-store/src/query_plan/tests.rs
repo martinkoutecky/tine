@@ -5,6 +5,59 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
+fn search_marks_comment_roots_and_replies_and_keeps_comment_only_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(
+        dir.path().join("pages/Annotations.md"),
+        "- Host\n  - needle root\n    tine.quote:: Host\n    - needle reply\n- needle body\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("pages/Only.md"),
+        "- Host\n  - needle only\n    tine.quote:: Host\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("pages/Org.org"),
+        "* Host\n** needle root\n:PROPERTIES:\n:tine.quote: Host\n:END:\n*** needle reply\n* needle body\n:PROPERTIES:\n:tine.quote: top-level property\n:END:\n").unwrap();
+    let graph = snapshot_for_dir(dir.path());
+    let mut plan = QueryPlan::friendly("needle", 20, 20);
+    plan.page_match_scope = FriendlyPageMatchScope::Content;
+    COMMENT_MEMBERSHIP_VISITS.with(|count| count.set(0));
+    let result = plan.execute(&graph, || false);
+    assert_eq!(
+        COMMENT_MEMBERSHIP_VISITS.with(Cell::get),
+        20,
+        "one membership visit per block in each existing page-content/block walk"
+    );
+    let only = result
+        .hits
+        .iter()
+        .find(|hit| matches!(hit, QueryHit::Page { page, .. } if page.name == "Only"))
+        .expect("comment-only page remains a hit");
+    assert_eq!(serde_json::to_value(only).unwrap()["is_comment"], true);
+    let blocks: Vec<_> = result
+        .hits
+        .iter()
+        .filter_map(|hit| match hit {
+            QueryHit::Block {
+                display_text,
+                block,
+                ..
+            } => Some((display_text, block, serde_json::to_value(hit).unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks.len(), 7);
+    for (text, block, wire) in blocks {
+        assert_eq!(wire["is_comment"], text != "needle body", "{text}");
+        if text != "needle body" {
+            assert_eq!(block.breadcrumb.first().map(String::as_str), Some("Host"));
+        }
+    }
+}
+
+#[test]
 fn literal_block_picker_keeps_its_existing_referenceable_block_surface() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -44,11 +97,7 @@ fn literal_block_picker_keeps_its_existing_referenceable_block_surface() {
 
 #[test]
 fn alias_completion_preserves_case_and_lists_every_matching_name() {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("tine-gh675-{nonce}"));
+    let dir = crate::test_support::fresh_dir("tine-gh675-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::write(
         dir.join("pages/Tine.md"),
@@ -72,11 +121,7 @@ fn alias_completion_preserves_case_and_lists_every_matching_name() {
 
 #[test]
 fn alias_completion_preserves_authored_case() {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("tine-gh675-case-{nonce}"));
+    let dir = crate::test_support::fresh_dir("tine-gh675-case-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     for (name, content) in [
         ("Owner.md", "alias:: SSE\n- body\n"),
@@ -102,7 +147,7 @@ fn alias_completion_preserves_authored_case() {
 
 #[test]
 fn pinyin_page_names_are_optional_and_rank_below_native_names() {
-    let dir = std::env::temp_dir().join(format!("tine-pinyin-{}", std::process::id()));
+    let dir = crate::test_support::fresh_dir("tine-pinyin-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     for name in [
         "北京",
@@ -224,12 +269,7 @@ fn pinyin_or_preserves_a_later_native_match_class() {
 
 #[test]
 fn graph_search_obeys_og_accent_switch_on_real_pages_and_blocks() {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("tine-accent-search-{}-{nonce}", std::process::id()));
+    let dir = crate::test_support::fresh_dir("tine-accent-search-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
     fs::write(dir.join("pages/Café.md"), "- café\n").unwrap();
@@ -285,7 +325,6 @@ fn erased_accent_query_never_matches_the_whole_graph() {
     fs::remove_dir_all(dir).unwrap();
 }
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn text_pred(mode: TextMatchMode, value: &str) -> TextPredicate {
     TextPredicate {
@@ -320,11 +359,7 @@ impl ReadSnapshot {
 }
 
 fn fixture() -> (PathBuf, Arc<ReadSnapshot>) {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("tine-query-plan-{}-{nonce}", std::process::id()));
+    let dir = crate::test_support::fresh_dir("tine-query-plan-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -657,14 +692,7 @@ fn canonical_unicode_matches_pages_aliases_blocks_and_original_utf16_spans() {
 
 #[test]
 fn canonical_unicode_executes_through_real_page_alias_and_block_projections() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-query-plan-unicode-{}-{nonce}",
-        std::process::id()
-    ));
+    let dir = crate::test_support::fresh_dir("tine-query-plan-unicode-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -714,14 +742,7 @@ fn canonical_unicode_executes_through_real_page_alias_and_block_projections() {
 
 #[test]
 fn page_alias_search_is_scoped_to_its_physical_owner() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "tine-query-plan-alias-owner-{}-{nonce}",
-        std::process::id()
-    ));
+    let dir = crate::test_support::fresh_dir("tine-query-plan-alias-owner-");
     fs::create_dir_all(dir.join("pages").join("sub")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -801,12 +822,7 @@ fn page_alias_search_is_scoped_to_its_physical_owner() {
 
 #[test]
 fn page_content_scope_admits_physical_owners_and_keeps_names_default() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir =
-        std::env::temp_dir().join(format!("tine-page-content-{}-{nonce}", std::process::id()));
+    let dir = crate::test_support::fresh_dir("tine-page-content-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
     fs::write(dir.join("pages/Alpha.md"), "- hiddenneedle in a block\n").unwrap();
@@ -1093,14 +1109,7 @@ fn block_picker_matches_literal_fragments_not_scattered_letters() {
 }
 
 fn picker_graph(blocks: &[&str]) -> (PathBuf, Arc<ReadSnapshot>) {
-    let dir = std::env::temp_dir().join(format!(
-        "tine-picker-ft-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = crate::test_support::fresh_dir("tine-picker-ft-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     let body: String = blocks.iter().map(|b| format!("- {b}\n")).collect();
     fs::write(dir.join("pages").join("Ft.md"), body).unwrap();
@@ -1182,14 +1191,7 @@ fn block_picker_full_text_words_fold_case_and_accents() {
 
 #[test]
 fn block_picker_fragments_fold_diacritics_and_case_for_czech_text() {
-    let dir = std::env::temp_dir().join(format!(
-        "tine-picker-cs-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = crate::test_support::fresh_dir("tine-picker-cs-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::write(
         dir.join("pages").join("Cs.md"),
@@ -1225,14 +1227,7 @@ fn block_picker_fragments_fold_diacritics_and_case_for_czech_text() {
 
 #[test]
 fn fragment_evidence_marks_each_fragment_in_original_utf16_offsets() {
-    let dir = std::env::temp_dir().join(format!(
-        "tine-picker-ev-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let dir = crate::test_support::fresh_dir("tine-picker-ev-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::write(dir.join("pages").join("Ev.md"), "- 😀 Foo bar BAZ qux\n").unwrap();
     let graph = snapshot_for_dir(&dir);
@@ -1329,6 +1324,7 @@ fn literal_block_search_adapter_preserves_fragment_membership_and_ranked_topk() 
 #[test]
 fn query_hit_json_contract_uses_tagged_entities_and_utf16_evidence() {
     let hit = QueryHit::Page {
+        is_comment: false,
         row: None,
         page: PageEntry {
             name: "🧠 Foo".into(),
@@ -1353,6 +1349,7 @@ fn query_hit_json_contract_uses_tagged_entities_and_utf16_evidence() {
         serde_json::to_value(hit).unwrap(),
         serde_json::json!({
             "entity": "page",
+            "is_comment": false,
             "page": {
                 "name": "🧠 Foo",
                 "kind": "page",

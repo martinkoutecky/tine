@@ -28,6 +28,27 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("carries comment membership into root, reply and body palette rows", async () => {
+    await bindTestHost();
+    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: ["root", "reply", "body"].map(id => ({ entity: "block" as const, page: "Notes", kind: "page" as const,
+        block: { id, raw: `needle ${id}`, children: [], collapsed: false, breadcrumb: ["Host"] },
+        display_text: `needle ${id}`, evidence: [], is_comment: id !== "body" })),
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openSwitcher({ mode: "content" });
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "needle"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.waitFor(() => expect(root.querySelectorAll(".block-result")).toHaveLength(3));
+      for (const row of root.querySelectorAll(".block-result")) {
+        expect(row.querySelector(".switcher-kind")?.textContent).toBe(row.textContent?.includes("needle body") ? "block" : "comment");
+        expect(row.textContent).toContain("Notes › Host");
+      }
+    } finally { dispose(); search.mockRestore(); }
+  });
   it.each(["mouse", "touch", "pen"].flatMap(pointerType =>
     ["page", "block", "create"].map(kind => ({ pointerType, kind }))))(
     "opens a $kind row in the focused split through $pointerType input", async ({ pointerType, kind }) => {
