@@ -4,10 +4,12 @@
 // Logseq's `:ui/enable-tooltip?`, read from the served graph config and written
 // through the shared graph-setting path.
 import { createSignal } from "solid-js";
+import { msg } from "./i18n";
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
 import { changeGraphSetting } from "./graphPreferences";
 import { loadPreference, writePreference } from "./preferenceWrites";
+import { pushToast } from "./toasts";
 
 const KEY = "hover_preview_delay_seconds";
 const [delay, setDelay] = createSignal(1);
@@ -40,9 +42,11 @@ export function hoverPreviewDelayMs(): number | null {
  *  `:ui/enable-tooltip?` (`state/enable-tooltip?`, `src/main/frontend/state.cljs:688`
  *  at `6e7afa8eb`): on when absent, only an explicit false turns them off. */
 export function previewsEnabled(): boolean {
-  return graphMeta()?.enable_tooltip ?? true;
+  const meta = graphMeta();
+  return meta ? meta.enable_tooltip : true;
 }
 
 export function changePreviewsEnabled(on: boolean): void {
-  changeGraphSetting("enable_tooltip", on, (next) => backend().setEnableTooltip(next!), "preview preference");
+  changeGraphSetting("enable_tooltip", on, (next) => backend().setEnableTooltip(next),
+    () => pushToast(msg("toast-reference-previews-save-failed"), "error"));
 }

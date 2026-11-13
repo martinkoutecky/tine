@@ -2602,6 +2602,7 @@ export interface MessageArgs {
   "settings-prose-when-a-page-you-are-not-editing-changes-on-disk": {};
   "settings-reference-previews": {};
   "settings-reference-previews-hint": {};
+  "settings-reference-previews-preference": {};
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };
@@ -3181,6 +3182,7 @@ export interface MessageArgs {
   "toast-link-outside-graph": { "dest": string | number };
   "toast-pinyin-load-failed": {};
   "toast-pinyin-save-failed": {};
+  "toast-reference-previews-save-failed": {};
   "toast-repeat-count": { "count": string | number };
   "toast-wsl-rootfs-warning": {};
   "toasts-close": {};
