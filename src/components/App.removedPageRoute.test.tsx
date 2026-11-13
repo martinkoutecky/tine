@@ -31,6 +31,22 @@ it("a missing publication target does not navigate a pane that already left it",
   expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Elsewhere" });
 });
 
+// Review HOLD on 12bcbeee0: a name-only recheck still sent a reader who had opened another file with the same page name
+// back onto the removed file.
+it("a missing publication target does not navigate a pane that moved to a same-named file", async () => {
+  ensurePageLoaded(removed);
+  mainPaneRouter.openFile("pages/Removed.md", "Removed", "page");
+  let deliver!: (dto: PageRead | null) => void;
+  const read = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }));
+  vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+  const pending = applyGraphChangesBulk({ changes: [], answers: publication("1", ["removed"]) });
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  mainPaneRouter.openFile("pages/keeper.md", "Removed", "page");
+  deliver(null);
+  await pending;
+  expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Removed", path: "pages/keeper.md" });
+});
+
 it("a pane still showing the missing page leaves it", async () => {
   ensurePageLoaded(removed);
   mainPaneRouter.openPage("Before", "page");

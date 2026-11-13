@@ -233,10 +233,11 @@ installExternalChangeUiHandler(() => {
     pageOpen: (name: string) => routes.some((p) => p.route.kind === "page" && p.route.name === name),
     journalsOpen: routes.some((p) => p.route.kind === "journals"),
     leaveRemovedPage: (name: string) => {
-      // Recheck each pane's current route: the removal may resolve after a read, when the reader has moved on.
-      for (const paneId of allPaneIds()) {
-        const p = { paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() };
-        if (p.route.kind === "page" && p.route.name === name) {
+      // The removal may resolve after a read: leave only panes still on the exact route (name, kind, path) they
+      // showed when the change was observed, never one the reader has since moved, even to a same-named file.
+      for (const p of routes) {
+        if (p.route.kind === "page" && p.route.name === name && allPaneIds().includes(p.paneId)
+          && sameRoute(p.router.route(), p.route)) {
           if (p.router.canGoBack()) p.router.goBack();
           else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
         }
