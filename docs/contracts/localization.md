@@ -86,6 +86,11 @@ revisions 2 and 3).
   error list, Copy and the debug log use the message id and English text, so a
   report reads the same in every language. The persisted flight recorder keeps
   its fixed `error_toast` event and never receives text.
+- Preference writers take a complete `Msg` for save failures. Catalog references
+  name the setting; callers never resolve a label before handing it to a writer.
+  The literal ratchet recognizes toast parameters typed directly as an imported
+  `Msg`; string parameters and unions remain literal sites. Typechecking enforces
+  the catalog boundary.
 
 ## Locale choice
 
