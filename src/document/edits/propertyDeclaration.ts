@@ -1,7 +1,7 @@
 import { backend } from "../../backend";
 import { readOwned, bindingOwner } from "../../owned";
 import { ensurePageLoaded } from "../workingSet";
-import { pageByName } from "../model";
+import { pageByName, pageReadOnly } from "../model";
 import { captureEmptyPage } from "../convert";
 import { setPageProperty } from "./properties";
 
@@ -25,7 +25,7 @@ export async function ensurePagePropertyOnKeyPage(name: string, key: string, val
   }
   const page = pageByName(name);
   if (page) {
-    if (page.readOnly || page.guide) throw new Error("The property key page is read-only.");
+    if (pageReadOnly(page) || page.guide) throw new Error("The property key page is read-only.");
     setPageProperty(name, key, value);
     return;
   }

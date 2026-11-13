@@ -8,9 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
 - Block selections now include each selected block's whole subtree, folded children included. Shift+Up/Down extend by sibling subtrees, and Shift+click, dragging, select-all and bulk actions use the same selection. Copying a parent always includes its children; the parent-copy setting has been retired (#941).
 - Search labels matching margin comments and replies as comments, with their host breadcrumbs (COMMENT-OUT-V2).
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
+- An unreadable `config.edn` is explained on page banners and in Settings errors. A live arrival raises one notice and makes open pages read-only; repairing it clears the graph restriction without reopening (Hl2_0).
 - A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).
 
 - CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
@@ -68,7 +70,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- The sidebar keeps workspace creation and menu controls within reach instead of clipping them into the editor (IcYyc).
 - All Pages keeps timestamps and backlink counts current when updates for different pages arrive out of order (REG-ALLPAGES-METRIC-ORDER).
+- Enter after text in a query or linked-reference result creates a child and keeps editing it, even when the child does not match the query (internal: UI-QUERY-REF-ENTER-EDITOR-1113).
 - A phone toolbar keeps Calendar, Journals, Share and the theme toggle on the bar down to about a 360-pixel-wide window instead of moving them into "…" on a 390-pixel phone: the small workspace switcher no longer sits on the bar at that width, and workspaces stay one tap away as the first row of the left drawer. On Settings → Keyboard shortcuts on a phone, every command's id now starts at the same place, with Unbind and Reset at the end of the line (#926).
 - On iOS, Settings → Graph and the graph lists show a graph as the folder inside Tine's Documents folder (for example `Documents/Graphs/Work notes`) instead of the long app-sandbox path; Copy path still copies the full path (#926).
 - Moving a block with Alt+Shift+Up/Down in the CodeMirror editor keeps its selected text selected; depending on timing it could collapse to the start of the block (internal: UI-CM6-MOVE-KEEPS-BROWSER-RANGE-1112).

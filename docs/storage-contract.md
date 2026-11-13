@@ -9,10 +9,14 @@ locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
 A failed config read opens the graph read-only: existing files remain readable,
-page DTOs carry read-only, and transactions reject every mutation before disk
-steps. Repair `config.edn` externally and refresh/reopen to resume writes using
-its configured directories. The graph-open reply reports the config failure;
-setup never throws over it.
+and transactions reject mutations before disk steps. `Store::config().problem`
+supplies the graph restriction separately from a page's Org round-trip flag.
+Graph-open replies and live config publications carry that same problem: the
+window shows one config notice and gates editing on every loaded page, including
+Markdown. Settings read failures use the same catalog explanation as the write
+guard. Repairing `config.edn` externally clears the graph restriction and its
+notice on the next watcher publication, without reopening; an unsafe Org file
+retains its own restriction. Setup never throws over the config failure.
 
 Watcher read failures preserve the last good page while external editors and
 sync clients deliver bytes (GH #543). A revision mismatch, short read, or
@@ -1736,7 +1740,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. The same check guards every page output a plan publishes, saves, replacements, reference rewrites (a merge survivor, a referrer) and renaming moves alike: large pages from Logseq, an import or an external editor (malformed or unusual input) whose merge or longer name would grow past the bound are refused before any write, both files unchanged, never published as a page the store refuses to open (REG-CM-MERGE-UNOPENABLE-SURVIVOR, proof `merge_text_trace.rs::a_merge_never_publishes_a_survivor_the_store_cannot_open`, `a_rename_never_publishes_a_page_the_store_cannot_open`). |
 | `transaction.rs::page_content_bytes<'a>::InvalidTarget` | 1 | A raw page stream exceeds its cap; refuse before creating an unreadable page. Shared validation supplies staged bytes to planning too. |
 | `transaction.rs::validate_config_bytes::InvalidTarget` | 1 | A config edit or create names a directory outside the graph; refuse before changing disk. |
-| `transaction.rs::config_write_failure::ConfigUnreadable` | 1 | config.edn could not be read when the graph loaded (not valid UTF-8, too large, or an iCloud placeholder), so the page file-name format is unknown and a page file would be written under another name; refuse every write before anything changes, as the typed reason the window words from its catalog instead of the raw read error (card HVgII). |
+| `transaction.rs::config_write_failure::ConfigUnreadable` | 1 | config.edn could not be read at graph open or live reload (not valid UTF-8, too large, inaccessible, or an iCloud placeholder), so the page file-name format is unknown and a page file would be written under another name; the transaction guard refuses before anything changes. The window receives the same problem at open and live, shows the catalog explanation on page banners and in Settings, and clears the graph restriction and notice when repair is observed (cards HVgII, Hl2_0). |
 
 The following rows cover refusals outside the constructor family counted
 above. Their individual call sites are inventoried in `og/batches/E-survey-errors.md`
@@ -2109,18 +2113,25 @@ empty document under their fileless entry (the row a page query evaluates): a
 namespace child brings its parent and its last child removes it, a page's
 references bring reference-only pages, and a file taking or leaving a name
 removes or brings that name's fileless row. The candidates are the changed
-pages' names and references and the namespace prefixes of both, each looked up
-on both sides by `ReadSnapshot::resident_reference_only_page` (the
+pages' moved names, changed references, and namespace prefixes, including a
+child's prefixes when it gains or loses its last text. Each is looked up on
+both sides by `ReadSnapshot::resident_reference_only_page` (the
 `reference_only_pages` rule for one name). It reads only the resident name
-table and day support; when either side has not built them, every mounted
-reader that can list a fileless page (a page-anchored query, a search) is named
-instead. Queries are named by the usual `touches_edit` rule on those synthetic
-edits. The `full` bound (more than 32 changed paths) is decided before any of
+table and day support. The summary produces the changed fileless keys once;
+both carried memo eviction and mounted query invalidation consume them through
+`Plan::may_list_fileless`, using execution's required-name constraints without
+evaluating vanished rows in the current graph. When either side's inputs are
+not resident, both conservatively invalidate plans that can list any fileless
+row; required properties still exclude fileless rows. Synthetic
+edits still name the other reader families; search also checks the edited
+pages' names and references. The `full` bound (more than 32 changed paths) is decided before any of
 this reads a page, and the preparation is linear in the batch (one active-path
 set). Unrelated mounted queries do not rerun: proof
 `crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario,
 fileless parents and reference-only pages on create, rename and delete, a
 counter at N = 8 and 64, and a batch-work counter at 8, 16, 40 and 400 files)
+and `fileless_change_producer_probes_only_changed_names` (two probes per
+changed fileless name, zero for typing, at 8 and 64 unrelated pages)
 and steps 60–62 of the random reader oracle in
 `crates/tine-store/tests/change_summary.rs`. The frontend create, delete and rename
 paths no longer add a full refresh of their own: create and delete no longer

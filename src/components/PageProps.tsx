@@ -2,7 +2,7 @@ import { msg, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps, type PropsPanelScope } from "../ui";
 import {
-  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageInstanceGeneration,
+  blockPageReadOnly, blockProperty, formatForBlock, node, pageByName, pageReadOnly, pageInstanceGeneration,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
 import { PAGE_PROP_SPECS, isEditablePropertyKey, FORM_MANAGED, hides, type PagePropSpec } from "../editor/properties";
@@ -75,7 +75,7 @@ function writeOne(scope: PropsPanelScope, binding: Binding, subject: object | un
 function scopeWritable(scope: PropsPanelScope): boolean {
   if (scope.kind === "block") return !!node(scope.id) && !blockPageReadOnly(scope.id);
   const page = pageByName(scope.name);
-  return !!page && !page.readOnly && !page.guide;
+  return !!page && !pageReadOnly(page) && !page.guide;
 }
 
 function scopeLabel(scope: PropsPanelScope): { title: string; subject: string } {

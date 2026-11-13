@@ -525,15 +525,17 @@ fn config_retry_reapplies_edit_over_external_write() {
 }
 
 #[test]
-fn config_invalid_utf8_error_matches_legacy() {
+fn config_invalid_utf8_error_keeps_its_cause_in_the_typed_config_family() {
     let _integration_guard = crate::integration_lock();
     let (new_root, store) = fixture("config-invalid-utf8-new");
     fs::create_dir_all(new_root.join("logseq")).unwrap();
     fs::write(new_root.join("logseq/config.edn"), b"\xff").unwrap();
-    let new = config::set_start_of_week(&store, 1)
-        .unwrap_err()
-        .to_string();
-    assert_eq!(new, "stream did not contain valid UTF-8");
+    let error = config::set_start_of_week(&store, 1).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(
+        error.to_string(),
+        "config-unreadable: stream did not contain valid UTF-8"
+    );
     assert_eq!(
         fs::read(new_root.join("logseq/config.edn")).unwrap(),
         b"\xff"

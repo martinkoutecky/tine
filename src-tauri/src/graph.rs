@@ -869,7 +869,8 @@ pub(crate) struct ConfigProblem {
     kind: &'static str,
     message: String,
 }
-fn config_problem(store: &Store) -> Option<ConfigProblem> {
+/// Serialize the store's current config read problem; O(1), no disk access.
+pub(crate) fn config_problem(store: &Store) -> Option<ConfigProblem> {
     store.config().problem.map(|error| ConfigProblem {
         kind: "config-read",
         message: error.to_string(),
