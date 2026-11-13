@@ -85,6 +85,7 @@ right-sidebar-on = On { $page }
 right-sidebar-this-block-is-no-longer-available = This block is no longer available.
 
 search-result-row-block = block
+search-result-row-comment = comment
 
 sidebar-tine = Tine
 

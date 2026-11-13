@@ -5,7 +5,7 @@ import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
-import { selectBlock, extendSelectionTo, resetStore, pageByName, undo, pasteClipboardPayload, selectedIds, setBlockProperty, blockProperty } from "../document";
+import { selectBlock, extendSelectionTo, resetStore, pageByName, undo, pasteClipboardPayload, selectedIds, setBlockProperty, blockProperty, loadFeed } from "../document";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { openContextMenu, closeContextMenu, closeExportModal, exportModal } from "../ui";
 import { setGraphMeta } from "../graphSession";
@@ -49,6 +49,27 @@ function click(stem: string) {
 function raws() { return pageByName("P")!.roots.map(id => doc.byId[id].raw.split("\n")[0]); }
 
 describe("selection context menu (GH #591)", () => {
+  it("Remove author is offered on a mixed read-only selection and skips the read-only page", () => {
+    load();
+    const page = (name: string, id: string, read_only: boolean) => ({ name, kind: "page" as const, title: name, format: "md" as const,
+      pre_block: null, read_only, blocks: [{ ...block(id, "Words\ntine.author:: Ada Test"), properties: [["tine.author", "Ada Test"]] as [string, string][] }] });
+    loadFeed([page("P", A, false), page("Q", B, true)]);
+    selectBlock(A); extendSelectionTo(B); open(B); click("Remove author");
+    expect(doc.byId[A].raw).toBe("Words");
+    expect(doc.byId[B].raw).toBe("Words\ntine.author:: Ada Test");
+    undo();
+    expect(doc.byId[A].raw).toBe("Words\ntine.author:: Ada Test");
+  });
+  it("Remove author clears the selected forest including folded children, with one undo (GH #918)", () => {
+    load(true);
+    for (const id of [A, child]) setBlockProperty(id, "tine.author", "Synthetic author");
+    const before = [A, child, B].map(id => doc.byId[id].raw);
+    open(B); click("Remove author");
+    for (const id of [A, child, B]) expect(blockProperty(id, "tine.author")).toBeNull();
+    expect(doc.byId[B].raw).toBe(before[2]);
+    undo();
+    expect([A, child, B].map(id => doc.byId[id].raw)).toEqual(before);
+  });
   it("one selected parent keeps the same Remove author target in the menu and palette (GH #941)", () => {
     load(); setBlockProperty(A, "tine.author", "Synthetic author"); selectBlock(A); open();
     expect(removeAuthorTarget()).toBe(A);
@@ -127,6 +148,7 @@ describe("selection context menu (GH #591)", () => {
     load(false, true); open();
     const labels = [...document.querySelectorAll(".ctx-item")].map(el => el.textContent?.trim());
     expect(labels).toContain("Copy blocks");
+    expect(labels).not.toContain("Remove author");
     expect(labels).not.toContain("Cut blocks"); expect(labels).not.toContain("Delete blocks");
     click("Copy block");
     await vi.waitFor(() => expect(backend().writeRich).toHaveBeenCalled());

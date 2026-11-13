@@ -8,7 +8,7 @@ import { backend } from "./backend";
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
 import { doc } from "./document/model";
-import { extendSelectionTo, pageByName, resetStore, selectBlock, undo } from "./document";
+import { extendSelectionTo, loadFeed, pageByName, resetStore, selectBlock, undo } from "./document";
 import { clearClipboardPayload } from "./clipboard";
 import { BUILTIN_KEYS, commandDefaults, installKeybindings, paletteCommands } from "./keybindings";
 import { closeSwitcher, switcherOpen, switcherPrefill } from "./ui";
@@ -22,6 +22,8 @@ import type { BlockDto } from "./types";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
 import { Block } from "./components/Block";
+import * as wiring from "./document/host/wiring";
+import * as model from "./document/model";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -512,6 +514,9 @@ describe("paste as link (GH #448)", () => {
 });
 
 describe("Remove author (GH #918)", () => {
+  const authorBlock = (id: string, raw: string, children: BlockDto[] = [], collapsed = false): BlockDto => ({
+    ...block(id, raw, children, collapsed), properties: [["tine.author", "Ada Test"]],
+  });
   const authored = `Agent words\ntine.author:: Ada Test\nid:: ${A}`;
   const loadAuthored = () => loadSingle({
     name: "P", kind: "page", title: "P", format: "md", pre_block: null,
@@ -535,7 +540,7 @@ describe("Remove author (GH #918)", () => {
     expect(removeAuthorTarget()).toBe("cost-0");
     expect(visits).toBe(0);
     extendSelectionTo("cost-1");
-    expect(removeAuthorTarget()).toBeNull();
+    expect(removeAuthorTarget()).toBe("cost-0");
     selectBlock("cost-1");
     expect(removeAuthorTarget()).toBe("cost-1");
   });
@@ -561,7 +566,7 @@ describe("Remove author (GH #918)", () => {
     expect(offered(), "a block without an author").toBe(false);
     selectBlock(A);
     extendSelectionTo(B);
-    expect(offered(), "several selected blocks").toBe(false);
+    expect(offered(), "mixed selected blocks").toBe(true);
     selectBlock(A);
     expect(offered(), "one authored block").toBe(true);
   });
@@ -577,5 +582,73 @@ describe("Remove author (GH #918)", () => {
     } finally {
       dispose();
     }
+  });
+
+  it.each(["palette", "bound key"])("removes authored descendants from a routed page via %s, with one undo", (entry) => {
+    const raw = (id: string) => `Words ${id}\ntine.author:: Ada Test\nkeep:: value`;
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,
+      blocks: [authorBlock(A, raw(A), [authorBlock(C1, raw(C1), [authorBlock(G1, raw(G1))]), block(C2, "Unauthored\nkeep:: child")], true),
+        { ...block(B, "Outside\ntine.author:: Other"), properties: [["tine.author", "Other"]] }] });
+    openPage("P", "page");
+    selectBlock(A);
+    const dispose = installKeybindings({ "editor/remove-author": "alt+shift+u" });
+    try {
+      if (entry === "palette") run("editor/remove-author");
+      else window.dispatchEvent(new KeyboardEvent("keydown", { key: "U", code: "KeyU", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      for (const id of [A, C1, G1]) expect(doc.byId[id].raw).toBe(`Words ${id}\nkeep:: value`);
+      expect(doc.byId[C2].raw).toBe("Unauthored\nkeep:: child");
+      expect(doc.byId[B].raw).toBe("Outside\ntine.author:: Other");
+      undo();
+      for (const id of [A, C1, G1]) expect(doc.byId[id].raw).toBe(raw(id));
+    } finally { dispose(); }
+  });
+
+  it.each([1, 200])("submits one batched page edit for %i authored blocks", async (count) => {
+    const blocks = Array.from({ length: count }, (_, i) => authorBlock(`bulk-${i}`, `Words ${i}\ntine.author:: Ada Test`));
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null, blocks });
+    selectBlock(blocks[0].id); extendSelectionTo(blocks.at(-1)!.id);
+    const dirty = vi.spyOn(wiring, "markDirty");
+    const submit = vi.spyOn(backend(), "pageSubmit");
+    const structure = model.structureRevision();
+    const started = performance.now();
+    run("editor/remove-author");
+    expect(performance.now() - started).toBeLessThan(500);
+    // Raw edits only: no structural publication that would make unrelated
+    // mounted outlines rescan (merge review F1).
+    expect(model.structureRevision()).toBe(structure);
+    expect(dirty).toHaveBeenCalledTimes(1);
+    expect(dirty).toHaveBeenCalledWith("P", "save-block");
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    for (const b of blocks) expect(doc.byId[b.id].raw).toBe(b.raw.replace("\ntine.author:: Ada Test", ""));
+    undo();
+    for (const b of blocks) expect(doc.byId[b.id].raw).toBe(b.raw);
+  });
+
+  it("offers a parent without attribution when a descendant has it, but skips read-only pages", () => {
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,
+      blocks: [block(A, "Parent", [authorBlock(C1, "Child\ntine.author:: Ada Test")])] });
+    selectBlock(A);
+    expect(offered()).toBe(true);
+    run("editor/remove-author");
+    expect(offered()).toBe(false);
+    loadSingle({ name: "Read only", kind: "page", title: "Read only", format: "md", pre_block: null, read_only: true,
+      blocks: [authorBlock(B, authored)] });
+    selectBlock(B);
+    expect(offered()).toBe(false);
+  });
+
+  it("skips a read-only page in a mixed selection and batches each writable page", () => {
+    const page = (name: string, id: string, read_only = false) => ({ name, kind: "page" as const, title: name, format: "md" as const,
+      pre_block: null, read_only, blocks: [authorBlock(id, authored)] });
+    loadFeed([page("P", A), page("Q", B, true), page("R", C1)]);
+    selectBlock(A); extendSelectionTo(C1);
+    const dirty = vi.spyOn(wiring, "markDirty");
+    run("editor/remove-author");
+    expect(doc.byId[A].raw).toBe(`Agent words\nid:: ${A}`);
+    expect(doc.byId[C1].raw).toBe(`Agent words\nid:: ${A}`);
+    expect(doc.byId[B].raw).toBe(authored);
+    expect(dirty.mock.calls).toEqual([["P", "save-block"], ["R", "save-block"]]);
+    undo();
+    for (const id of [A, B, C1]) expect(doc.byId[id].raw).toBe(authored);
   });
 });
