@@ -53,7 +53,7 @@ export const SURFACES = Object.freeze({
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
   // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting;
   // D-20261110-TT adds Logseq's preview on/off switch (`:ui/enable-tooltip?`) beside it.
-  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 14 : 13),
+  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 12 : 11),
   "settings.journals.open": settingsOpen("journals", 13),
   "settings.journals.advanced": settingsAdvanced("journals", 1),
   "settings.files.open": settingsOpen("files", 7),

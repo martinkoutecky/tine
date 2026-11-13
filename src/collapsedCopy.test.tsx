@@ -1,6 +1,5 @@
-// GH #943 (Martin D-20261112-SU941): a selected block whose view hides its children (a
-// fold, or a Sheet view) copies together with them, in every copy entry, while an expanded parent selected
-// alone still copies alone under the default "Copy a parent block's sub-blocks" off.
+// GH #943 / #941: every selected parent copies with its whole subtree, whether
+// expanded, folded or shown as a Sheet view (D-20261112-SU10).
 // Assertions are on the public clipboard text (what a plain-text paste receives).
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
@@ -14,7 +13,7 @@ import { openContextMenu, closeContextMenu, closeExportModal } from "./ui";
 import { setGraphMeta } from "./graphSession";
 import { clearTransientLayersForTest } from "./transientLayers";
 import { installKeybindings } from "./keybindings";
-import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
+import { setCopyStripCollapsed } from "./copySettings";
 import type { BlockDto } from "./types";
 import { bindTestHost } from "./document/host/wiring.test.support";
 
@@ -47,7 +46,6 @@ beforeEach(async () => {
   vi.spyOn(backend(), "writeRich").mockResolvedValue();
   vi.spyOn(backend(), "writeText").mockResolvedValue();
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map(() => null));
-  setCopyIncludeSubtree(false);
   setCopyStripCollapsed(true);
 });
 afterEach(() => {
@@ -55,7 +53,7 @@ afterEach(() => {
   disposeKeys?.(); disposeKeys = undefined;
   closeContextMenu(); closeExportModal(); clearClipboardPayload(); resetStore();
   setGraphMeta(null); clearTransientLayersForTest(); vi.restoreAllMocks();
-  setCopyIncludeSubtree(false); setCopyStripCollapsed(true);
+  setCopyStripCollapsed(true);
   document.body.innerHTML = "";
 });
 
@@ -95,9 +93,8 @@ describe("GH #943: a collapsed block copies with the children it hides", () => {
       load();
       expect(await entry.copy()).toBe(WHOLE_B_STRIPPED);
     });
-    it(`${entry.name}: with the setting on, still the whole subtree`, async () => {
-      setCopyIncludeSubtree(true);
-      load();
+    it(`${entry.name}: an expanded parent also copies the whole subtree`, async () => {
+      load(false);
       expect(await entry.copy()).toBe(WHOLE_B_STRIPPED);
     });
     it(`${entry.name}: collapsed:: follows the strip setting`, async () => {
@@ -119,17 +116,16 @@ describe("GH #943: a collapsed block copies with the children it hides", () => {
   it.each([
     ["Ctrl+C", () => ctrlC()],
     ["block menu Copy", () => menuCopy("B")],
-  ])("%s: the setting on copies the same A through D", async (_name, copy) => {
-    setCopyIncludeSubtree(true);
-    load();
+  ])("%s: expanded A through D copies the same complete forest", async (_name, copy) => {
+    load(false);
     select("A", "D");
     expect(await copy()).toBe(`- A\n${WHOLE_B_STRIPPED}\n- D`);
   });
 
-  it("an expanded B selected alone still copies alone under the default (Ctrl+C)", async () => {
+  it("an expanded B selected alone copies its descendants (Ctrl+C)", async () => {
     load(false);
     select("B");
-    expect(await ctrlC()).toBe("- B");
+    expect(await ctrlC()).toBe(WHOLE_B_STRIPPED);
   });
 
   it("an expanded B and its visible children up to C: the folded F inside carries G", async () => {
@@ -139,24 +135,23 @@ describe("GH #943: a collapsed block copies with the children it hides", () => {
     expect(selectionMarkdown()).toBe(WHOLE_B_STRIPPED);
   });
 
-  it("an expanded B through C only: unselected visible children stay out", async () => {
+  it("an expanded B through C completes all descendants of both endpoints", async () => {
     load(false);
     select("B", "C");
-    expect(selectionMarkdown()).toBe("- B\n\t- C");
+    expect(selectionMarkdown()).toBe(WHOLE_B_STRIPPED);
   });
 
-  it("with the setting on, an expanded B selected alone copies its subtree (unchanged)", async () => {
-    setCopyIncludeSubtree(true);
+  it("block-menu Copy of an expanded parent includes its subtree", async () => {
     load(false);
     select("B");
-    expect(await ctrlC()).toBe(WHOLE_B_STRIPPED);
+    expect(await menuCopy("B")).toBe(WHOLE_B_STRIPPED);
   });
 
   it("a zoom that force-expands collapsed B: B's visible children are not hidden by it", () => {
     load();
     // Zoomed into B: B's own fold is overridden for this view, so its children show.
     selectBlock("B", { roots: ["B"], forceExpandedRoot: "B" });
-    expect(selectionMarkdown()).toBe("- B");
+    expect(selectionMarkdown()).toBe(WHOLE_B_STRIPPED);
   });
 
   it("a secondary surface that folds an expanded block: its hidden children are copied", () => {
@@ -192,11 +187,10 @@ describe("GH #943: a collapsed block copies with the children it hides", () => {
     expect(await menuCopy("H")).toBe(`${SHEET("grid")}\n- after`);
   });
 
-  it("with the setting on, a Sheet host still copies whole", async () => {
-    setCopyIncludeSubtree(true);
+  it("block-menu Copy of a Sheet host includes all rows", async () => {
     loadSheet("grid");
     select("H");
-    expect(await ctrlC()).toBe(SHEET("grid"));
+    expect(await menuCopy("H")).toBe(SHEET("grid"));
   });
 
   it("the in-app paste payload agrees with the text for a collapsed block", async () => {

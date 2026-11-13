@@ -15,7 +15,7 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, topSelected, node as docNode, type OutlineScope } from "../document";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -79,7 +79,7 @@ export function beginDrag(id: string, e: MouseEvent) {
     if (!dragMoved) {
       dragMoved = true;
       // A bullet drag moves the active selection when there is one (GH #240).
-      const selected = selectedIds();
+      const selected = topSelected();
       capturedIds = selected.length ? [...selected] : [id];
       setDragId(id);
       endEdit("drag-start");

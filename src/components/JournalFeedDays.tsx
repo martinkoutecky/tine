@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { feedNames, mainPages, pageByName, retireFeedPages, ensurePageLoaded, toLoadablePage, emptyPage, reportPageLoadRefusal, isDirty, isSaving, isConflicted, selectedIds, type FeedPage } from "../document";
+import { feedNames, mainPages, pageByName, retireFeedPages, ensurePageLoaded, toLoadablePage, emptyPage, reportPageLoadRefusal, isDirty, isSaving, isConflicted, topSelected, type FeedPage } from "../document";
 import { editingId } from "../editorController";
 import { graphOwner, readOwned } from "../owned";
 import { newIntersectionObserver, newResizeObserver, requestFrame, useOwnerWindow } from "../windowRealm";
@@ -94,7 +94,7 @@ export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Eleme
   });
   // Reconsider formerly protected pages after their edit/save/selection ends.
   createEffect(() => {
-    editingId(); selectedIds();
+    editingId(); topSelected();
     for (const page of mainPages()) { isDirty(page.name); isSaving(page.name); isConflicted(page.name); }
     schedule();
   });

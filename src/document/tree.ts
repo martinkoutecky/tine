@@ -19,7 +19,7 @@ export function rootsOf(id: string): string[] {
 /** Whether the block's children are hidden in the view `scope` describes: folded (the
  * scope's fold override, a zoom's force-expanded root, else the durable flag) or shown
  * as an opaque Sheet view (grid/table/board) instead of as rows. The one answer visible
- * order and copy share (GH #943). O(1); the Sheet answer is read only for an unfolded parent. */
+ * traversals share. O(1); the Sheet answer is read only for an unfolded parent. */
 export function hidesChildrenInView(id: string, scope?: OutlineScope | null): boolean {
   const node = doc.byId[id];
   if (!node?.children.length) return false;
