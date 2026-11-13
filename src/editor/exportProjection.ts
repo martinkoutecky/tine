@@ -1,7 +1,7 @@
 // Export-only projection. The existing Rust-backed discriminator owns comment
 // identity; carry thread membership down the already-required O(blocks) walk.
 // No I/O, document edits, ancestor scans or per-edit work.
-import { isCommentBlock, isCommentPresentationKey, authorOf, commentDateOf } from "../comments";
+import { COMMENT_QUOTE_KEY, isCommentBlock, isCommentPresentationKey, authorOf, commentDateOf } from "../comments";
 import { blockRegions, editBlock } from "../render/parse";
 import { t } from "../i18n";
 import type { ExportNode } from "./exportText";
@@ -9,9 +9,14 @@ import type { ExportNode } from "./exportText";
 export function projectExportNodes(nodes: ExportNode[], includeComments = true, inComment = false): ExportNode[] {
   const walk = (forest: ExportNode[], parent: boolean, thread: boolean): ExportNode[] => forest.flatMap(node => {
     const properties = blockRegions(node.raw, node.format ?? "md").properties.filter(p => p.primary).map(p => [p.key, p.value] as const);
-    const comment = thread || node.comment !== undefined || isCommentBlock(properties, node.hasParent ?? parent);
+    const sourceComment = isCommentBlock(properties, true);
+    const comment = thread || node.comment !== undefined || ((node.hasParent ?? parent) && sourceComment);
     if (comment && !includeComments) return [];
     return [{ ...node,
+      // A detached reply has membership but no source carrier. Reuse the
+      // whole-parent quote so expansion/copy keeps it marked without DTO bits.
+      raw: comment && !thread && !sourceComment
+        ? editBlock(node.raw, node.format ?? "md", { kind: "property", key: COMMENT_QUOTE_KEY, value: "" }) : node.raw,
       ...(comment ? { comment: { author: authorOf(properties), date: commentDateOf(properties) } } : {}),
       children: walk(node.children, true, comment),
     }];

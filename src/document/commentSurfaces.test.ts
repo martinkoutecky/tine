@@ -130,6 +130,42 @@ it("attributes flat annotations and retains their author/date in source with Rem
   for (const property of ["tine.quote:: Body", "tine.author:: Ada", "tine.date:: 2026-11-13T00:00Z"]) expect(source).toContain(property);
 });
 
+it.each(["md", "org"] as const)("preserves a detached embedded reply as a comment in %s source", format => {
+  const reply: ExportNode = { raw: "REPLYMARKER", format, hasParent: false,
+    comment: { author: null, date: null }, children: [] };
+  const nodes: ExportNode[] = [{ raw: "Body", format, children: [
+    { raw: "{{embed ((6a1b2c3d-0000-4000-8000-000000000010))}}", format, children: [] },
+  ] }];
+  const resolveEmbed = () => [reply];
+  const options = { ...DEFAULT_EXPORT_OPTIONS, resolveEmbed };
+  for (const output of [exportOutline(expandExportNodes(nodes, options), options), exportHtml(nodes, options), exportOpml(nodes, options)]) {
+    expect(output).toContain("REPLYMARKER");
+    expect(output).toContain("Comment");
+  }
+  for (const output of [
+    exportOutline(expandExportNodes(nodes, options), { ...options, includeComments: false }),
+    exportOutline(nodes, { ...options, content: "source", includeComments: false }),
+    exportHtml(nodes, { ...options, includeComments: false }),
+    exportOpml(nodes, { ...options, includeComments: false }),
+  ]) {
+    expect(output).toContain("Body");
+    expect(output).not.toContain("REPLYMARKER");
+  }
+  for (const removeProperties of [false, true]) {
+    const source = exportOutline(nodes, { ...options, content: "source", removeProperties });
+    expect(source).toContain("REPLYMARKER");
+    expect(source).toContain("tine.quote");
+  }
+  // A source-only copy must retain the meaning after transient DTO bits are gone.
+  const materialized = expandExportNodes(nodes, options)[0].children[0];
+  const copied: ExportNode[] = [{ raw: "Body", format, children: [
+    { raw: materialized.raw, format, children: [] },
+  ] }];
+  expect(exportOutline(copied, DEFAULT_EXPORT_OPTIONS)).toContain("[Comment] REPLYMARKER");
+  expect(exportOutline(copied, { ...DEFAULT_EXPORT_OPTIONS, includeComments: false })).toBe("- Body");
+  expect(reply.raw).toBe("REPLYMARKER");
+});
+
 it.each(["md", "org"] as const)("keeps expanded embeds inside the original comment in %s source-only copies", (format) => {
   const metadata = format === "md" ? "\ntine.quote:: Body\ntine.author:: Ada" : "\n:PROPERTIES:\n:tine.quote: Body\n:tine.author: Ada\n:END:";
   const targetAuthor = format === "md" ? "\ntine.author:: Bob" : "\n:PROPERTIES:\n:tine.author: Bob\n:END:";

@@ -4,7 +4,7 @@
   "scenarios": {
     "scripts/e2e-comment-output.mjs": {
       "setup":"Synthetic routed page, scratch HOME/XDG and account-home shim; no network.",
-      "contracts":[{"class":"stateful-ux","userOutcome":"Copy/export includes marked comments by default; switching comments off removes whole threads and keeps body text. Folder publication remembers the choice in the definition and snapshot.","blocking":false,"authority":"H9TvA; D-20261113-CO/CO2"}],
+      "contracts":[{"class":"stateful-ux","userOutcome":"Copy/export includes marked comments by default; switching comments off removes whole threads and keeps body text. An embedded detached reply retains its source comment carrier in Markdown and is omitted with comments off. Folder publication remembers the choice in the definition and snapshot.","blocking":false,"authority":"H9TvA; D-20261113-CO/CO2"}],
       "acceptableVariations":["Annotation styling and geometry may vary."],
       "nonRequirements":["No real gist upload, OS PDF dialog, release burn-in or other platform certification."],
       "stability":"burn-in"

@@ -55,6 +55,8 @@ its review. The reviewed fingerprint includes the effective choice.
 
 Flat exports keep expanded embed content under its comment root. The root's
 source properties and the embedded blocks' authors stay with their owners.
+Detached replies carry an empty `tine.quote` in source exports so their comment
+marking survives expansion and copies without transient thread metadata.
 Computed tables, boards and grids show ordinary rows in their view and preserve
 comment threads as annotations alongside it.
 

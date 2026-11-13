@@ -20,9 +20,11 @@ const graph = path.join(run, "graph");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(run, dir));
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
-const source = "- Body passage remains\n  - COMMENTMARKER\n    tine.quote:: Body passage\n    tine.author:: Ada\n    - REPLYMARKER\n- Another body block remains\n";
+const replyId = "6a1b2c3d-0000-4000-8000-000000000010";
+const source = `- Body passage remains\n  - COMMENTMARKER\n    tine.quote:: Body passage\n    tine.author:: Ada\n    - REPLYMARKER\n      id:: ${replyId}\n- Another body block remains\n`;
 const pageFile = path.join(graph, "pages/Comment Output.md");
 fs.writeFileSync(pageFile, source);
+fs.writeFileSync(path.join(graph, "pages/Detached Output.md"), `- Detached output body\n  - {{embed ((${replyId}))}}\n`);
 const revision = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const fixture = accountHomeFixture(run, run, { ...process.env, TINE_SOURCE_REVISION: revision,
   TINE_GRAPH: graph, HOME: path.join(run, "home"), XDG_DATA_HOME: path.join(run, "data"),
@@ -70,6 +72,20 @@ try {
   assert.match(omitted, /Body passage remains/); assert.match(omitted, /Another body block remains/);
   assert.doesNotMatch(omitted, /COMMENTMARKER|REPLYMARKER/); await shot("02-export-omitted");
   await browser.$(".export-btn-secondary").click();
+  stage = "detached reply source keeps comment identity";
+  await openPageByName(browser, "Detached Output");
+  await pageAction("Copy / export"); await browser.$(".export-preview").waitForExist();
+  await browser.$(".export-modal").$("button=Markdown").click();
+  await browser.waitUntil(async () => (await browser.$(".export-preview").getValue()).includes("REPLYMARKER"));
+  const detached = await browser.$(".export-preview").getValue();
+  assert.match(detached, /tine.quote/);
+  assert.doesNotMatch(detached, /COMMENTMARKER/);
+  await shot("02-detached-source");
+  await commentsBox(".export-modal").click();
+  await browser.waitUntil(async () => !(await browser.$(".export-preview").getValue()).includes("REPLYMARKER"));
+  assert.match(await browser.$(".export-preview").getValue(), /Detached output body/);
+  await browser.$(".export-btn-secondary").click();
+  await openPageByName(browser, "Comment Output");
   stage = "folder remembers exclusion";
   await pageAction("Share"); await browser.$(".share-dialog").waitForExist();
   await commentsBox(".share-dialog").click();
@@ -85,7 +101,7 @@ try {
   assert.equal(fs.readFileSync(pageFile, "utf8"), source);
   await browser.$(".query-export-modal").waitForExist({ reverse: true });
   await shot("04-folder-exported");
-  proof.outcomes.push("Marked default; omitted root and reply; both body blocks intact", "Folder snapshot excludes thread; definition remembers exclusion; source unchanged");
+  proof.outcomes.push("Marked default; omitted root and reply; both body blocks intact", "Detached embedded reply retains tine.quote in Markdown; comments-off omits it", "Folder snapshot excludes thread; definition remembers exclusion; source unchanged");
   fs.writeFileSync(path.join(run, "proof.json"), JSON.stringify(proof, null, 2)); console.log(JSON.stringify(proof));
 } catch (error) {
   if (browser) await shot("failure").catch(() => {});

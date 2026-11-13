@@ -41,6 +41,13 @@ it.each(["embed", "query", "tine-query"].flatMap(macro => [false, true].map(repl
       const preview = () => root.querySelector<HTMLTextAreaElement>(".export-preview")?.value ?? "";
       await vi.waitFor(() => expect(preview()).toContain(reply ? "REPLYMARKER" : "COMMENTMARKER"));
       expect(preview()).toContain("Comment");
+      if (macro === "embed") {
+        const source = [...root.querySelectorAll<HTMLButtonElement>("button")]
+          .find(button => button.textContent?.trim() === "Markdown")!;
+        source.click();
+        await vi.waitFor(() => expect(preview()).toContain("tine.quote"));
+        expect(preview()).toContain(reply ? "REPLYMARKER" : "COMMENTMARKER");
+      }
       const checkbox = [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
         .find(input => input.closest("label")?.textContent?.includes("Include comments"))!;
       expect(checkbox.checked).toBe(true);
