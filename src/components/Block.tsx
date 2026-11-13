@@ -9,7 +9,7 @@ import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
-import { LineGutter } from "../render/LineGutter";
+import { codeGutterStyle, LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { editorCompletions, propertyNameInputCaret } from "../editor/editorCompletions";
 import { reportUiFailure } from "../uiFailure";
@@ -181,7 +181,7 @@ export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 // block preceding the embed on the host page (OG leaves the embed upward instead
 // of trapping the caret).
 // D-20261030-EMB: `rowHost` names the host a whole-block embed's one root row stands for.
-export const EmbedNavExitContext = createContext<{ hostBlockId: string; firstRoot: () => string | undefined; rowHost: (id: string) => RowHost | null } | null>(null);
+export const EmbedNavExitContext = createContext<{ hostBlockId: string; hostSurface: string; firstRoot: () => string | undefined; rowHost: (id: string) => RowHost | null } | null>(null);
 /** A plain bullet click opens the block here instead of zooming the pane (a
  *  hover preview opens it in a new tab, D-20261023-VQ). */
 export const BulletOpenContext = createContext<((id: string) => void) | null>(null);
@@ -313,7 +313,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id} data-author={storedAuthor() ?? undefined}
-      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope }); }}
+      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope, surface: surfaceKey }); }}
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
@@ -327,7 +327,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           // GH #501: touch swipes on the row while a touch input exists, following
           // it if it appears or goes away (src/blockSwipe.ts).
           followBlockSwipe(el, { get id() { return rowHost()?.id ?? props.id; }, get scope() { return rowHost() ? rowHost()!.scope : outlineScope; },
-            editorId: props.id, editing, readOnly: () => blockPageReadOnly(rowHost()?.id ?? props.id) });
+            editorId: props.id, surface: rowHost()?.surface ?? surfaceKey, editing, readOnly: () => blockPageReadOnly(rowHost()?.id ?? props.id) });
         }}
         classList={{
           // Heading level on the row so the bullet column can match the (taller)
@@ -501,7 +501,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   // A navOnly display-list scope must never act as a merge/structural topology.
   const structuralScope = outlineScope?.navOnly ? null : outlineScope;
   // Where this row sits: a whole-block embed's root row stands for its host (D-20261030-EMB).
-  const position = (): RowHost => embedNavExit?.rowHost(props.id) ?? { id: props.id, scope: outlineScope };
+  const position = (): RowHost => embedNavExit?.rowHost(props.id) ?? { id: props.id, scope: outlineScope, surface: surfaceKey };
   const setOccurrenceCollapsed = (value: boolean) => {
     if (!collapseSurface) { setCollapsed(props.id, value); return; }
     const n = docNode(props.id);
@@ -713,6 +713,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     return fence ? { before: raw.slice(0, fence.start), after: raw.slice(fence.end) } : null;
   });
   const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
+  const codeLines = createMemo(() => codeEditing() ? (codeShown()?.body ?? editorValue()).split("\n") : []);
   const codeWrapCommit = codeView.join;
   // One door to the fence language picker: `/Code block` and the hand-typed ```
   // scaffold both come here (GH #507). While open `codeShown` keeps the raw
@@ -1215,7 +1216,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     if (!atEdge) return false;
     e.preventDefault();
     commit(raw);
-    selectBlock(position().id, position().scope);
+    const selected = position(); selectBlock(selected.id, selected.scope, selected.surface);
     return true;
   };
   const cycleTodoCmd = () => {
@@ -1301,7 +1302,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       // The source's outline scope belongs to the embed. Selection belongs to
       // its containing outline instead (including a nested embed's host).
       const host = ref.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
-      selectBlock(embedNavExit.hostBlockId);
+      selectBlock(embedNavExit.hostBlockId, null, embedNavExit.hostSurface);
       host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
       return true;
     },
@@ -1330,7 +1331,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (!fullySelected) return false;
       e.preventDefault();
       commit(ref.value);
-      selectBlockSubtree(position().id, position().scope);
+      const selected = position(); selectBlockSubtree(selected.id, selected.scope, selected.surface);
       return true;
     },
     "editor/cycle-todo": (e) => { e.preventDefault(); cycleTodoCmd(); return true; },
@@ -1957,7 +1958,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (revealed !== null) {
         ref.value = revealed; ref.setSelectionRange(revealed.length, revealed.length);
         ref.focus(); autosize();
-      } else selectBlock(position().id, position().scope); // exit raw editing into block selection
+      } else { const selected = position(); selectBlock(selected.id, selected.scope, selected.surface); } // exit raw editing into block selection
     }
   };
 
@@ -2213,17 +2214,15 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   return (
     <div class="editor-wrap" dir={blockDirAttr(docNode(props.id)?.raw ?? "", pageFmt())} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
       <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></BlockRenderBoundary></div>}</Show>
-      <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
+      <div class="code-editor-region" style={codeGutterStyle(codeLines().length)} dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
         <Show when={codeShown() ?? codeBodyProjection(editorValue(), pageFmt())}>
           {code => <CopyButton text={code().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
         </Show>
-        <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
+        <LineGutter lines={codeLines()} code />
       </Show>
-      <Show when={isCalc()}>
-        <LineGutter lines={calcRows().map(row => row.input)} />
-      </Show>
+      <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>
       <textarea
         ref={ref}
         class="block-editor"
