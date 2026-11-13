@@ -288,6 +288,22 @@ comment index, and makes no backend read or write other than the ancestor
 reveal's own save (none for a visible target; counted in
 `CommentReview.test.tsx`). Nothing is stored; the current thread is a view signal.
 
+## Full-text search (COMMENT-OUT-V2, D-20261113-CO2)
+
+Full-text search retains comment roots and every descendant reply as ordinary
+block hits. The palette, search workspace and search result excerpts label them
+**comment**, keeping the host block in their existing ancestor breadcrumbs.
+A page whose only matching text is a comment remains a content-search page hit;
+its matching comment also remains a labelled block hit. In-page Find and reference
+counts retain their existing inclusion of comments (V3).
+
+The result-only `QueryHit::Block.is_comment` fact comes from
+`tine_outline::editor_text::comment_quote` over parsed own properties, with a
+parent required for a thread root. The search walk carries membership to all
+descendants. Projection and rendering read that boolean in O(1) per hit, with
+zero additional file reads, writes, stats or IPC calls. Navigation uses the
+existing comment-target reveal path.
+
 ## Styling layer (D-20261111-CSL, GH #929)
 
 The class names users restyle comments with, `data-author` on every block

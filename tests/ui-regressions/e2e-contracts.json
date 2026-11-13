@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-search-comment-cue.mjs": {
+      "setup":"Synthetic graph, scratch HOME/XDG and account-home shim; native Linux palette on a routed page.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Palette labels comment roots and replies as comments beside an ordinary block hit, retains host breadcrumbs and opens the reply visibly without changing graph bytes.","blocking":false,"authority":"COMMENT-OUT-V2; D-20261113-CO2"}],
+      "acceptableVariations":["Result order, markup and spacing may vary."],
+      "nonRequirements":["No device certification or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-zoom-back.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Back after clicking a block bullet restores the reading position in a long routed page and Journals, using both Alt+Left and the back button.","blocking":false,"authority":"UI-ZOOM-BACK-SCROLL; Martin 2026-11-11"}],
       "acceptableVariations": ["Exact pixels and layout may vary; the previously visible reading block must return to view."],
@@ -332,7 +339,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-query-subscriptions.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}],
+      "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}, {"class":"stateful-ux","userOutcome":"On a routed query page, a source page's properties and ordinary result rows stay live: the first click opens an editor, every typed character survives its save, and Enter creates a child that stays focused and editable with durable text.","blocking":true,"authority":"UI-HCP6JS-QUERY-GROUP-LIVE-WHILE-EDITING; UI-QUERY-REF-ENTER-EDITOR-1113; card Hi7GQ; Logseq 6e7afa8eb editor.cljs outliner-insert-block!"}],
       "acceptableVariations": ["Publication and rendering latency, IPC batching and machine load; exact 1.5-second boundaries are covered with fake timers."],
       "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a links query skipping unrelated saves after the pause: the memo conservatively invalidates links on every edit."],
       "stability":"burn-in"

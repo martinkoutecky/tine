@@ -16,7 +16,7 @@ fn write(root: &std::path::Path, path: &str, bytes: &str) {
 
 #[test]
 fn documents_outside_the_configured_roots_follow_the_graph_text_policy() {
-    let root: PathBuf = std::env::temp_dir().join(format!("tine-246-{}", std::process::id()));
+    let root: PathBuf = crate::test_support::fresh_dir("tine-246-");
     let _ = std::fs::remove_dir_all(&root);
     for dir in ["content/pages", "content/journals"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();

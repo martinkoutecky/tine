@@ -14,7 +14,7 @@ fn planning_busy_keeps_its_message_and_retryable_kind() {
 
 #[test]
 fn rollback_failure_keeps_recovery_family_and_locations() {
-    let root = std::env::temp_dir().join(format!("tine-tx-error-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-tx-error-");
     std::fs::create_dir_all(&root).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let graph_rev = store.whole_graph().unwrap().rev();
@@ -54,7 +54,7 @@ fn rollback_failure_keeps_recovery_family_and_locations() {
 
 #[test]
 fn rollback_and_publication_failures_keep_both_locations_and_original_reason() {
-    let root = std::env::temp_dir().join(format!("tine-tx-combined-error-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-tx-combined-error-");
     std::fs::create_dir_all(&root).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let outcome = TxOutcome::NotCommitted {
@@ -98,7 +98,7 @@ fn rollback_and_publication_failures_keep_both_locations_and_original_reason() {
 
 #[test]
 fn fail_read_conflict_retry_keeps_failed_undo_and_publication() {
-    let root = std::env::temp_dir().join(format!("tine-fail-retry-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-fail-retry-");
     std::fs::create_dir_all(&root).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     for undo in [true, false] {
@@ -138,7 +138,7 @@ fn fail_read_conflict_retry_keeps_failed_undo_and_publication() {
 
 #[test]
 fn fail_read_asset_inventory_cannot_be_an_empty_success() {
-    let root = std::env::temp_dir().join(format!("tine-fail-assets-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-fail-assets-");
     std::fs::create_dir_all(&root).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     std::fs::write(root.join("assets"), "not a directory").unwrap();

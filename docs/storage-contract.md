@@ -102,7 +102,13 @@ graph indexes read, panics (og-gh644 F1): every such parse runs inside that
 page's isolation (the load's per-page parse, and `cache_upsert` for a sync,
 rescan, page open or own save), so the page is listed as unreadable, a page
 open answers `StoreError::Unparseable` for it alone, and the writer lock is
-never unwound through. Such a failure retires that page's row only: the page
+never unwound through. Cold, warm, direct-path and supplied/held-byte page reads
+validate the same block and page-property projections (`prime_projections`);
+a cold read parses only its already-read page bytes, without warming the graph.
+A matching save revision does not authorize replacing unreadable bytes: save
+serialization validates the projections of its already-parsed base and refuses
+`ReadOnly` before admission if they panic, in both cache states. Repairing the
+file makes its next read eligible again. Such a failure retires that page's row only: the page
 cache, the other pages' rows and other reported errors stay, and nothing else
 is read again. A panic in a pure graph-wide index stage after the parses, in a
 publication that builds every index and so names no page (the initial cold
@@ -1754,7 +1760,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::page_create_checks::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
 | `transaction.rs::creating_save_owner::Twin` | 1 | Audit L8-02: sync or an external editor delivers a title claimant or a possible unreadable owner after an absent page opens. Its creating save rechecks the published name slot and bounded unreadable-owner predicate; refuse publication, name the claimant in the save notice, and retain the proposed bytes in host/draft custody. A move exempts its source; unrelated unreadable files do not refuse creation. |
 | `transaction.rs::page_open_checks::InvalidTarget` | 1 | A page host open (STEP3 §2) names a non-page path, as a malformed link or an external rename leaves it; refuse before the page is registered or anything changes disk. |
-| `transaction.rs::serialize_page_at::ReadOnly` | 2 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. Round-trip is judged with every line terminator read as `\n` (`org::org_round_trips`; the writer restores each line's own terminator), so a CRLF or lone-CR page is refused exactly when its LF twin is. R-VCS-MARKERS: a VCS merge by an external writer left unresolved markers; a rewrite would re-indent them and silently lose a side. Only `SaveBase::ResolvingMarkers` (the Concord resolver) passes, and it first stages the old bytes in `logseq/.tine-trash/conflicts/`. |
+| `transaction.rs::serialize_page_at::ReadOnly` | 2 | Malformed imported or externally delivered page bytes panic the parser or a block/page-property projection of the save base: refuse before planning or host-submit admission, retaining the file and proposed edit even when the base revision matches. Repairing the source permits retry; the cache state is irrelevant. An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. Round-trip is judged with every line terminator read as `\n` (`org::org_round_trips`; the writer restores each line's own terminator), so a CRLF or lone-CR page is refused exactly when its LF twin is. R-VCS-MARKERS: a VCS merge by an external writer left unresolved markers; a rewrite would re-indent them and silently lose a side. Only `SaveBase::ResolvingMarkers` (the Concord resolver) passes, and it first stages the old bytes in `logseq/.tine-trash/conflicts/`. |
 | `transaction.rs::unreadable_owner::UnreadableOwner` | 1 | R-CREATE-UNREADABLE-OWNER (master 69e0a885ddf9 + 69525c055f0b, GH #543): sync delivery, an interrupted external write or malformed imported Markdown/Org leaves a page file Tine cannot read (not UTF-8 where its name lives, an oversized preamble, a permission error) or a directory it cannot list, so the file's page name is unknown; creating a page of a name it could carry would give that name two files once the bad file is repaired. Refuse a name-only creation (`CreateNew` save, `create`, `create_unique` of an ordinary page) only for a name that entry could be (`Graph::unreadable_page_could_own`: its file-name name; its preamble name when that still decodes; otherwise a name its bytes, folded as page names are, contain; any name for an unlistable directory or a file unreadable now; nothing for a FIFO, socket, device, journal or vanished entry), and name the entry. Every other creation, save, move and the watcher proceed. |
 | `transaction.rs::preflight::RepeatedFile` | 1 | A unique filename collides with a fixed step of the same operation; refuse the ambiguous plan. Earlier unique allocations are reserved and later unique steps choose the next free candidate. |
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
@@ -2010,10 +2016,10 @@ checkpointed (cost-model audit 2026-11-02 rows 1 and 2; tests
 
 A page that starts or stops existing without a file of its own (a
 reference-only page, a namespace parent) is in no edited document, so the
-edit predicate cannot see it. The publication's inventory comparison
-(`Snapshot::answer_changes`) is its one producer: the keys whose entry moved
-(the delta's keys, or every changed own name when no delta is expressible).
-A mounted query that a fileless row of one of those keys could meet fires in
+edit predicate cannot see it. The change summary's fileless comparison
+(`fileless_changes` in `store/change_summary.rs`, described with the summary
+below) is its one producer: the fileless keys that came or left. A mounted
+query that a fileless row of one of those keys could meet fires in
 `queryTo`, and a carried memo answer it could list is dropped; the test is
 the names execution narrows fileless rows by (`Plan::may_list_fileless`), so
 a block-anchored query, a property-only query or a different exact name is
@@ -2148,18 +2154,25 @@ empty document under their fileless entry (the row a page query evaluates): a
 namespace child brings its parent and its last child removes it, a page's
 references bring reference-only pages, and a file taking or leaving a name
 removes or brings that name's fileless row. The candidates are the changed
-pages' names and references and the namespace prefixes of both, each looked up
-on both sides by `ReadSnapshot::resident_reference_only_page` (the
+pages' moved names, changed references, and namespace prefixes, including a
+child's prefixes when it gains or loses its last text. Each is looked up on
+both sides by `ReadSnapshot::resident_reference_only_page` (the
 `reference_only_pages` rule for one name). It reads only the resident name
-table and day support; when either side has not built them, every mounted
-reader that can list a fileless page (a page-anchored query, a search) is named
-instead. Queries are named by the usual `touches_edit` rule on those synthetic
-edits. The `full` bound (more than 32 changed paths) is decided before any of
+table and day support. The summary produces the changed fileless keys once;
+both carried memo eviction and mounted query invalidation consume them through
+`Plan::may_list_fileless`, using execution's required-name constraints without
+evaluating vanished rows in the current graph. When either side's inputs are
+not resident, both conservatively invalidate plans that can list any fileless
+row; required properties still exclude fileless rows. Synthetic
+edits still name the other reader families; search also checks the edited
+pages' names and references. The `full` bound (more than 32 changed paths) is decided before any of
 this reads a page, and the preparation is linear in the batch (one active-path
 set). Unrelated mounted queries do not rerun: proof
 `crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario,
 fileless parents and reference-only pages on create, rename and delete, a
 counter at N = 8 and 64, and a batch-work counter at 8, 16, 40 and 400 files)
+and `fileless_change_producer_probes_only_changed_names` (two probes per
+changed fileless name, zero for typing, at 8 and 64 unrelated pages)
 and steps 60–62 of the random reader oracle in
 `crates/tine-store/tests/change_summary.rs`. The frontend create, delete and rename
 paths no longer add a full refresh of their own: create and delete no longer

@@ -2467,6 +2467,7 @@ export interface MessageArgs {
   "row-chrome-collapse-all-descendants": {};
   "row-chrome-expand-all-descendants": {};
   "search-result-row-block": {};
+  "search-result-row-comment": {};
   "seen-change-position": { "index": string | number; "total": string | number };
   "seen-change-position-wrapped": { "index": string | number; "total": string | number };
   "seen-forget-failed": { "error": string | number };

@@ -393,13 +393,14 @@ impl Lifecycle {
     }
 }
 
-/// The pages without a file a publication brought or removed, as `(came,
-/// row)`: a namespace child brings its parent and its last one removes it, a
+/// The pages without a file a publication brought or removed, in canonical
+/// key order as `(came, row)`: a child brings its parent and its last removes it, a
 /// page's references bring reference-only pages, and a file taking or leaving
 /// a name removes or brings that name's fileless row (review F1). Candidates:
 /// a moved page's name and references, an edited page's references that came
-/// or went (none while typing plain text), and the namespace prefixes of
-/// both, each looked up on both sides. `None` when there are candidates but a
+/// or went, and their namespace prefixes, including a child's prefixes when
+/// it gains or loses its last text. Each is looked up on both sides. No probes
+/// for ordinary typing. `None` when there are candidates but a
 /// side's fileless inputs are not resident (never built here): the caller then
 /// treats every reader that can list one as touched.
 fn fileless_changes(
@@ -427,6 +428,14 @@ fn fileless_changes(
         };
         if moved {
             names.push(entry.name.clone());
+        }
+        if crate::model::namespace_parents::document_supplies_parents(before)
+            != crate::model::namespace_parents::document_supplies_parents(after)
+        {
+            spellings.extend(
+                crate::model::namespace_parents::parent_prefixes(&entry.name)
+                    .map(|(prefix, _)| prefix.to_owned()),
+            );
         }
         for name in names {
             spellings.extend(
@@ -472,7 +481,6 @@ impl Snapshot {
         paths: &[String],
         names_changed: bool,
         inventory_changed: bool,
-        moved_keys: &[String],
         edits: Option<
             &[(
                 PageEntry,
@@ -514,19 +522,22 @@ impl Snapshot {
             dirty_query_plans(query_targets);
             return summary;
         };
-        // Each fileless row that came or left is a moved edit of the empty
-        // document under its fileless entry (the row query execution
-        // evaluates, `exec_candidates.rs`), so the same classifier names its
-        // readers, and its name is a name that came or left. Not compared
-        // when already `full` (every reader fires).
+        // One fileless delta for both memo eviction and mounted queries.
+        // Synthetic edits also name the other page readers. A full summary
+        // skips comparison but still retires possibly stale page-query memos.
         let fileless = if summary.full {
-            Some(Vec::new())
+            None
         } else {
             fileless_changes(&old.graph, &self.graph, current, |i| {
                 lifecycle.as_ref().is_some_and(|l| l.moved[i])
             })
         };
-        let fileless_unknown = fileless.is_none();
+        let fileless_keys = fileless.as_ref().map(|rows| {
+            let mut keys: Vec<_> = rows.iter().map(|(_, row)| page_key(&row.name)).collect();
+            keys.dedup();
+            keys
+        });
+        self.graph.drop_fileless_listings(fileless_keys.as_deref());
         if let Some(rows) = fileless.filter(|rows| !rows.is_empty()) {
             if lifecycle.is_none() {
                 lifecycle = edits.map(Lifecycle::of_edits);
@@ -616,24 +627,13 @@ impl Snapshot {
                             || plan.reads_tag_targets() && was.tags() != now.tags()
                     })
                 });
-            // A page that started or stopped existing without a file of its
-            // own (answer_changes' moved keys) is in no edited document.
-            let listed = target
-                .plan
-                .as_ref()
-                .is_some_and(|plan| plan.may_list_fileless(moved_keys, &self.journal_format));
+            // The same changed fileless keys that retired carried memos.
+            let listed = target.plan.as_ref().is_some_and(|plan| {
+                plan.may_list_fileless(fileless_keys.as_deref(), &self.journal_format)
+            });
             // Time can change a displayed answer even when this publication
             // has no changed document to pass to the shared edit predicate.
-            // Fileless rows that could not be compared (their inputs not
-            // resident): every query that can list one is touched. (Search
-            // already offers an edited page's referenced names itself.)
             let touched = target.plan.as_ref().is_some_and(Plan::reads_clock)
-                || fileless_unknown
-                    && matches!(
-                        target.request,
-                        QuerySubscription::Query { .. } | QuerySubscription::Source { .. }
-                    )
-                    && target.plan.as_ref().is_none_or(Plan::lists_fileless_pages)
                 || edits.iter().zip(&facts).enumerate().any(
                     |(i, ((entry, before, after), (was, now)))| {
                         if before == after && !moved(i) {
@@ -649,17 +649,20 @@ impl Snapshot {
                                 })
                             }
                             QuerySubscription::Query { .. } | QuerySubscription::Source { .. } => {
-                                target.plan.as_ref().is_none_or(|plan| {
-                                    plan.touches_edit(
-                                        &self.graph,
-                                        entry,
-                                        before,
-                                        after,
-                                        was,
-                                        now,
-                                        &config,
-                                    )
-                                })
+                                // Fileless rows use `listed`, including rows
+                                // absent from the generation evaluated here.
+                                entry.rel_path.is_some()
+                                    && target.plan.as_ref().is_none_or(|plan| {
+                                        plan.touches_edit(
+                                            &self.graph,
+                                            entry,
+                                            before,
+                                            after,
+                                            was,
+                                            now,
+                                            &config,
+                                        )
+                                    })
                             }
                         }
                     },

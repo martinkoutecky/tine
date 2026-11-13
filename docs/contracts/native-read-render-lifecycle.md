@@ -61,6 +61,13 @@ per top-level tree, cumulatively across siblings. The existing visible
 accounting is preserved; it is not an encoded file-size limit. Templates remain
 unexpanded until admitted, including export's resolver (L7s8-02, macro half).
 
+Native print and static HTML export share a separate embed/query expansion
+budget: depth 4, 1,000 expansions and 16 MiB of cumulatively rendered HTML.
+Each outer block body starts one budget; sibling macros and their descendants
+share it. Admission precedes subtree rendering; a refused expansion retains
+the visible `macro expansion limit` cue. Independent block bodies start fresh.
+The live app's embeds use their existing link-depth guard.
+
 A PDF viewer owns one pending pdf.js loading task. Close, owner cancellation
 and load failure destroy it once; cancellation-induced rejection is silent.
 On success, ownership passes to the document proxy and its existing cleanup.

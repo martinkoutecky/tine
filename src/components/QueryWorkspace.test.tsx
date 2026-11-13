@@ -396,6 +396,24 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it.each(["search", "list", "table", "board"] as const)("labels root and reply hits in %s results", async presentation => {
+    const route: QueryRoute = { kind: "query", id: `comment-${presentation}`, sourceKind: "search", source: "needle", presentation };
+    const deps = workspaceDeps();
+    const fixture = executionFixture(false);
+    const original = fixture.hits.find(hit => hit.entity === "block")!;
+    if (original.entity !== "block") throw new Error("block fixture missing");
+    fixture.hits = ["root", "reply", "body"].map(id => ({ ...original,
+      block: { ...original.block, id, breadcrumb: ["Host"] }, display_text: `needle ${id}`, is_comment: id !== "body" }));
+    vi.mocked(deps.runGraphSearch).mockResolvedValue(fixture);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("needle reply"));
+      const blocks = root.querySelector('[data-query-result-kind="block"]')!;
+      expect(blocks.textContent?.match(/comment/g)).toHaveLength(2);
+      expect(blocks.textContent).toContain("needle body");
+    } finally { dispose(); }
+  });
   it("GH #107: presentation controls and save validation follow Chinese and switch back live", async () => {
     const route: QueryRoute = { kind: "query", id: "locale", sourceKind: "search", source: "", presentation: "search" };
     const root = document.createElement("div"); document.body.append(root);

@@ -22,8 +22,7 @@ impl Drop for Refused {
 }
 
 fn fixture(label: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("tine-gh538-{label}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-gh538-{label}-"));
     for dir in ["pages", "journals"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

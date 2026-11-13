@@ -38,14 +38,7 @@ fn page(name: &str, blocks: Vec<BlockDto>) -> PageDto {
 #[test]
 fn a_titleless_table_first_bullet_stays_a_block_and_the_page_keeps_saving() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!(
-        "tine-gh210-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir("tine-gh210-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;

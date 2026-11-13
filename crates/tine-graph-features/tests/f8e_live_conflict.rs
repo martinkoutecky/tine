@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::test_host_writer::{HostWriter, SaveRefused};
 use std::sync::Arc;
@@ -20,12 +19,7 @@ const PAGE: &str = "pages/Desk.md";
 const BASE: &str = "- the shared intro line\n- the plan for today\n";
 
 fn scratch(label: &str) -> PathBuf {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-f8e-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-f8e-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
