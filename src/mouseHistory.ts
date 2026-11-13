@@ -4,14 +4,12 @@
 export function installMouseHistory(win: Window, doc: Document, navigate: (direction: "back" | "forward") => void) {
   let press: { button: number; x: number; y: number; cancelled: boolean } | undefined;
   let released: number | undefined;
-  let releaseCancelled = false;
   let primaryHeld = false;
   let dragging = false;
   const side = (button: number) => button === 3 || button === 4;
   const cancel = () => { if (press) press.cancelled = true; };
   const down = (event: MouseEvent) => {
     released = undefined;
-    releaseCancelled = false;
     if (!side(event.button)) { primaryHeld = true; cancel(); return; }
     press = { button: event.button, x: event.clientX, y: event.clientY,
       cancelled: event.defaultPrevented || primaryHeld || dragging || !!(event.buttons & 7) };
@@ -27,7 +25,7 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     // Suppress Wry's window.history default even for a cancelled gesture.
     const prevented = event.defaultPrevented;
     event.preventDefault();
-    releaseCancelled = current?.button !== event.button || !!current?.cancelled || prevented || dragging || primaryHeld
+    const releaseCancelled = current?.button !== event.button || !!current?.cancelled || prevented || dragging || primaryHeld
       || (!!current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 5);
     if (!releaseCancelled)
       navigate(event.button === 3 ? "back" : "forward");
@@ -42,7 +40,7 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
   };
   const dragStart = () => { dragging = true; cancel(); };
   const dragEnd = () => { dragging = false; };
-  const blur = () => { press = undefined; released = undefined; releaseCancelled = false; primaryHeld = false; dragging = false; };
+  const blur = () => { press = undefined; released = undefined; primaryHeld = false; dragging = false; };
   const listeners = { mousedown: down, mouseup: up, mousemove: move, auxclick: aux,
     dragstart: dragStart, dragend: dragEnd, blur };
   const capture = { capture: true };
@@ -52,6 +50,5 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     for (const [name, listener] of Object.entries(listeners)) win.removeEventListener(name, listener as EventListener, capture);
     doc.removeEventListener?.("selectionchange", cancel);
   };
-  dispose.nativeAllowed = () => !dragging && !primaryHeld && !press?.cancelled && !releaseCancelled;
   return dispose;
 }
