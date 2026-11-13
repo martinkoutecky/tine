@@ -20,6 +20,7 @@ function meta(root: string): GraphMeta {
     journal_file_name_format: "yyyy_MM_dd",
     preferred_format: "md",
     macros: {},
+    enable_tooltip: true,
     enable_timetracking: true,
     show_brackets: true,
     logbook_with_second_support: true,
