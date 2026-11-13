@@ -9,6 +9,9 @@ lanes landed; this test keeps the counts from creeping back.
 pixels, and compare it with the frozen table `SURFACES` in
 `scripts/lib/ui-census-budget.mjs`. Both run under `npm test` (render config).
 
+The editor Advanced budget excludes the retired parent-copy preference and its
+Logseq revert (#941).
+
 ## What is counted, and from where
 
 - **Commands** (registries, nothing rendered): `commandDefaults()` (Shortcuts

@@ -37,6 +37,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/block/readOnlyFold.ts#view": "presentation-only folds of read-only pages, never written to a graph; the accessor checks graphEpoch and clearOnBindingInvalidated drops them",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
   "src/document/edits/selection.ts#selFocus": "cleared by clearOnBindingInvalidated",
+  "src/document/edits/selection.ts#selectionView": "clearSelection, registered with clearOnBindingInvalidated, releases the scope, topology and keyboard history on reset",
   "src/editorController.ts#editingId": "resetStore ends the edit (endEdit \"graph-switch\")",
   "src/editorController.ts#editingOwner": "resetStore ends the edit",
   "src/editorController.ts#editingSurface": "resetStore ends the edit",

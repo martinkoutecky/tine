@@ -126,12 +126,12 @@ describe.each(["md", "org"] as const)("body structure around %s threads", fmt =>
     expect(node("child").parent).toBe("parent");
   });
 
-  it("body selection arrows and ranges skip inline annotation threads", () => {
+  it("body arrows skip annotation threads; selecting their parent carries the whole subtree (GH #941)", () => {
     load([block("comment", ""), block("child", "Child")]);
     selectBlock("parent"); moveSelection(1, false);
     expect(selectedIds()).toEqual(["child"]);
     selectBlock("parent"); extendSelectionTo("child");
-    expect(selectedIds()).toEqual(["parent", "child"]);
+    expect(selectedIds()).toEqual(["parent", "comment", "reply", "deep", "child"]);
   });
 
   it("the shared navigation API skips threads from body blocks and retains in-thread steps", () => {

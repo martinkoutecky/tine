@@ -15,7 +15,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { isConflicted, pageInstanceGeneration } from "../document";
+import { isConflicted, pageInstanceGeneration, pageReadOnly } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { isGuidePageName } from "../guide";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -26,7 +26,7 @@ import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, topSelected, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock, removeAuthor, removeAuthorTarget } from "../blockRefActions";
 import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
@@ -813,7 +813,7 @@ function PageMenu(props: {
   const fav = () => isFavorite(props.name, props.pageKind);
   const readOnly = () => {
     const page = pageByName(props.name);
-    return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
+    return !pageTargetMatchesLoaded(target(), page) || pageReadOnly(page);
   };
   // A link can name an alias without loading a page of that name. Renaming
   // is a name operation; Rust's planner decides the source and its offers.
@@ -835,7 +835,7 @@ function PageMenu(props: {
     // changes nothing on disk and is the recovery path a stuck conflict needs
     // (og I1d, master 6f8531344, GH #490).
     let conflicted = isConflicted(name);
-    if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
+    if (!conflicted && !pageReadOnly(page) && !(await flushPage(name))) {
       if (owner()) pushToast(msg("context-menu-ui-couldn-t-save-its-on-disk-file-was-not", { name: name }), "error");
       return;
     }
@@ -1156,11 +1156,12 @@ function favoriteAction(id: string): MenuAction {
 function blockActions(id: string, x: number, y: number, commentSelection: ReturnType<typeof renderedSelectionIn> = null): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
+  const authorTarget = removeAuthorTarget(multi ? topSelected() : [id]);
   const commentRoot = threadRootOf(id);
   const commentParent = commentRoot ? docNode(commentRoot)!.parent! : id;
   const ids = multi ? selected : [id];
   const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
-  const text = (cut = false) => multi ? selectionMarkdown(cut || undefined) : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
+  const text = () => multi ? selectionMarkdown() : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
   const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), msg("context-menu-ui-copied", { count: ids.length }));
   const writable = ids.every(blockWritable);
   const mutate = (tag: string, action: (target: string) => void) => {
@@ -1197,7 +1198,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
-    ...(!multi && removeAuthorTarget([id]) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(id) }] : []),
+    ...(authorTarget !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(authorTarget) }] : []),
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).
@@ -1229,7 +1230,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
     {
       label: msg("context-menu-ui-cut", { count: ids.length }),
       run: () => {
-        void cutBlocks(ids, text(true), () => !multi || sameSelection() ? text(true) : "", () => multi ? deleteSelection() : deleteBlock(id))
+        void cutBlocks(ids, text(), () => !multi || sameSelection() ? text() : "", () => multi ? deleteSelection() : deleteBlock(id))
           .catch(() => pushToast(msg("context-menu-ui-couldn-t-cut-clipboard-write-failed", { count: ids.length }), "error"));
       },
     },

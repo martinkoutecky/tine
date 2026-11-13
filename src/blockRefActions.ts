@@ -21,6 +21,7 @@ import {
   pageByName,
   pasteClipboardPayload,
   selectedIds,
+  topSelected,
   singleSelectedId,
   setCollapsed,
   storedFold,
@@ -87,7 +88,7 @@ export function openRefTarget(
 // palette command and rebindable in Settings > Keyboard shortcuts.
 // ---------------------------------------------------------------------------
 
-/** The blocks a keyboard block command acts on: the selection (visible order),
+/** The blocks a keyboard block command acts on: the complete selected subtrees,
  *  else the block being edited, else none. */
 export function commandTargetIds(): string[] {
   if (hasSelection()) return selectedIds();
@@ -140,9 +141,7 @@ function ancestorsIn(id: string, set: ReadonlySet<string>): boolean {
  *  The caret follows the copy when a single block is being edited, so repeated
  *  presses stack duplicates. Returns the first inserted root above, or the last below. */
 export async function duplicateTargetBlocks(side: "below" | "above" = "below"): Promise<string | null> {
-  const ids = commandTargetIds();
-  const set = new Set(ids);
-  const roots = ids.filter((id) => !ancestorsIn(id, set));
+  const roots = hasSelection() ? topSelected() : commandTargetIds();
   if (!roots.length) return null;
   const last = side === "above" ? roots[0] : roots[roots.length - 1];
   const wasEditing = !hasSelection() && editingId() === last;
@@ -171,7 +170,7 @@ export async function duplicateTargetBlocks(side: "below" | "above" = "below"): 
  *  places Enter+Tab cannot (an embedded block with no children: Enter makes a
  *  sibling outside the embed). A collapsed target opens so the child shows. */
 export function insertChildIntoTarget(): string | null {
-  const ids = commandTargetIds();
+  const ids = hasSelection() ? topSelected() : commandTargetIds();
   const id = ids[ids.length - 1];
   const n = id ? docNode(id) : undefined;
   if (!id || !n) return null;
@@ -220,7 +219,7 @@ interface FoldWalk {
 }
 
 function foldWalk(pageFallback: boolean): FoldWalk | null {
-  let parents: string[] = commandTargetIds();
+  let parents: string[] = hasSelection() ? topSelected() : commandTargetIds();
   let pageRoots: string[] | null = null;
   if (!parents.length) {
     if (!pageFallback) return null;

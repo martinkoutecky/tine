@@ -238,6 +238,30 @@ fn save_around_directory_sync(
         .unwrap()
 }
 
+#[test]
+fn a_return_to_the_old_bytes_before_directory_sync_leaves_the_edit_unsaved() {
+    let mut f = Fixture::new();
+    f.edit("a.md", "P");
+    let version = f.host.pages["a.md"].version;
+    let (outcome, step) = save_around_directory_sync(&mut f, "a.md", |path| {
+        assert_eq!(fs::read(path).unwrap(), b"P", "rename is visible already");
+        fs::write(path, b"A").unwrap();
+        touch_times(path);
+    });
+    assert_eq!(outcome, Outcome::Uncertain);
+    assert_eq!(
+        step,
+        Some("publication check: changed before directory sync")
+    );
+    let page = &f.host.pages["a.md"];
+    assert_eq!(page.version, version, "no newer adopted-return version");
+    assert_eq!(page.obs, Some(text("A")));
+    assert_eq!(page.buf, text("P"));
+    assert!(!page.clean(), "seeing the rename did not complete the save");
+    assert_eq!(f.save("a.md"), Outcome::Published);
+    assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"P");
+}
+
 /// GH #811: an Android 16 phone's saves all ended Uncertain and the toast
 /// named no step, as the M3-1 publication check has no OS error. Each failed
 /// check is named in the notice and counted by kind in the diagnostics; a

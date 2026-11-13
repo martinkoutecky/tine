@@ -3,10 +3,11 @@ import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
 import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount } from "../../toasts";
-import { OutlineScope, hidesChildrenInView, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible } from "../tree";
+import { OutlineScope, depthOf, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder } from "../tree";
+import { commentsFirst } from "../commentOrder";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
-import { batch, createSignal, createRoot, createMemo, createComputed, untrack } from "solid-js";
+import { batch, createSignal, createRoot, createMemo, createComputed, getOwner, runWithOwner, untrack, type Accessor } from "solid-js";
 import { ChangeKeyRegistry } from "../../changeKeyRegistry";
 import { threadRootOf } from "../commentThreads";
 import { previousBodySibling } from "../bodyStructure";
@@ -20,7 +21,7 @@ import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
 import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../../ui";
 import { markDirty } from "../host/wiring";
-import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
+import { copyStripCollapsed } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
 import { pushToast } from "../../toasts";
 import { activeDocument, queryAllWindows, requestFrame } from "../../windowRealm";
@@ -52,98 +53,244 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
 
 const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
+const [selectionView, setSelectionView] = createSignal<{ id: string; scope: OutlineScope | null } | null>(null);
 
-/** True when `ancestor` is a strict ancestor of `id` in the block tree. */
-function isAncestorId(ancestor: string, id: string): boolean {
-  let p = doc.byId[id]?.parent ?? null;
-  while (p !== null) {
-    if (p === ancestor) return true;
-    p = doc.byId[p]?.parent ?? null;
+// View topology belongs to the selection, not its moving endpoints. Rebuild
+// only when the view/tree changes; keypresses use its index and subtree ends.
+let topologyGeneration = 0;
+const selectionTopology = createRoot(() => createMemo(() => {
+  const view = selectionView();
+  const order = view ? selectionOrder(view.id, view.scope) : [];
+  const index = new Map<string, number>();
+  for (let at = 0; at < order.length; at++) index.set(order[at], at);
+  const end = order.map((_, at) => at);
+  const previous: number[] = [];
+  const stack: number[] = [];
+  const stacked = new Map<string, number>();
+  const depths = order.map(id => depthOf(id));
+  for (let at = 0; at < order.length; at++) {
+    let ancestor: number | undefined;
+    for (let parent = doc.byId[order[at]]?.parent; parent; parent = doc.byId[parent]?.parent) {
+      ancestor = stacked.get(parent);
+      if (ancestor !== undefined) break;
+    }
+    while (stack.length > (ancestor ?? -1) + 1) {
+      const popped = stack.pop()!;
+      end[popped] = at - 1;
+      stacked.delete(order[popped]);
+    }
+    stacked.set(order[at], stack.length);
+    stack.push(at);
+    let prev = at - 1;
+    while (prev >= 0 && depths[prev] > depths[at]) {
+      const parent = doc.byId[order[prev]]?.parent;
+      const parentAt = parent ? index.get(parent) : undefined;
+      if (parentAt === undefined) break;
+      prev = parentAt;
+    }
+    previous.push(prev);
+  }
+  for (const at of stack) end[at] = order.length - 1;
+  return { order, index, end, previous, generation: ++topologyGeneration,
+    duplicates: index.size !== order.length };
+}));
+
+// An ordinary outline selection is one interval in visible preorder.
+// Keep that interval, rather than enumerating its old contents on every key.
+// Repeated query rows need an explicit union of their subtrees; distinct query
+// rows use the same interval and ancestor membership as an ordinary outline.
+const selectionState = createRoot(() => createMemo(() => {
+  const a = selAnchor();
+  const f = selFocus();
+  const topology = selectionTopology();
+  const { order, index, end, duplicates } = topology;
+  const i = a ? index.get(a) : undefined;
+  const j = f ? index.get(f) : undefined;
+  let lo = 0, hi = -1;
+  if (i !== undefined && j !== undefined) {
+    lo = Math.min(i, j);
+    let last = order[Math.max(i, j)];
+    // An endpoint can be inside a parent the range already selected. Complete
+    // that outermost selected parent too, in either direction (GH #262/#941).
+    for (let parent = doc.byId[last]?.parent; parent; parent = doc.byId[parent]?.parent) {
+      const at = index.get(parent);
+      if (at === undefined || at < Math.min(i, j) || at > Math.max(i, j)) break;
+      last = parent;
+    }
+    hi = end[index.get(last)!];
+  }
+  if (!duplicates) return { topology, lo, hi, exact: null };
+  // O(view rows in range): keep the selected roots only. Membership is an
+  // ancestor walk and the descendant list is materialized on demand, so an
+  // endpoint step never pays for folded subtrees.
+  const roots: string[] = [];
+  const rootSet = new Set<string>();
+  if (i !== undefined && j !== undefined) {
+    for (let at = Math.min(i, j); at <= Math.max(i, j); at = end[at] + 1) {
+      if (doc.byId[order[at]] && !rootSet.has(order[at])) { rootSet.add(order[at]); roots.push(order[at]); }
+    }
+  }
+  // Query rows may list a child before its (folded) parent: keep only roots no
+  // selected ancestor already carries, so each block is emitted once.
+  const covered = (id: string) => {
+    for (let p = doc.byId[id]?.parent; p; p = doc.byId[p]?.parent) if (rootSet.has(p)) return true;
+    return false;
+  };
+  if (roots.some(covered)) {
+    const kept = roots.filter((id) => !covered(id));
+    rootSet.clear();
+    for (const id of kept) rootSet.add(id);
+    roots.splice(0, roots.length, ...kept);
+  }
+  return { topology, lo, hi, exact: { roots, rootSet } };
+}));
+
+/** Subtree ids of `roots` in display preorder; stops and returns null once more
+ *  than `limit` ids would be listed, so callers can bound their work. */
+function subtreeIds(roots: readonly string[], limit = Infinity): string[] | null {
+  const ids: string[] = [];
+  const stack = [...roots].reverse();
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (!doc.byId[id]) continue;
+    // Check the bound before touching the children: O(limit), never O(width).
+    if (ids.push(id) + stack.length + doc.byId[id].children.length > limit) return null;
+    const children = commentsFirst(doc.byId[id].children);
+    for (let at = children.length - 1; at >= 0; at--) stack.push(children[at]);
+  }
+  return ids;
+}
+
+const selectionSnapshot = createRoot(() => createMemo(() => {
+  const state = selectionState();
+  const owner = getOwner();
+  let ids: Accessor<string[]> | undefined, roots: string[] | undefined;
+  const selectedRoots = () => roots ??= selectionRoots(state)!;
+  return {
+    ids: () => (ids ??= runWithOwner(owner, () => createMemo(() => subtreeIds(selectedRoots())!))!)(),
+    roots: selectedRoots,
+  };
+}));
+
+function selectionRoots(state: ReturnType<typeof selectionState>, limit = Infinity, lo = state.lo, hi = state.hi): string[] | null {
+  if (state.exact) return state.exact.roots.length > limit ? null : state.exact.roots;
+  const roots: string[] = [];
+  for (let at = lo; at <= hi; at = state.topology.end[at] + 1) {
+    const id = state.topology.order[at];
+    let covered = false;
+    // A query can put a selected ancestor after its child. The ancestor
+    // carries that child once, regardless of their display positions.
+    for (let parent = doc.byId[id]?.parent; parent; parent = doc.byId[parent]?.parent) {
+      const parentAt = state.topology.index.get(parent);
+      if (parentAt !== undefined && parentAt >= lo && parentAt <= hi) { covered = true; break; }
+    }
+    if (covered) continue;
+    if (roots.length === limit) return null;
+    roots.push(id);
+  }
+  return roots;
+}
+
+/** Selected IDs in display preorder, including every selected parent's hidden
+ * descendants. O(1) cached read; O(selected blocks) to materialize after an
+ * endpoint change; an already materialized closure follows selected subtree
+ * edits. Every selection operation consumes this same closure. */
+export function selectedIds(): string[] {
+  return selectionSnapshot().ids();
+}
+/** The lone selected subtree root, or null. O(1) cached read; materializing
+ * changed roots costs O(selected roots), independently of descendant count. */
+export function singleSelectedId(): string | null {
+  const roots = selectionSnapshot().roots();
+  return roots.length === 1 ? roots[0] : null;
+}
+const selectedMembership = new ChangeKeyRegistry();
+function membership(state: ReturnType<typeof selectionState> | null, id: string): boolean {
+  // No selection: answer in O(1) and read no ancestry, so ordinary rendering
+  // neither walks nor subscribes to every row's parents.
+  if (!state || (state.exact ? state.exact.rootSet.size === 0 : state.hi < state.lo)) return false;
+  if (state.exact) {
+    for (let p: string | null | undefined = id; p; p = doc.byId[p]?.parent) if (state.exact.rootSet.has(p)) return true;
+    return false;
+  }
+  for (let p: string | null | undefined = id; p; p = doc.byId[p]?.parent) {
+    const at = state.topology.index.get(p);
+    if (at !== undefined && at >= state.lo && at <= state.hi) return true;
   }
   return false;
 }
-
-/** Index of the last visible descendant of order[headIdx] within `order`.
- *  (A subtree occupies one contiguous DFS slice of the visible order.) */
-function subtreeEndIndex(order: string[], headIdx: number): number {
-  const head = order[headIdx];
-  let end = headIdx;
-  for (let k = headIdx + 1; k < order.length && isAncestorId(head, order[k]); k++) end = k;
-  return end;
-}
-
-/** The selected block ids in visible order: the anchor..focus slice, where a
- *  reverse (Shift+Up) slice also completes the visible subtree of every member
- *  that is an ancestor of the anchor, so a selection never holds a parent
- *  without its later children (GH #262). Cost O(slice · depth). */
-export function selectedIds(): string[] {
-  const a = selAnchor();
-  const f = selFocus();
-  if (!a || !f) return [];
-  const order = selectionOrder(a);
-  const i = order.indexOf(a);
-  const j = order.indexOf(f);
-  if (i < 0 || j < 0) return [];
-  const lo = Math.min(i, j);
-  let hi = Math.max(i, j);
-  // GH #262 Shift+Up: extending UP from inside a subtree onto its parent left
-  // the slice [parent … anchor], omitting the parent's later children — a
-  // partial-subtree selection that copy/cut/move received as "parent without
-  // its children". (Shift+Down is the semantic reverse and never produces it:
-  // a parent's children all follow it in visible order.) In a reverse slice,
-  // any member that is an ancestor of the anchor may hold a partial subtree
-  // inside the slice; complete its visible subtree.
-  if (i > j) {
-    for (let k = lo; k <= hi; k++) {
-      if (isAncestorId(order[k], a)) {
-        const end = subtreeEndIndex(order, k);
-        if (end > hi) hi = end;
-      }
-    }
-  }
-  return order.slice(lo, hi + 1);
-}
-// Memoized set of selected ids. `isSelected` is read in the render of EVERY
-// block (Block.tsx classList), and selectedIds() rebuilds visibleOrder() each
-// call — so without this, a selection over N visible blocks costs O(N²). The
-// memo recomputes only when the anchor/focus or the visible tree changes.
-const selectedSet = createRoot(() => createMemo(() => new Set(selectedIds())));
-/** The lone selected block, or null. Reads the existing memo without ordering the outline again. */
-export function singleSelectedId(): string | null {
-  const selected = selectedSet();
-  return selected.size === 1 ? selected.values().next().value! : null;
-}
-const selectedMembership = new ChangeKeyRegistry();
 createRoot(() => {
-  let previous = new Set<string>();
+  let previous: ReturnType<typeof selectionState> | null = null;
   createComputed(() => {
-    const next = selectedSet();
+    const next = selectionState();
+    // Notify only keys someone reads: walk the changed members or the registered
+    // keys, whichever is fewer, so extending past a folded parent never pays for
+    // its hidden descendants (advance() on an unread key is a no-op anyway).
+    const prev = previous;
+    const interval = prev && !prev.exact && !next.exact && prev.topology === next.topology;
+    // O(1) visible intervals; enumerate source descendants only up to the reader count.
+    const ranges: [number, number][] = interval ? [
+      [prev.lo, Math.min(prev.hi, next.lo - 1)], [Math.max(prev.lo, next.hi + 1), prev.hi],
+      [next.lo, Math.min(next.hi, prev.lo - 1)], [Math.max(next.lo, prev.hi + 1), next.hi]] : [];
+    // Otherwise list both member sets, but give up (and walk the registered keys)
+    // once that exceeds the registry: O(min(changed members, read keys)).
+    const listed = (state: ReturnType<typeof selectionState> | null) => {
+      const roots = state ? selectionRoots(state, selectedMembership.size) : [];
+      return roots && subtreeIds(roots, selectedMembership.size);
+    };
+    let changedIds: Set<string> | null = new Set();
+    if (interval) for (const [lo, hi] of ranges) {
+      const roots = selectionRoots(next, selectedMembership.size, lo, hi);
+      const ids = roots && subtreeIds(roots, selectedMembership.size);
+      if (!ids || ids.length + changedIds.size > selectedMembership.size) { changedIds = null; break; }
+      for (const id of ids) changedIds.add(id);
+    }
+    const prevIds = interval ? [] : listed(prev);
+    const nextIds = interval || !prevIds ? [] : listed(next);
     batch(() => {
-      for (const id of previous) if (!next.has(id)) selectedMembership.advance(id);
-      for (const id of next) if (!previous.has(id)) selectedMembership.advance(id);
+      if (!changedIds || !prevIds || !nextIds) {
+        for (const id of [...selectedMembership.keys()]) {
+          if (membership(prev, id) !== membership(next, id)) selectedMembership.advance(id);
+        }
+      } else if (interval) {
+        for (const id of changedIds) if (membership(prev, id) !== membership(next, id)) selectedMembership.advance(id);
+      } else {
+        for (const id of prevIds) if (!membership(next, id)) selectedMembership.advance(id);
+        for (const id of nextIds) if (!membership(prev, id)) selectedMembership.advance(id);
+      }
     });
     previous = next;
   });
 });
 export function isSelected(id: string): boolean {
   selectedMembership.read(id);
-  return untrack(selectedSet).has(id);
+  // Parent changes must update mounted descendants even when a tree mutation
+  // already changed their old ancestry before the membership diff runs.
+  return membership(untrack(selectionState), id);
 }
 // Hierarchical Ctrl/Cmd+A (GH #262): the ancestor whose visible subtree the
 // current select-all sequence covers. Any other selection mutation resets it.
 let selectAllHead: string | null = null;
+// Remember crossed subtree boundaries so reversal can restore a nested anchor
+// after an upward step selected its parent. Entries are indices in this topology.
+let keyboardPath: number[] = [];
+let keyboardTopology: number | null = null;
 
 export function selectBlock(id: string, scope: OutlineScope | null = null) {
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
   activeSelectionScope = scope;
   selectAllHead = null;
-  batch(() => { setSelAnchor(id); setSelFocus(id); });
+  keyboardPath = [];
+  keyboardTopology = null;
+  batch(() => { setSelectionView({ id, scope }); setSelAnchor(id); setSelFocus(id); });
 }
 export function clearSelection() {
-  batch(() => { setSelAnchor(null); setSelFocus(null); });
+  batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); });
   activeSelectionScope = null;
   selectAllHead = null;
+  keyboardPath = [];
+  keyboardTopology = null;
 }
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
@@ -151,10 +298,12 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
   notifyOutlineSelectionStarted(id);
   if (selAnchor() === null) {
     activeSelectionScope = scope;
+    setSelectionView({ id, scope });
     setSelAnchor(id);
   }
-  if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(id)) return;
+  if (scope !== activeSelectionScope || !selectionTopology().index.has(id)) return;
   selectAllHead = null;
+  keyboardPath = [];
   setSelFocus(id);
 }
 export function hasSelection(): boolean {
@@ -163,26 +312,52 @@ export function hasSelection(): boolean {
 export function moveSelection(dir: 1 | -1, extend: boolean) {
   const f = selFocus();
   if (!f) return;
-  const order = selectionOrder(f);
-  const i = order.indexOf(f);
-  const ni = i + dir;
+  const topology = selectionTopology();
+  const { order, index, end, previous } = topology;
+  const i = index.get(f);
+  if (i === undefined) return;
+  // D-20261112-SU10 makes both directions sibling-subtree steps. Logseq's
+  // select-block-up-down/get-next-block-non-collapsed-skip supplies the downward
+  // skip; upward promotion also avoids stopping inside the preceding subtree.
+  if (keyboardTopology !== topology.generation || keyboardPath.at(-1) !== i) keyboardPath = [i];
+  keyboardTopology = topology.generation;
+  const prior = keyboardPath.at(-2);
+  const reversing = extend && prior !== undefined && Math.sign(i - prior) !== dir;
+  // Downward, skip the subtree of the outermost selected ancestor of the focus
+  // too (Logseq get-next-block-non-collapsed-skip): Shift+click into a selected
+  // parent, then Shift+Down, continues after that parent.
+  let skip = i;
+  if (extend && !reversing && dir > 0) {
+    const a = selAnchor();
+    const ai = a ? index.get(a) ?? i : i;
+    const lo = Math.min(i, ai), hi = Math.max(i, ai);
+    // Only an ancestor inside the selected range counts: query rows may list a
+    // folded parent after its child, and that parent is not selected.
+    for (let p = doc.byId[f]?.parent; p; p = doc.byId[p]?.parent) {
+      const at = index.get(p);
+      if (at === undefined || at < lo || at > hi) break;
+      skip = at;
+    }
+  }
+  const ni = reversing ? prior : !extend ? i + dir : dir > 0 ? end[skip] + 1 : previous[i];
   if (ni < 0 || ni >= order.length) return;
+  if (!extend) keyboardPath = [];
+  else if (reversing) keyboardPath.pop();
+  else keyboardPath.push(ni);
   const next = order[ni];
   selectAllHead = null;
-  setSelFocus(next);
-  if (!extend) setSelAnchor(next);
+  batch(() => {
+    setSelFocus(next);
+    if (!extend) setSelAnchor(next);
+  });
   scrollBlockRowIntoView(next);
 }
 
 /** Ctrl/Cmd+A while editing a block, with the block's text already fully
- *  selected: escalate to a block selection covering the block's whole visible
+ *  selected: escalate to a block selection covering the block's whole source
  *  subtree, and mark it the head of the hierarchy ladder (GH #262). */
 export function selectBlockSubtree(id: string, scope: OutlineScope | null = null) {
   selectBlock(id, scope);
-  const order = selectionOrder(id);
-  const idx = order.indexOf(id);
-  if (idx < 0) return;
-  setSelFocus(order[subtreeEndIndex(order, idx)]);
   selectAllHead = id;
 }
 
@@ -191,35 +366,33 @@ export function selectBlockSubtree(id: string, scope: OutlineScope | null = null
  *  outline, where it stays (idempotent) — or start the ladder at the current
  *  selection's anchor when no select-all sequence is in progress (GH #262). */
 export function expandBlockSelection() {
+  keyboardPath = [];
   const a = selAnchor();
   const f = selFocus();
   if (!a || !f) return;
-  const order = selectionOrder(a);
+  const { order, index, end } = selectionTopology();
   if (order.length < 2) return;
   // Whole-outline selection is the top of the ladder; further presses no-op.
-  if (a === order[0] && f === order[order.length - 1]) return;
+  if (a === order[0] && end[index.get(f)!] === order.length - 1) return;
   let head = selectAllHead;
-  if (head === null || !order.includes(head)) head = a;
-  let idx = order.indexOf(head);
-  if (idx < 0) return;
+  if (head === null || !index.has(head)) head = a;
+  const idx = index.get(head);
+  if (idx === undefined) return;
   // A head whose subtree is fully inside the current selection (exactly or
   // because the user extended past it) is covered: climb from there.
-  if (a === head && order.indexOf(f) >= subtreeEndIndex(order, idx)) {
+  if (a === head && end[index.get(f)!] >= end[idx]) {
     // This subtree is already fully selected: climb to its parent, or to the
     // whole outline when the head is already a root (within the active scope).
     const parent = doc.byId[head]?.parent ?? null;
-    if (parent !== null && order.includes(parent)) {
+    if (parent !== null && index.has(parent)) {
       head = parent;
-      idx = order.indexOf(head);
     } else {
-      setSelAnchor(order[0]);
-      setSelFocus(order[order.length - 1]);
+      batch(() => { setSelAnchor(order[0]); setSelFocus(order[order.length - 1]); });
       selectAllHead = null;
       return;
     }
   }
-  setSelAnchor(head);
-  setSelFocus(order[subtreeEndIndex(order, idx)]);
+  batch(() => { setSelAnchor(head); setSelFocus(head); });
   selectAllHead = head;
 }
 
@@ -272,22 +445,19 @@ function scrollBlockRowIntoView(id: string) {
   });
 }
 
-/** Top-level selected blocks (exclude those whose parent is also selected). */
+/** Selected subtree roots. O(1) cached read; O(selected roots) to materialize
+ * after an endpoint/tree change, without enumerating their descendants. */
 export function topSelected(): string[] {
-  const ids = selectedIds();
-  const set = new Set(ids);
-  return ids.filter((id) => {
-    const p = doc.byId[id]?.parent;
-    return !(p && set.has(p));
-  });
+  return selectionSnapshot().roots();
 }
 
 function selectionRemovalSurvivor(): string | null {
-  const selected = selectedIds();
-  const first = selected[0];
-  const last = selected.at(-1);
+  const roots = topSelected();
+  const first = roots[0];
+  const last = roots.at(-1);
   if (!first || !last) return null;
-  return nextVisible(last) ?? prevVisible(first) ?? doc.byId[first]?.parent ?? null;
+  const { order, index, end } = selectionTopology();
+  return order[end[index.get(last)!] + 1] ?? order[index.get(first)! - 1] ?? doc.byId[first]?.parent ?? null;
 }
 
 function reselectSurvivingBlock(id: string | null) {
@@ -366,9 +536,8 @@ export function deleteSelection() {
 }
 
 /** GH #764: merge the selected blocks into the first one. Their texts follow in
- *  visible order, one line break between them; the first block keeps its place,
- *  its identity and its properties, and every selected block's children stay
- *  under it (the first block's own, then each merged block's in turn). One
+ *  source preorder, including folded descendants, one line break between them;
+ *  the first block keeps its place, its identity and its properties. One
  *  kernel verb (`merge_many`), one undo step, the ordinary save path. The kernel
  *  refuses, changing nothing, when a merged block's referenced `id::` would be
  *  lost (the first block already has one, or an earlier merged block's moved
@@ -422,32 +591,12 @@ export function mergeSelection(): boolean {
   return true;
 }
 
-/** The blocks a selected-only copy carries (GH #943, D-20261112-SU941): the selected
- * blocks, plus the whole subtree of every selected block whose children its view hides
- * (a fold or a Sheet view), since those can never be selected. An expanded parent
- * selected alone stays alone.
- * O(selection + hidden subtree size). */
-function selectionCopiedIds(): Set<string> {
-  const selected = selectedIds();
-  const out = new Set(selected);
-  const addSubtree = (id: string) => {
-    for (const child of doc.byId[id]?.children ?? []) { out.add(child); addSubtree(child); }
-  };
-  for (const id of selected) if (hidesChildrenInView(id, activeSelectionScope)) addSubtree(id);
-  return out;
-}
-
-/** Public clipboard text for the selected roots; O(visible-order resolution + selected subtree bytes).
- * Defaults to the copy preference; cuts request complete subtrees so their
- * public clipboard flavor includes everything deletion removes. */
-export function selectionMarkdown(includeSubtree = copyIncludeSubtree()): string {
-  // Clipboard → always strip id:: (OG parity). collapsed:: and whole-subtree vs
-  // selected-only are user-configurable (see copySettings): OG copies the full
-  // sub-tree of a selected parent; Tine's default copies only the selected blocks.
+/** Public clipboard text for the selected roots, including folded descendants.
+ * O(selected subtree bytes). Identity is stripped; collapsed:: follows its preference. */
+export function selectionMarkdown(): string {
   const stripCollapsed = copyStripCollapsed();
-  const onlySel = includeSubtree ? undefined : selectionCopiedIds();
   return topSelected()
-    .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
+    .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed))
     .join("\n");
 }
 

@@ -83,7 +83,6 @@ settings-appearance = 外观
 
 settings-could-not-read-the-system-tray-state = 无法读取系统托盘状态。
 
-settings-could-not-load-copy-subtree-preference = 无法加载复制子树偏好。
 
 settings-could-not-load-collapsed-copy-preference = 无法加载复制折叠属性偏好。
 
@@ -357,7 +356,7 @@ settings-ui-restore-settings-size = 还原设置窗口大小
 
 settings-ui-maximize-settings = 最大化设置窗口
 
-settings-ui-config-edn-could-not-be-read-this-graph-is = 无法读取 config.edn。此图谱为只读，请修复配置并重新打开图谱。
+settings-ui-config-edn-could-not-be-read-this-graph-is = { ui-failure-config-read }
 
 settings-ui-no-matching-settings = 没有匹配的设置
 
@@ -367,7 +366,6 @@ settings-ui-differs-from-logseq = 与 Logseq 不同
 
 settings-og-reference-spacing = Logseq：不加空格，光标停在右括号后。
 
-settings-og-copy-subtree = Logseq：始终复制所选块的整个子树。
 
 settings-og-copy-collapsed = Logseq：复制文本时保留 collapsed::（仅去除 id::）。
 
@@ -531,9 +529,7 @@ settings-ui-ctrl-k-ranking-reset-for-this-graph = 已重置此图谱的 Ctrl+K �
 
 settings-ui-reset-ranking = 重置排序
 
-settings-ui-copy-a-parent-block-s-sub-blocks = 复制父块的子块
 
-settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块，以及已折叠块或表格视图所隐藏的子块。Tine 默认关闭，避免仅选中父块却复制整个子树。
 
 settings-ui-strip-collapsed-when-copying = 复制时去除 collapsed::
 
@@ -807,7 +803,6 @@ toast-save-asset-format-failed = 无法保存{ settings-ui-new-asset-filename }�
 toast-save-launcher-ranking-failed = 无法保存{ settings-ui-learn-ctrl-k-choices }。
 toast-save-media-editor-failed = 无法保存媒体编辑器命令。
 toast-save-reference-click-failed = 无法保存{ settings-ui-click-a-block-reference-to-zoom-in }。
-toast-save-copy-subtree-failed = 无法保存{ settings-ui-copy-a-parent-block-s-sub-blocks }。
 toast-save-copy-collapsed-failed = 无法保存{ settings-ui-strip-collapsed-when-copying }。
 toast-save-hover-delay-failed = 无法保存{ settings-hover-preview-delay }。
 toast-save-search-results-failed = 无法保存搜索结果偏好。

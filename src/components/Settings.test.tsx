@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
-import { setGraphConfigProblem } from "../graph";
+import { setGraphConfigProblem } from "../graphConfig";
 import { closeSettings, openSettings } from "../ui";
 import { setActiveLocale } from "../i18n";
 
@@ -240,8 +240,7 @@ it("keeps the config-read error visible in Settings until a repaired reopen", as
   const dispose = render(() => <Settings />, host);
   openSettings("appearance");
   await tick();
-  expect(host.querySelector('[role="alert"]')?.textContent).toContain("This graph is read-only");
-  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Repair the config and reopen");
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe("Couldn't read config.edn. The graph is read-only; repair the config to resume editing.");
   setGraphConfigProblem(null);
   await tick();
   expect(host.querySelector('[role="alert"]')).toBeNull();

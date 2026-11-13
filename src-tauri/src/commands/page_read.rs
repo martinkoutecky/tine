@@ -19,7 +19,6 @@ impl std::ops::Deref for PageWire {
 pub(super) fn page_dto(read: tine_store::PageRead) -> PageWire {
     let mut doc = read.doc;
     doc.rev = Some(read.rev.into());
-    doc.read_only = read.read_only.is_some();
     PageWire {
         id: read.id.into(),
         doc,

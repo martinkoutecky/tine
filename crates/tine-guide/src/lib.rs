@@ -615,6 +615,10 @@ mod journal_guide_tests {
         // og 22b: settings writes never overwrite a half-delivered config.edn.
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("`logseq/config.edn` is live too"));
+        assert!(files.contains("editing resumes and the notice clears automatically"));
+        assert!(files.contains(
+            "An Org file Tine cannot safely round-trip keeps its own read-only restriction"
+        ));
         assert!(files.contains("refused rather than written if `config.edn` is half-written"));
         // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
         assert!(files.contains("pages kept in other folders or at the graph root"));
@@ -773,7 +777,7 @@ mod merge_sibling_guide_tests {
             "after its whole subtree",
             "**Merge selected blocks** is in **Commands**",
             "starts unbound",
-            "keeps every child under it",
+            "Children in the selected subtrees join the merged text too, even when folded",
             "It is one Undo step.",
             "a block ID that other blocks refer to moves to the merged block",
         ] {

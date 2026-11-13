@@ -13,7 +13,7 @@ let loading: Promise<void> | undefined;
  * promise settles after the attempt, leaving the classic engine available. */
 export function preloadCm6Editor(): Promise<void> {
   return loading ??= import("./Cm6BlockEditor").then(
-    module => { loadedEditor = module.Cm6BlockEditor; }, error => reportUiFailure("editor-load", error));
+    module => { loadedEditor = module.Cm6BlockEditor; }, error => { reportUiFailure("editor-load", error); });
 }
 
 /** Await the stored choice (at most five seconds), then choose once per

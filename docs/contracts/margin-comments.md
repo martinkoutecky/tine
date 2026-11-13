@@ -142,8 +142,13 @@ reference counts and Find remain unchanged.
   folded "N below" count, and every block's comment children (outline filter,
   highlights, compact entry and popup, margin column) and margin eligibility
   read it. A structural change rescans the scope's trees once with untracked
-  reads. Each mounted block's child-list memo then compares its own list; an
-  unchanged list retains its value and does not rerun downstream comment views.
+  reads. The rescan compares old and new comment lists and notifies only the
+  parents whose lists changed; unchanged parents evaluate no child-list memo.
+  Child-list memos depend on a stable scan result for freshness while a comment's
+  structure and metadata are published in one batch. A separate rescan signal
+  notifies root readers; typing adds no scan reads to child-list accessor reads.
+  Rows and grouped passage headers use the existing node-lifetime binding
+  while deletion notifications settle, until their owners dispose them.
   Covering-index selection follows the block's ancestry rather than a global
   structural revision. A raw edit of any
   block on those pages runs one key screen (plus one facet lookup if it may

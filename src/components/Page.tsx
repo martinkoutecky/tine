@@ -14,13 +14,14 @@ import { openShareDialog } from "../shareState";
 import { ShareIcon } from "./ShareIcon";
 import { QuickShareAll } from "./QuickShareAll";
 import { graphEpoch, graphMeta } from "../graphSession";
+import { graphConfigUnreadable } from "../graphConfig";
 import { changed } from "../changeKeys";
 import { PageLoadError, createPinnedPathRecovery, refusedPageOpen, routeAdoptsRead, type PinnedPathRefusal } from "./pageLoadRecovery";
 import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
 import { createTagTableAvailabilityResource, createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
-import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
+import { blockRef, isConflicted, pageReadOnly, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { recordFeedReason } from "../journalFeedDiagnostic";
@@ -933,7 +934,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = docNode(props.id);
-    if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
+    if (!root || pageReadOnly(pageByName(root.page)) || pageByName(root.page)?.guide) return;
     // GH #158: always append a fresh child (never reuse the trailing empty leaf), so
     // the affordance can always add a new last block even when the current last one
     // is an empty, possibly deeper-nested, bullet.
@@ -996,7 +997,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
           <CommentSurface main page={pageByName(pageName())} roots={[props.id]}><Block id={props.id} forceExpanded /></CommentSurface>
         </OutlineScopeContext.Provider>
       </div>
-      <Show when={!pageByName(pageName())?.readOnly && !pageByName(pageName())?.guide}>
+      <Show when={!pageReadOnly(pageByName(pageName())) && !pageByName(pageName())?.guide}>
         <TrailingBlockTarget onActivate={focusTrailing} />
       </Show>
     </div>
@@ -1064,7 +1065,7 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
   };
   const startRename = () => {
     if (renameInFlight) return;
-    if (props.page.guide || props.page.readOnly) return;
+    if (props.page.guide || pageReadOnly(props.page)) return;
     if (props.page.kind !== "page") return; // journals are named by their date
     renameSubmitted = false;
     renameCancelled = false;
@@ -1296,8 +1297,8 @@ function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Ele
           <button onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>
         </div>
       </Show>
-      <Show when={props.page.readOnly && !props.page.guide}>
-        <div class="page-readonly-banner" title={t("page-ui-tine-can-t-reproduce-this-org-file-byte-for")}><Rich message={msg("page-ui-read-only-this-org-file-uses-a-structure-tine")} /></div>
+      <Show when={pageReadOnly(props.page) && !props.page.guide}>
+        <div class="page-readonly-banner" title={graphConfigUnreadable() ? t("ui-failure-config-read") : t("page-ui-tine-can-t-reproduce-this-org-file-byte-for")}><Rich message={msg(graphConfigUnreadable() ? "ui-failure-config-read" : "page-ui-read-only-this-org-file-uses-a-structure-tine")} /></div>
       </Show>
       <ExternalChangeBar name={props.page.name} />
       <SeenHeader seen={seen} pageName={props.page.name} />
@@ -1354,12 +1355,12 @@ export function PageTypingTarget(props: {
   // no-op once a body exists, so this only ever fires on a genuinely empty page.
   createEffect(() => {
     const page = props.page();
-    if (!page || page.readOnly) return;
+    if (!page || pageReadOnly(page)) return;
     page.roots.length; // track: a page emptied while rendered must re-seed
     ensureEmptyBlock(page.name, { afterProperties: true });
   });
   return (
-    <Show when={props.page() && !props.page()!.readOnly && !props.page()!.guide}>
+    <Show when={props.page() && !pageReadOnly(props.page()) && !props.page()!.guide}>
       <TrailingBlockTarget onActivate={focusTrailing} />
     </Show>
   );
