@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -114,12 +113,7 @@ fn disk_tree(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
 }
 
 fn fixture(label: &str) -> (PathBuf, std::sync::Arc<Store>) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-client-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-client-{label}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("assets")).unwrap();
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -888,8 +882,7 @@ fn stream_cap_and_missing_trash_leave_no_asset() {
 #[test]
 fn asset_import_creates_missing_assets_directory() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-missing-assets-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-missing-assets-");
     fs::create_dir_all(root.join("pages")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     assert_eq!(

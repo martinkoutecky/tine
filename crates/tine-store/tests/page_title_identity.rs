@@ -19,8 +19,7 @@ fn path_saved_under_another_case_opens_disk_spelling() {
     let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
 
-    let root = std::env::temp_dir().join(format!("tine-case-path-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-case-path-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("pages/contents.md"), "- body\n").unwrap();
@@ -78,8 +77,7 @@ fn normalization_alias_opens_only_the_listed_disk_spelling() {
 #[test]
 fn nonportable_graph_text_path_is_outside_page_scope() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-portable-scope-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-portable-scope-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("archive")).unwrap();
@@ -100,8 +98,7 @@ fn nonportable_graph_text_path_is_outside_page_scope() {
 #[test]
 fn title_property_owns_page_name_through_store() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-title-identity-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-title-identity-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(
@@ -191,8 +188,7 @@ fn title_property_owns_page_name_through_store() {
 #[test]
 fn ordinary_page_outside_standard_directories_is_discoverable() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-outside-pages-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-outside-pages-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("archive")).unwrap();
@@ -270,8 +266,7 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
 #[test]
 fn the_first_path_wins_even_when_its_claim_comes_from_a_title() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-title-claimants-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-title-claimants-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("pages/A.md"), "title:: Z\n\n- other\n").unwrap();
@@ -289,8 +284,7 @@ fn the_first_path_wins_even_when_its_claim_comes_from_a_title() {
 #[test]
 fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-safe-filenames-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-safe-filenames-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("pages/Template.md"), "- created\n").unwrap();
@@ -383,8 +377,7 @@ fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
 #[test]
 fn page_name_agrees_with_the_outline_preamble() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-title-outline-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-title-outline-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(
@@ -430,9 +423,7 @@ fn page_name_agrees_with_the_outline_preamble() {
 #[test]
 fn rename_keeps_a_heading_blocks_title_property() {
     let _integration_guard = crate::integration_lock();
-    let root =
-        std::env::temp_dir().join(format!("tine-title-heading-rename-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-title-heading-rename-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(

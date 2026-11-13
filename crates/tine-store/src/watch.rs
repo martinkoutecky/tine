@@ -1373,14 +1373,7 @@ mod tests {
     use crate::store::{OpenOptions, Store};
 
     fn temp_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "tine-{tag}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-{tag}-"));
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         root
@@ -1958,8 +1951,7 @@ mod tests {
 
     #[test]
     fn watcher_inventory_and_incremental_path_share_hidden_policy() {
-        let root = std::env::temp_dir().join(format!("tine-hidden-watch-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir("tine-hidden-watch-");
         fs::create_dir_all(root.join("archive/private")).unwrap();
         fs::create_dir_all(root.join("archive/public")).unwrap();
         let hidden = root.join("archive/private/Secret.md");
@@ -1988,15 +1980,7 @@ mod tests {
     fn windows_any_events_on_exact_text_files_stay_incremental() {
         use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
 
-        let root = std::env::temp_dir().join(format!(
-            "tine-win-any-{}-{}",
-            std::process::id(),
-            // Debug of SystemTime prints `{` and `:`; Windows rejects them in file names.
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = crate::test_support::fresh_dir("tine-win-any-");
         let pages = root.join("pages");
         fs::create_dir_all(&pages).unwrap();
         let text = pages.join("TINE版本更新提示词.md");
@@ -2210,11 +2194,7 @@ mod tests {
 
     #[test]
     fn failed_reread_keeps_old_view_and_retries_unchanged_file() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-watch-reread-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-watch-reread-");
         fs::create_dir_all(root.join("pages")).unwrap();
         let path = root.join("pages/A.md");
         fs::write(&path, "- old\n").unwrap();

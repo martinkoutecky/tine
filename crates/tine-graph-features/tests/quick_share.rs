@@ -10,7 +10,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_graph_features::publish_query::QueryExportRequest;
 use tine_graph_features::quick_share::{
@@ -26,13 +25,7 @@ const LOGIN: &str = "tine-fixture";
 const GIST: &str = "0123456789abcdef0123";
 
 fn base() -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-quick-share-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-quick-share-");
     fs::create_dir_all(root.join("scratch")).unwrap();
     root
 }

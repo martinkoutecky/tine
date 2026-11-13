@@ -8,7 +8,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_graph_features::pages;
 use tine_store::{FaultPoint, Store};
@@ -25,13 +24,7 @@ fn hosted<T>(
 }
 
 fn scratch(label: &str, config: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-home-rename-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir(&format!("tine-home-rename-{label}-"));
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
     fs::write(dir.join("logseq/config.edn"), config).unwrap();

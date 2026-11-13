@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::concord_queue::{ConflictObject, ConflictSource};
 use tine_core::model::PageKind;
@@ -243,12 +242,7 @@ fn name_conflicts_list_ordinary_and_cross_kind_files_without_writing() {
 }
 
 fn graph(label: &str) -> PathBuf {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-f8dj-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-f8dj-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
@@ -682,14 +676,7 @@ fn journal_conflicts_expose_a_routable_path_per_file() {
 #[test]
 fn the_duplicate_day_keeper_is_the_file_the_day_opens() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!(
-        "tine-f8dj-ow2-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir("tine-f8dj-ow2-");
     for dir in ["pages", "journals", "assets"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
