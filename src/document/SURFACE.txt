@@ -212,6 +212,7 @@ toggleCollapse
 toggleListItemAtIndex
 toggleOwnNumberedList
 toggleUndoRedoMode
+topSelected  # why: expose the selection owner's roots for editing subtree units without re-deriving them; batch-sel-941
 trackAssetWrite
 tryFreezeGraphRewrite  # why: graph switch freezes all input before its last flush (STEP3 6 step 1); batch-og-s3b
 undo

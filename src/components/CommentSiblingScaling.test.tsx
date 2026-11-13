@@ -8,7 +8,8 @@ import "../keystrokeProbe.test.support";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { setImmediate } from "node:timers/promises";
 import { render } from "solid-js/web";
-import { createComputed } from "solid-js";
+import { createComputed, For } from "solid-js";
+import { createCommentChildren } from "../commentIndex";
 import { SurfaceContext } from "./Block";
 import { BlockList } from "./BlockList";
 import { createMarginSurface } from "./MarginColumn";
@@ -28,6 +29,40 @@ import type { BlockDto } from "../types";
 
 const facetCalls = vi.hoisted(() => ({ count: 0 }));
 const commentViews = vi.hoisted(() => ({ runs: 0 }));
+const typingWork = vi.hoisted(() => ({
+  active: false, scans: 0, childReads: 0, scanReads: 0, childEvaluations: 0,
+}));
+vi.mock("solid-js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("solid-js")>();
+  const scans = new WeakSet<() => unknown>();
+  return { ...actual,
+    createMemo: ((fn: (previous: unknown) => unknown, initial: unknown, options: object) => {
+      // Identify the two index producers by the primitives they call, rather
+      // than line numbers (the base and candidate have different layouts).
+      const source = fn.toString();
+      const scan = source.includes("someBlockInTrees");
+      const children = source.includes("previous.entries");
+      if (!scan && !children) return actual.createMemo(fn, initial, options);
+      const value = actual.createMemo((previous: unknown) => {
+        if (typingWork.active) {
+          if (scan) typingWork.scans++;
+          if (children) typingWork.childEvaluations++;
+        }
+        return fn(previous);
+      }, initial, options);
+      const read = () => {
+        if (typingWork.active && children) typingWork.childReads++;
+        return value();
+      };
+      if (scan) scans.add(read);
+      return read;
+    }) as typeof actual.createMemo,
+    untrack: ((fn: () => unknown) => {
+      if (typingWork.active && scans.has(fn)) typingWork.scanReads++;
+      return actual.untrack(fn);
+    }) as typeof actual.untrack,
+  };
+});
 vi.mock("../commentIndex", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../commentIndex")>();
   return { ...actual, createCommentChildren: (...args: Parameters<typeof actual.createCommentChildren>) => {
@@ -90,6 +125,13 @@ function edit(siblings: number, width: number, comments: number) {
   return { foreignRaw: Math.max(...runs.map(r => r.foreignRaw)), facets: Math.max(...runs.map(r => r.facets)), ms: Math.max(...runs.map(r => r.ms)) };
 }
 
+// Exercise the same leased reader as a block without mounting hundreds of
+// unrelated editors. The edited group still uses the complete block UI.
+function ParentCommentReader(props: { id: string }) {
+  const children = createCommentChildren(() => props.id);
+  return <span data-comment-parent={props.id}>{children().entries.length}</span>;
+}
+
 it.each([
   { tier: "medium", width: 800, comments: 1 },
   { tier: "wide", width: 1400, comments: 1 },
@@ -123,6 +165,40 @@ function mountFolded(children: number, hiddenThreads: number) {
   </CommentResolutionScope></SurfaceContext.Provider>, pane);
   return pane;
 }
+
+it.each([
+  { kind: "ordinary", width: 800, comments: 1 },
+  { kind: "ordinary", width: 1400, comments: 1 },
+  { kind: "ordinary", width: 800, comments: 0 },
+  { kind: "phone", width: 390, comments: 2 },
+  { kind: "folded", width: 800, comments: 0 },
+  { kind: "folded", width: 800, comments: 1 },
+])("typing work counts at 64 children ($kind, $width, $comments comments)", ({ kind, width, comments }) => {
+  typingWork.scans = typingWork.childReads = typingWork.scanReads = typingWork.childEvaluations = 0;
+  commentViews.runs = 0;
+  typingWork.active = true;
+  try {
+    if (kind === "folded") mountFolded(64, comments);
+    else mount(64, width, comments);
+    // A broken matcher must not turn every counter into a false zero.
+    expect(typingWork.scans).toBeGreaterThan(0);
+    expect(typingWork.childEvaluations).toBeGreaterThan(0);
+    expect(typingWork.childReads).toBeGreaterThan(0);
+    expect(commentViews.runs).toBeGreaterThan(0);
+    for (let key = 0; key < 3; key++) {
+      typingWork.scans = typingWork.childReads = typingWork.scanReads = typingWork.childEvaluations = 0;
+      commentViews.runs = 0;
+      const id = kind === "folded" ? "p" : "k1";
+      setDoc("byId", id, "raw", `Typed ordinary text ${key}`);
+      const counts = { scans: typingWork.scans, childReads: typingWork.childReads,
+        scanReads: typingWork.scanReads, childEvaluations: typingWork.childEvaluations, views: commentViews.runs };
+      console.log(JSON.stringify({ measurement: "typing work counts", kind, width, comments, key, counts }));
+      expect(document.querySelector(`[data-block-id="${id}"]`)?.textContent).toContain(`Typed ordinary text ${key}`);
+      expect(counts).toEqual({ scans: 0, childReads: kind === "folded" ? 2 : 0,
+        scanReads: 0, childEvaluations: 0, views: 0 });
+    }
+  } finally { typingWork.active = false; }
+});
 function typeInFolded(children: number, hiddenThreads: number) {
   const pane = mountFolded(children, hiddenThreads);
   const chip = () => pane.querySelector(".comment-below-chip")?.textContent ?? null;
@@ -193,10 +269,16 @@ it("opening one passage mounts that passage's cards only at 4, 16 and 64 passage
   expect(results[2].ms, "opening at 64 passages vs 4").toBeLessThan(results[0].ms * 3 + 25);
 });
 
-it.each([0, 1].flatMap(comments => [16, 64, 256].map(n => ({ comments, n }))))(
-  "a structural edit reruns constant downstream comment work ($n groups, $comments comments)", ({ comments, n }) => {
-    // Insert into a group directly: no extra ordinary child needs a setup render.
+it.each([
+  { comments: 0, parentReaders: false },
+  { comments: 1, parentReaders: false },
+  { comments: 1, parentReaders: true },
+].flatMap(config => [16, 64, 256].map(n => ({ ...config, n }))))(
+  "a structural edit reruns constant downstream comment work ($n groups, $comments comments, parent readers $parentReaders)", ({ comments, parentReaders, n }) => {
+    // Non-leaf groups keep a reader mounted before the edit; leaf-only groups
+    // also cover initialization of the first child-list reader.
     const blocks = Array.from({ length: n }, (_, i) => b(`g${i}`, `Group ${i}`, [
+      ...(parentReaders ? [b(`body${i}`, `Body ${i}`)] : []),
       ...(i === 0 && comments ? [b("t", "Comment\ntine.quote:: Group")] : [])]));
     loadSingle({ name: "Structure", title: "Structure", kind: "page", pre_block: null, format: "md", blocks });
     const pane = document.createElement("main"); pane.className = "main-content";
@@ -205,9 +287,11 @@ it.each([0, 1].flatMap(comments => [16, 64, 256].map(n => ({ comments, n }))))(
       let outline: HTMLDivElement | undefined;
       const margin = createMarginSurface({ page: () => pageByName("Structure"), eligible: () => true, outline: () => outline });
       return <SurfaceContext.Provider value="main"><CommentResolutionScope roots={pageByName("Structure")?.roots ?? []}><MarginContext.Provider value={margin.placement}>
-        <div class="page-section"><div class="page-blocks" ref={outline}><BlockList ids={pageByName("Structure")?.roots ?? []} /></div><margin.Column /></div>
+        <div class="page-section"><div class="page-blocks" ref={outline}><BlockList ids={parentReaders ? ["g0"] : pageByName("Structure")?.roots ?? []} /></div><margin.Column /></div>
+        <For each={parentReaders ? blocks.slice(1) : []}>{block => <ParentCommentReader id={block.id} />}</For>
       </MarginContext.Provider></CommentResolutionScope></SurfaceContext.Provider>;
     }, pane);
+    if (parentReaders) expect(pane.querySelectorAll("[data-comment-parent]")).toHaveLength(n - 1);
     let inserted: string | null = null;
     commentViews.runs = 0;
     const m = measure("g0", () => { inserted = insertEmptyChildBlock("g0", 0); });
@@ -216,12 +300,11 @@ it.each([0, 1].flatMap(comments => [16, 64, 256].map(n => ({ comments, n }))))(
     const sites = [...m.bySite].filter(([site]) => site.includes("src/commentIndex.ts:"));
     const indexRuns = sites.reduce((sum, [, stat]) => sum + stat.runs, 0);
     const memoEvaluations = Math.max(...sites.map(([, stat]) => stat.runs));
-    console.log(JSON.stringify({ measurement: "structural edit", comments, n, indexRuns, memoEvaluations, downstreamRuns: commentViews.runs,
+    console.log(JSON.stringify({ measurement: "structural edit", comments, parentReaders, n, indexRuns, memoEvaluations, downstreamRuns: commentViews.runs,
       totalRuns: m.runs, ms: m.ms, sites: sites.map(([site, stat]) => [site, stat.runs]) }));
-    // A leaf owns no comment reader. The first child initializes its parent's
-    // view; an existing parent reuses its view. No other leaf subscribes to
-    // the rescan, so this budget is constant even at 256 groups.
+    // The first child initializes its parent's view; existing parents reuse
+    // theirs. Unchanged parent readers must not evaluate on the rescan.
     expect(commentViews.runs).toBe(comments ? 0 : 1);
     expect(memoEvaluations).toBe(1);
-    expect(indexRuns - memoEvaluations).toBe(comments ? 1 : 4);
+    expect(indexRuns).toBe(comments ? 1 : 5);
 });
