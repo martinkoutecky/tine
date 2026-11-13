@@ -1,5 +1,8 @@
 /** Lazy graph-scoped All Pages metrics. Panes share one seed per metric and
- * patch final publication rows. Only an in-flight seed retains replay rows. */
+ * patch final publication rows. Only an in-flight seed retains replay rows.
+ * Per-target revisions (deletions included) stay O(live rows): past
+ * 2 x live + 64 retained revisions the metric reseeds, so a reseed costs one
+ * metric read per O(live rows) changed targets. */
 import { batch, createEffect, createRoot, createSignal, onCleanup } from "solid-js";
 import { backend, type GraphAnswersChange } from "./backend";
 import { graphEpoch } from "./graphSession";
@@ -20,8 +23,10 @@ const shared = createRoot(() => {
     let seedRev = -1n, attempted = false;
     const rowRevs = new Map<string, bigint>();
     let pending: { rows: Map<string, { rev: bigint; value: number | null }>; invalidRev: bigint } | null = null;
-    const apply = (delta: Delta) => {
-      if (!delta.rows || delta.rev <= seedRev) return;
+    /** Apply a publication; true when the retained revisions outgrew the
+     * live rows and the metric must reseed. O(rows in the delta). */
+    const apply = (delta: Delta): boolean => {
+      if (!delta.rows || delta.rev <= seedRev) return false;
       let changed = false;
       for (const [key, value] of delta.rows) {
         if (delta.rev <= (rowRevs.get(key) ?? seedRev)) continue;
@@ -30,10 +35,13 @@ const shared = createRoot(() => {
         else if (values.get(key) !== value) { values.set(key, value); changed = true; }
       }
       if (changed) setVersion(n => n + 1);
+      return rowRevs.size > 2 * values.size + 64;
     };
     return {
       read: () => { version(); return values as ReadonlyMap<string, number>; },
       reset() { values.clear(); rowRevs.clear(); seedRev = -1n; attempted = false; pending = null; setVersion(n => n + 1); },
+      /** Feed a publication; true means "reseed now" (full invalidation or
+       * revision retention past its bound). */
       delta(delta: Delta) {
         if (pending) {
           if (delta.rows === null) pending.invalidRev = delta.rev > pending.invalidRev ? delta.rev : pending.invalidRev;
@@ -42,8 +50,9 @@ const shared = createRoot(() => {
           }
         }
         else if (attempted) {
-          if (delta.rows === null && delta.rev > seedRev) { attempted = false; return true; }
-          apply(delta);
+          if ((delta.rows === null && delta.rev > seedRev) || apply(delta)) {
+            attempted = false; rowRevs.clear(); return true;
+          }
         }
         return false;
       },
@@ -88,11 +97,19 @@ const shared = createRoot(() => {
     reset();
     const rev = BigInt(change.rev);
     batch(() => {
-      modified.delta({ rev, rows: change.pageModified ?? [] });
-      const retry = backlinks.delta({ rev, rows: change.pageBacklinkCounts === undefined ? [] : change.pageBacklinkCounts });
-      if (retry && users() > 0) void backlinks.seed(loadCounts);
+      const reseedModified = modified.delta({ rev, rows: change.pageModified ?? [] });
+      const reseedCounts = backlinks.delta({ rev, rows: change.pageBacklinkCounts === undefined ? [] : change.pageBacklinkCounts });
+      if (users() > 0) {
+        if (reseedModified) void modified.seed(loadModified);
+        if (reseedCounts) void backlinks.seed(loadCounts);
+      }
     });
   });
+  async function loadModified() {
+    const result = await readOwned(graphOwner(), backend().pageModified());
+    if (result.kind !== "current") throw new Error("All Pages graph changed");
+    return { rev: BigInt(result.value.rev), rows: new Map(result.value.modified) };
+  }
   async function loadCounts() {
     const result = await readOwned(graphOwner(), backend().pageBacklinkCounts());
     if (result.kind !== "current") throw new Error("All Pages graph changed");
@@ -101,11 +118,7 @@ const shared = createRoot(() => {
   createEffect(() => {
     reset();
     if (users() === 0) return;
-    void modified.seed(async () => {
-      const result = await readOwned(graphOwner(), backend().pageModified());
-      if (result.kind !== "current") throw new Error("All Pages graph changed");
-      return { rev: BigInt(result.value.rev), rows: new Map(result.value.modified) };
-    });
+    void modified.seed(loadModified);
     void backlinks.seed(loadCounts);
   });
   return {

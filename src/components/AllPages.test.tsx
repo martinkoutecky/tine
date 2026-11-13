@@ -115,6 +115,30 @@ describe("the All Pages view", () => {
       expect(readModified).toHaveBeenCalledTimes(1);
     } finally { dispose(); }
   });
+  it("keeps per-target revisions bounded by live rows: churn through many deleted pages reseeds", async () => {
+    const { host, readCounts, readModified, dispose } = await mountAllPages(
+      [existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 1], ["pages/Beta.md", 1]]);
+    try {
+      await settle();
+      expect(readModified).toHaveBeenCalledTimes(1);
+      expect(readCounts).toHaveBeenCalledTimes(1);
+      const publish = (rev: number, rows: [string, number | null][]) => applyGraphAnswers({
+        rev: String(rev), inventoryChanged: false, blockRefCounts: {}, pageModified: rows, pageBacklinkCounts: rows,
+      });
+      // 200 distinct pages created and deleted: each leaves a deletion revision until the bound reseeds.
+      let rev = 10;
+      for (let i = 0; i < 200; i++) {
+        publish(rev++, [[`pages/Temp${i}.md`, 3]]);
+        publish(rev++, [[`pages/Temp${i}.md`, null]]);
+      }
+      await settle();
+      expect(readModified.mock.calls.length).toBeGreaterThan(1);
+      expect(readCounts.mock.calls.length).toBeGreaterThan(1);
+      // At most one reseed per 2 x live + 64 retained revisions (2 live rows here: <= 200 / 64 + 1).
+      expect(readModified.mock.calls.length).toBeLessThanOrEqual(5);
+      expect(rowNames(host).sort()).toEqual(["Alpha", "Beta"]);
+    } finally { dispose(); }
+  });
   it("repairs the cold seed/publication race when its notification arrives after the seed", async () => {
     const { host, readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")], [], [["pages/Alpha.md", 1]]);
     try {
