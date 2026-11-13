@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
-import { blockProperty, blockWritable, node, pageByName, readPageProperty, setBlockProperty, setPageProperty, withUndoUnit } from "../document";
+import { blockProperty, blockWritable, node, pageByName, pageReadOnly, readPageProperty, setBlockProperty, setPageProperty, withUndoUnit } from "../document";
 import { parseTableColumnWidths, serializeTableColumnWidths, TABLE_COLUMN_MAX_WIDTH } from "./config";
 import { windowOf } from "../windowRealm";
 
@@ -33,7 +33,7 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string, ho
   const writable = () => {
     const target = home();
     return target?.kind === "block" ? blockWritable(target.id)
-      : target?.kind === "page" ? pageByName(target.page)?.readOnly === false : false;
+      : target?.kind === "page" ? !!pageByName(target.page) && !pageReadOnly(pageByName(target.page)) : false;
   };
   const [preview, setPreview] = createSignal<ReadonlyMap<string, number> | null>(null);
   const [resizing, setResizing] = createSignal<string | null>(null);

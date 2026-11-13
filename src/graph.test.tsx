@@ -1079,12 +1079,12 @@ it("opens with the config-read problem available to Settings and clears it on a 
   const failure = await import("./uiFailure");
   const report = vi.spyOn(failure, "reportUiFailure");
   expect(await loadGraphPath(META.root)).toMatchObject({ kind: "loaded" });
-  const { graphConfigProblem } = await import("./graph");
-  expect(graphConfigProblem()).toEqual(problem);
+  const { graphConfigUnreadable } = await import("./graphConfig");
+  expect(graphConfigUnreadable()).toBe(true);
   expect(report).toHaveBeenCalledWith("config-read", problem);
   expect(createPage).not.toHaveBeenCalled();
   expect(await loadGraphPath(META.root, { forceRefresh: true })).toMatchObject({ kind: "loaded" });
-  expect(graphConfigProblem()).toBeNull();
+  expect(graphConfigUnreadable()).toBe(false);
 });
 
 

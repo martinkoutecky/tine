@@ -1195,9 +1195,9 @@ html[data-system-insets="native-viewport"] {
 .workspace-sidebar-header {
   padding: 12px 16px 2px;
 }
-.workspace-sidebar-header .workspace-switcher,
-.workspace-sidebar-header .workspace-switcher-btn {
+.workspace-sidebar-header :is(.workspace-switcher, .workspace-switcher-btn, .workspace-menu, .workspace-quick-menu) {
   width: 100%;
+  min-width: 0;
 }
 
 .app-logo {
