@@ -1206,8 +1206,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
           "history-navigate",
           (e) => {
-            if (!nativeMainHistory || e.payload?.target !== target || mainMouse?.gestureActive()) return;
-            if (e.payload.direction === "back" || e.payload.direction === "forward") {
+            if (!nativeMainHistory || e.payload?.target !== target) return;
+            if ((e.payload.direction === "back" || e.payload.direction === "forward") && mainMouse?.acceptNative(e.payload.direction) !== false) {
               navigateMouseHistory(e.payload.direction);
             }
           },
