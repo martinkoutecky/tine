@@ -1269,6 +1269,9 @@ export interface MessageArgs {
   "in-page-find-find-in-page": {};
   "in-page-find-next-match-enter": {};
   "in-page-find-previous-match-shift-enter": {};
+  "in-page-find-references-block": {};
+  "in-page-find-references-linked": {};
+  "in-page-find-references-unlinked": {};
   "in-page-find-replace": {};
   "in-page-find-replace-all": {};
   "in-page-find-replace-every-match-on-this-page-ctrl-cmd": {};
@@ -1276,6 +1279,8 @@ export interface MessageArgs {
   "in-page-find-replace-with": {};
   "in-page-find-retired-days": { "count": string | number };
   "in-page-find-search-journals": {};
+  "in-page-find-search-references-linked": {};
+  "in-page-find-search-references-unlinked": {};
   "inpage-replace-no-matches-on-this-page-to-replace": {};
   "inpage-replace-nothing-was-replaced-this-page-cannot-be-edited": {};
   "inpage-replace-replace-changes-only-the-page-you-opened-find": {};
@@ -2600,6 +2605,7 @@ export interface MessageArgs {
   "settings-prose-when-a-page-you-are-not-editing-changes-on-disk": {};
   "settings-reference-previews": {};
   "settings-reference-previews-hint": {};
+  "settings-reference-previews-preference": {};
   "settings-rescan": {};
   "settings-reset": {};
   "settings-reset-control": { "title": string | number };
@@ -3175,6 +3181,7 @@ export interface MessageArgs {
   "toast-link-outside-graph": { "dest": string | number };
   "toast-pinyin-load-failed": {};
   "toast-pinyin-save-failed": {};
+  "toast-reference-previews-save-failed": {};
   "toast-repeat-count": { "count": string | number };
   "toast-wsl-rootfs-warning": {};
   "toasts-close": {};

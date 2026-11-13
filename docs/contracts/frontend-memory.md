@@ -75,4 +75,7 @@ is retained for this geometry.
 Find/Replace searches loaded days only. When Journals is visible, Find shows
 “N older days not searched — search all journals” for retired days. Its action
 opens the existing graph-wide search tab with the current query (D-20261022-JN).
-Find never reads retired bodies from disk.
+Find never reads retired bodies from disk. Find also leaves reference panels
+out of its count, which would otherwise grow as their groups mount on scroll; it
+names them, and its action opens the panel's own search with the query (GH #935;
+[reference rendering contract](reference-rendering.md)).

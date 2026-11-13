@@ -30,13 +30,12 @@ fn exclusive_integration_lock() -> std::sync::RwLockWriteGuard<'static, ()> {
 /// from the private build graph): the folder it landed in and its page count.
 /// Each call writes a fresh folder outside the graph.
 fn published_site(store: &tine_store::Store) -> std::io::Result<(String, usize)> {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let parent = std::env::temp_dir().join(format!(
-        "tine-published-site-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&parent)?;
+    // Callers read the output after return. Keep that lifetime, with a fresh
+    // parent even when the OS reuses a test process's PID.
+    let parent = tempfile::Builder::new()
+        .prefix("tine-published-site-")
+        .tempdir()?
+        .keep();
     let receipt = tine_graph_features::publish_query::publish_static(
         store,
         &parent,

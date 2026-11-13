@@ -8,6 +8,8 @@ it("the Guide teaches selection-seeded Find and the page-embed host fold", () =>
   expect(find).toContain("it keeps your previous query");
   expect(find).toContain("Find and Replace search loaded days only");
   expect(find).toContain("N older days not searched — search all journals");
+  expect(find).toContain("Linked references not searched");
+  expect(find).toContain("**search linked references** closes Find and opens that section's own search with your query");
   const embed = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   expect(embed).toContain("Only its page-name line remains");
   expect(embed).toContain("saved on the host block, never the embedded page");

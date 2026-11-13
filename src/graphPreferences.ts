@@ -27,10 +27,12 @@ export function seedGraphSignal(key: string): void {
 
 /** Apply now and queue a graph-bound write. A graph switch rejects a queued
  * write with a toast but cannot cancel one in flight; active failures roll back.
+ * Failure handling accepts a label or a custom handler, forwarded to the
+ * preference writer's existing failure callback.
  * Return does not confirm persistence. O(1) plus queued backend work. */
 export function writeGraphSignal<T>(
   key: string, read: () => T, apply: (value: T) => void, value: T,
-  persist: (value: T) => Promise<unknown>, label: string,
+  persist: (value: T) => Promise<unknown>, failure: string | (() => void),
 ): void {
   const activeScope = currentScope();
   if (activeScope !== scope) { readers.clear(); scope = activeScope; }
@@ -44,23 +46,28 @@ export function writeGraphSignal<T>(
     (next) => bound()
       ? persist(next)
       : Promise.reject(new Error("graph changed before preference write")),
-    label);
+    typeof failure === "string" ? failure : "",
+    typeof failure === "function" ? failure : undefined);
 }
 
 /** Change graph metadata; equal values do nothing. Without loaded metadata,
  * persist directly without a signal update or queue. Failures toast; return
- * does not confirm persistence. O(1) plus any backend write. */
+ * does not confirm persistence. Failure handling accepts a label or a custom
+ * handler. O(1) plus any backend write. */
 export function changeGraphSetting<K extends keyof GraphMeta>(
-  key: K, value: GraphMeta[K], persist: (value: GraphMeta[K]) => Promise<unknown>, label: string,
+  key: K, value: GraphMeta[K], persist: (value: GraphMeta[K]) => Promise<unknown>, failure: string | (() => void),
 ): void {
   const meta = graphMeta();
   if (!meta) {
-    void persist(value).catch(() => pushToast(msg("graph-preferences-could-not-save", { label: String(label) }), "error"));
+    void persist(value).catch(() => {
+      if (typeof failure === "function") failure();
+      else pushToast(msg("graph-preferences-could-not-save", { label: failure }), "error");
+    });
     return;
   }
   if (meta[key] === value) return;
   writeGraphSignal(`meta:${String(key)}`, () => graphMeta()?.[key] as GraphMeta[K], (next) => {
     const current = graphMeta();
     if (current) setGraphMeta({ ...current, [key]: next });
-  }, value, persist, label);
+  }, value, persist, failure);
 }
