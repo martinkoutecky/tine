@@ -206,7 +206,9 @@ export function singleSelectedId(): string | null {
 }
 const selectedMembership = new ChangeKeyRegistry();
 function membership(state: ReturnType<typeof selectionState> | null, id: string): boolean {
-  if (!state) return false;
+  // No selection: answer in O(1) and read no ancestry, so ordinary rendering
+  // neither walks nor subscribes to every row's parents.
+  if (!state || (state.exact ? state.exact.rootSet.size === 0 : state.hi < state.lo)) return false;
   if (state.exact) {
     for (let p: string | null | undefined = id; p; p = doc.byId[p]?.parent) if (state.exact.rootSet.has(p)) return true;
     return false;

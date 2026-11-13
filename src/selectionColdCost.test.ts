@@ -153,6 +153,17 @@ it.each([1000, 10000])("query notifies only changed membership among %i mounted 
   advance.mockRestore(); dispose();
 });
 
+it("with no selection, mounted rows answer membership without reading ancestry", () => {
+  fixture(10000, "deep");
+  cost.reads = 0;
+  const dispose = createRoot(dispose => {
+    for (let at = 0; at < 10000; at++) createComputed(() => { isSelected(`n${at}`); });
+    return dispose;
+  });
+  expect(cost.reads).toBe(0);
+  dispose();
+});
+
 it("outline replacement releases the old visible order", async () => {
   fixture(1000, "folded");
   selectBlock("n0", { roots: [...doc.pages[0].roots] });
