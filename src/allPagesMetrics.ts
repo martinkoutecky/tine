@@ -17,13 +17,15 @@ const shared = createRoot(() => {
   function metric() {
     let values = new Map<string, number>();
     const [version, setVersion] = createSignal(0);
-    let rev = -1n, attempted = false;
+    let seedRev = -1n, attempted = false;
+    const rowRevs = new Map<string, bigint>();
     let pending: { rows: Map<string, { rev: bigint; value: number | null }>; invalidRev: bigint } | null = null;
     const apply = (delta: Delta) => {
-      if (delta.rev <= rev || !delta.rows) return;
-      rev = delta.rev;
+      if (!delta.rows || delta.rev <= seedRev) return;
       let changed = false;
       for (const [key, value] of delta.rows) {
+        if (delta.rev <= (rowRevs.get(key) ?? seedRev)) continue;
+        rowRevs.set(key, delta.rev);
         if (value === null) changed = values.delete(key) || changed;
         else if (values.get(key) !== value) { values.set(key, value); changed = true; }
       }
@@ -31,7 +33,7 @@ const shared = createRoot(() => {
     };
     return {
       read: () => { version(); return values as ReadonlyMap<string, number>; },
-      reset() { values.clear(); rev = -1n; attempted = false; pending = null; setVersion(n => n + 1); },
+      reset() { values.clear(); rowRevs.clear(); seedRev = -1n; attempted = false; pending = null; setVersion(n => n + 1); },
       delta(delta: Delta) {
         if (pending) {
           if (delta.rows === null) pending.invalidRev = delta.rev > pending.invalidRev ? delta.rev : pending.invalidRev;
@@ -40,7 +42,7 @@ const shared = createRoot(() => {
           }
         }
         else if (attempted) {
-          if (delta.rows === null && delta.rev > rev) { attempted = false; return true; }
+          if (delta.rows === null && delta.rev > seedRev) { attempted = false; return true; }
           apply(delta);
         }
         return false;
@@ -61,11 +63,12 @@ const shared = createRoot(() => {
           }
           batch(() => {
             values = result.rows;
-            rev = result.rev;
+            seedRev = result.rev;
+            rowRevs.clear();
             for (const [key, update] of pending?.rows ?? []) {
               if (update.rev <= result.rev) continue;
+              rowRevs.set(key, update.rev);
               if (update.value === null) values.delete(key); else values.set(key, update.value);
-              if (update.rev > rev) rev = update.rev;
             }
             pending = null;
             setVersion(n => n + 1);

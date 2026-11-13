@@ -89,6 +89,32 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
+  it("orders metric publications per target, retaining deletion revisions", async () => {
+    const { host, readCounts, readModified, dispose } = await mountAllPages(
+      [existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 1], ["pages/Beta.md", 1]]);
+    try {
+      await settle();
+      const publish = (rev: string, rows: [string, number | null][]) => applyGraphAnswers({
+        rev, inventoryChanged: false, blockRefCounts: {}, pageModified: rows, pageBacklinkCounts: rows,
+      });
+      publish("5", [["pages/Beta.md", 5]]);
+      publish("4", [["pages/Alpha.md", 4], ["pages/Beta.md", 4]]);
+      expect(rowNames(host)).toEqual(["Beta", "Alpha"]);
+      expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["5", "4"]);
+      publish("7", [["pages/Beta.md", null]]);
+      publish("6", [["pages/Alpha.md", 6], ["pages/Beta.md", 6]]);
+      expect(rowNames(host)).toEqual(["Alpha", "Beta"]);
+      expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["6", "—"]);
+      expect(readCounts).toHaveBeenCalledTimes(1);
+      expect(readModified).toHaveBeenCalledTimes(1);
+      // An unrelated newer row also cannot hide an older full invalidation.
+      readCounts.mockResolvedValue([[["pages/Alpha.md", 6], ["pages/Beta.md", 8]], [], "8"]);
+      applyGraphAnswers({ rev: "5", inventoryChanged: false, blockRefCounts: {}, pageBacklinkCounts: null });
+      await vi.waitFor(() => expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["6", "8"]));
+      expect(readCounts).toHaveBeenCalledTimes(2);
+      expect(readModified).toHaveBeenCalledTimes(1);
+    } finally { dispose(); }
+  });
   it("repairs the cold seed/publication race when its notification arrives after the seed", async () => {
     const { host, readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")], [], [["pages/Alpha.md", 1]]);
     try {
