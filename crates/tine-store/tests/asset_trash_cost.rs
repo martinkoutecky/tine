@@ -14,13 +14,7 @@ const OLD: std::time::Duration = std::time::Duration::from_secs(3600);
 /// `pages` pages; every fifth page shows an image `imgN.png`; `spare` assets
 /// nobody references.
 fn graph(pages: usize, spare: usize) -> (std::path::PathBuf, std::sync::Arc<Store>) {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-asset-trash-cost-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-asset-trash-cost-");
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

@@ -13,8 +13,7 @@ fn names(groups: &[tine_core::model::RefGroup]) -> Vec<String> {
 #[test]
 fn favorites_layout_page_is_never_a_reference_source() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-fav-exclude-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-fav-exclude-");
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("logseq")).unwrap();

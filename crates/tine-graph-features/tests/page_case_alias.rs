@@ -7,16 +7,10 @@
 //! lives in `src/components/Page.test.tsx`.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_store::{PageId, Store, StoreError};
 
 fn fixture(label: &str) -> (PathBuf, Store) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-case-alias-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-case-alias-{label}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("assets")).unwrap();

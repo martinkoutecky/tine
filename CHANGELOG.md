@@ -73,6 +73,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A page whose properties cannot be parsed is refused consistently while opening, including during startup, and an edit cannot overwrite its unreadable bytes (internal: REG-READABLE-OWNER-COLD; HbcTw).
 - The sidebar keeps workspace creation and menu controls within reach instead of clipping them into the editor (IcYyc).
 - All Pages keeps timestamps and backlink counts current when updates for different pages arrive out of order (REG-ALLPAGES-METRIC-ORDER).
 - Enter after text in a query or linked-reference result creates a child and keeps editing it, even when the child does not match the query (internal: UI-QUERY-REF-ENTER-EDITOR-1113).

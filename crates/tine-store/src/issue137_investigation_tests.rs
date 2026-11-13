@@ -2,13 +2,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tine_core::model::ReferenceKind;
 use tine_core::{PageKind, RefGroup};
 use tine_graph_features::pages;
 use tine_store::{PageId, Resolved, SaveBase, Store};
-
-static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 struct Fixture {
     root: PathBuf,
@@ -16,12 +13,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(label: &str) -> Self {
-        let ordinal = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "tine-issue137-{label}-{}-{ordinal}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir(&format!("tine-issue137-{label}-"));
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::create_dir_all(root.join("logseq/bak")).unwrap();

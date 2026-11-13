@@ -275,13 +275,7 @@ fn probe(pages: usize, blocks: usize, memo: bool) -> Probe {
 /// `edits` are the two texts written to the first block of `Page0000`: the
 /// first settles one-time work, the second is measured.
 fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Probe {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-query-unit-cost-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-query-unit-cost-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     for index in 0..pages {
@@ -541,13 +535,7 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     fn save_bytes(aliases: bool) -> (u64, u64) {
-        static NEXT: AtomicU64 = AtomicU64::new(2_000_000);
-        let root = std::env::temp_dir().join(format!(
-            "tine-query-alias-carry-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_support::fresh_dir("tine-query-alias-carry-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         for index in 0..10_000 {
