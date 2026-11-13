@@ -6,9 +6,10 @@ import { startEditing, endEdit } from "./editorController";
 import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
 import type { BlockDto } from "./types";
 
-const save = vi.hoisted(() => ({ dirty: false, saving: false, pending: false, conflict: false }));
+const save = vi.hoisted(() => ({ dirty: false, saving: false, pending: false, conflict: false, instance: 0, page: "Source" }));
 vi.mock("./document", () => ({
-  node: () => ({ page: "Source" }),
+  node: () => ({ page: save.page }),
+  pageInstanceGeneration: () => save.instance,
   isDirty: () => save.dirty, isSaving: () => save.saving,
   isConflicted: () => save.conflict, pendingDataRevision: () => save.pending,
 }));
@@ -16,7 +17,7 @@ const disposals: (() => void)[] = [];
 afterEach(() => {
   disposals.splice(0).forEach((dispose) => dispose());
   endEdit("blur");
-  Object.assign(save, { dirty: false, saving: false, pending: false, conflict: false });
+  Object.assign(save, { dirty: false, saving: false, pending: false, conflict: false, instance: 0, page: "Source" });
   document.body.innerHTML = "";
 });
 function mount(load: (id: string) => Promise<string[]>, identity = () => "Target") {
@@ -97,6 +98,29 @@ it("embedded descendant editing retains the containing answer", () => {
   const child: BlockDto = { id: "child", raw: "TODO child", collapsed: false, children: [] };
   expect(blocksContainEdit([{ ...child, id: "root", children: [child] }], "child")).toBe(true);
   expect(blocksContainEdit([{ ...child, id: "root", children: [] }], "child")).toBe(false);
+});
+
+it.each([["replacement", true], ["transfer", true], ["replacement", false], ["transfer", false]] as const)(
+  "source %s retires a held answer (after local split: %s)", async (change, localSplit) => {
+  const { beginResultsChange } = await import("./queryResultsEpoch");
+  const load = vi.fn(async () => ["task"]);
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    const [answer] = createMembershipResource(() => "Target", () => "Target", load,
+      (rows, id) => rows.includes(id), () => true, true);
+    return <div>{answer()?.join(",")}</div>;
+  }, root));
+  await vi.waitFor(() => expect(root.textContent).toBe("task"));
+  startEditing("task");
+  load.mockResolvedValue(["replacement"]);
+  if (localSplit) { beginResultsChange()(); await turn(); }
+  expect(root.textContent).toBe("task");
+  expect(load).toHaveBeenCalledTimes(1);
+  if (change === "replacement") save.instance++;
+  else save.page = "Other";
+  beginResultsChange()();
+  await vi.waitFor(() => expect(root.textContent).toBe("replacement"));
+  expect(load).toHaveBeenCalledTimes(2);
 });
 
 it("D-10: a suppressed (collapsed) guarded read is not rerun by structural result epochs", async () => {

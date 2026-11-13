@@ -9,19 +9,24 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const out = path.resolve(process.env.QUERY_OUT || "artifacts/gx4-s4/native");
 fs.mkdirSync(out, { recursive: true });
 const run = fs.mkdtempSync(path.join(out, "run-"));
 const graph = process.env.QUERY_GRAPH ? path.resolve(process.env.QUERY_GRAPH) : path.join(run, "graph");
-assert(graph.startsWith(path.resolve("artifacts/gx4-s4") + path.sep), "only lane-generated scratch graphs may be changed");
+assert(["artifacts/gx4-s4", "target/artifacts/qgroup-enter-1113"].some(root => graph.startsWith(path.resolve(root) + path.sep)), "only lane-generated scratch graphs may be changed");
 for (const directory of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, directory), { recursive: true });
-for (const directory of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, directory));
+for (const directory of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(run, directory));
 const pageFile = name => path.join(graph, "pages", `${name}.md`);
 fs.writeFileSync(pageFile("Query target"), "- Target seed\n");
 fs.writeFileSync(pageFile("Query source"), "- TODO [[Query target]] original matching result\n");
 fs.writeFileSync(pageFile("Query unrelated"), "- Unrelated typing body\n");
+const groupBody = "Group ordinary [[Query group target]] tail [[Query group target]]";
+fs.writeFileSync(pageFile("Query group source"), `tags:: [[Query group target]]\n\n- ${groupBody}\n`);
+fs.writeFileSync(pageFile("Query group target"), "- Group target\n");
+fs.writeFileSync(pageFile("Query group route"), "- {{query [[Query group target]]}}\n");
 const journal = path.join(graph, "journals", "2026_10_25.md");
 const narrowForm = "(and (task TODO) [[Query target]])";
 const linksForm = "@page and any(links, name = 'Query target')";
@@ -29,19 +34,29 @@ fs.writeFileSync(journal, `- [[Query unrelated]]\n- {{query ${narrowForm}}}\n- {
 const events = path.join(run, "host-events.ndjson");
 const app = path.resolve(process.env.TINE_APP || "target/debug/tine");
 const port = Number(process.env.E2E_DRIVER_PORT || 4892);
-const env = { ...process.env, TINE_GRAPH: graph, TINE_BENCH_EVENTS: events,
+const account = accountHomeFixture(run, run);
+const env = { ...account.env, TINE_GRAPH: graph, TINE_BENCH_EVENTS: events,
+  HOME: path.join(run, "home"), XDG_STATE_HOME: path.join(run, "state"),
   XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const log = fs.openSync(path.join(run, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, port + 1, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
   { env, detached: true, stdio: ["ignore", log, log] });
-const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), diff: "working tree", app,
+const report = { testedCommit: execFileSync("git", ["-C", process.cwd(), "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), diff: "working tree", app,
   graph, loadBefore: execFileSync("uptime", { encoding: "utf8" }).trim(), passed: [], measurements: [] };
 let browser, stage = "startup";
 const scope = ".right-sidebar";
 async function shown(selector, text) {
   await browser.waitUntil(() => browser.execute((selector, text) => [...document.querySelectorAll(selector)].some(el => el.textContent.includes(text)), selector, text),
     { timeout: 60000, timeoutMsg: `${selector} did not show ${text}` });
+}
+async function groupPublication() {
+  const saved = fs.readFileSync(pageFile("Query group source"), "utf8");
+  const relative = path.relative(graph, pageFile("Query group source"));
+  await waitForFileText(events, log => log.split("\n").slice(0, -1).filter(Boolean).some(line => {
+    const event = JSON.parse(line);
+    return event.ev === "published" && event.path === relative && event.text === saved;
+  }));
 }
 async function debugMode(on) {
   await browser.$('button[title="Settings (t s)"]').click();
@@ -61,6 +76,68 @@ async function focusSource() {
   await browser.keys(["Control", "End"]);
 }
 async function calls() { return browser.execute(() => window.__queryIpc); }
+async function liveGroupEditing() {
+  await openPageByName(browser, "Query group route");
+  await shown(".main-content .query-block .page-property-reference", "Query group target");
+  await shown(".main-content .query-block .block-content", "Group ordinary");
+  // One physical click, with no retry: the page-open handshake used to drop it.
+  const body = await browser.$('.main-content .query-block .ls-block:not(.page-property-reference) .block-content');
+  await body.click();
+  const editorSelector = ".main-content .query-block textarea.block-editor";
+  await browser.$(editorSelector).waitForExist();
+  await browser.execute(selector => {
+    const editor = document.querySelector(selector);
+    window.__groupEditor = editor;
+    window.__groupEditorRetired = false;
+    window.__groupEditorObserver = new MutationObserver(() => {
+      if (!editor.isConnected) window.__groupEditorRetired = true;
+    });
+    window.__groupEditorObserver.observe(document.body, { childList: true, subtree: true });
+  }, editorSelector);
+  await browser.keys(["Control", "End"]);
+  const suffix = " typed";
+  for (const character of suffix) await browser.keys(character);
+  await waitForFileText(pageFile("Query group source"), text => text.includes(groupBody + suffix));
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector('.main-content .query-block')?.getAttribute("aria-busy") !== "true"),
+  { timeout: 15000, timeoutMsg: "query publication did not settle after typing" });
+  assert(await browser.execute(expected => !window.__groupEditorRetired
+    && document.activeElement === window.__groupEditor && window.__groupEditor.value === expected, groupBody + suffix),
+  "first-click editor retains focus, identity and every character through its own save");
+  await browser.execute(() => {
+    window.__groupEditorObserver.disconnect();
+    const editor = window.__groupEditor;
+    const split = editor.value.indexOf("tail");
+    editor.setSelectionRange(split, split);
+  });
+  await browser.keys("Enter");
+  await browser.waitUntil(() => browser.execute(selector => {
+    const editor = document.querySelector(selector);
+    return editor === document.activeElement && editor.value.startsWith("tail");
+  }, editorSelector), { timeout: 15000, timeoutMsg: "Enter must leave the split result live and editing" });
+  for (const character of "split ") await browser.keys(character);
+  await waitForFileText(pageFile("Query group source"), text =>
+    text.includes("- Group ordinary [[Query group target]]")
+      && text.includes("\n\t- split tail [[Query group target]] typed"));
+  // A held answer's old epoch keeps aria-busy until editing ends. The host's
+  // published event, with these exact saved bytes, proves publication meanwhile.
+  await groupPublication();
+  assert(await browser.execute(selector => {
+    const editor = document.querySelector(selector);
+    return editor === document.activeElement && editor.value === "split tail [[Query group target]] typed";
+  }, editorSelector), "the new block remains editable after the structural edit and save");
+  for (const character of "ok ") await browser.keys(character);
+  await waitForFileText(pageFile("Query group source"), text => text.includes("\n\t- split ok tail [[Query group target]] typed"));
+  await groupPublication();
+  assert(await browser.execute(selector => {
+    const editor = document.querySelector(selector);
+    return editor === document.activeElement && editor.value === "split ok tail [[Query group target]] typed";
+  }, editorSelector), "typing after publication remains focused and durable in the new block");
+  await browser.keys("Escape");
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector('.main-content .query-block')?.getAttribute("aria-busy") !== "true"),
+  { timeout: 15000, timeoutMsg: "query answer did not refresh after editing ended" });
+}
 const question = call => call.args.query?.source?.original === narrowForm ? "narrow"
   : call.args.query?.source?.original === linksForm ? "links" : "other";
 async function measure(full) {
@@ -109,6 +186,9 @@ try {
     capabilities: tauriCapabilities(app, "query-subscriptions") });
   await ensureMainWindow(browser); await browser.setWindowSize(1600, 1100);
   await browser.$(".app-container").waitForExist({ timeout: 120000 });
+  await assertAppLease(account);
+  stage = "synthetic properties and ordinary query rows stay live through typing and Enter";
+  await liveGroupEditing(); report.passed.push(stage);
   await openPageByName(browser, "Query target");
   // Open the physical journal by its standard display name; fixture date is fixed.
   await openPageByName(browser, "Oct 25th, 2026");
@@ -153,12 +233,18 @@ try {
   fs.writeFileSync(path.join(run, "passed.html"), await browser.getPageSource());
 } catch (error) {
   report.failureCapsule = { testedCommit: report.testedCommit, journey: stage,
-    expected: "Unrelated typing leaves queries idle; relevant narrow answers refresh and graph-wide work coalesces after a pause", observed: String(error.stack || error),
+    expected: stage.startsWith("synthetic properties")
+      ? "The first click opens a stable editor; typing and Enter preserve focused editing and all text on disk"
+      : "Unrelated typing leaves queries idle; relevant narrow answers refresh and graph-wide work coalesces after a pause", observed: String(error.stack || error),
     classification: "ambiguous", screenshot: null, log: "driver.log / failure.html" };
-  if (browser) fs.writeFileSync(path.join(run, "failure.html"), await browser.getPageSource().catch(() => "unavailable"));
+  if (browser) {
+    fs.writeFileSync(path.join(run, "failure.html"), await browser.getPageSource().catch(() => "unavailable"));
+    try { await browser.saveScreenshot(path.join(run, "failure.png")); report.failureCapsule.screenshot = "failure.png"; } catch {}
+  }
   process.exitCode = 1;
 } finally {
   report.loadAfter = execFileSync("uptime", { encoding: "utf8" }).trim();
   fs.writeFileSync(path.join(run, "report.json"), JSON.stringify(report, null, 2)); console.log(JSON.stringify({ run, ...report }));
   await browser?.deleteSession().catch(() => {}); try { process.kill(-driver.pid, "SIGTERM"); } catch {} fs.closeSync(log);
+  account.close?.(); account.verify();
 }

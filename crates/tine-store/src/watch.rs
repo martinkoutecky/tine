@@ -12,6 +12,8 @@ use std::time::{Duration, Instant, SystemTime};
 use notify::Watcher;
 
 mod custom_css;
+#[cfg(test)]
+mod generation_tests;
 mod launch;
 mod racy;
 mod rebuild;

@@ -4,7 +4,7 @@ import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, exitMultilineBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
   mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
-  selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, type OutlineScope,
+  selectBlockSubtree, setCollapsed, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
   bodyNeighbor, type PendingEdit,
@@ -33,6 +33,7 @@ import { gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
+import { splitBlockInView } from "./splitBlockInView";
 
 interface StructureContext {
   cell?: SheetCellCtx | null;
@@ -225,8 +226,7 @@ export function cm6Structure(ctx: StructureContext) {
     // a line break and Ctrl/Cmd+Enter sends (GH #891), so no reply branch here.
     const replacement = s.empty ? undefined : ctx.deleteSelection(v, s.from, s.to);
     if (!replacement) ctx.commit(raw);
-    const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
-    splitBlock(ctx.id, s.from, zoom, zoom, editSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement);
+    splitBlockInView(ctx.id, s.from, ctx.scope, navSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement, ctx.collapse);
     return true;
   };
   const vertical = (v: EditorView, forward: boolean) => {
