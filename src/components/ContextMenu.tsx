@@ -15,7 +15,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { isConflicted, pageInstanceGeneration } from "../document";
+import { isConflicted, pageInstanceGeneration, pageReadOnly } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { isGuidePageName } from "../guide";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -813,7 +813,7 @@ function PageMenu(props: {
   const fav = () => isFavorite(props.name, props.pageKind);
   const readOnly = () => {
     const page = pageByName(props.name);
-    return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
+    return !pageTargetMatchesLoaded(target(), page) || pageReadOnly(page);
   };
   // A link can name an alias without loading a page of that name. Renaming
   // is a name operation; Rust's planner decides the source and its offers.
@@ -835,7 +835,7 @@ function PageMenu(props: {
     // changes nothing on disk and is the recovery path a stuck conflict needs
     // (og I1d, master 6f8531344, GH #490).
     let conflicted = isConflicted(name);
-    if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
+    if (!conflicted && !pageReadOnly(page) && !(await flushPage(name))) {
       if (owner()) pushToast(msg("context-menu-ui-couldn-t-save-its-on-disk-file-was-not", { name: name }), "error");
       return;
     }

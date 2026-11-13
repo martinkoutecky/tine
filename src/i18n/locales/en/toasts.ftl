@@ -400,9 +400,9 @@ ui-failure-export-preview = Couldn't prepare a block for the export preview. It 
 ui-failure-sheet-export = Couldn't read the sheets for export. They are exported as plain outlines.
 ui-failure-editor-load = Couldn't load the CodeMirror editor. You can keep editing with the classic editor.
 
-ui-failure-config-read = Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.
+ui-failure-config-read = Couldn't read config.edn. The graph is read-only; repair the config to resume editing.
 
-ui-failure-config-read-after = { $done }, but config.edn couldn't be read. The graph is open read-only; repair the config and reopen the graph.
+ui-failure-config-read-after = { $done }, but config.edn couldn't be read. The graph is read-only; repair the config to resume editing.
 
 ui-failure-conflict-inventory = Couldn't refresh conflicts. The last successful inventory is kept.
 

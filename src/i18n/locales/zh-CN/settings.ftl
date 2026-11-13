@@ -357,7 +357,7 @@ settings-ui-restore-settings-size = 还原设置窗口大小
 
 settings-ui-maximize-settings = 最大化设置窗口
 
-settings-ui-config-edn-could-not-be-read-this-graph-is = 无法读取 config.edn。此图谱为只读，请修复配置并重新打开图谱。
+settings-ui-config-edn-could-not-be-read-this-graph-is = { ui-failure-config-read }
 
 settings-ui-no-matching-settings = 没有匹配的设置
 
