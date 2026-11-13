@@ -134,8 +134,8 @@ function installFakeWindow() {
   };
 
   return {
-    dispatchMouse(type: string, button: number, buttons = 0) {
-      const event = { type, button, buttons, clientX: 20, clientY: 20, preventDefault() {} } as MouseEvent;
+    dispatchMouse(type: string, button: number, buttons = 0, clientX = 20) {
+      const event = { type, button, buttons, clientX, clientY: 20, preventDefault() {} } as MouseEvent;
       listeners.filter(l => l.type === type && l.capture).forEach(l => l.listener(event));
     },
     dispatchCaptureKeydown(event: KeyboardEvent) {
@@ -383,7 +383,7 @@ describe("mouse side-button navigation (#156)", () => {
     }
   });
 
-  it.each(["windows", "linux"])("%s native presses wait while the primary button selects or drags, and never stay blocked (GH #948)", async () => {
+  it.each(["windows", "linux"])("%s native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
     const fake = installFakeWindow();
     Object.assign(window, { __TAURI_INTERNALS__: {} });
     nativeHistory.listener = undefined;
@@ -405,6 +405,23 @@ describe("mouse side-button navigation (#156)", () => {
       fake.dispatchMouse("mousedown", 0, 1);
       fake.dispatchMouse("mousemove", 0, 0);
       expect(back()).toMatchObject(at(0));
+      router.goForward(); router.goForward();
+      // A side-button press that moved is a drag, whichever of DOM release and native release arrives first.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      // The cancelled gestures leave nothing behind: the next presses step, in either order.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mouseup", 3);
+      expect(back()).toMatchObject(at(1));
+      fake.dispatchMouse("mousedown", 3, 8);
+      expect(back()).toMatchObject(at(0));
+      fake.dispatchMouse("mouseup", 3);
     } finally {
       dispose();
     }
