@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
+- Code line numbers stay readable with wrapping enabled, and the gutter grows to fit larger numbers in reading and both editors (GH #946).
+- In-block numbered lists show their stored numbers after editing (GH #947).
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
 
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
