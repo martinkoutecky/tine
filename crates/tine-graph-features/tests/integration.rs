@@ -43,6 +43,7 @@ fn published_site(store: &tine_store::Store) -> std::io::Result<(String, usize)>
         &parent,
         "site",
         store.config().all_pages_public,
+        true,
     )?;
     Ok((receipt.path, receipt.pages))
 }

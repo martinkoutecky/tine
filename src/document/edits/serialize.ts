@@ -5,6 +5,7 @@ import { pageInstanceGeneration } from "../instance";
 import { stampCutSource } from "../host/wiring";
 import { type ExportNode } from "../../editor/exportText";
 import { type BlockDto } from "../../types";
+import { threadRootOf } from "../commentThreads";
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.
  *  - `stripId`: drop the internal `id::` property line (fence-aware) — OG does this
@@ -107,12 +108,16 @@ export function exportNodesFor(ids: string[]): ExportNode[] {
     return {
       raw: n.raw,
       format: pageByName(n.page)?.format ?? "md",
+      hasParent: n.parent !== null,
       children: n.children.map(toNode).filter((x): x is ExportNode => x != null),
     };
   };
   return ids
     .filter((id) => !hasSelectedAncestor(id, set))
-    .map(toNode)
+    .map(id => {
+      const node = toNode(id);
+      return node && threadRootOf(id) ? { ...node, comment: { author: null, date: null } } : node;
+    })
     .filter((x): x is ExportNode => x != null);
 }
 

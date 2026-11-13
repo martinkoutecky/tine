@@ -63,6 +63,7 @@ fn query_publish_inventory_work_tracks_only_selected_pages() {
             replace: false,
             asset_budget_bytes: None,
             include_query_text: false,
+            include_comments: None,
         };
         let plan = plan_query(&store, &request).unwrap();
         assert_eq!(plan.pages.len(), 1);
@@ -251,6 +252,7 @@ fn generated_query_home_preserves_legacy_table_columns_and_sort() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: true,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -288,6 +290,7 @@ fn folder_membership_review_is_read_only_and_ignores_unavailable_snapshots() {
         replace: true,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     assert!(plan_query(&store, &request)
         .unwrap()
@@ -354,6 +357,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     assert_eq!(plan.anchor, "block");
@@ -411,6 +415,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
     // Ticked, the home carries the query and its answer as before.
     let with_text = QueryExportRequest {
         include_query_text: true,
+        include_comments: None,
         replace: true,
         ..request.clone()
     };
@@ -433,17 +438,17 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
 fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder() {
     let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
-    let public = publish_live(&store, &output, "Public site", false, &bundle()).unwrap();
+    let public = publish_live(&store, &output, "Public site", false, true, &bundle()).unwrap();
     assert_eq!(public.pages, 1);
     let snapshot: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("public-site/app/snapshot.json")).unwrap())
             .unwrap();
     assert_eq!(snapshot["pages"].as_array().unwrap().len(), 1);
     assert!(!snapshot.to_string().contains("DOING hidden"));
-    assert!(publish_live(&store, &output, "Public site", false, &bundle()).is_err());
-    assert!(publish_live(&store, &graph, "inside", true, &bundle()).is_err());
+    assert!(publish_live(&store, &output, "Public site", false, true, &bundle()).is_err());
+    assert!(publish_live(&store, &graph, "inside", true, true, &bundle()).is_err());
     assert!(!graph.join("inside").exists());
-    let all = publish_live(&store, &output, "All pages", true, &bundle()).unwrap();
+    let all = publish_live(&store, &output, "All pages", true, true, &bundle()).unwrap();
     assert_eq!(all.pages, 2);
     store.close();
 }
@@ -458,7 +463,7 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
     )
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    publish_live(&store, &output, "Dashboard", false, &bundle()).unwrap();
+    publish_live(&store, &output, "Dashboard", false, true, &bundle()).unwrap();
     let snapshot: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("dashboard/app/snapshot.json")).unwrap())
             .unwrap();
@@ -492,6 +497,7 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -531,7 +537,7 @@ fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
     )
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    publish_live(&store, &output, "Page query", false, &bundle()).unwrap();
+    publish_live(&store, &output, "Page query", false, true, &bundle()).unwrap();
     let html = fs::read_to_string(output.join("page-query/public.html")).unwrap();
     assert!(html.contains("query-count\">1</span>"), "{html}");
     assert!(!html.contains("secret.html"));
@@ -559,6 +565,7 @@ fn selected_static_page_keeps_outside_references_inert() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -590,7 +597,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
         let source = format!("public:: true\n{}", "- TODO selected\n".repeat(count));
         fs::write(graph.join("pages/Public.md"), source).unwrap();
         store.refresh(tine_store::Depth::Stamps).unwrap();
-        publish_live(&store, &output, name, false, &bundle()).unwrap();
+        publish_live(&store, &output, name, false, true, &bundle()).unwrap();
         let request = QueryExportRequest {
             argument: "(task TODO)".into(),
             dialect: QueryTextDialect::MacroQuery,
@@ -602,6 +609,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
             replace: false,
             asset_budget_bytes: None,
             include_query_text: false,
+            include_comments: None,
         };
         let plan = plan_query(&store, &request).unwrap();
         let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -651,6 +659,7 @@ fn build_real_query_site_for_browser_smoke() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist");
@@ -697,7 +706,7 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
     )
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    publish_live(&store, &output, "Multibyte", false, &bundle()).unwrap();
+    publish_live(&store, &output, "Multibyte", false, true, &bundle()).unwrap();
     assert!(output.join("multibyte/app/snapshot.json").is_file());
     store.close();
 }
@@ -710,7 +719,7 @@ fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
     let (graph, output, store) = fixture();
     fs::write(graph.join("pages/Public.md"), "- alpha body\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    let receipt = publish_live(&store, &output, "Nothing public", false, &bundle()).unwrap();
+    let receipt = publish_live(&store, &output, "Nothing public", false, true, &bundle()).unwrap();
     assert_eq!(
         receipt.pages, 0,
         "publication is the public-page capability"
@@ -755,6 +764,7 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -800,6 +810,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let result = publish_query(&store, &request, &plan.fingerprint, &bundle());
@@ -839,6 +850,7 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let first = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -936,6 +948,7 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let names: Vec<_> = plan.pages.iter().map(|p| p.name.as_str()).collect();
@@ -970,6 +983,7 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
     // Ticked, the published answer is closed to the exported pages too.
     let ticked = QueryExportRequest {
         include_query_text: true,
+        include_comments: None,
         replace: true,
         ..request.clone()
     };
@@ -986,7 +1000,7 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
         );
     }
 
-    let site = publish_live(&store, &output, "All public", true, &bundle()).unwrap();
+    let site = publish_live(&store, &output, "All public", true, true, &bundle()).unwrap();
     let snapshot =
         fs::read_to_string(std::path::Path::new(&site.path).join("app/snapshot.json")).unwrap();
     assert!(!snapshot.contains("exports md") && !snapshot.contains("exports org"));
@@ -1015,6 +1029,7 @@ fn query_export_refuses_when_every_selected_page_is_left_out() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let error = plan_query(&store, &request).unwrap_err();
     assert!(error.to_string().contains("private"), "{error}");

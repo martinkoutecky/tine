@@ -261,6 +261,7 @@ describe("removeShareProperty", () => {
       blk("{{tine-query @page and name = 'C'}}\nowner:: me\ntine.share:: octo/g1"),
       blk("{{tine-query @page and name = 'D'}}\ntine.share:: octo/g1", [blk("a child")]),
       blk("parent", [blk("{{tine-query @page and name = 'E'}}\ntine.share:: octo/g1")]),
+      blk("{{tine-query @page and name = 'F'}}\ntine.share:: octo/g1\ntine.comments:: false"),
     ], "md", "tine/exports:: true\npublic:: false");
     const notes = page("Notes", [blk("{{tine-query @page and name = 'A'}}\ntine.share:: octo/g1")]);
     const disk = await bindDisk([exportsPage, notes]);

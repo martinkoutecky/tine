@@ -62,6 +62,7 @@ export interface QueryExportBatch {
  * to `parseQuery`. Publication writes a graph query leaf, preserves replaced
  * output in recovery and refuses a changed source fingerprint. */
 export interface QueryPublicationRequest {
+  includeComments?: boolean;
   argument: string;
   dialect: import("./editor/queryIr").QueryTextDialect;
   properties: [string, string][];
@@ -76,6 +77,7 @@ export interface QueryPublicationRequest {
 }
 
 export interface QueryPublicationPlan {
+  includeComments?: boolean;
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
@@ -749,6 +751,7 @@ export interface PdfState {
 /** Options for the print-to-PDF export (chosen in the pre-export dialog). Field
  *  names are snake_case to match the Rust `PrintOpts` serde deserialization. */
 export interface PrintOpts {
+  include_comments?: boolean;
   /** Expand `collapsed:: true` blocks (true = print the whole page). */
   expand_collapsed: boolean;
   /** Base body font size, px. */

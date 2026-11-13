@@ -225,7 +225,7 @@ export interface Backend {
   publishQuery(request: QueryPublicationRequest, fingerprint: string, sheets: SheetExport[]): Promise<PublicationReceipt>;
   /** Publish a whole-graph read-only app plus static fallback under a picked
    * folder. `allPages` explicitly includes private pages; default public only. */
-  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
+  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[], includeComments?: boolean): Promise<PublicationReceipt>;
   /** Quick share (DESIGN §3.9; src-tauri/src/quick_share). Every GitHub call,
    * the token and each share's key stay native; failures reject with a
    * `QuickShareError`. Prepare builds the exact payload a later create uploads,

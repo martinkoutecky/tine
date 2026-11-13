@@ -45,7 +45,7 @@ invalid, oversized or inaccessible snapshots show the count only. No new record 
 Quick shares retain their membership diff. Folder exports remain available when
 quick share is disabled or disconnected. Updates run sequentially and show each
 outcome, continuing after failures. Closing or switching graphs prevents further
-updates; a write already started may finish. No definition or output format changes.
+updates; a write already started may finish.
 
 ## What every export leaves out
 
@@ -54,6 +54,34 @@ live site and the CLI (quick share uses the query export's plan):
 
 - a page marked `public:: false` (privacy settings apply on every run);
 - the exports page, even when a query selects it and even with every page public.
+- comment threads when **Include comments** is off (or CLI `--no-comments`):
+  their roots and every reply are omitted; the body host remains. This is a
+  block projection beside the page rules, before the private build graph.
+
+Comments are included by default, shown in the viewer's margin and as labelled
+annotations in static HTML/print, with author and date where known. Text and OPML
+prefix comment text with `[Comment]`; Markdown/Org retain the source comment
+properties so they round-trip, including with Remove properties selected.
+Copy outline and the private clipboard retain their full source content.
+
+Repeating definitions carry `tine.comments:: false` when excluded; absence means
+include. Re-export and Update all read it. Dialogs save only an explicit changed
+choice through ordinary guarded block edits. Update all shows mixed saved choices
+with an indeterminate checkbox; changing it overrides the batch and prepares a new
+review. The effective comments choice is part of the reviewed fingerprint.
+
+Unit cost: an excluded Markdown definition adds 22 UTF-8 bytes plus indentation
+(`tine.comments:: false` plus LF); Org adds 22 bytes plus indentation for
+`:tine.comments: false` plus LF, and 19 bytes for a new property drawer when one
+is needed (a destination already supplies one). ASCII fixture byte counts:
+Markdown 1-block 48→72, 60-block 461→485 (+24 with two-space indentation);
+Org 1-block 65→87, 60-block 478→500 (+22 with its existing drawer).
+On both page sizes ordinary edits add 0 bytes, files, transport bytes, reads,
+stats or IPC. Changing the choice edits the existing page through its normal
+whole-file guarded save (one file); the uncompressed file transport payload
+grows by the same 24/22 bytes. No new transport record, file, cache
+record or per-edit work. Projection costs O(exported blocks), within the existing
+export walk; default-inclusion publication performs no projection clone.
 
 The query export's plan lists the pages it left out (`leftOut`, with the reason)
 and says whether the export includes the query's own page (`selectsHostPage`).

@@ -99,7 +99,7 @@ fn every_page_static_export_excludes_public_false_pages() {
     let out = dir.with_extension("out");
     fs::create_dir_all(&out).unwrap();
     let store = Store::open(&dir, Default::default()).unwrap().0;
-    let receipt = publish_static(&store, &out, "Site", true).unwrap();
+    let receipt = publish_static(&store, &out, "Site", true, true).unwrap();
     assert_eq!(receipt.pages, 1);
     assert_no_opted_out(&site(Path::new(&receipt.path)));
     store.close();

@@ -105,6 +105,7 @@ fn the_apps_export_lays_out_as_table_board_and_grid() {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         exports(),
     )
@@ -137,7 +138,15 @@ fn sheets_export_without_frontend_keeps_the_outline() {
     // Named divergence (Guide > Exporting): the CLI has no evaluator, so a sheet block
     // publishes as the plain outline of its rows, never as a table.
     let (base, store) = open_fixture();
-    publish_live(&store, &base.join("output"), "export", false, &bundle()).unwrap();
+    publish_live(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        true,
+        &bundle(),
+    )
+    .unwrap();
     let html = sheets_html(&base);
     for gone in ["sheet-table", "sheet-board", "sheet-grid", "sheet-note"] {
         assert!(
@@ -173,6 +182,7 @@ fn export_html(sheets: Vec<SheetExport>) -> String {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         sheets,
     )
@@ -321,6 +331,7 @@ fn exported_sheets_have_the_structure_of_masters_static_export() {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         exports(),
     )
@@ -396,6 +407,7 @@ fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
         &base.join("output"),
         "export",
         true,
+        true,
         &bundle(),
         sheets,
     )
@@ -424,6 +436,7 @@ fn a_card_in_two_board_columns_keeps_page_anchors_unique() {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         serde_json::from_value(exports).unwrap(),
     )
@@ -455,6 +468,7 @@ fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() 
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         exports(),
     )
@@ -523,6 +537,7 @@ fn export_html_of(all: &[Value]) -> (Scratch, String) {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         serde_json::from_value(Value::Array(all.to_vec())).unwrap(),
     )
@@ -544,7 +559,10 @@ fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
     )
     .unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    let scope = SheetScope::Live { all_pages: false };
+    let scope = SheetScope::Live {
+        all_pages: false,
+        include_comments: None,
+    };
     let inputs =
         sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()]), Some(&scope)).unwrap();
     let table = &inputs[0];
@@ -574,6 +592,7 @@ fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         answer,
     )
@@ -596,7 +615,13 @@ fn the_scope_the_app_sends_deserializes_as_the_wire_shape() {
     // `src/sheet/staticExport.ts::SheetScope` is the other half of this contract.
     let live: SheetScope =
         serde_json::from_value(serde_json::json!({"kind": "live", "allPages": true})).unwrap();
-    assert!(matches!(live, SheetScope::Live { all_pages: true }));
+    assert!(matches!(
+        live,
+        SheetScope::Live {
+            all_pages: true,
+            include_comments: None
+        }
+    ));
     let query: SheetScope = serde_json::from_value(serde_json::json!({
         "kind": "query",
         "request": {"argument": "(task TODO)", "dialect": "macro_query", "properties": [], "name": "n"}
@@ -630,6 +655,7 @@ fn grid_render_uses_only_rows_sent_for_aggregates_and_charges_their_area() {
             &base.join("output"),
             "export",
             false,
+            true,
             &bundle(),
             sheets,
         )

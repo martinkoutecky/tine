@@ -41,7 +41,7 @@ type ExportFormat = "text" | "opml" | "html";
 function loadOptions(): ExportOptions {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return { ...DEFAULT_EXPORT_OPTIONS, ...JSON.parse(raw) };
+    if (raw) return { ...DEFAULT_EXPORT_OPTIONS, ...JSON.parse(raw), includeComments: true };
   } catch {
     /* ignore malformed/missing */
   }
@@ -49,7 +49,8 @@ function loadOptions(): ExportOptions {
 }
 function saveOptions(o: ExportOptions): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(o));
+    const { includeComments: _, ...saved } = o;
+    localStorage.setItem(STORE_KEY, JSON.stringify(saved));
   } catch {
     /* storage unavailable — non-fatal */
   }
@@ -80,6 +81,7 @@ const MAX_DEPTHS: MaxDepth[] = ["all", 1, 2, 3, 4, 5, 6, 7, 8, 9];
 // `sourceOnly` toggles are moot in rendered mode (the markers are already gone).
 type ExportToggle = { key: keyof ExportOptions; label: Msg; sourceOnly?: boolean; renderedOnly?: boolean };
 const COMMON_TOGGLES: ExportToggle[] = [
+  { key: "includeComments", label: msg("export-include-comments") },
   { key: "stripLinks", label: msg("export-modal-links-text") },
   { key: "removeEmphasis", label: msg("export-modal-remove-emphasis"), sourceOnly: true },
   { key: "removeTags", label: msg("export-modal-remove-tags") },
@@ -150,8 +152,8 @@ function macroArg(args: string[]): string {
 
 /** Project a bounded DTO subtree into the export serializer's read-only forest.
  * Cost is O(blocks and descendants); it does not read or write the graph. */
-export function blockDtosToExportNodes(blocks: BlockDto[], format: Format): ExportNode[] {
-  return blocks.map((b) => ({ raw: b.raw, format, children: blockDtosToExportNodes(b.children, format) }));
+export function blockDtosToExportNodes(blocks: BlockDto[], format: Format, hasParent = false): ExportNode[] {
+  return blocks.map((b) => ({ id: b.id, raw: b.raw, format, hasParent, children: blockDtosToExportNodes(b.children, format, true) }));
 }
 
 function pageToExportNodes(page: PageDto): ExportNode[] {

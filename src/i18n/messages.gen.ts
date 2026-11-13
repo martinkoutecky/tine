@@ -884,6 +884,11 @@ export interface MessageArgs {
   "error-toast-history-no-error-messages-this-session": {};
   "error-toast-history-recent-error-messages": {};
   "error-toast-history-the-last-20-red-error-messages-of-this": {};
+  "export-comment": {};
+  "export-definition-cannot-edit": {};
+  "export-definition-changed": {};
+  "export-definition-save-failed": { "page": string | number };
+  "export-include-comments": {};
   "export-modal-block-count": { "count": number };
   "export-modal-cleaned-the-text-as-displayed-without-markup-markers": {};
   "export-modal-close": {};

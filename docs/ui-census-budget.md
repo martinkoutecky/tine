@@ -31,6 +31,11 @@ pixels, and compare it with the frozen table `SURFACES` in
 
 ## Failure modes
 
+H9TvA (D-20261113-CO/CO2) adds the approved **Include comments** checkbox to
+the existing Graph publication controls. `settings.graph.open` is 8 (was 7),
+accounting for that one export content choice. Other surface and performance
+budgets stay unchanged.
+
 MC9 (D-20261109-MC9; GH #891 c13) explicitly adds **Next comment** and
 **Previous comment** to both the palette and Keyboard shortcuts. The approved
 review capability sets `commands.registry` to 153 (from 151) and

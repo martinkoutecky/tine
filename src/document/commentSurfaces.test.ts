@@ -1,5 +1,4 @@
-// H9TvA inventory evidence. Export inclusion is awaiting a product decision;
-// these tests describe the current outputs, not a new comment export policy.
+// H9TvA / D-20261113-CO: outward copies include marked comments by default.
 import { afterEach, describe, expect, it } from "vitest";
 import { loadFeed, resetStore, pageByName, ensureEmptyBlock, exportNodesFor, blockSubtreeMarkdown, buildClipboardPayload, nextVisible } from ".";
 import { doc } from "./model";
@@ -8,9 +7,12 @@ import { dtoSubtreeMarkdown } from "./edits/serialize";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "../editor/exportText";
 import { exportHtml } from "../editor/exportHtml";
 import { exportOpml } from "../editor/exportOpml";
+import { expandExportNodes } from "../editor/exportMarkup";
+import type { ExportNode } from "../editor/exportText";
 import type { BlockDto, Format } from "../types";
 import { blockRegions } from "../render/parse";
 import { collectInPageFindMatches } from "../inpageFind";
+import flat from "../../tests/fixtures/comment-output/flat.json";
 
 afterEach(resetStore);
 
@@ -48,23 +50,36 @@ describe.each(["md", "org"] as const)("comment surface inventory (%s)", format =
     expect(threadRootOf(id)).toBeNull();
     expect(nextVisible(id)).toBeNull();
     expect(ensureEmptyBlock("Root quote")).toBeNull();
+    expect(exportOutline(exportNodesFor([id]), { ...DEFAULT_EXPORT_OPTIONS, includeComments: false })).toContain("COMMENTMARKER");
   });
 
-  it("retains unlabelled comment children in text, source, HTML and OPML exports", () => {
+  it("marks comments by default, preserves source markers, and omits whole threads on request", () => {
     const { bodyId } = fixture(format);
     const nodes = exportNodesFor([bodyId]);
     expect(nodes[0].children[0].children[0].raw).toBe("REPLYMARKER");
     const options = { stripLinks: false, removeEmphasis: false, removeTags: false };
     for (const output of [
       exportOutline(nodes, DEFAULT_EXPORT_OPTIONS),
-      exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source", removeProperties: true }),
       exportHtml(nodes, options), exportOpml(nodes, options),
     ]) {
       expect(output).toContain("COMMENTMARKER");
       expect(output).toContain("REPLYMARKER");
+      expect(output).toContain("Comment");
       expect(output).not.toContain("tine.quote");
     }
-    expect(exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source" })).not.toContain("tine.quote");
+    for (const removeProperties of [false, true]) {
+      expect(exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source", removeProperties })).toContain("tine.quote");
+    }
+    for (const output of [
+      exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, includeComments: false }),
+      exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source", includeComments: false }),
+      exportHtml(nodes, { ...options, includeComments: false }),
+      exportOpml(nodes, { ...options, includeComments: false }),
+    ]) {
+      expect(output).toContain("Body passage");
+      expect(output).not.toContain("COMMENTMARKER");
+      expect(output).not.toContain("REPLYMARKER");
+    }
   });
 
   it("keeps comment metadata and descendants in live/fetched Markdown copy and private clipboard", () => {
@@ -77,12 +92,70 @@ describe.each(["md", "org"] as const)("comment surface inventory (%s)", format =
     expect(buildClipboardPayload([bodyId])!.blocks[0].children[0].raw).toContain("tine.quote");
   });
 
+  it("omits a selected comment or reply without treating its host as a thread", () => {
+    const { commentId, replyId, bodyId } = fixture(format);
+    for (const id of [commentId, replyId]) {
+      expect(exportOutline(exportNodesFor([id]), { ...DEFAULT_EXPORT_OPTIONS, includeComments: false })).toBe("");
+    }
+    expect(exportOutline(exportNodesFor([bodyId]), { ...DEFAULT_EXPORT_OPTIONS, includeComments: false })).toBe("- Body passage");
+  });
+
   it("includes comment and reply text in the in-page Find count", () => {
     const { root } = fixture(format);
     expect(collectInPageFindMatches([root], "COMMENTMARKER", format)).toHaveLength(1);
     expect(collectInPageFindMatches([root], "REPLYMARKER", format)).toHaveLength(1);
     expect(collectInPageFindMatches([root], "tine.quote", format)).toHaveLength(0);
   });
+});
+
+it("freezes the comment marking for each flat format", () => {
+  const { bodyId } = fixture("md");
+  const nodes = exportNodesFor([bodyId]);
+  const options = { stripLinks: false, removeEmphasis: false, removeTags: false };
+  expect({
+    text: exportOutline(nodes, DEFAULT_EXPORT_OPTIONS),
+    source: exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source" }),
+    html: exportHtml(nodes, options),
+    opml: exportOpml(nodes, options),
+  }).toEqual(flat);
+});
+
+it("attributes flat annotations and retains their author/date in source with Remove properties", () => {
+  const nodes = [{ raw: "Body", children: [{ raw: "Note\ntine.quote:: Body\ntine.author:: Ada\ntine.date:: 2026-11-13T00:00Z", children: [] }] }];
+  const options = { stripLinks: false, removeEmphasis: false, removeTags: false };
+  for (const output of [exportOutline(nodes, DEFAULT_EXPORT_OPTIONS), exportHtml(nodes, options), exportOpml(nodes, options)]) {
+    expect(output).toContain("Comment · Ada · 2026-11-13T00:00Z");
+  }
+  const source = exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source", removeProperties: true });
+  for (const property of ["tine.quote:: Body", "tine.author:: Ada", "tine.date:: 2026-11-13T00:00Z"]) expect(source).toContain(property);
+});
+
+it.each(["md", "org"] as const)("keeps expanded embeds inside the original comment in %s source-only copies", (format) => {
+  const metadata = format === "md" ? "\ntine.quote:: Body\ntine.author:: Ada" : "\n:PROPERTIES:\n:tine.quote: Body\n:tine.author: Ada\n:END:";
+  const targetAuthor = format === "md" ? "\ntine.author:: Bob" : "\n:PROPERTIES:\n:tine.author: Bob\n:END:";
+  const nodes: ExportNode[] = [{ raw: "Body", format, children: [{
+    raw: `{{embed [[Target]]}}${metadata}`, format,
+    children: [{ raw: "Reply", children: [] }],
+  }] }];
+  const options = { stripLinks: false, removeEmphasis: false, removeTags: false,
+    resolveEmbed: () => [{ raw: `Embedded${targetAuthor}`, format, children: [{ raw: "Nested target child", children: [] }] },
+      { raw: "Second target root", children: [] }],
+  };
+  const html = exportHtml(nodes, options);
+  expect(html.match(/<aside class="comment">/g)).toHaveLength(5);
+  expect(html).toContain("Comment · Ada");
+  expect(html).toContain("Comment · Bob");
+  const opml = exportOpml(nodes, options);
+  expect(opml.match(/text="\[Comment/g)).toHaveLength(5);
+  const sourceOnly = (forest: ExportNode[]): ExportNode[] => forest.map(node => ({ raw: node.raw, format: node.format, children: sourceOnly(node.children) }));
+  const copied = sourceOnly(expandExportNodes(nodes, options));
+  const source = exportOutline(copied, { ...DEFAULT_EXPORT_OPTIONS, content: "source" });
+  for (const text of ["tine.quote", "Ada", "Bob", "Embedded", "Nested target child", "Second target root", "Reply"]) expect(source).toContain(text);
+  expect(exportOutline(copied, { ...DEFAULT_EXPORT_OPTIONS, content: "source", includeComments: false })).toBe("- Body");
+  for (const output of [exportHtml(nodes, { ...options, includeComments: false }), exportOpml(nodes, { ...options, includeComments: false })]) {
+    expect(output).toContain("Body");
+    expect(output).not.toMatch(/Embedded|Nested target child|Second target root|Reply/);
+  }
 });
 
 it("seeds a body bullet after a Markdown properties-only root even when that root holds a thread", () => {
