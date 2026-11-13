@@ -329,6 +329,7 @@ describe("Journals feed generation lifecycle", () => {
     const first = journalDto(today, "Visible today");
     const second = journalDto(older, "Move me");
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
+    await bindTestHost(); // a block moving between pages needs the page host (L2-14)
     const mounted = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(mounted.root.querySelector(`[data-block-id="${second.blocks[0].id}"]`)).not.toBeNull());

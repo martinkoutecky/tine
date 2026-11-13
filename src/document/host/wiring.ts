@@ -921,7 +921,14 @@ export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: Edi
   const endpoints = [...new Set(moves.flat())];
   const after = new Map(endpoints.map((name) => [name, pageToDto(name)] as const));
   const c = host();
-  if (c && (edges.some(([a, b]) => !before.has(a) || !before.has(b)) || [...after.values()].some(dto => !dto))) {
+  // No page host (startup before the bind finishes, or a failed bind): a block
+  // moving between pages needs the host's planned sequence, so the move is
+  // refused and restored like an endpoint the host cannot take (L2-14). Edits
+  // with no block moving between pages stay ordinary dirty pages, noted and
+  // saved at bind like any edit made before it.
+  const cannotRun = c ? edges.some(([a, b]) => !before.has(a) || !before.has(b)) || [...after.values()].some(dto => !dto)
+    : endpoints.length > 0;
+  if (cannotRun) {
     const rollback = transferRollbacks.get(before);
     if (rollback) rollback();
     else for (const [name, dto] of before) installPageContent(name, dto);
@@ -929,11 +936,10 @@ export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: Edi
     if (!refuseConflictedMove(new Set(edges.flat()))) pushToast(msg("document-transfer-rolled-back"), "error");
     return Promise.resolve(false);
   }
-  const plain = !c;
-  for (const name of before.keys()) if (plain || !after.has(name)) markDirty(name, kinds);
-  if (plain || !endpoints.length) return Promise.resolve(true);
+  for (const name of before.keys()) if (!c || !after.has(name)) markDirty(name, kinds);
+  if (!c || !endpoints.length) return Promise.resolve(true);
   const list: EditKinds = typeof kinds === "string" ? [kinds] : kinds;
-  return transfer(c!, endpoints, before, after as Map<string, PageDto>, moves, list);
+  return transfer(c, endpoints, before, after as Map<string, PageDto>, moves, list);
 }
 
 async function transfer(c: HostClient, endpoints: string[], before: ReadonlyMap<string, PageDto>,

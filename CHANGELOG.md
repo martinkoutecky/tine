@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- After you leave a page, Backspace and Delete no longer remove blocks that were selected on that page.
+- A block moved between pages right after opening a graph now stays in its original page and shows a save error if the move cannot be saved, instead of appearing to move successfully (internal: REG-L2-14-TRANSFER-NO-HOST).
+
 ## [0.9.0-beta.12] - 2026-11-13
 
 ### Added

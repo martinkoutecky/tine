@@ -66,6 +66,7 @@ describe("batch 11e page identity and journal continuity", () => {
     const first = journalDto(today, "Visible today");
     const second = journalDto(older, "Move me");
     vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([first, second]));
+    await bindTestHost(); // the cross-day transfer needs a storage host (L2-14)
     const mounted = mount(() => <PageView />);
     try {
       const id = second.blocks[0].id;

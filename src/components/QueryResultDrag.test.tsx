@@ -18,6 +18,7 @@ import type { ParsedQuery } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import * as identity from "../document/edits/identity";
 import { invalidateBinding } from "../binding";
+import { bindTestHost } from "../document/host/wiring.test.support";
 
 beforeAll(initParser);
 beforeEach(() => {
@@ -68,6 +69,7 @@ it.each([
     ],
     feed: ["Host"], loaded: true,
   });
+  if (!altKey) await bindTestHost(); // moving the result between pages needs a host (L2-14)
   const host = document.createElement("div");
   document.body.append(host);
   const dispose = render(() => <><For each={pageByName("Host")?.roots ?? []}>{(id) => <Block id={id} />}</For>{"ordinary" in scenario && <Block id="hit" />}</>, host);
