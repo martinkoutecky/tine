@@ -83,6 +83,7 @@ right-sidebar-on = 位于 { $page }
 right-sidebar-this-block-is-no-longer-available = 此块已不可用。
 
 search-result-row-block = 块
+search-result-row-comment = 批注
 
 sidebar-tine = Tine
 

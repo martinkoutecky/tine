@@ -1270,6 +1270,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               >
                                 <span class="switcher-kind">{hit.page.kind}</span>
                                 <span>{hit.display_text}</span>
+                                <Show when={hit.is_comment}><span class="switcher-kind">{t("search-result-row-comment")}</span></Show>
                               </button>
                             ) : null}
                           >
@@ -1293,6 +1294,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                                   page={blockHit().page}
                                   breadcrumb={blockHit().block.breadcrumb ?? []}
                                   text={blockHit().display_text}
+                                  isComment={blockHit().is_comment}
                                   spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
                                 />
                               </button>

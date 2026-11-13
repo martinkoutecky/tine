@@ -60,43 +60,49 @@ pub(super) fn execute_blocks(
             let mut ancestors = Vec::new();
             let pre = pre_blocks.get(page_index).map(Vec::as_slice).unwrap_or(&[]);
             for (is_pre, roots) in [(true, pre), (false, doc.roots.as_slice())] {
-                walk_blocks(roots, &mut ancestors, &mut |block, path| {
-                    if cancelled() {
-                        return false;
-                    }
-                    let candidate_index = index;
-                    index = index.saturating_add(1);
-                    let text = search_text(block, plan, graph);
-                    // New synthetic headers must not consume a window with
-                    // invisible metadata. Ordinary outline behavior stays intact.
-                    if is_pre && text.original.chars().all(char::is_whitespace) {
-                        return true;
-                    }
-                    if let Some(relevance) =
-                        block_relevance(plan, &branch.predicate, &text.original, &text.folded)
-                    {
-                        has_more |= heap.len() >= branch.limit;
-                        // The key is read from the candidate, so every match
-                        // pays for it; only a kept one is retained.
-                        let keys = sort
-                            .iter()
-                            .map(|(field, _)| {
-                                crate::query::exec::block_sort_decor(field, entry, block, || 0)
-                            })
-                            .collect();
-                        let candidate = ScoredBlock {
-                            relevance,
-                            index: candidate_index,
-                            page: entry,
-                            block,
-                            keys,
-                            ascending: &ascending,
-                            ancestors: Vec::new(),
-                        };
-                        push_block(&mut heap, branch.limit, candidate, path);
-                    }
-                    true
-                });
+                walk_blocks(
+                    roots,
+                    &mut ancestors,
+                    false,
+                    &mut |block, path, is_comment| {
+                        if cancelled() {
+                            return false;
+                        }
+                        let candidate_index = index;
+                        index = index.saturating_add(1);
+                        let text = search_text(block, plan, graph);
+                        // New synthetic headers must not consume a window with
+                        // invisible metadata. Ordinary outline behavior stays intact.
+                        if is_pre && text.original.chars().all(char::is_whitespace) {
+                            return true;
+                        }
+                        if let Some(relevance) =
+                            block_relevance(plan, &branch.predicate, &text.original, &text.folded)
+                        {
+                            has_more |= heap.len() >= branch.limit;
+                            // The key is read from the candidate, so every match
+                            // pays for it; only a kept one is retained.
+                            let keys = sort
+                                .iter()
+                                .map(|(field, _)| {
+                                    crate::query::exec::block_sort_decor(field, entry, block, || 0)
+                                })
+                                .collect();
+                            let candidate = ScoredBlock {
+                                relevance,
+                                index: candidate_index,
+                                page: entry,
+                                block,
+                                is_comment,
+                                keys,
+                                ascending: &ascending,
+                                ancestors: Vec::new(),
+                            };
+                            push_block(&mut heap, branch.limit, candidate, path);
+                        }
+                        true
+                    },
+                );
             }
             if cancelled() {
                 return None;
@@ -131,6 +137,7 @@ pub(super) fn execute_blocks(
                         kind: winner.page.kind,
                         path: winner.page.rel_path.clone().unwrap(),
                         block: dto,
+                        is_comment: winner.is_comment,
                         display_text: text.original.into_owned(),
                         evidence: matched.evidence,
                         score: winner.relevance.score(),
