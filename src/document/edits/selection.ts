@@ -159,7 +159,8 @@ function subtreeIds(roots: readonly string[], limit = Infinity): string[] | null
   while (stack.length) {
     const id = stack.pop()!;
     if (!doc.byId[id]) continue;
-    if (ids.push(id) > limit) return null;
+    // Check the bound before touching the children: O(limit), never O(width).
+    if (ids.push(id) + stack.length + doc.byId[id].children.length > limit) return null;
     const children = commentsFirst(doc.byId[id].children);
     for (let at = children.length - 1; at >= 0; at--) stack.push(children[at]);
   }
@@ -312,10 +313,13 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   let skip = i;
   if (extend && !reversing && dir > 0) {
     const a = selAnchor();
-    const lo = Math.min(i, a ? index.get(a) ?? i : i);
+    const ai = a ? index.get(a) ?? i : i;
+    const lo = Math.min(i, ai), hi = Math.max(i, ai);
+    // Only an ancestor inside the selected range counts: query rows may list a
+    // folded parent after its child, and that parent is not selected.
     for (let p = doc.byId[f]?.parent; p; p = doc.byId[p]?.parent) {
       const at = index.get(p);
-      if (at === undefined || at < lo) break;
+      if (at === undefined || at < lo || at > hi) break;
       skip = at;
     }
   }

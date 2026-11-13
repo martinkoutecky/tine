@@ -1,9 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-const counts = vi.hoisted(() => ({ orders: 0, children: 0 }));
+const counts = vi.hoisted(() => ({ orders: 0, children: 0, entries: 0 }));
 vi.mock("./document/commentOrder", async original => {
   const order = await original<typeof import("./document/commentOrder")>();
   return { ...order,
-    commentsFirst: (...args: Parameters<typeof order.commentsFirst>) => { counts.children++; return order.commentsFirst(...args); },
+    commentsFirst: (...args: Parameters<typeof order.commentsFirst>) => {
+      counts.children++; counts.entries += args[0].length; return order.commentsFirst(...args);
+    },
   };
 });
 vi.mock("./document/tree", async original => {
@@ -16,7 +18,7 @@ vi.mock("./document/tree", async original => {
 });
 import { initParser } from "./render/parse";
 import { loadSingle } from "./document/workingSet";
-import { clearSelection, deleteSelection, expandBlockSelection, extendSelectionTo, moveSelection, resetStore, selectBlock, selectedIds, selectionMarkdown, singleSelectedId, topSelected, undo, type OutlineScope } from "./document";
+import { clearSelection, deleteSelection, expandBlockSelection, extendSelectionTo, isSelected, moveSelection, resetStore, selectBlock, selectedIds, selectionMarkdown, singleSelectedId, topSelected, undo, type OutlineScope } from "./document";
 import { doc } from "./document/model";
 import type { BlockDto } from "./types";
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
@@ -164,11 +166,24 @@ describe("complete subtree selection units (GH #941)", () => {
     const scope: OutlineScope = { roots: ["R1", "P", "R3"], navOnly: true };
     selectBlock("R1", scope);
     expect(topSelected()).toEqual(["R1"]);
-    counts.children = 0;
+    // Mounted rows read membership; notifications must not list hidden children for them (round 4 F2).
+    for (const id of ["R1", "P", "R3"]) isSelected(id);
+    counts.children = 0; counts.entries = 0;
     moveSelection(1, true); expect(topSelected()).toEqual(["R1", "P"]);
     moveSelection(1, true); expect(topSelected()).toEqual(["R1", "P", "R3"]);
     moveSelection(-1, true); expect(topSelected()).toEqual(["R1", "P"]);
     expect(counts.children).toBeLessThanOrEqual(16);
+    expect(counts.entries).toBeLessThanOrEqual(160);
+    expect(isSelected("P0")).toBe(true);
     expect(selectedIds()).toHaveLength(hidden + 2);
+  });
+
+  it("a folded parent listed after its child in a query does not make Shift+Down jump (review round 4 F1)", () => {
+    loadSingle({ name: "Units", title: "Units", kind: "page", pre_block: null,
+      blocks: [block("middle"), block("parent", [block("child")], true), block("tail")] });
+    const scope: OutlineScope = { roots: ["child", "middle", "parent", "tail"], navOnly: true };
+    selectBlock("child", scope);
+    moveSelection(1, true);
+    expect(topSelected()).toEqual(["child", "middle"]);
   });
 });
