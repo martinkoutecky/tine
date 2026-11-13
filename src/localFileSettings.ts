@@ -21,7 +21,7 @@ export const allowLocalFileImages = allow;
  * trusted graphs. Apply now and queue a device-local write. Failure rolls back
  * and toasts; return does not confirm persistence. O(1) plus backend write. */
 export function setAllowLocalFileImages(on: boolean): void {
-  writePreference(allow, setAllowSig, on, (next) => backend().setAppBool(KEY, next), "local image access preference");
+  writePreference(allow, setAllowSig, on, (next) => backend().setAppBool(KEY, next), msg("toast-save-local-images-failed"));
 }
 
 /** Load the device preference at startup (default OFF); read failure toasts and resolves. */

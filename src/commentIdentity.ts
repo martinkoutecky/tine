@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { loadPreference, seedPreference, writePreference } from "./preferenceWrites";
@@ -51,7 +52,7 @@ export function authorTint(author: string): number {
 /** Apply now and persist; a failed save rolls back and toasts (writePreference). */
 export function setCommentAuthorName(value: string): void {
   setLoadedSig(true);
-  writePreference(nameSig, setNameSig, normalizeAuthorName(value), (next) => backend().setAppString(KEY, next), "comment author name");
+  writePreference(nameSig, setNameSig, normalizeAuthorName(value), (next) => backend().setAppString(KEY, next), msg("toast-save-comment-author-failed"));
 }
 
 /** Load the name at startup; a read failure toasts and leaves it unset. */

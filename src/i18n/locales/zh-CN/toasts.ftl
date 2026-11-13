@@ -249,7 +249,6 @@ gpu-tine-is-rendering-on-the-cpu-your-gpu = Tine 正在使用 CPU 渲染：GPU �
 
 graph-open-failure-couldn-t-open-the-graph = 无法打开图谱。（{ $detail }）
 
-graph-preferences-could-not-save = 无法保存 { $label }。
 
 graph-session-couldn-t-save-the-journal-template-setting = 无法保存日记模板设置。（{ $error }）
 
@@ -279,7 +278,6 @@ launcher-ranking-could-not-load-adaptive-launcher-ranking-preference = 无法加
 
 move-notice-moved-in = 已移入 { $page }
 
-preference-writes-could-not-save = 无法保存 { $label }。
 
 preference-writes-could-not-load = 无法加载 { $label }。
 

@@ -1,7 +1,7 @@
 // Device-local paste preference, shared by both block editor engines.
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
-import { t } from "./i18n";
+import { msg, t } from "./i18n";
 import { loadPreference, writePreference } from "./preferenceWrites";
 
 const KEY = "auto_embed_video_links";
@@ -14,7 +14,7 @@ export const autoEmbedVideoLinks = enabled;
  * write rolls back and toasts; return does not confirm persistence. */
 export function setAutoEmbedVideoLinks(on: boolean): void {
   writePreference(enabled, setEnabled, on, next => backend().setAppBool(KEY, next),
-    t("settings-auto-embed-video-links"));
+    msg("toast-save-auto-embed-failed"));
 }
 
 /** Restore the device choice without overwriting a newer local change. */
