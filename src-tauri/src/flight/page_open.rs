@@ -83,6 +83,7 @@ mod tests {
                     None,
                     None,
                     Some(refusal),
+                    None,
                 );
                 let report = build_diagnostic_report(
                     None,

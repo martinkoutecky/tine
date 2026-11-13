@@ -533,7 +533,7 @@ settings-ui-reset-ranking = 重置排序
 
 settings-ui-copy-a-parent-block-s-sub-blocks = 复制父块的子块
 
-settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块。Tine 默认关闭，避免仅选中父块却复制整个子树。
+settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块，以及已折叠块或表格视图所隐藏的子块。Tine 默认关闭，避免仅选中父块却复制整个子树。
 
 settings-ui-strip-collapsed-when-copying = 复制时去除 collapsed::
 
@@ -790,3 +790,5 @@ settings-auto-embed-video-links = 自动嵌入粘贴的视频链接
 settings-auto-embed-video-links-hint = 关闭后，粘贴的 YouTube、Vimeo、Loom 和 Bilibili 网址将保留为普通链接。默认开启。粘贴时不会获取视频标题。
 settings-show-workspaces = 显示工作区
 settings-show-workspaces-hint = 在此设备上显示已保存工作区的控件和命令。关闭后仍保留现有工作区。
+settings-show-help-button = 显示帮助按钮
+settings-show-help-button-hint = 在此设备上显示角落里的“?”按钮。关闭后，可在命令面板中用“切换帮助”或在 设置 → 帮助与诊断 中打开帮助。

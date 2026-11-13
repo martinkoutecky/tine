@@ -48,7 +48,10 @@
   color: var(--text-muted);
   cursor: default;
 }
-.topbar-overflow-sep {
+/* The Settings row's divider is its own class: the tiers show and hide
+   .topbar-overflow-sep together with Back/Forward (GH #926). */
+.topbar-overflow-sep,
+.topbar-overflow-settings-sep {
   height: 1px;
   margin: 4px 2px;
   background: var(--border-color);
@@ -92,18 +95,17 @@
    engaged there and the toolbar ran off the screen (GH #926). rem resolves
    through the same zoom in every engine; Tine never sets the root font size. */
 @container topbar (max-width: 24.125rem) {
-  /* The tab strip is the flexible middle (.tab-bar flex:1 1 auto, min-width:0;
-     .tab-strip-scroll overflow-x:auto) — it shrinks and scrolls, so it never
-     clips the fixed clusters and must stay reachable on a narrow desktop window.
-     Only the fixed-width low-priority action buttons overflow into the "…" menu.
-     386px is the measured CONTENT-BOX fit boundary (28px of inline padding) of a
-     phone topbar with the compact workspace switcher and Share: a 390px phone
-     (362px) no longer fits them all, so its optional actions use the menu. The
-     "…" trigger is as wide as Share, so moving Share alone does not fit either. */
-  .topbar .topbar-optional-action {
+  /* 386px is the measured CONTENT-BOX fit boundary (28px of inline padding) of a
+     phone topbar with the compact workspace switcher beside calendar, journals,
+     Share, theme and Settings: a 390px phone (362px) no longer fits them all, and
+     the "…" trigger is as wide as Share, so moving Share alone frees nothing.
+     The switcher gives way: its twin is the first row of the left drawer, one
+     tap away (TOOLBAR-390B, GH #926). Only a drawer-width window (< 640px) is
+     ever this narrow, so the full-size switcher is never affected. */
+  .topbar [data-workspace-switcher-compact] {
     display: none;
   }
-  /* The menu then holds most actions, and its trigger sits right of center:
+  /* The menu may hold most actions here, and its trigger sits right of center:
      anchored to the trigger, a 174px menu runs off the left edge at high zoom
      (GH #926 review B1). Anchor it to the (relative) topbar instead, bound it
      to the topbar's width and the window's height (it scrolls), and let long
@@ -123,17 +125,27 @@
     white-space: normal;
     overflow-wrap: anywhere;
   }
-  .topbar .topbar-right {
-    margin-inline-start: auto;
-  }
-  .topbar .topbar-overflow {
-    display: block;
-  }
   /* Back/Forward remain inline through this tier; do not duplicate them. */
   .topbar .topbar-overflow [data-topbar-overflow-action="back"],
   .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
   .topbar .topbar-overflow .topbar-overflow-sep {
     display: none;
+  }
+}
+
+/* A phone topbar keeps calendar, journals, Share and theme inline down to a
+   333px content box (347px of controls; the last 14px may use the inline
+   padding): a 390px phone keeps them all (GH #205, #926). Narrower, they use the
+   "..." menu. */
+@container topbar (max-width: 20.75rem) {
+  .topbar .topbar-optional-action {
+    display: none;
+  }
+  .topbar .topbar-right {
+    margin-inline-start: auto;
+  }
+  .topbar .topbar-overflow {
+    display: block;
   }
 }
 
@@ -218,15 +230,12 @@
 }
 
 /* Below the floor's measured 195px content box (a 390px phone above ~185%
-   interface zoom) the compact workspace switcher goes: it duplicates the one
-   in the navigation sidebar's header, one tap away. If even that does not fit
-   (higher zoom still), the navigation cluster shrinks and scrolls sideways, as
-   the bottom navigation row does, so "…" and Settings never leave the screen
-   (GH #926). */
+   interface zoom), if the navigation cluster still does not fit, it shrinks and
+   scrolls sideways, as the bottom navigation row does, so "…" and Settings never
+   leave the screen (GH #926). */
 @container topbar (max-width: 12.125rem) {
   /* .topbar-right already takes the free space (margin-inline-start: auto), so
      the spacer only cost a gap; the divider before Settings goes too. */
-  .topbar [data-workspace-switcher-compact],
   .topbar .topbar-spacer,
   .topbar .topbar-sep {
     display: none;

@@ -39,6 +39,7 @@ const OTHER_TEXTAREAS = new Map<string, string>([
   ["src/components/FormulaEditor.test.tsx", "Standalone formula-editor-textarea (FormulaEditor.tsx)."],
   ["src/components/GraphVerification.test.tsx", "Graph report comparison input (GraphVerification.tsx)."],
   ["src/components/QueryTextPane.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
+  ["src/components/graphResourceEpoch.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
 ]);
 
 const DIRECT = /textarea\.block-editor|querySelector(?:All)?(?:<[^>]*>)?\(["']textarea["']\)|HTMLTextAreaElement/u;

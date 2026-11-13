@@ -250,11 +250,20 @@ fn synthetic_10k_memory_and_enumeration_budget() {
         let result = days.0.values().copied().collect::<Vec<_>>();
         let elapsed = start.elapsed();
         assert_eq!(result.len(), 3000);
-        assert!(elapsed < std::time::Duration::from_millis(10));
         std::hint::black_box(result);
         ns.push(elapsed.as_nanos());
     }
     assert_eq!(take_work(), (0, 0, 0));
     ns.sort_unstable();
+    // The 10 ms budget judges the median of 51 enumerations, not any single one:
+    // a scheduler preemption on a loaded host stretches one sample by tens of
+    // milliseconds, but a real slowdown of the enumeration moves all of them.
+    // The unconditional work counters and the allocation size above catch what
+    // a timing cannot.
+    assert!(
+        ns[25] < std::time::Duration::from_millis(10).as_nanos(),
+        "median enumeration {} ns exceeds the 10 ms budget",
+        ns[25]
+    );
     eprintln!("synthetic pages=10000 days=3000 requested_allocation_bytes={bytes} bytes_per_day=88 p50_ns={} p95_ns={}", ns[25], ns[48]);
 }

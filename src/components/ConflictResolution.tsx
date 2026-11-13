@@ -20,7 +20,7 @@ import { msg, t, type Msg } from "../i18n";
 // through `resolve_sync_conflict` / `resolve_vcs_marker_conflict`: one tine-store
 // transaction guarded by the diff's `base_rev`, which stages the replaced bytes
 // (the copy, or the marker file) in the recoverable trash in the same commit.
-import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { Show, For, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned } from "../owned";
@@ -45,6 +45,7 @@ import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from ".
 import { listen, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
 import { claimConflictReview, conflictReviewRequest, pageConflictToResolve } from "../liveConflicts";
 import { conflictForPage } from "../conflictQueue";
+import { createGraphResource } from "../graphResource";
 
 function errorDetail(error: unknown): string {
   // Tauri rejects a `Result<T, String>` with the bare string; keep its text.
@@ -220,7 +221,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
 
   // A live conflict re-reviews when a newer refused save observed another disk
   // revision; every source re-reviews after a refused Apply.
-  const [readResource, { refetch }] = createResource(
+  const [readResource, { refetch }] = createGraphResource(
     () => `${conflict().id}\0${conflict().source === "live-save" ? conflictReason(conflict().page_name)?.observedRev ?? "" : ""}`,
     () => readDiff(conflict(), () => mounted),
   );

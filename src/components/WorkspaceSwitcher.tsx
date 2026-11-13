@@ -8,6 +8,7 @@ import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLay
 import { pushToast } from "../toasts";
 import { hoverIntent } from "./hoverIntent";
 import { useOwnerWindow, listen } from "../windowRealm";
+import { mobileDrawerMode } from "../mobileDrawers";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -38,6 +39,8 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
     setEdit(state);
   };
   onCleanup(listen(useOwnerWindow(), "tine-new-workspace", () => {
+    // In drawer mode the drawer's switcher takes the command (openWorkspaceCreation).
+    if (props.compact && mobileDrawerMode()) return;
     setHoverOpen(false);
     setMenuOpen(true);
     openEdit({ kind: "new", value: "" });

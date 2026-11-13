@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-zoom-back.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Back after clicking a block bullet restores the reading position in a long routed page and Journals, using both Alt+Left and the back button.","blocking":false,"authority":"UI-ZOOM-BACK-SCROLL; Martin 2026-11-11"}],
+      "acceptableVariations": ["Exact pixels and layout may vary; the previously visible reading block must return to view."],
+      "nonRequirements": ["No graph writes, new navigation defaults or certification of platforms not run."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-comment-review.mjs": {
       "setup":"Synthetic routed pages with three distant threads, dated message threads and a Triage page with open, resolved and two-author threads; scratch HOME/XDG and account-home shim, Linux native WebKit at wide width.",
       "contracts":[{"class":"stateful-ux","userOutcome":"Palette Next comment and Previous comment walk page threads in margin order, focus each live thread and keep its anchor in view. In a popup setting uses the same steps and visible controls across blocks. Review preserves graph bytes.","blocking":false,"authority":"D-20261109-MC9; GH #891 c13; UI-MC9-REVIEW"},{"class":"stateful-ux","userOutcome":"Dated messages contain ordinary body bullets. Opening leaves files unchanged; message and thread folds persist through collapsed:: true, and collapsing all passage threads is restored byte-for-byte by one undo.","blocking":false,"authority":"D-20261108-MC5/MC6; UI-MC5-MESSAGES; UI-MC5-COLLAPSE; GH #891"},{"class":"stateful-ux","userOutcome":"The palette commands Review open comments on this page and in the graph open a right-sidebar list of live open threads: the page list shows that page's unresolved threads only, the graph list adds other pages' and still omits resolved ones, an Author filter keeps one author's threads, and editing a listed comment changes only that comment's text in its page file. Wide and phone-width screenshots are captured.","blocking":false,"authority":"DESIGN §12; GH #891; UI-MC12-REVIEW-QUERY"}],
@@ -1527,7 +1533,8 @@
     "scripts/e2e-structured-paste.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" },
-        { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true }
+        { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Keyboard Copy of a selected collapsed block puts the children it hides into the public clipboard text under the default copy setting (GH #943).", "blocking": true, "authority": "Martin decision D-20261112-SU941 (GH #943)" }
       ],
       "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "With Tine's default copy setting the public clipboard text may hold only the selected block while the subtree travels in Tine's private payload; the pasted outline is the oracle."],
       "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation.", "Exact clipboard text or HTML flavour for block Cut/Copy."],

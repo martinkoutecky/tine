@@ -50,6 +50,23 @@ describe("TopbarOverflowMenu", () => {
     }
   });
 
+  it("ends with Settings in every state, so Settings is two taps away (GH #926)", () => {
+    const onSettings = vi.fn();
+    const { host } = mount({ onSettings, onShare: vi.fn() });
+    host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    const rows = [...host.querySelectorAll<HTMLButtonElement>("[data-topbar-overflow-action]")];
+    expect(rows.at(-1)!.dataset.topbarOverflowAction).toBe("settings");
+    rows.at(-1)!.click();
+    expect(onSettings).toHaveBeenCalledOnce();
+    expect(host.querySelector(".topbar-overflow-menu")).toBeNull();
+  });
+
+  it("omits the Settings row where Settings does not apply (a published export)", () => {
+    const { host } = mount();
+    host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    expect(host.querySelector('[data-topbar-overflow-action="settings"]')).toBeNull();
+  });
+
   it("offers Share as the twin of the topbar button: shown only when wired, disabled with no page", () => {
     const bare = mount();
     bare.host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();

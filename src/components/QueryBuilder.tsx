@@ -3,7 +3,6 @@ import {
   Show,
   createEffect,
   createMemo,
-  createResource,
   createSignal,
   createUniqueId,
   onCleanup,
@@ -54,6 +53,7 @@ import { Rich } from "../i18n/Rich";
 import { QueryLivePreview } from "./QueryLivePreview";
 import { readLatestOr } from "../resourceRead";
 import { activeWindow, newResizeObserver, queryAllWindows, registeredWindows, requestFrame, viewportOf, windowOf } from "../windowRealm";
+import { createGraphResource } from "../graphResource";
 
 /** One animation frame later on the active window's clock (a timer where there
  * is no rAF); returns the canceller (OG-MULTIWINDOW P1). */
@@ -169,7 +169,7 @@ function QueryTextPane(props: {
   const accepts = (mine: number) => !disposed && mine === revision();
 
   // The session's own text is PRINTED BY RUST.
-  const [printedResource] = createResource(
+  const [printedResource] = createGraphResource(
     () => (props.visible() ? props.session() : undefined),
     async (session) => {
       const key = { query: session.query, view: session.view };
@@ -434,7 +434,7 @@ export function createQueryRegistryAccess(active: () => boolean): RegistryAccess
   const registryScope = () => `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
   const registryKey = () =>
     active() ? `${subscription.revision()}\0${declarationRevision()}` : undefined;
-  const [registrySnapshot] = createResource(
+  const [registrySnapshot] = createGraphResource(
     () => {
       const key = registryKey();
       return key === undefined ? undefined : { scope: registryScope(), key };

@@ -9,7 +9,7 @@ import { FailureBoundary } from "./FailureBoundary";
  *  edits to one), at most `PREVIEW_ROWS` rows rendered, no graph write. A superseded answer never
  *  lands (I-20: `latestOwner`), and an identical request shares its in-flight IPC with the block's own
  *  run (`sharedQueryResult`). */
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { createQuerySubscription } from "../querySubscription";
@@ -24,6 +24,7 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { ExecutionContext, PageRow, Query, ViewSettings } from "../editor/queryIr";
 import type { RefGroup } from "../types";
 import { captureResultsTicket, resultsEpoch, resultsSettled, resultsTicketCurrent } from "../queryResultsEpoch";
+import { createGraphResource } from "../graphResource";
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -112,7 +113,7 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
   });
 
   const owners = {};
-  const [answer] = createResource(settled, async (req): Promise<PreviewAnswer | undefined> => {
+  const [answer] = createGraphResource(settled, async (req): Promise<PreviewAnswer | undefined> => {
     const owner = latestOwner(owners, "preview", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
     if (!await subscription.ready()) return undefined;
