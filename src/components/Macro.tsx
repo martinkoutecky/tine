@@ -1270,6 +1270,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               >
                                 <span class="switcher-kind">{hit.page.kind}</span>
                                 <span>{hit.display_text}</span>
+                                <Show when={hit.is_comment}><span class="switcher-kind">{t("search-result-row-comment")}</span></Show>
                               </button>
                             ) : null}
                           >
