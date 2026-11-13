@@ -22,6 +22,17 @@ literal). Each rendered subset starts independently, including embedded and
 sidebar copies. Hovering or focusing an individual gutter mark shows that
 block's author. The first chip retains its **Remove author** menu.
 
+**Remove author** is a palette command and bindable shortcut, without a default
+key. It acts on the complete block selection (folded descendants included), or
+the edited block when there is no selection. The block context menu acts on
+that same selection when its pointer is inside it, otherwise on the pointer
+block. It is offered when at least one target is writable and carries
+`tine.author`; read-only blocks and blocks without attribution are skipped.
+The shared action removes only `tine.author`, retaining other text/properties,
+through the property writer in one undo step and one guarded save per changed
+page. Availability stops at the first matching target; execution costs
+O(selected property bytes), plus the existing affected-page undo/save cost.
+
 **Show/Hide author marks** is an independent palette command, rebindable under
 Settings → Keyboard shortcuts, without a default key. Settings → Appearance
 groups its switch with **Show/Hide comments**. It controls gutter lines only

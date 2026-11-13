@@ -1134,6 +1134,8 @@ mod rename_guide_tests {
 
     #[test]
     fn margin_comments_are_documented() {
+        assert!(include_str!("templates/pages-links-references-search.md")
+            .contains("Comment roots and replies stay in search results, labelled **comment**"));
         for fact in [
             "**Next comment**",
             "**Previous comment**",

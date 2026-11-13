@@ -266,7 +266,7 @@ pub(super) fn execute_pages(
     let file_pages = graph.page_list_arc();
     let include_names = plan.page_match_scope != FriendlyPageMatchScope::Content;
     let include_content = plan.page_match_scope != FriendlyPageMatchScope::Names;
-    let mut content_by_path: HashMap<String, (BlockRelevance, String)> = HashMap::new();
+    let mut content_by_path: HashMap<String, (BlockRelevance, String, bool)> = HashMap::new();
     if include_content {
         let block_expr = plan
             .branches
@@ -287,7 +287,7 @@ pub(super) fn execute_pages(
                     .map(|pre| text::pre_blocks_with_config(entry, pre, &config))
                     .unwrap_or_default();
                 for (is_pre, roots) in [(true, pre.as_slice()), (false, doc.roots.as_slice())] {
-                    walk_blocks(roots, &mut ancestors, &mut |block, _| {
+                    walk_blocks(roots, &mut ancestors, false, &mut |block, _, is_comment| {
                         if cancelled() {
                             return false;
                         }
@@ -299,12 +299,14 @@ pub(super) fn execute_pages(
                             block_relevance(plan, block_expr, &text.original, &text.folded)
                         {
                             let key = entry.rel_path_str().to_owned();
-                            let replace = content_by_path.get(&key).is_none_or(|(best, _)| {
+                            let replace = content_by_path.get(&key).is_none_or(|(best, _, _)| {
                                 relevance.cmp_quality(best) == Ordering::Greater
                             });
                             if replace {
-                                content_by_path
-                                    .insert(key, (relevance, text.original.into_owned()));
+                                content_by_path.insert(
+                                    key,
+                                    (relevance, text.original.into_owned(), is_comment),
+                                );
                             }
                         }
                         true
@@ -386,7 +388,7 @@ pub(super) fn execute_pages(
             name_match
                 .map(|(score, class, text, alias)| (score, class, text, alias, None))
                 .or_else(|| {
-                    content_match.map(|(relevance, text)| {
+                    content_match.map(|(relevance, text, _)| {
                         (
                             relevance.score(),
                             ObjectiveMatchClass::Fuzzy,
@@ -574,6 +576,10 @@ pub(super) fn execute_pages(
                 .map(|matched| matched.evidence)
                 .unwrap_or_default();
                 QueryHit::Page {
+                    is_comment: winner.content_text.is_some()
+                        && content_by_path
+                            .get(page.rel_path_str())
+                            .is_some_and(|(_, _, comment)| *comment),
                     display_text: winner.matched_text,
                     row: page
                         .rel_path

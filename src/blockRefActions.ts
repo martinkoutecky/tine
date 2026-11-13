@@ -22,7 +22,6 @@ import {
   pasteClipboardPayload,
   selectedIds,
   topSelected,
-  singleSelectedId,
   setCollapsed,
   storedFold,
   withUndoUnit,
@@ -110,23 +109,22 @@ export function copyTargetBlockRefs(): boolean {
   return true;
 }
 
-/** "Remove author" (GH #918): the block it acts on, or null where it is not
- *  offered. The block context menu offers it on one writable block carrying
- *  `tine.author::`; the command takes the same block from the selection or the
- *  editor, so a selection of several offers nothing. Target lookup reuses the
- *  memoized selection; property checks read only the target block. */
+const hasWritableAuthor = (id: string) => blockWritable(id) && blockProperty(id, "tine.author") !== null;
+
+/** First writable authored target, or null when Remove author is unavailable.
+ * Uses complete selected subtrees, else the editor; an explicit list is the
+ * context menu's selection/pointer scope. O(target property bytes) worst case,
+ * stopping at the first match; selection topology is owned by selectedIds(). */
 export function removeAuthorTarget(ids?: readonly string[]): string | null {
-  const id = ids ? (ids.length === 1 ? ids[0] : null)
-    : hasSelection() ? singleSelectedId() : editingId();
-  return id !== null && blockWritable(id) && blockProperty(id, "tine.author") !== null ? id : null;
+  return (ids ?? commandTargetIds()).find(hasWritableAuthor) ?? null;
 }
 
 /** The one "Remove author" action, for the block context menu and its command:
- *  leaves the editor and deletes the block's `tine.author::` through the
- *  ordinary property write (one undo step, the guarded save). */
-export function removeAuthor(id: string): void {
+ * leaves the editor and clears writable authored targets through the property
+ * batch (one undo, one guarded save per changed page). O(target/page bytes). */
+export function removeAuthor(ids: readonly string[] = commandTargetIds()): void {
   endEdit("select-block");
-  setBlockProperty(id, "tine.author", null);
+  setBlockProperty(ids.filter(hasWritableAuthor), "tine.author", null);
 }
 
 function ancestorsIn(id: string, set: ReadonlySet<string>): boolean {
