@@ -17,14 +17,7 @@ use tine_graph_features::pages;
 use tine_store::Store;
 
 fn graph(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "tine-rescue-identity-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-rescue-identity-{tag}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     root

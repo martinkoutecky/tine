@@ -4,7 +4,6 @@
 //! `docs/contracts/config-live-reload.md`; og's is the same file in this repo.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tine_store::{
@@ -13,13 +12,7 @@ use tine_store::{
 };
 
 fn scratch(name: &str) -> PathBuf {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-config-live-{name}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-config-live-{name}-"));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("logseq")).unwrap();

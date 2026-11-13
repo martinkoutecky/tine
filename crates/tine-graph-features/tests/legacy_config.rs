@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::config::Config;
 use tine_core::model::Format;
@@ -8,12 +7,7 @@ use tine_graph_features::config;
 use tine_store::Store;
 
 fn fixture(label: &str, input: &str) -> (PathBuf, Store) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-config-port-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::test_support::fresh_dir(&format!("tine-config-port-{label}-"));
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
     fs::write(dir.join("logseq/config.edn"), input).unwrap();

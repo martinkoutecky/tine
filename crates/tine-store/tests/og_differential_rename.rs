@@ -56,10 +56,7 @@ fn rename_paths_and_bytes_match_master_ddf408c55() {
         "../../../scripts/fixtures/og-master-rename-golden.json"
     ))
     .unwrap();
-    let root = std::env::temp_dir().join(format!("tine-og-diff-rename-{}", std::process::id()));
-    if root.exists() {
-        fs::remove_dir_all(&root).unwrap();
-    }
+    let root = crate::test_support::fresh_dir("tine-og-diff-rename-");
     for dir in ["pages", "journals"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

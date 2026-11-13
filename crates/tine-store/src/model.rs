@@ -349,11 +349,7 @@ mod depth_contract_tests {
 
     #[test]
     fn cold_page_reads_preserve_lookup_cache() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-cold-page-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-cold-page-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("pages/A.md"), "- first\n").unwrap();
         let graph = Graph::open(&root);
@@ -5652,8 +5648,7 @@ mod tests {
     fn merge_pages_preserves_src_page_properties() {
         // F2: reconciling a duplicate page must not silently drop src's page
         // properties (alias/tags/icon). dst wins on a key clash (no duplicate line).
-        let dir = std::env::temp_dir().join(format!("tine-merge-props-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-merge-props-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
@@ -5716,12 +5711,7 @@ mod tests {
         // alias lived in the page pre-block (dedicated properties panel / Logseq
         // file convention); the bulleted form silently did nothing.
         let build = |books_body: &str| {
-            let dir = std::env::temp_dir().join(format!(
-                "tine-gh62-{}-{}",
-                books_body.len(),
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&dir);
+            let dir = crate::test_support::fresh_dir("tine-gh62-");
             fs::create_dir_all(dir.join("journals")).unwrap();
             fs::create_dir_all(dir.join("pages")).unwrap();
             fs::write(dir.join("pages").join("books.md"), books_body).unwrap();
@@ -5874,8 +5864,7 @@ mod tests {
         // still "exists" (OG semantics) and must show up in quick-switch — that's
         // what lets `#`/`[[ ]]` autocomplete say "#thistag" rather than a
         // misleading "Create #thistag" when the tag is already used elsewhere.
-        let dir = std::env::temp_dir().join(format!("tine-refpages-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-refpages-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
@@ -5936,8 +5925,7 @@ mod tests {
     }
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tine-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir(&format!("tine-{tag}-"));
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         dir
@@ -9805,9 +9793,7 @@ mod tests {
     fn write_pdf_area_image_rejects_nested_asset_symlink_escape() {
         use std::os::unix::fs::symlink;
         let dir = scratch("areaimg-nested-symlink");
-        let outside =
-            std::env::temp_dir().join(format!("tine-areaimg-outside-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&outside);
+        let outside = crate::test_support::fresh_dir("tine-areaimg-outside-");
         fs::create_dir_all(&outside).unwrap();
         fs::create_dir_all(dir.join("assets")).unwrap();
         symlink(&outside, dir.join("assets").join("My Paper")).unwrap();
@@ -10647,9 +10633,7 @@ mod tests {
     fn checked_open_and_resolve_reject_symlink_escape() {
         use std::os::unix::fs::symlink;
         let dir = scratch("checked-open-symlink");
-        let outside =
-            std::env::temp_dir().join(format!("tine-checked-open-outside-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&outside);
+        let outside = crate::test_support::fresh_dir("tine-checked-open-outside-");
         fs::create_dir_all(&outside).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
         symlink(&outside, dir.join("pages-link")).unwrap();
@@ -10674,11 +10658,8 @@ mod tests {
         use std::os::unix::fs::symlink;
         for managed in ["assets", "logseq", "publish"] {
             let dir = scratch(&format!("checked-open-{managed}-symlink"));
-            let outside = std::env::temp_dir().join(format!(
-                "tine-checked-open-{managed}-outside-{}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&outside);
+            let outside =
+                crate::test_support::fresh_dir(&format!("tine-checked-open-{managed}-outside-"));
             fs::create_dir_all(&outside).unwrap();
             let managed_path = dir.join(managed);
             let _ = fs::remove_dir_all(&managed_path);
@@ -10699,16 +10680,8 @@ mod tests {
     fn checked_open_accepts_only_the_approved_external_assets_target() {
         use std::os::unix::fs::symlink;
         let dir = scratch("checked-open-approved-assets");
-        let outside = std::env::temp_dir().join(format!(
-            "tine-checked-open-approved-assets-outside-{}",
-            std::process::id()
-        ));
-        let other = std::env::temp_dir().join(format!(
-            "tine-checked-open-approved-assets-other-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&outside);
-        let _ = fs::remove_dir_all(&other);
+        let outside = crate::test_support::fresh_dir("tine-checked-open-approved-assets-outside-");
+        let other = crate::test_support::fresh_dir("tine-checked-open-approved-assets-other-");
         fs::create_dir_all(&outside).unwrap();
         fs::create_dir_all(&other).unwrap();
         let _ = fs::remove_dir_all(dir.join("assets"));
@@ -10798,11 +10771,7 @@ mod tests {
     #[test]
     fn checked_open_accepts_an_approved_windows_assets_junction() {
         let dir = scratch("checked-open-approved-assets-junction");
-        let outside = std::env::temp_dir().join(format!(
-            "tine-approved-assets-junction-outside-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&outside);
+        let outside = crate::test_support::fresh_dir("tine-approved-assets-junction-outside-");
         fs::create_dir_all(&outside).unwrap();
         let _ = fs::remove_dir_all(dir.join("assets"));
         let status = std::process::Command::new("cmd")

@@ -124,9 +124,7 @@ fn backlinks_to_parameterized_complexity() {
 
 #[test]
 fn unlinked_references_include_plain_text_alias_mentions() {
-    let root =
-        std::env::temp_dir().join(format!("tine-unlinked-alias-test-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-unlinked-alias-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(
@@ -178,11 +176,7 @@ fn unlinked_references_include_plain_text_alias_mentions() {
 
 #[test]
 fn backlinks_include_explicit_links_in_page_properties() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-page-property-backlink-test-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-page-property-backlink-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(
@@ -227,11 +221,7 @@ fn backlinks_include_explicit_links_in_page_properties() {
 
 #[test]
 fn backlinks_include_bare_tags_page_properties() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-page-property-tags-backlink-test-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-page-property-tags-backlink-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages/page1.md"), "- Reference target page.\n").unwrap();
@@ -282,7 +272,7 @@ fn block_ref_counts_and_referrers() {
     // block and three blocks on another page (labeled, embed, and a double ref that
     // must dedupe to one). Exercises all three OG block-ref forms + same-page
     // inclusion.
-    let root = std::env::temp_dir().join(format!("tine-blockref-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-blockref-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(
@@ -347,7 +337,7 @@ fn block_ref_counts_and_referrers() {
 
 #[test]
 fn publishes_only_public_pages() {
-    let root = std::env::temp_dir().join(format!("tine-publish-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-publish-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(
@@ -387,7 +377,7 @@ fn search_cache_reflects_saves_and_deletes() {
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
     // Isolated temp graph so we can mutate it freely.
-    let root = std::env::temp_dir().join(format!("tine-cache-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-cache-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
@@ -450,7 +440,7 @@ fn search_cache_reflects_saves_and_deletes() {
 fn search_finds_user_properties_but_ignores_hidden_metadata() {
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-search-meta-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-search-meta-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
@@ -522,7 +512,7 @@ fn search_finds_user_properties_but_ignores_hidden_metadata() {
 
 #[test]
 fn save_preserves_file_format_no_churn() {
-    let root = std::env::temp_dir().join(format!("tine-fmt-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-fmt-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Logseq style: no trailing newline. Plus one with a newline, and a
     // space-indented file (Tine emits tabs by default — must preserve spaces).
@@ -572,11 +562,7 @@ fn save_preserves_file_format_no_churn() {
 fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
     use tine_core::model::Format;
 
-    let root = std::env::temp_dir().join(format!(
-        "tine-sheet-field-rename-org-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-sheet-field-rename-org-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     let path = root.join("pages").join("Sheet.org");
@@ -698,7 +684,7 @@ fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
 #[test]
 fn save_refuses_to_clobber_external_change() {
     use crate::store::SaveBase;
-    let root = std::env::temp_dir().join(format!("tine-conflict-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-conflict-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Production `Store::open` binds the canonical root; the write-target
     // guard compares canonical targets against it. On Windows and macOS the
@@ -756,7 +742,7 @@ fn save_refuses_to_clobber_external_change() {
 #[test]
 fn save_conflicts_when_file_deleted_externally() {
     use crate::store::SaveBase;
-    let root = std::env::temp_dir().join(format!("tine-del-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-del-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Canonical like production `Store::open` (see save_refuses_to_clobber_external_change).
     let root = std::fs::canonicalize(&root).unwrap();
@@ -798,7 +784,7 @@ fn save_conflicts_when_file_deleted_externally() {
 
 #[test]
 fn load_reflects_external_change_then_save_is_clean() {
-    let root = std::env::temp_dir().join(format!("tine-reconcile-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-reconcile-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("N.md");
     std::fs::write(&path, "- one").unwrap();
@@ -841,7 +827,7 @@ fn consecutive_self_saves_do_not_conflict() {
     // for an external edit.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-selfsave-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-selfsave-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
     let store = std::sync::Arc::new(store);
@@ -902,7 +888,7 @@ fn consecutive_self_saves_do_not_conflict() {
 
 #[test]
 fn sync_file_detects_external_change_and_suppresses_self() {
-    let root = std::env::temp_dir().join(format!("tine-sync-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-sync-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let path = root.join("pages").join("S.md");
     std::fs::write(&path, "- before").unwrap();
@@ -955,7 +941,7 @@ fn noop_save_does_not_bump_cache_generation() {
     // whole-graph requery on every open dashboard. A real edit still bumps it.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-noopgen-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-noopgen-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
     let store = std::sync::Arc::new(store);
@@ -1031,7 +1017,7 @@ fn self_write_marker_does_not_outlive_its_save() {
     // the recreate look like our own write and it was silently dropped.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-marker-life-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-marker-life-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
     let store = std::sync::Arc::new(store);
@@ -1094,7 +1080,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     // never mask a change, and the served content must update.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-diskrev-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-diskrev-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
     let store = std::sync::Arc::new(store);
@@ -1169,7 +1155,7 @@ fn self_write_is_not_reported_as_external_change() {
     // window). Uses the multi-line `> quote` shape that surfaced the original bug.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-selfwrite-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-selfwrite-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = store_at(&root);
     let store = std::sync::Arc::new(store);
@@ -1219,7 +1205,7 @@ fn self_write_is_not_reported_as_external_change() {
 
 #[test]
 fn query_between_filters_by_journal_date() {
-    let root = std::env::temp_dir().join(format!("tine-between-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-between-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(
         root.join("journals").join("2022_06_15.md"),
@@ -1255,7 +1241,7 @@ fn query_between_filters_by_journal_date() {
 
 #[test]
 fn rename_page_moves_file_and_updates_refs() {
-    let root = std::env::temp_dir().join(format!("tine-rename-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-rename-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Old Name.md"), "- the page body\n").unwrap();
@@ -1295,7 +1281,7 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     // F2 (namespace cascade) + F3 (self-refs): renaming `Proj` must move every
     // `Proj/*` page to `Renamed/*`, rewrite refs to all of them everywhere, and
     // rewrite the renamed pages' OWN refs.
-    let root = std::env::temp_dir().join(format!("tine-ns-rename-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-ns-rename-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("logseq")).unwrap();
@@ -1372,7 +1358,7 @@ fn legacy_namespace_file_round_trips() {
     // file (what OG writes on a legacy graph) must be discoverable under its
     // slashed name and save back to the SAME file — never silently forked into a
     // `___` twin. This is the G1/G2 fix: Tine used to always use/expect `___`.
-    let root = std::env::temp_dir().join(format!("tine-ns-legacy-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-ns-legacy-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(
@@ -1415,7 +1401,7 @@ fn legacy_namespace_file_round_trips() {
 fn rename_rewrites_bare_tags_property() {
     // F1: a page referencing the renamed page only through a bare `tags::` value
     // (no inline [[..]]) must have that value rewritten; siblings preserved.
-    let root = std::env::temp_dir().join(format!("tine-tags-rename-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-tags-rename-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Old.md"), "- old page body\n").unwrap();
@@ -1447,7 +1433,7 @@ fn rename_rewrites_bare_tags_property() {
 fn rename_aborts_on_target_collision_without_changes() {
     // Renaming onto an existing page name aborts with NO change (Tine doesn't
     // merge). Both files must be byte-identical afterwards.
-    let root = std::env::temp_dir().join(format!("tine-collide-rename-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-collide-rename-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("A.md"), "- a body [[B]]\n").unwrap();
@@ -1477,7 +1463,7 @@ fn rename_aborts_on_target_collision_without_changes() {
 fn rename_ref_only_page_rewrites_refs_without_a_file() {
     // A page that exists only via references (no file of its own) still has its
     // refs rewritten across the graph.
-    let root = std::env::temp_dir().join(format!("tine-refonly-rename-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-refonly-rename-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(
@@ -1503,7 +1489,7 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
 fn query_and_not_includes_everything_except_excluded() {
     // (and (task TODO) (not [[X]])) must return ALL TODO blocks that don't
     // reference [[X]] — regression for "NOT excludes right but drops others".
-    let root = std::env::temp_dir().join(format!("tine-not-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-not-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(
         root.join("pages").join("P.md"),
@@ -1531,7 +1517,7 @@ fn query_and_not_includes_everything_except_excluded() {
 #[test]
 fn page_aliases_resolve_and_collect_backlinks() {
     use tine_core::model::PageKind;
-    let root = std::env::temp_dir().join(format!("tine-alias-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-alias-test-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Canonical page "Parameterized Complexity" with an alias "PC".
     std::fs::write(
@@ -1600,7 +1586,7 @@ fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
 
 #[test]
 fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal() {
-    let root = std::env::temp_dir().join(format!("tine-gh715-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-gh715-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let pages = [
         ("Page A", "alias:: My Important Page\n\n- canonical\n"),
@@ -1678,7 +1664,7 @@ fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal
 
 #[test]
 fn set_favorites_round_trips_in_config_edn() {
-    let root = std::env::temp_dir().join(format!("tine-fav-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-fav-test-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Existing config with another key that must be preserved + a COMMENTED
@@ -1720,8 +1706,7 @@ fn set_favorites_edn_aware_vector_end() {
     // Round-6 audit: the end of `:favorites [...]` was found with the first raw
     // `]`, so a favorite NAME containing `]` truncated the replacement and left a
     // corrupt fragment. The end scan is now EDN-aware (skips strings/escapes).
-    let root = std::env::temp_dir().join(format!("tine-fav-edn-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-fav-edn-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -1765,8 +1750,7 @@ fn set_preferred_workflow_ignores_key_inside_string_literal() {
     // Round-7 audit: the key was located with a non-string-aware scan, so a
     // `:preferred-workflow` inside a string value could be edited instead of the
     // real key. `find_keyword_at_map_level` now skips strings.
-    let root = std::env::temp_dir().join(format!("tine-wf-str-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-wf-str-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -1806,8 +1790,7 @@ fn config_readers_are_edn_aware_for_bracket_brace_in_values() {
     // value (a favorited/templated page titled `f[x]` / `Plan {B}`); the readers
     // used delimiter scans that truncated at the first raw `]`/`}` and silently
     // lost the value on reload. Writer→file→reader must now round-trip.
-    let root = std::env::temp_dir().join(format!("tine-cfg-read-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-cfg-read-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
 
@@ -1840,8 +1823,7 @@ fn config_reader_preserves_semicolon_in_string_values() {
     // Round-8 audit: comment stripping cut every line at the first `;`, even
     // inside a string, so a favorited/templated page named `A;B` reloaded as `A`.
     // Comment stripping is now string-aware.
-    let root = std::env::temp_dir().join(format!("tine-cfg-semi-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-cfg-semi-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
 
@@ -1883,11 +1865,7 @@ fn config_reader_preserves_semicolon_in_string_values() {
 
 #[test]
 fn editor_structure_preferences_round_trip_through_config_edn() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-editor-structure-config-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-editor-structure-config-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let config = root.join("logseq").join("config.edn");
@@ -1918,7 +1896,7 @@ fn editor_structure_preferences_round_trip_through_config_edn() {
 
 #[test]
 fn set_preferred_workflow_round_trips_in_config_edn() {
-    let root = std::env::temp_dir().join(format!("tine-wf-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-wf-test-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Existing config: another key + a *commented* decoy that must NOT be edited.
@@ -1970,7 +1948,7 @@ fn set_preferred_workflow_round_trips_in_config_edn() {
 
 #[test]
 fn set_default_journal_template_round_trips_in_config_edn() {
-    let root = std::env::temp_dir().join(format!("tine-jtmpl-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-jtmpl-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -2053,8 +2031,7 @@ fn set_default_journal_template_ignores_commented_journals_inside_map() {
     // `:journals` appears only inside a comment within the :default-templates map;
     // the writer must NOT edit the comment — it must insert a real key and leave
     // the comment + sibling untouched.
-    let root = std::env::temp_dir().join(format!("tine-jtmpl-c-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-jtmpl-c-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -2086,8 +2063,7 @@ fn set_default_journal_template_quoted_name_does_not_corrupt_config() {
     // A template name with an embedded quote is escaped on write; the escape-aware
     // value-end scan must then replace/clear only the value on the next edit,
     // never mis-scanning the `\"` and corrupting config.edn.
-    let root = std::env::temp_dir().join(format!("tine-jtmpl-q-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-jtmpl-q-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -2150,8 +2126,7 @@ fn set_default_journal_template_edn_aware_value_location() {
     // IMMEDIATE token, never "the next quote anywhere in the map" (which could land
     // on a later key's string value), and the outer `:default-templates` must not be
     // matched inside a string literal.
-    let root = std::env::temp_dir().join(format!("tine-jtmpl-edn-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-jtmpl-edn-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -2241,8 +2216,7 @@ fn config_writers_skip_comment_between_key_and_value() {
     // A `;` comment between a key and its value must not mislead a writer (the
     // readers already skip it). Verify the writers do too — no duplicate key, the
     // real value is replaced.
-    let root = std::env::temp_dir().join(format!("tine-wr-cmt-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-wr-cmt-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
@@ -2280,8 +2254,7 @@ fn config_writers_skip_comment_between_key_and_value() {
 #[test]
 fn deleted_journal_is_not_served_from_stale_cache() {
     use tine_core::PageKind;
-    let root = std::env::temp_dir().join(format!("tine-del-cache-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-del-cache-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let jpath = root.join("journals").join("2026_06_18.md");
@@ -2345,7 +2318,7 @@ fn agenda_query_excludes_finished_tasks() {
     // DONE/CANCELED/CANCELLED items — matching OG's get-date-scheduled-or-deadlines
     // — while keeping open tasks AND marker-less scheduled blocks. A ±100y window
     // keeps the test robust against the real-clock `today` the engine resolves.
-    let root = std::env::temp_dir().join(format!("tine-agenda-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-agenda-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(
         root.join("journals").join("2026_06_26.md"),
@@ -2415,7 +2388,7 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     // Regression for the reported case: the new name CONTAINS the old name, and
     // the old name is referenced from BOTH a non-journal page and a journal, with
     // the cache already warm + a backlinks query run first (as in live use).
-    let root = std::env::temp_dir().join(format!("tine-rename-ss-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-rename-ss-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Testtest.md"), "- the page\n").unwrap();
@@ -2462,7 +2435,7 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
 fn rename_rewrites_nested_ref_in_open_page() {
     // Mirror the reported "Tine" page: a NESTED ref (sub-bullet) with a block
     // id::, the page already LOADED (open/pinned), cache warm + backlinks queried.
-    let root = std::env::temp_dir().join(format!("tine-rename-nested-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-rename-nested-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Testtest.md"), "- the page\n").unwrap();
@@ -2504,7 +2477,7 @@ fn rename_rewrites_nested_ref_in_open_page() {
 
 #[test]
 fn trash_sync_conflict_refuses_real_pages() {
-    let root = std::env::temp_dir().join(format!("tine-trashconflict-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-trashconflict-");
     let pages = root.join("pages");
     std::fs::create_dir_all(&pages).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
@@ -2552,7 +2525,7 @@ fn sync_conflict_base_recognises_syncthing_and_dropbox() {
 
 #[test]
 fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
-    let root = std::env::temp_dir().join(format!("tine-syncconflict-test-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-syncconflict-test-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // A real page + its Syncthing conflict copy (shares the id::, so exercises the
@@ -2618,7 +2591,7 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
 #[test]
 fn resolve_sync_conflict_merges_and_trashes() {
     use std::collections::HashMap;
-    let root = std::env::temp_dir().join(format!("tine-resolveconflict-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-resolveconflict-");
     std::fs::create_dir_all(root.join("journals")).unwrap();
     let pages = root.join("pages");
     std::fs::create_dir_all(&pages).unwrap();
@@ -2764,10 +2737,9 @@ fn resolve_sync_conflict_merges_and_trashes() {
 fn page_symlinks_are_not_indexed_or_reconciled() {
     use std::os::unix::fs::symlink;
 
-    let root = std::env::temp_dir().join(format!("tine-page-symlink-{}", std::process::id()));
-    let outside = std::env::temp_dir().join(format!("tine-outside-page-{}.md", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    let _ = std::fs::remove_file(&outside);
+    let root = crate::test_support::fresh_dir("tine-page-symlink-");
+    let outside_dir = tempfile::tempdir().unwrap();
+    let outside = outside_dir.path().join("outside.md");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(&outside, "- outside secret\n").unwrap();
@@ -2794,8 +2766,7 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
 
 #[test]
 fn graph_meta_carries_the_configured_default_home_page() {
-    let root = std::env::temp_dir().join(format!("tine-default-home-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-default-home-");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");

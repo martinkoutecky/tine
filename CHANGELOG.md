@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
 - Remove author works on a block selection, including folded descendants, from Commands, a bound shortcut or the context menu. It skips read-only blocks and removes all selected attributions in one undo step (#918).

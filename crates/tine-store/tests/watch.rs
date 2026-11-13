@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
@@ -20,12 +19,7 @@ impl Fixture {
     }
 
     fn with_mode(name: &str, files: &[(&str, &str)], mode: WatchMode) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "tine-store-watch-{name}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-store-watch-{name}-"));
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
         for (rel, text) in files {
@@ -487,11 +481,7 @@ fn second_subscribe_ends_first() {
 #[test]
 fn subscribe_then_view_preserves_startup_and_later_changes() {
     let _integration_guard = crate::test_transactions::integration_lock();
-    let root = std::env::temp_dir().join(format!(
-        "tine-subscribe-start-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-subscribe-start-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(root.join("pages/A.md"), "- old\n").unwrap();
     let store = Store::open(
@@ -555,12 +545,7 @@ fn scan_refresh_keeps_journal_day_index_current() {
 #[test]
 fn notify_with_one_missing_directory_falls_back_to_polling() {
     let _integration_guard = crate::test_transactions::integration_lock();
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-watch-partial-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir("tine-watch-partial-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let store = Store::open(
         &root,
@@ -638,12 +623,7 @@ fn unreadable_subdirectory_keeps_its_pages_until_access_returns() {
 #[test]
 fn external_changes_during_initial_load_publish_after_ready() {
     let _integration_guard = crate::test_transactions::integration_lock();
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-watch-loading-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir("tine-watch-loading-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages/Existing.md"), "- old\n").unwrap();

@@ -31,11 +31,7 @@ use crate::{Refusal, Why};
 use tine_core::doc::TEST_PROJECTION_PANIC_SENTINEL;
 
 pub(super) fn graph_with_bad_page(tag: &str, bad: &str, fillers: usize) -> PathBuf {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("tine-load-panic-{tag}-{unique}"));
+    let root = crate::test_support::fresh_dir(&format!("tine-load-panic-{tag}-"));
     let pages = root.join("pages");
     fs::create_dir_all(&pages).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
