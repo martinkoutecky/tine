@@ -1,5 +1,4 @@
 use crate::test_host_writer::HostWriter;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tine_core::model::{BlockDto, PageDto, PageKind};
 use tine_graph_features::{assets, pages};
@@ -8,12 +7,7 @@ use tine_store::{OpenOptions, PageId, Resolved, SaveBase, Store};
 struct Fixture(std::path::PathBuf);
 impl Fixture {
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "tine-feature-transport-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::fresh_dir("tine-feature-transport-");
         for area in ["pages", "journals", "assets"] {
             std::fs::create_dir_all(root.join(area)).unwrap();
         }

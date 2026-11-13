@@ -133,7 +133,10 @@ revisions 2 and 3).
   and the tray relabel change under one lock, in call order. Native code never
   negotiates.
 - A change applies live and is broadcast (`ui-language-changed`) to the other
-  windows.
+  windows. Each received event, including the writer's echo, re-reads the stored
+  choice once without writing: event delivery order does not determine the
+  choice. The shared `preferenceChangedElsewhere` boundary owns reconciliation;
+  language's operation owner keeps superseded reads and catalog loads inert.
 - The macOS Edit menu's **Paste and Match Style** entry uses
   `shell-edit-paste-match-style` and follows the resolved locale at startup and
   on a live language change, using the same shell catalog as the tray.

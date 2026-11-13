@@ -2,8 +2,7 @@ use std::{fs, path::PathBuf};
 use tine_graph_features::assets;
 use tine_store::{Area, Content, EditKind, Store};
 fn graph(tag: &str) -> (PathBuf, Store) {
-    let root = std::env::temp_dir().join(format!("tine-fail2-{tag}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-fail2-{tag}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();

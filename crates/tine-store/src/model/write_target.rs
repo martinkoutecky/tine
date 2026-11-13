@@ -400,8 +400,7 @@ mod write_target_probe_tests {
     }
 
     fn graph(tag: &str) -> (PathBuf, Graph) {
-        let dir = std::env::temp_dir().join(format!("tine-probe-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir(&format!("tine-probe-{tag}-"));
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/Page.md"), "- before\n").unwrap();
         let graph = Graph::open(&dir);

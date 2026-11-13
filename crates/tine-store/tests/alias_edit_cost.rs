@@ -10,13 +10,7 @@ use std::time::Instant;
 /// Every 20th page declares an alias, so the relation is neither empty nor
 /// a rounding error of the graph.
 fn graph(pages: usize) -> (std::path::PathBuf, std::sync::Arc<Store>) {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-alias-edit-cost-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-alias-edit-cost-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     for index in 0..pages {

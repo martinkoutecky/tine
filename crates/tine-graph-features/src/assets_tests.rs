@@ -4,11 +4,7 @@ const TEST_ASSET_MAX_BYTES: u64 = 16;
 
 #[test]
 fn nested_asset_reads_and_openers_stay_inside_assets() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-nested-assets-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-nested-assets-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets/sub")).unwrap();
     std::fs::write(root.join("assets/sub/x.png"), b"png").unwrap();
@@ -55,11 +51,7 @@ fn asset_open_accepts_files_directories_and_the_assets_root() {
     // GH #367: the OS opener takes a regular file, a nested directory, and the
     // empty name (the assets root); traversal, missing names and escapes still
     // fail, and the edit handoff keeps its regular-file gate.
-    let root = std::env::temp_dir().join(format!(
-        "tine-asset-open-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-asset-open-");
     let nested = root.join("assets/some dir/报表");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(&nested).unwrap();
@@ -110,11 +102,7 @@ fn asset_open_accepts_files_directories_and_the_assets_root() {
 fn a_bounded_asset_read_refuses_an_oversized_file_and_accepts_the_limit() {
     const EXACT_MAX_BYTES: u64 = 5;
     const TOO_SMALL_MAX_BYTES: u64 = EXACT_MAX_BYTES - 1;
-    let root = std::env::temp_dir().join(format!(
-        "tine-bounded-asset-read-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-bounded-asset-read-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     std::fs::write(root.join("assets/large.pdf"), b"12345").unwrap();

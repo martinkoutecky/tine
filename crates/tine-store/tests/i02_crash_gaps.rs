@@ -3,7 +3,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_graph_features::{conflicts, pages};
 use tine_store::{Area, FaultPoint, OpenOptions, RestoreFile, Store};
@@ -19,14 +18,8 @@ fn hosted<T>(
     run(&host)
 }
 
-static SEQ: AtomicU64 = AtomicU64::new(0);
-
 fn scratch(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "tine-i02-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-i02-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
