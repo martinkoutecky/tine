@@ -2113,18 +2113,25 @@ empty document under their fileless entry (the row a page query evaluates): a
 namespace child brings its parent and its last child removes it, a page's
 references bring reference-only pages, and a file taking or leaving a name
 removes or brings that name's fileless row. The candidates are the changed
-pages' names and references and the namespace prefixes of both, each looked up
-on both sides by `ReadSnapshot::resident_reference_only_page` (the
+pages' moved names, changed references, and namespace prefixes, including a
+child's prefixes when it gains or loses its last text. Each is looked up on
+both sides by `ReadSnapshot::resident_reference_only_page` (the
 `reference_only_pages` rule for one name). It reads only the resident name
-table and day support; when either side has not built them, every mounted
-reader that can list a fileless page (a page-anchored query, a search) is named
-instead. Queries are named by the usual `touches_edit` rule on those synthetic
-edits. The `full` bound (more than 32 changed paths) is decided before any of
+table and day support. The summary produces the changed fileless keys once;
+both carried memo eviction and mounted query invalidation consume them through
+`Plan::may_list_fileless`, using execution's required-name constraints without
+evaluating vanished rows in the current graph. When either side's inputs are
+not resident, both conservatively invalidate plans that can list any fileless
+row; required properties still exclude fileless rows. Synthetic
+edits still name the other reader families; search also checks the edited
+pages' names and references. The `full` bound (more than 32 changed paths) is decided before any of
 this reads a page, and the preparation is linear in the batch (one active-path
 set). Unrelated mounted queries do not rerun: proof
 `crates/tine-store/tests/page_lifecycle_summary.rs` (oracle per scenario,
 fileless parents and reference-only pages on create, rename and delete, a
 counter at N = 8 and 64, and a batch-work counter at 8, 16, 40 and 400 files)
+and `fileless_change_producer_probes_only_changed_names` (two probes per
+changed fileless name, zero for typing, at 8 and 64 unrelated pages)
 and steps 60–62 of the random reader oracle in
 `crates/tine-store/tests/change_summary.rs`. The frontend create, delete and rename
 paths no longer add a full refresh of their own: create and delete no longer

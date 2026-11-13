@@ -652,9 +652,8 @@ impl ChangeFeed {
             unparsed: std::sync::OnceLock::new(),
         };
         // The first publication carries every answer, as a cold one does.
-        let (inventory, delta, counts, moved) = snapshot.answer_changes(None, &[], true);
-        let summary =
-            snapshot.change_summary(None, &[], true, inventory, &moved, None, None, &[], &[]);
+        let (inventory, delta, counts, _) = snapshot.answer_changes(None, &[], true);
+        let summary = snapshot.change_summary(None, &[], true, inventory, None, None, &[], &[]);
         let metrics = snapshot.metric_changes(None, &[], &[]);
         snapshot.answers = (inventory, counts, summary, delta, metrics);
         let change = Change {

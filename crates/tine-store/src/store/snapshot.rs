@@ -519,15 +519,11 @@ impl Snapshot {
         }
         let (inventory, delta, counts, moved) =
             snapshot.answer_changes(old, &changed_paths, name_set_changed);
-        // A carried answer that can list a page which started or stopped
-        // existing without a file is stale, as the summary's readers are.
-        snapshot.graph.drop_fileless_listings(&moved);
         let summary = snapshot.change_summary(
             old,
             &changed_paths,
             name_set_changed,
             inventory,
-            &moved,
             edited_pages.as_deref(),
             page_changes.as_deref(),
             &targets.unlinked,
