@@ -5,7 +5,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
-import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
+import { currentPageTitle, openPageByLink, openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 
@@ -17,14 +17,15 @@ const GRAPH = path.join(RUN, "graph");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(RUN, dir));
 fs.writeFileSync(path.join(GRAPH, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
-const outline = "- Block A caret starts here\n- Block B middle\n- Block C middle\n- Block D text after the click\n  collapsed:: true\n  - Last block child\n- [[Shift click]]\n";
+const outline = "- Block A caret starts here\n- Block B middle\n- Block C middle\n- Block D text after the click\n  collapsed:: true\n  - Last block child\n- [[Shift click]]\n- [[Selection destination]]\n";
 const pageFile = path.join(GRAPH, "pages/Shift click.md");
 fs.writeFileSync(pageFile, outline);
+fs.writeFileSync(path.join(GRAPH, "pages/Selection destination.md"), "- Destination stays visible\n");
 const today = new Date();
 const date = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"), String(today.getDate()).padStart(2, "0")].join("_");
 fs.writeFileSync(path.join(GRAPH, `journals/${date}.md`), outline);
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
-const revision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const revision = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const fixture = accountHomeFixture(RUN, RUN);
 const env = { ...fixture.env, HOME: path.join(RUN, "home"), TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: path.join(RUN, "data"), XDG_CONFIG_HOME: path.join(RUN, "config"),
@@ -101,13 +102,59 @@ try {
         .some(el => el.textContent.trim() === "Block D text after the click")), { timeout: 10000 });
     }
   }
+  const routeFailures = [];
+  for (const entry of ["link", "palette", "back", "forward", "keyboard"]) {
+    stage = `Ifods: select a routed block, navigate by ${entry}, Delete, reopen the source`;
+    classification = "harness";
+    if (entry === "back") await openPageByName(browser, "Selection destination");
+    await openPageByName(browser, "Shift click");
+    if (entry === "forward") {
+      await openPageByLink(browser, "Selection destination");
+      await browser.keys(["Alt", "ArrowLeft", "NULL"]);
+      await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Shift click");
+    }
+    const sourceBlock = await browser.$(".main-content .block-content");
+    await sourceBlock.click();
+    await browser.$(".main-content textarea.block-editor").waitForDisplayed();
+    await browser.keys(["Escape"]);
+    await browser.$(".main-content .block-main.selected").waitForExist();
+    const beforeDeparture = fs.readFileSync(pageFile, "utf8");
+    if (entry === "link") await openPageByLink(browser, "Selection destination");
+    if (entry === "palette") await openPageByName(browser, "Selection destination");
+    if (entry === "back" || entry === "forward") {
+      await browser.keys(["Alt", entry === "back" ? "ArrowLeft" : "ArrowRight", "NULL"]);
+      await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Selection destination");
+    }
+    if (entry === "keyboard") {
+      await browser.keys(["g", "j"]);
+      await browser.$(".main-content .journal-title").waitForExist();
+    }
+    await browser.keys(["Delete"]);
+    await openPageByName(browser, "Shift click");
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector(".main-content .page-loading")));
+    const sourceStillVisible = await browser.execute(() => [...document.querySelectorAll(".main-content .block-content")]
+      .some(el => el.textContent.trim() === "Block A caret starts here"));
+    classification = "product";
+    let undoRestored = null;
+    if (!sourceStillVisible) {
+      await waitForFileText(pageFile, text => !text.includes("Block A caret starts here"));
+      await browser.keys(["Control", "z", "NULL"]);
+      await waitForFileText(pageFile, text => text === beforeDeparture);
+      undoRestored = true;
+    }
+    const fileUnchanged = sourceStillVisible && fs.readFileSync(pageFile, "utf8") === beforeDeparture;
+    evidence.push({ entry, sourceStillVisible, fileUnchanged, undoRestored });
+    screenshot(`route-selection-${entry}`);
+    if (!fileUnchanged) routeFailures.push(entry);
+  }
+  assert.deepEqual(routeFailures, [], "Delete after every navigation method must leave the source file byte-identical");
   fixture.verify();
   fs.writeFileSync(path.join(RUN, "receipt.json"), JSON.stringify({ outcome: "PASS", revision, workingDiff: true, app: APP, evidence }, null, 2));
   console.log(`PASS ${RUN}`);
 } catch (error) {
   try { screenshot("failure"); } catch {}
   fs.writeFileSync(path.join(RUN, "failure.json"), JSON.stringify({ revision, app: APP, journey: stage,
-    expected: "A through D selected as whole blocks, editor closed; cut includes the last block's children and Undo restores them",
+    expected: "A through D selected as whole blocks, cut/Undo preserves children; Delete after route departure leaves the source file unchanged",
     observed: error.stack, classification, evidence }, null, 2));
   console.error(`FAIL ${RUN}`);
   throw error;

@@ -49,7 +49,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-shift-click-selection.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Shift-click from the editing caret to another block selects the complete range and closes the editor on a routed page, sidebar and journal; cutting the range includes the last block's collapsed children and Undo restores them.","blocking":false,"authority":"GH #924; UI-GH924-SHIFT-CLICK-BLOCK-RANGE"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Shift-click from the editing caret to another block selects the complete range and closes the editor on a routed page, sidebar and journal; cutting the range includes the last block's collapsed children and Undo restores them. Selecting on a routed page, navigating by link, palette, history back/forward or the Journals shortcut and pressing Delete leaves the departed page's file unchanged.","blocking":false,"authority":"GH #924; UI-GH924-SHIFT-CLICK-BLOCK-RANGE; UI-IFODS-ROUTE-SELECTION"}],
       "acceptableVariations": ["Theme, layout, exact click column and save latency may vary."],
       "nonRequirements": ["No keyboard selection changes, reporter attachments, Windows/macOS certification or final release acceptance."],
       "stability":"burn-in"
