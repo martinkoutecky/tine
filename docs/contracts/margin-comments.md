@@ -6,8 +6,54 @@ UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE, UI-MC010-DATES, UI-MC010
 UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY, UI-MC5-MESSAGES, UI-MC5-COLLAPSE, UI-MC9-REVIEW,
 UI-MC12-REVIEW-QUERY, UI-MC12-UNREAD; GH #891 review findings 1 and 2; GH #929.
 
-Not yet built: the page-level discussion thread (design §13). Everything else in
-the design's 0.10 scope is described below.
+Not yet built: the page-level discussion thread (design §13). Export inclusion
+and search grouping from design §1 await a product decision; the existing
+behavior is recorded under “Counting, listing and output surfaces” below.
+
+## Counting, listing and output surfaces
+
+Comments require a parent block and the parser-recognized `tine.quote`
+property. All descendants of that comment belong to its thread. A root block
+carrying that property is ordinary body content, not a page discussion thread.
+The discriminator is Rust's `tine_outline::editor_text::comment_quote`, exposed
+through wasm to `isCommentBlock`; `threadRootOf` supplies document ancestry.
+The surface comment index supplies root membership and resolution counts.
+
+The following describes existing behavior, not a settled export or search
+policy (internal card H9TvA). Characterization evidence:
+`src/document/commentSurfaces.test.ts`,
+`crates/tine-graph-features/tests/comment_surfaces.rs`, and the existing comment
+count, resolution and rendering suites.
+
+| Surface | Treatment of comments |
+|---|---|
+| Body navigation | Skips the whole thread, including unquoted replies. |
+| Empty page / typing target | Seeds a bullet when there are no roots, or after a Markdown properties-only root. A blank body root with a thread remains a body root and is not replaced. A root with `tine.quote` is not excluded. |
+| Comment controls | Counts thread roots rather than messages: resolved count and hidden-descendant “N below” use the comment index; resolved roots are excluded from open counts. Expanded margin and popup have no count badge; phone chip has no visible count. |
+| Text / Markdown export modal | Includes the whole thread as ordinary indented children; render-hidden `tine.*` metadata is omitted even with “Remove properties” off. No comment label is added. |
+| HTML / OPML export modal | Includes comment text and replies as ordinary child list items / outlines, without their comment metadata or a comment label. |
+| Copy outline / copy page as Markdown | Includes comment text, replies and source comment properties. The private clipboard retains the complete source subtree. Copying a block reference or link copies its identity rather than its body. |
+| Print / PDF | The generated print HTML includes comment text and replies as ordinary outline children and omits the comment property. PDF uses this print document. |
+| Static site | Includes comment text and replies as ordinary outline children without a comment label; its block search index includes them. |
+| Live folder publication | Its snapshot retains source comment properties and descendants; its static fallback uses the static-site rendering above. |
+| Quick share | The generated document retains comment source properties and descendants. Its read-only viewer renders the shared outline. |
+| Full-text search | Comment text can produce ordinary block hits with the host in the breadcrumb; metadata is absent from display text. With page-content matching enabled, comment text can also produce a page hit. There is no separate comment result family. |
+| Palette / search previews | Uses the search engine's ordinary block hits, display text and breadcrumbs. The result goes in the existing block section, without a comment label. |
+| In-page Find | Includes comment and reply text in match counts, including threads outside the body outline. Hidden comment metadata is excluded. |
+| Backlinks / All pages reference counts | References written in comment text and replies participate in membership and counts, like references in body blocks. These counts measure referring blocks, not page body size. |
+
+There is no word-count feature or page-body-size badge in this inventory.
+The export modal's block count is the requested selection/result count, not a
+recursive count of the exported subtree. Query results and reference panels
+retain engine membership; the live block renderer applies comment presentation
+within a shown subtree. This inventory does not change query semantics.
+
+Whether outputs omit comments, retain source markers or render labelled
+annotations, and whether search identifies/group comments separately, requires
+a product decision. Until then the output/search paths above remain unchanged;
+design §1's shared comment-aware projection across those paths is not complete.
+
+## Interaction
 
 - Settings > Appearance > Comments offers **In the margin** (default) and
   **In a popup** (D-20261108-MC7). This viewer preference uses the same
