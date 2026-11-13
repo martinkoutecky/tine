@@ -572,6 +572,7 @@ export function mergeSelection(): boolean {
     return false;
   }
   const scope = activeSelectionScope;
+  const surface = selectedSurfaceKey;
   // A result list orders blocks by the query, not by the outline.
   if (scope?.navOnly) {
     pushToast(msg("selection-merge-not-in-results"), "warn");
@@ -607,7 +608,7 @@ export function mergeSelection(): boolean {
   pushUndo(notice.tag, outlineChangePages(change));
   applyOutlineChange(change);
   markOutlineDirty(change);
-  selectBlock(survivor, scope);
+  selectBlock(survivor, scope, surface);
   notice.show();
   return true;
 }

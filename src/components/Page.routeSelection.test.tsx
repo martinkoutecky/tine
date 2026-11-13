@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { resetStore, selectBlock, selectedIds, undo, extendFeedForScroll } from "../document";
+import { resetStore, selectBlock, selectedIds, undo, extendFeedForScroll, mergeSelection, moveSelection } from "../document";
 import { pageToDto } from "../document/convert";
 import { mainPaneRouter, resetTabsToJournals, type PaneRouter } from "../router";
 import { PaneContext, resetPaneLayoutToSingle, setFocusedPaneId, splitPane, paneRouter } from "../panes";
@@ -169,10 +169,10 @@ it("navigation retires selection made by Escape inside a nested editable page em
   expect(pageToDto("Source")).toEqual(before);
 });
 
-// Merge review F1: deleting a selected embed host reselects its surviving neighbour. That
-// selection keeps the host's surface, not the unmounted inner editor's, so navigation still
-// retires it and a later Delete cannot reach the departed page.
-it("the block reselected after deleting an embed host is still retired by navigation", async () => {
+// Merge review F1 (delete) and round 2 (merge): the owner's own reselection after deleting a
+// selected embed host, and after merging, keeps the selection's surface, not the unmounted
+// inner editor's, so navigation still retires it and a later Delete cannot reach the departed page.
+it.each(["delete", "merge"])("the block reselected after %s is still retired by navigation", async after => {
   vi.mocked(backend().getPage).mockImplementation(async name => name === "Cold"
     ? { ...page(name), blocks: [...page(name).blocks, { id: "embed", raw: "{{embed [[Source]]}}", children: [], collapsed: false }] }
     : page(name));
@@ -188,6 +188,12 @@ it("the block reselected after deleting an embed host is still retired by naviga
   expect(selectedIds()).toEqual(["embed"]);
   pressDelete();
   expect(selectedIds()).toEqual(["Cold-link"]);
+  if (after === "merge") {
+    moveSelection(-1, true);
+    expect(selectedIds()).toEqual(["Cold-root", "Cold-link"]);
+    expect(mergeSelection()).toBe(true);
+    expect(selectedIds()).toEqual(["Cold-root"]);
+  }
   const before = pageToDto("Cold");
   mainPaneRouter.openPage("Other");
   await vi.waitFor(() => expect(host.textContent).toContain("Other visible content"));
