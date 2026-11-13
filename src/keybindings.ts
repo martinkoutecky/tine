@@ -236,7 +236,7 @@ function firstVisibleBlockInFocusedPane(): string | null {
 function restoreBlockSelectionAfterPaneReturn(previous: string | null) {
   if (hasSelection()) return;
   const target = previous && docNode(previous) ? previous : firstVisibleBlockInFocusedPane();
-  if (target) selectBlock(target);
+  if (target) selectBlock(target, null, focusedPaneId() === "main" ? "main" : `pane:${focusedPaneId()}`);
 }
 
 // Materialize a split at the selected seam/edge. Two flavors (Martin's Jul 8

@@ -5,7 +5,7 @@ import type { OutlineScope } from "../../document";
  *  the host's position (0.8). That row's position belongs to the host on this
  *  page, so drag, indent/outdent, selection (and through it Delete) and the
  *  bullet's menu act on the host; its text and children stay the source's. */
-export interface RowHost { id: string; scope: OutlineScope | null }
+export interface RowHost { id: string; scope: OutlineScope | null; surface?: string }
 
 // Pointer hit tests (drop target, selection drags) find rows by DOM element.
 const rows = new WeakMap<Element, () => RowHost | null>();

@@ -1,4 +1,5 @@
 import { focusOnMount } from "../focusOnMount";
+import { ownSelectionSurface } from "../document";
 import { t, msg, render } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
@@ -103,6 +104,7 @@ export function SheetTable(props: {
   onDefaultColumns?: (columns: string[]) => void;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
+  ownSelectionSurface(cellSurfaceKey(props.ownerId, surfaceId), undefined, surfaceId);
   let tableRef: HTMLDivElement | undefined;
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
