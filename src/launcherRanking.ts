@@ -4,7 +4,7 @@ import type { ObjectiveMatchClass } from "./types";
 import { writePreference, seedPreference, preferenceChangedElsewhere, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
 import { latestOwner, readOwned, revisionOwner, writeOwned } from "./owned";
-import { activeLocale, msg, render } from "./i18n";
+import { activeLocale, msg } from "./i18n";
 
 const PINYIN_KEY = "pinyin-page-matching";
 const PINYIN_CHANGED = "pinyin-page-matching-changed";
@@ -61,7 +61,7 @@ export function setPinyinMatchingEnabled(value: boolean): void {
         const { emit } = await import("@tauri-apps/api/event");
         await emit(PINYIN_CHANGED, { origin: pinyinWindow });
       } catch { /* No native event bus in published pages. */ }
-    }, render(msg("settings-pinyin-label")), () => pushToast(msg("toast-pinyin-save-failed"), "error"));
+    }, msg("toast-pinyin-save-failed"));
 }
 
 export function resetPinyinMatchingSetting(): void {
@@ -120,7 +120,7 @@ export async function initLauncherRankingSetting(): Promise<void> {
 /** Apply now and queue a device-local write. Failure rolls back and toasts;
  * return does not confirm persistence. O(1) plus backend write. */
 export function setLauncherRankingEnabled(value: boolean): void {
-  writePreference(enabled, setEnabledSignal, value, (next) => backend().setAppBool(SETTING_KEY, next), "adaptive launcher ranking");
+  writePreference(enabled, setEnabledSignal, value, (next) => backend().setAppBool(SETTING_KEY, next), msg("toast-save-launcher-ranking-failed"));
 }
 
 function graphKey(root: string): string {
