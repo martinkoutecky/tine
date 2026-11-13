@@ -131,9 +131,9 @@ impl<'a> RenderGraph<'a> {
             .into_iter()
             .filter_map(|(id, (_, comment))| (!comment).then_some(id))
             .collect();
-        group
-            .blocks
-            .retain(|block| kept.contains(block.id.as_str()));
+        group.blocks.retain(|block| {
+            block.page_property || block.page_preamble || kept.contains(block.id.as_str())
+        });
     }
 
     fn read_asset_limited(

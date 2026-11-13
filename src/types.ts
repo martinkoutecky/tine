@@ -16,6 +16,8 @@ export interface BlockDto {
   /** Synthetic read-only reference row: the source page's prose before its
    *  first block (CM step 2 batch 8). No outline id; it opens its page. */
   page_preamble?: boolean;
+  /** Source thread membership carried by native detached export hydration. */
+  comment?: boolean;
   // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
   // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
   // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).

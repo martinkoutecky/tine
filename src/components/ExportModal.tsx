@@ -153,7 +153,9 @@ function macroArg(args: string[]): string {
 /** Project a bounded DTO subtree into the export serializer's read-only forest.
  * Cost is O(blocks and descendants); it does not read or write the graph. */
 export function blockDtosToExportNodes(blocks: BlockDto[], format: Format, hasParent = false): ExportNode[] {
-  return blocks.map((b) => ({ id: b.id, raw: b.raw, format, hasParent, children: blockDtosToExportNodes(b.children, format, true) }));
+  return blocks.map((b) => ({ id: b.id, raw: b.raw, format, hasParent,
+    ...(b.comment ? { comment: { author: null, date: null } } : {}),
+    children: blockDtosToExportNodes(b.children, format, true) }));
 }
 
 function pageToExportNodes(page: PageDto): ExportNode[] {

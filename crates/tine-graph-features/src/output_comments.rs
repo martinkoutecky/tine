@@ -38,7 +38,9 @@ pub(crate) fn close_result(result: &mut tine_core::query::ir::QueryResult, pages
         collect(&page.document.roots, &mut ids);
     }
     for group in groups.iter_mut() {
-        group.blocks.retain(|block| ids.contains(block.id.as_str()));
+        group.blocks.retain(|block| {
+            block.page_property || block.page_preamble || ids.contains(block.id.as_str())
+        });
     }
     groups.retain(|group| !group.blocks.is_empty());
     result.total = groups.iter().map(|group| group.blocks.len()).sum();

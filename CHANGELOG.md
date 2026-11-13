@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 - Exports, print and publication include labelled margin comments by default; **Include comments** and CLI `--no-comments` can omit entire threads. Repeating exports remember the choice (H9TvA).
+- Embedded comments and replies, including query macro results, retain export labels and obey **Include comments**; excluding comments keeps ordinary page-property and preamble query rows (H9TvA).
 
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
 - A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).

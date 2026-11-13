@@ -7,6 +7,213 @@ use tine_graph_features::{print, publish_query, quick_share};
 use tine_store::{Cancel, SearchRequest, Store};
 
 #[test]
+fn detached_export_hydration_carries_comment_roots_and_replies() {
+    let _integration_guard = crate::integration_lock();
+    let scratch = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    fs::create_dir_all(scratch.path().join("pages")).unwrap();
+    fs::write(scratch.path().join("pages/Source.md"), "- Body\n  tine.quote:: root is body\n  - TODO COMMENTMARKER\n    id:: comment-id\n    tine.quote:: Body\n    - DONE REPLYMARKER\n      id:: reply-id\n- Ordinary\n").unwrap();
+    let store = Store::open(scratch.path(), Default::default()).unwrap().0;
+    let whole = store.whole_graph().unwrap();
+    let mut membership = Vec::new();
+    for (id, query) in [("comment-id", "(task TODO)"), ("reply-id", "(task DONE)")] {
+        let preview = whole.preview_block(id, 100).unwrap().unwrap();
+        let batch = whole
+            .export_query_subtrees(&[tine_core::query::QueryExportSpec {
+                key: id.into(),
+                query: query.into(),
+                dialect: Default::default(),
+            }])
+            .unwrap();
+        assert_eq!(
+            (
+                batch.results[0].shown,
+                batch.results[0].total,
+                batch.results[0].omitted_nodes
+            ),
+            (1, 1, 0)
+        );
+        for block in [
+            &preview.group.blocks[0],
+            &batch.results[0].groups[0].blocks[0],
+        ] {
+            membership.push((
+                id,
+                serde_json::to_value(block).unwrap()["comment"]
+                    .as_bool()
+                    .unwrap_or(false),
+            ));
+        }
+    }
+    let body = whole.corpus(Some("Source"), true).pages[0].document.roots[0]
+        .uuid
+        .clone();
+    let preview = whole.preview_block(&body, 100).unwrap().unwrap();
+    assert_ne!(
+        serde_json::to_value(&preview.group.blocks[0]).unwrap()["comment"],
+        true
+    );
+    assert_eq!(
+        membership,
+        [
+            ("comment-id", true),
+            ("comment-id", true),
+            ("reply-id", true),
+            ("reply-id", true)
+        ]
+    );
+}
+
+#[test]
+fn detached_macros_keep_native_print_annotation_context() {
+    let _integration_guard = crate::integration_lock();
+    let scratch = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    fs::create_dir_all(scratch.path().join("pages")).unwrap();
+    fs::write(scratch.path().join("pages/Source.md"), "public:: true\n- Body\n  - TODO COMMENTMARKER\n    id:: 6a1b2c3d-0000-4000-8000-000000000009\n    tine.quote:: Body\n    - DONE REPLYMARKER\n      id:: 6a1b2c3d-0000-4000-8000-000000000010\n").unwrap();
+    fs::write(scratch.path().join("pages/Output.md"), "public:: true\n- Output body\n- {{embed ((6a1b2c3d-0000-4000-8000-000000000009))}}\n- {{embed ((6a1b2c3d-0000-4000-8000-000000000010))}}\n- {{query (task TODO)}}\n- {{query (task DONE)}}\n").unwrap();
+    let store = Store::open(scratch.path(), Default::default()).unwrap().0;
+    for include_comments in [true, false] {
+        let html = print::page_print_html(
+            &store,
+            "Output",
+            print::PrintOpts {
+                include_comments,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(html.contains("Output body"));
+        for marker in ["COMMENTMARKER", "REPLYMARKER"] {
+            assert_eq!(html.contains(marker), include_comments, "{marker}");
+        }
+        if include_comments {
+            assert_eq!(html.matches("<aside class=\"comment\">").count(), 6);
+        }
+    }
+}
+
+#[test]
+fn comments_off_keeps_page_property_query_answer() {
+    let _integration_guard = crate::integration_lock();
+    comments_off_keeps_header_answer(
+        "Header export",
+        "(property status exported-state)",
+        "exported-state",
+        "page_property",
+    );
+}
+
+#[test]
+fn comments_off_keeps_preamble_query_answer() {
+    let _integration_guard = crate::integration_lock();
+    comments_off_keeps_header_answer(
+        "Preamble export",
+        "[[PreambleTarget]]",
+        "Prose",
+        "page_preamble",
+    );
+}
+
+fn comments_off_keeps_header_answer(name: &str, argument: &str, marker: &str, flag: &str) {
+    let scratch = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let root = scratch.path().join("graph");
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::write(
+        root.join("pages/Header.md"),
+        "status:: exported-state\n\n- Ordinary\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pages/Preamble.md"),
+        "Prose [[PreambleTarget]]\n\n- Ordinary\n",
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let request = publish_query::QueryExportRequest {
+        argument: argument.into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: name.into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: true,
+        include_comments: Some(false),
+    };
+    let plan = publish_query::plan_query(&store, &request).unwrap();
+    assert_eq!(plan.row_count, 1, "{name} retains its ordinary header row");
+    let bundle = vec![("index.html".into(), b"<head></head>".to_vec())];
+    let receipt = publish_query::publish_query_with_sheets_in(
+        &store,
+        &request,
+        &plan.fingerprint,
+        &bundle,
+        vec![],
+        scratch.path(),
+    )
+    .unwrap();
+    let snapshot: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(std::path::Path::new(&receipt.path).join("app/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    let query = snapshot["queries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|q| q["host"] == name)
+        .unwrap();
+    let groups = query["result"]["groups"].as_array().unwrap();
+    assert_eq!(
+        groups.len(),
+        1,
+        "Include the query text retains the selecting answer"
+    );
+    let blocks = groups[0]["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0][flag], true);
+    assert!(blocks[0]["raw"].as_str().unwrap().contains(marker));
+}
+
+#[test]
+fn comments_off_keeps_header_rows_as_query_sheet_inputs() {
+    use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
+    let _integration_guard = crate::integration_lock();
+    let scratch = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    fs::create_dir_all(scratch.path().join("pages")).unwrap();
+    fs::write(
+        scratch.path().join("pages/Header.md"),
+        "status:: exported-state\n\n- Ordinary\n",
+    )
+    .unwrap();
+    fs::write(
+        scratch.path().join("pages/Preamble.md"),
+        "Prose [[PreambleTarget]]\n\n- Ordinary\n",
+    )
+    .unwrap();
+    fs::write(scratch.path().join("pages/Sheet.md"), "- {{query (property status exported-state)}}\n  tine.view:: table\n- {{query [[PreambleTarget]]}}\n  tine.view:: table\n").unwrap();
+    let store = Store::open(scratch.path(), Default::default()).unwrap().0;
+    let inputs = sheet_export_inputs(
+        &store,
+        Some(&["Sheet".into()]),
+        Some(&SheetScope::Print {
+            include_comments: Some(false),
+        }),
+    )
+    .unwrap();
+    assert_eq!(inputs.len(), 2);
+    for (input, marker) in inputs.iter().zip(["exported-state", "Prose"]) {
+        let query = input
+            .query
+            .as_ref()
+            .expect("ordinary header query survives comment omission");
+        assert_eq!(query.rows.len(), 1);
+        assert!(query.rows[0].raw.contains(marker));
+    }
+}
+
+#[test]
 fn omitted_threads_never_become_sheet_inputs_or_query_sheet_rows() {
     use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
     let _integration_guard = crate::integration_lock();
