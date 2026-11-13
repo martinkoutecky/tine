@@ -605,7 +605,11 @@ impl PagePlan<'_> {
             .graph
             .prepare_page_bytes(doc, &path, text)
             .map_err(|error| {
-                if error.kind() == io::ErrorKind::PermissionDenied {
+                if error.kind() == io::ErrorKind::PermissionDenied
+                    || error
+                        .get_ref()
+                        .is_some_and(|inner| inner.is::<crate::model::ParserPanicked>())
+                {
                     Why::Refused(Refusal::ReadOnly(error.to_string()))
                 } else {
                     Why::Failed(error.into())
