@@ -920,7 +920,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
     captureChanged = true;
     const v = !captureEnterFiles();
     writePreference(captureEnterFiles, setCaptureEnterFiles, v,
-      (next) => backend().setCaptureEnterFiles(next), "capture Enter preference");
+      (next) => backend().setCaptureEnterFiles(next), msg("toast-save-capture-enter-failed"));
   };
   return (
     <>
@@ -1335,7 +1335,7 @@ function FilesTab(props: { search: string }): JSX.Element {
     if (m === watchMode()) return;
     watchChanged = true;
     writePreference(watchMode, setWatchMode, m,
-      (next) => backend().setWatchMode(next), "file watcher mode");
+      (next) => backend().setWatchMode(next), msg("toast-save-file-watcher-failed"));
   };
   return (
     <>

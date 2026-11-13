@@ -57,6 +57,27 @@ enum Trash {
 }
 
 /// [`measure`] with the trash folder in the given state.
+/// A directory handle that can set its times. Windows opens a directory only
+/// with backup semantics, and setting times needs FILE_WRITE_ATTRIBUTES
+/// (hosted CI 43383656044: plain `File::open` was "Access is denied").
+fn open_dir_for_times(dir: &Path) -> fs::File {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)
+            .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(dir).unwrap()
+    }
+}
+
 fn measure_in(
     files: &[(String, String)],
     trash: Trash,
@@ -87,7 +108,7 @@ fn measure_in(
         // Innermost first: setting a directory's time does not touch its
         // parent's, but creating an entry does.
         for dir in folder.ancestors().take_while(|dir| dir.starts_with(&root)) {
-            fs::File::open(dir).unwrap().set_modified(old).unwrap();
+            open_dir_for_times(dir).set_modified(old).unwrap();
         }
     }
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);

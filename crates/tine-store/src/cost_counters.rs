@@ -68,6 +68,7 @@ static TRANSACTION_RECORD_PROBES: AtomicU64 = AtomicU64::new(0);
 static READDIR: AtomicU64 = AtomicU64::new(0);
 static FULL_READS: AtomicU64 = AtomicU64::new(0);
 static PREAMBLE_READS: AtomicU64 = AtomicU64::new(0);
+static SAVE_PATH_RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
 static OLD_SOURCE_PARSES: AtomicU64 = AtomicU64::new(0);
 static PARSES: AtomicU64 = AtomicU64::new(0);
 static CORPUS: AtomicU64 = AtomicU64::new(0);
@@ -335,6 +336,9 @@ mod watcher_read_trace_tests {
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Counts {
+    /// Transaction path validations, each including its canonicalization and
+    /// metadata probes; counts resolutions, not individual OS syscalls.
+    pub save_path_resolutions: u64,
     /// Transaction plan/undo records inspected for final per-file publication.
     pub transaction_record_probes: u64,
     /// Directory enumerations.
@@ -484,6 +488,7 @@ pub fn reset() {
         &READDIR,
         &FULL_READS,
         &PREAMBLE_READS,
+        &SAVE_PATH_RESOLUTIONS,
         &PARSES,
         &OLD_SOURCE_PARSES,
         &CORPUS,
@@ -538,6 +543,7 @@ pub fn reset() {
 /// multi-counter snapshot; concurrent activity may mix intervals. O(counters).
 pub fn snapshot() -> Counts {
     Counts {
+        save_path_resolutions: SAVE_PATH_RESOLUTIONS.load(Ordering::Relaxed),
         transaction_record_probes: TRANSACTION_RECORD_PROBES.load(Ordering::Relaxed),
         readdir: READDIR.load(Ordering::Relaxed),
         full_reads: FULL_READS.load(Ordering::Relaxed),
@@ -592,6 +598,10 @@ pub fn snapshot() -> Counts {
 
 pub(crate) fn file_rename() {
     FILE_RENAMES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn save_path_resolution() {
+    SAVE_PATH_RESOLUTIONS.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn rename_map_clone() {
     RENAME_MAP_CLONES.fetch_add(1, Ordering::Relaxed);
