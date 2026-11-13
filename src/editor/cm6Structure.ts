@@ -2,7 +2,7 @@ import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, exitMultilineBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
-  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection,
+  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
   selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
@@ -139,7 +139,6 @@ export function cm6Structure(ctx: StructureContext) {
   const selectBlockAtEdge = (v: EditorView, dir: -1 | 1) => {
     if (!atEdge(v, dir > 0)) return false;
     selectBlock(position().id, position().scope);
-    moveSelection(dir, true);
     return true;
   };
   const commands = guardedCommands<[EditorView]>(v => ctx.current() && !v.compositionStarted, {

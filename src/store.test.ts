@@ -16,7 +16,7 @@ import { doc, setDoc } from "./document/model";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, BUILTIN_HIDE, HIDE_ALL } from "./editor/properties";
-import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
+import { setCopyStripCollapsed } from "./copySettings";
 import { backend } from "./backend";
 import { isConflicted, installAliasDraftRouteHandler, unsavedDrafts } from "./document";
 import { baseRevFor, resolveConflict, unpublishedPages } from "./document/host/wiring";
@@ -309,7 +309,6 @@ beforeEach(() => {
   setFavorites([]);
   setRecentPages([]);
   setRightSidebar([]);
-  setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
   setCopyStripCollapsed(false);
 });
 
@@ -819,8 +818,7 @@ describe("clipboard copy strips id:: (OG parity)", () => {
     expect(copied).not.toContain("id:: 5462a76e"); // the real property is gone
   });
 
-  it("selectionMarkdown: default copies ONLY the selected block (not unselected children)", () => {
-    setCopyIncludeSubtree(false); // Tine default
+  it("selectionMarkdown: copying a parent includes its children and strips every id (GH #941)", () => {
     const parent = blk("parent\nid:: 11111111-1111-1111-1111-111111111111", [
       blk("child\nid:: 22222222-2222-2222-2222-222222222222"),
     ]);
@@ -829,18 +827,16 @@ describe("clipboard copy strips id:: (OG parity)", () => {
     const md = selectionMarkdown();
     expect(md).not.toContain("id::");
     expect(md).toContain("- parent");
-    expect(md).not.toContain("child"); // child wasn't selected → excluded
+    expect(md).toContain("\t- child");
   });
 
-  it("selectionMarkdown: include-subtree mode (OG) copies the whole sub-tree", () => {
-    setCopyIncludeSubtree(true); // = Logseq behavior
+  it("selectionMarkdown: a selected parent copies the whole subtree", () => {
     const parent = blk("parent", [blk("child")]);
     load([parent]);
     selectBlock(parent.id);
     const md = selectionMarkdown();
     expect(md).toContain("- parent");
     expect(md).toContain("\t- child");
-    setCopyIncludeSubtree(false); // restore default for other tests
   });
 
   it("collapsed:: kept by default (OG), stripped when the option is on", () => {

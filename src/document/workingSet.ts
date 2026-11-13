@@ -29,7 +29,7 @@ import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
 import { msg, type UiText } from "../i18n";
-import { selectedIds } from "./edits/selection";
+import { topSelected } from "./edits/selection";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -484,7 +484,7 @@ function pinnedPages(includeFeed = true): Set<string> {
   for (const name of unsettledPages()) pin.add(name);
   const ed = editingId();
   if (ed && doc.byId[ed]) pin.add(doc.byId[ed].page);
-  for (const id of selectedIds()) if (doc.byId[id]) pin.add(doc.byId[id].page);
+  for (const id of topSelected()) if (doc.byId[id]) pin.add(doc.byId[id].page);
   return pin;
 }
 

@@ -777,7 +777,7 @@ mod merge_sibling_guide_tests {
             "after its whole subtree",
             "**Merge selected blocks** is in **Commands**",
             "starts unbound",
-            "keeps every child under it",
+            "Children in the selected subtrees join the merged text too, even when folded",
             "It is one Undo step.",
             "a block ID that other blocks refer to moves to the merged block",
         ] {
