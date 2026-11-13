@@ -1528,9 +1528,10 @@
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" },
         { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true },
-        { "class": "exact-safety-interoperability", "userOutcome": "Keyboard Copy of a selected collapsed block puts the children it hides into the public clipboard text under the default copy setting (GH #943).", "blocking": true, "authority": "Martin decision D-20261112-SU941 (GH #943)" }
+        { "class": "core-operation", "userOutcome": "Shift+Down first selects the current block and all descendants, then extends by the next sibling subtree; native Copy retains the complete selected forest and leaves the routed page unchanged (GH #941).", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Keyboard Copy of a selected collapsed block puts the children it hides into the public clipboard text (GH #943).", "blocking": true, "authority": "Martin decisions D-20261112-SU941 and D-20261112-SU10 (GH #943 / #941)" }
       ],
-      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "With Tine's default copy setting the public clipboard text may hold only the selected block while the subtree travels in Tine's private payload; the pasted outline is the oracle."],
+      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "Clipboard indentation may vary while parent-child structure and all selected content remain intact."],
       "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation.", "Exact clipboard text or HTML flavour for block Cut/Copy."],
       "stability": "stable"
     },

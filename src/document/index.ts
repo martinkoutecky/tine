@@ -16,9 +16,14 @@
  * replacement leaves the current edit intact. Satellite/scratch loads use
  * `ensurePageLoaded` and cannot enable persistence.
  *
- * `selectionMarkdown(includeSubtree?)` returns public clipboard Markdown in
- * selected-root order, honoring the copy preference unless overridden. Cuts
- * pass true to include every removed descendant. O(visible-order resolution + selected subtree bytes);
+ * `selectedIds()` returns the complete subtree closure of the selection in
+ * display order, including folded descendants. O(1) cached read, O(selected
+ * blocks) to materialize after endpoint/tree changes. `singleSelectedId()`
+ * returns the sole selected subtree root, or null for several roots.
+ * `topSelected()` returns those selected roots, O(1) cached read; operations
+ * that move/delete subtrees or enter an editor use it to address each unit once.
+ * `selectionMarkdown()` returns public clipboard Markdown in selected-root
+ * order, always including descendants. O(selected subtree bytes);
  * an empty selection returns an empty string; no save or undo side effects.
  *
  * Editing. Change a page only through an intent exported here (`setRaw`,
@@ -117,7 +122,7 @@ export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, c
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
 export { blockExternalId, blockPositionRef, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, resolveBlockRef, settleBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
-export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, mergeSelection, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, selectionScope, setSelectionHeading, singleSelectedId } from "./edits/selection";
+export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, mergeSelection, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, selectionScope, setSelectionHeading, singleSelectedId, topSelected } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { pageInstanceGeneration } from "./instance";

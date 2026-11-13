@@ -27,8 +27,6 @@ import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import {
-  copyIncludeSubtree,
-  setCopyIncludeSubtree,
   copyStripCollapsed,
   setCopyStripCollapsed,
   refClickZoom,
@@ -876,15 +874,6 @@ function EditorTab(props: { search: string }): JSX.Element {
             >{t("settings-ui-reset-ranking")}</button>
           </>
         </Field>
-
-        <OgField
-        setting={settings["settings-ui-copy-a-parent-block-s-sub-blocks"]}
-
-        ogNote={msg("settings-og-copy-subtree")}
-        ogValue={true}
-        on={copyIncludeSubtree()}
-        onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
-      />
 
         <OgField
         setting={settings["settings-ui-strip-collapsed-when-copying"]}

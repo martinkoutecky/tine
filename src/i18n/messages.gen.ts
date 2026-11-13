@@ -2526,7 +2526,6 @@ export interface MessageArgs {
   "settings-could-not-load-automatic-update-preference": {};
   "settings-could-not-load-block-reference-preference": {};
   "settings-could-not-load-collapsed-copy-preference": {};
-  "settings-could-not-load-copy-subtree-preference": {};
   "settings-could-not-load-editor-command": { "id": string | number };
   "settings-could-not-load-local-image-access-preference": {};
   "settings-could-not-load-reference-completion-preference": {};
@@ -2574,7 +2573,6 @@ export interface MessageArgs {
   "settings-newest-first": {};
   "settings-no-underline": {};
   "settings-og-copy-collapsed": {};
-  "settings-og-copy-subtree": {};
   "settings-og-reference-spacing": {};
   "settings-og-reference-zoom": {};
   "settings-oldest-first": {};
@@ -2628,14 +2626,12 @@ export interface MessageArgs {
   "settings-search-carry-over": {};
   "settings-search-click-a-block-reference-to-zoom-in": {};
   "settings-search-clipboard-properties": {};
-  "settings-search-clipboard-subtree": {};
   "settings-search-closers-selections-backspace": {};
   "settings-search-code-blocks-line-wrapping-long-lines": {};
   "settings-search-color-scheme": {};
   "settings-search-comment-author-name-margin-reply": {};
   "settings-search-comment-margin": {};
   "settings-search-comment-threads-hide-show": {};
-  "settings-search-copy-a-parent-block-s-sub-blocks": {};
   "settings-search-default-journal-template": {};
   "settings-search-default-nord-solarized-gruvbox-soft-medium-light": {};
   "settings-search-developer-tools": {};
@@ -2780,7 +2776,6 @@ export interface MessageArgs {
   "settings-ui-config-edn-could-not-be-read-this-graph-is": {};
   "settings-ui-conflicts": {};
   "settings-ui-controls-enter-for-non-exact-name-and-name-completion": {};
-  "settings-ui-copy-a-parent-block-s-sub-blocks": {};
   "settings-ui-could-not-load-advanced-section-preference": {};
   "settings-ui-could-not-save-advanced-section-preference": {};
   "settings-ui-couldn-t-do-that": { "value1": string | number };
@@ -2929,7 +2924,6 @@ export interface MessageArgs {
   "settings-ui-use-your-os-s-native-window-frame-title-bar": {};
   "settings-ui-watch-for-external-edits": {};
   "settings-ui-wednesday": {};
-  "settings-ui-when-you-copy-cut-a-selected-block-that-has": {};
   "settings-ui-which-markers-tab-cycle-through-and-what-new-tasks": {};
   "settings-ui-wide-mode": {};
   "settings-ui-window-controls": {};

@@ -70,7 +70,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/backgroundFlush.ts#installBackgroundFlush.flush": ["flushAll", "flushAll"],
   "src/clipboard.ts#copyBlockOutline": ["writeRich"],
   "src/components/primitives.ts#openExternal": ["openExternal"],
-  "src/copySettings.ts#initCopySettings": ["getAppBool", "getAppBool", "getAppBool"],
+  "src/copySettings.ts#initCopySettings": ["getAppBool", "getAppBool"],
   "src/debug.ts#dbg": ["debugLog"],
   "src/editor/linkDefault.ts#initLinkDefault": ["setAppString"],
   "src/launcherRanking.ts#initLauncherRankingSetting": ["getAppBool"],

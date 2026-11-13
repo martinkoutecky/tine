@@ -240,6 +240,19 @@ it("GH #428 can remap Escape to editing a single selected block", () => {
   dispose();
 });
 
+it("editing a selected folded subtree returns to its root, not a hidden child (GH #941)", () => {
+  loadSingle({ name: "Selection", kind: "page", title: "Selection", pre_block: null, blocks: [
+    { id: "parent", raw: "Parent", collapsed: true, children: [
+      { id: "hidden", raw: "Child", collapsed: false, children: [] },
+    ] },
+  ] });
+  selectBlock("parent");
+  expect(selectedIds()).toEqual(["parent", "hidden"]);
+  paletteCommands().find(c => c.id === "editor/edit-selected-block")!.run();
+  expect(editingId()).toBe("parent");
+  expect(hasSelection()).toBe(false);
+});
+
 it("GH #587 activates visible tab slots in the focused pane, with slot nine meaning last", () => {
   const snapshot: PaneSnapshot = {
     tabs: Array.from({ length: 11 }, (_, i) => ({ history: [{ kind: "page" as const, name: `Tab ${i + 1}`, pageKind: "page" as const }], pos: 0, pinned: i === 0 })),
