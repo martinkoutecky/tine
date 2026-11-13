@@ -14,12 +14,7 @@ fn put(root: &std::path::Path, rel: &str, bytes: &[u8]) {
 }
 
 fn fixture() -> (PathBuf, Store) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-scan-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir("tine-scan-");
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

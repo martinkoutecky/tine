@@ -24,12 +24,7 @@ impl Fixture {
     }
 
     fn with_watch(watch: WatchMode, files: &[(&str, &[u8])]) -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "tine-transaction-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::fresh_dir("tine-transaction-");
         for dir in ["pages", "journals", "assets", "logseq"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }

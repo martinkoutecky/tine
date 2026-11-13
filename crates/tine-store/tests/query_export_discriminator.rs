@@ -12,9 +12,7 @@ use tine_store::{OpenOptions, Store};
 #[test]
 fn export_runs_each_query_through_the_engine_the_macro_reader_chose() {
     let _integration_guard = crate::integration_lock();
-    let dir =
-        std::env::temp_dir().join(format!("tine-export-discriminator-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-export-discriminator-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::write(
@@ -66,8 +64,7 @@ fn export_runs_each_query_through_the_engine_the_macro_reader_chose() {
 #[test]
 fn export_expands_a_tine_query_macro_through_the_tql_dialect() {
     let _integration_guard = crate::integration_lock();
-    let dir = std::env::temp_dir().join(format!("tine-export-tql-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-export-tql-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::write(dir.join("pages/Notes.md"), "- TODO plan\n- DONE other\n").unwrap();

@@ -1042,14 +1042,8 @@ mod tests {
     }
 
     fn roots(label: &str) -> (PathBuf, PathBuf) {
-        let base =
-            std::env::temp_dir().join(format!("tine-publish-{label}-{}", std::process::id()));
-        let outside = std::env::temp_dir().join(format!(
-            "tine-publish-{label}-outside-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&base);
-        let _ = fs::remove_dir_all(&outside);
+        let base = crate::test_support::fresh_dir(&format!("tine-publish-{label}-"));
+        let outside = crate::test_support::fresh_dir(&format!("tine-publish-{label}-outside-"));
         fs::create_dir_all(&base).unwrap();
         fs::create_dir_all(&outside).unwrap();
         (base, outside)

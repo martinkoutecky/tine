@@ -16,14 +16,7 @@ fn rust_save_matches_shared_page_header_golden() {
         "I-12: page-header golden needs save fixtures"
     );
 
-    let root = std::env::temp_dir().join(format!(
-        "tine-i12-header-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir("tine-i12-header-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;

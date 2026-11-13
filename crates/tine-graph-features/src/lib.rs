@@ -4,6 +4,10 @@
 //! writes use guarded transactions or the Store's graph creation/publish paths.
 //! Callers need no graph path, lock, cache state, or write protocol.
 
+#[cfg(test)]
+#[path = "../../test-support/temp_dir.rs"]
+mod test_support;
+
 pub mod assets;
 mod build_graph;
 pub mod config;
