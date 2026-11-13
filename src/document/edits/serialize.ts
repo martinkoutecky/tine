@@ -12,14 +12,12 @@ import { type BlockDto } from "../../types";
  *    referenced block doesn't leak `id:: <uuid>` into pasted text. (Quick-capture
  *    writing to a journal FILE passes false to keep `id::`.)
  *  - `stripCollapsed`: also drop `collapsed::` (OG keeps it; opt-in cleaner copy).
- *  - `onlySelected`: when a Set is passed, recurse only into children that are in it
- *    (used by the "copy only the selected blocks, not the whole sub-tree" mode). */
+ */
 export function blockSubtreeMarkdown(
   id: string,
   level = 0,
   stripId = false,
-  stripCollapsed = false,
-  onlySelected?: Set<string>
+  stripCollapsed = false
 ): string {
   const n = doc.byId[id];
   if (!n) return "";
@@ -34,15 +32,14 @@ export function blockSubtreeMarkdown(
     : n.raw;
   const out = markdownBlockLines(raw, level);
   for (const c of n.children) {
-    if (onlySelected && !onlySelected.has(c)) continue;
-    out.push(blockSubtreeMarkdown(c, level + 1, stripId, stripCollapsed, onlySelected));
+    out.push(blockSubtreeMarkdown(c, level + 1, stripId, stripCollapsed));
   }
   return out.join("\n");
 }
 
 /**
- * Build the private clipboard forest from selection roots. Unlike the public
- * text flavor this always includes the complete subtree and exact raw strings,
+ * Build the private clipboard forest from selection roots, with complete
+ * subtrees and exact raw strings,
  * including id::/collapsed:: and hidden properties. Returns null (without
  * affecting the public copy) when the bounded in-memory payload is too large.
  */
@@ -97,7 +94,7 @@ export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | nul
  *  subtrees — input to the configurable text exporter (Copy / Export modal). */
 export function exportNodesFor(ids: string[]): ExportNode[] {
   const set = new Set(ids);
-  // A multi-selection (selectedIds) is a flat slice of visible order, so it can
+  // A multi-selection (selectedIds) includes complete subtrees, so it can
   // contain BOTH a parent and its descendants. Export only the selection's roots
   // — a kept node's subtree already carries its children, so emitting a selected
   // child again as a top-level node would duplicate it (the "1 2 3 1 2 3" bug).

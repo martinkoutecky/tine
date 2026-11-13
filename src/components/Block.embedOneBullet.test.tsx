@@ -177,7 +177,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("D-20261030-EMB: the embed's one 
       closeContextMenu();
       const editor = await editRoot(root);
       editor.keydown(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-      expect(selectedIds()).toEqual(["target"]);
+      expect(selectedIds()).toEqual(["target", "kid", "grandkid"]);
     } finally { dispose(); }
   });
 });
