@@ -54,6 +54,7 @@ function childrenValue(entries: readonly CommentChild[] | undefined): CommentChi
 export function createCommentIndex(trees: Accessor<readonly string[]>): CommentIndex {
   const [revision, bump] = createSignal(undefined, { equals: false });
   const [membership, remeasure] = createSignal(undefined, { equals: false });
+  const [scanned, didScan] = createSignal(undefined, { equals: false });
   let comments = new Map<string, CommentChild>();
   let byParent = new Map<string, CommentChild[]>();
   let rootList: readonly CommentChild[] = [];
@@ -74,11 +75,8 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
     for (let at: string | null = id; at !== null; at = docNode(at)?.parent ?? null) if (treeRoots.has(at)) return true;
     return false;
   });
-  // The rescan is a memo that every reader tracks, so Solid brings it up to date
-  // before any reader reads it: a structural edit never shows a reader the old
-  // membership (a just-created comment as a body block, a deleted one's rows).
-  // Readers return their previous value when their own answer is unchanged.
-  let generation = 0;
+  // A stable scan result preserves Solid's freshness ordering without
+  // invalidating unchanged child lists. Root readers track `scanned` instead.
   const scan = createMemo(() => {
     membership();
     const ids = trees();
@@ -112,11 +110,18 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
           ancestors.set(at, !!a && a.parent !== null && !!commentChildOf(at, a.raw, formatOf(a.page)));
         }
       }
+      const previousParents = byParent;
       comments = found; byParent = parents; treeRoots = new Set(ids); above = ancestors;
       // The one root predicate (`threadRootOf`), asked once per comment.
       rootList = [...found.values()].filter(entry => threadRootOf(entry.id, formatOf(docNode(entry.id)!.page)) === entry.id);
       rootParents = [...new Set(rootList.map(entry => docNode(entry.id)!.parent!))]
         .sort((a, b) => positions.get(a)! - positions.get(b)!);
+      for (const [parent, entries] of previousParents) {
+        if (!sameEntries(entries, parents.get(parent) ?? [])) watchers.get(parent)?.notify();
+      }
+      for (const parent of parents.keys()) {
+        if (!previousParents.has(parent)) watchers.get(parent)?.notify();
+      }
       onCleanup(onPageRawChanged(changed => {
         const n = docNode(changed);
         const known = comments.get(changed);
@@ -135,13 +140,13 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
         watchers.get(parentId)?.notify();
         if (rootList.includes(known)) { rootList = rootList.map(entry => entry === known ? next : entry); bump(); }
       }, pages));
+      didScan();
     });
-    return ++generation;
   });
 
   /** Open thread roots strictly below `id`'s direct children, in file order. O(roots × depth). */
   const openRootsBelow = (id: string): readonly string[] => {
-    scan(); revision();
+    scan(); scanned(); revision();
     return untrack(() => {
       const roots: string[] = [];
       for (const root of rootList) {
@@ -176,8 +181,8 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
       // One leased producer per parent, shared by its outline and review views.
       return held.value;
     },
-    roots: () => { scan(); revision(); return rootList; },
-    parents: () => { scan(); return rootParents; },
+    roots: () => { scan(); scanned(); revision(); return rootList; },
+    parents: () => { scan(); scanned(); return rootParents; },
     openBelow: id => openRootsBelow(id).length,
     openRootsBelow,
   };

@@ -1,5 +1,5 @@
 import { msg } from "./i18n";
-import { node as docNode } from "./document";
+import { hasSelection, topSelected, node as docNode } from "./document";
 import { captureHistoryEditorContext, editingId, startEditing } from "./editorController";
 import { commandTargetIds } from "./blockRefActions";
 import { focusedRouter, mainRouter, paneRouter } from "./panes";
@@ -35,7 +35,7 @@ function keepEditing(id: string, offset: number, router: PaneRouter): void {
 /** Zoom into the selected block, else the block being edited (the last one when
  *  several are selected). An edit continues in the zoomed view. */
 export function zoomInOnTarget(): boolean {
-  const ids = commandTargetIds();
+  const ids = hasSelection() ? topSelected() : commandTargetIds();
   const id = ids[ids.length - 1];
   if (!id || !docNode(id)) {
     pushToast(msg("commands-select-a-block-or-edit-one-to-zoom-in"), "warn");

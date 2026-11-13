@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-guide/src/templates/${page}.md`, "utf8");
 
+it("the Guide explains whole-subtree selection and the keyboard's first selection step (GH #941)", () => {
+  const tips = guide("tips");
+  for (const detail of ["A selected block includes **its whole subtree**", "Copying a parent always includes its children", "selects that block with its children", "Further presses extend by sibling subtrees", "drag across blocks", "the selection stays within that outline"]) expect(tips).toContain(detail);
+});
+
 it("the Guide explains usable journals during graph loading and the later referenced-day merge", () => {
   const journals = guide("journals-tasks-scheduling");
   for (const detail of ["today's journal and nearby saved days appear while the graph is still loading", "Days mentioned only by other blocks join", "keeping your place and any open editor"]) expect(journals).toContain(detail);

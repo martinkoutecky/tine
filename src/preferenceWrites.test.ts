@@ -4,7 +4,7 @@ import { toasts, setToasts } from "./toasts";
 import { assetNameFormat, setAssetNameFormat, initAssetSettings } from "./assetSettings";
 import { launcherRankingEnabled, setLauncherRankingEnabled } from "./launcherRanking";
 import { mediaEditorCommand, setMediaEditorCommand } from "./mediaEditorSettings";
-import { copyIncludeSubtree, setCopyIncludeSubtree } from "./copySettings";
+import { copyStripCollapsed, setCopyStripCollapsed } from "./copySettings";
 import { navReuseTabs, setNavReuseTabs } from "./navSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "./localFileSettings";
 import { spellcheckEnabled, setSpellcheckEnabled } from "./spellcheckSettings";
@@ -23,16 +23,16 @@ it("restores device preferences and reports a rejected write", async () => {
   const beforeAsset = assetNameFormat();
   const beforeRanking = launcherRankingEnabled();
   const beforeMedia = mediaEditorCommand("editor-test");
-  const beforeCopy = copyIncludeSubtree();
+  const beforeCopy = copyStripCollapsed();
   setAssetNameFormat("failed.%ext");
   setLauncherRankingEnabled(!beforeRanking);
   setMediaEditorCommand("editor-test", "failed-editor");
-  setCopyIncludeSubtree(!beforeCopy);
+  setCopyStripCollapsed(!beforeCopy);
   await flush();
   expect(assetNameFormat()).toBe(beforeAsset);
   expect(launcherRankingEnabled()).toBe(beforeRanking);
   expect(mediaEditorCommand("editor-test")).toBe(beforeMedia);
-  expect(copyIncludeSubtree()).toBe(beforeCopy);
+  expect(copyStripCollapsed()).toBe(beforeCopy);
   expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(4);
 });
 
