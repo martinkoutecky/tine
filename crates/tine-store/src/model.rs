@@ -3258,7 +3258,6 @@ impl Graph {
         }
         // A failed read must not fall through to a stale cached DTO.
         let content = read?;
-        let rev = Some(content_rev(&content));
         // Serve from the cache if it's ALREADY built, but never trigger a build
         // here: a cold-cache `with_pages` would synchronously parse the entire
         // graph just to return one page, making first paint scale with graph size
@@ -3270,18 +3269,13 @@ impl Graph {
         if cache_ready {
             if let Some(mut dto) = self.peek_cached_page(entry) {
                 dto.read_only = read_only_org(&entry.path, &content);
-                dto.rev = rev;
+                dto.rev = Some(content_rev(&content));
                 return Ok(dto);
             }
         }
         // Cache miss: parse the bytes we already read (propagate the original read
         // error if it failed).
-        let mut doc = parse_doc(&entry.path, &content);
-        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
-        let mut dto = page_dto(entry, &doc);
-        dto.read_only = read_only_org(&entry.path, &content);
-        dto.rev = rev;
-        Ok(dto)
+        Ok(Self::dto_of(entry, &content))
     }
 
     /// Directly read the caller-selected file, including a duplicate-day stray;
@@ -3297,7 +3291,7 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        Ok(Some(Self::dto_of(&entry, abs, &content)))
+        Ok(Some(Self::dto_of(&entry, &content)))
     }
 
     /// The DTO of `bytes` as the page file at `abs`, as a read of that file
@@ -3316,15 +3310,21 @@ impl Graph {
         let Some(entry) = self.page_entry_in(abs, Some(content)) else {
             return Ok(None);
         };
-        Ok(Some(Self::dto_of(&entry, abs, content)))
+        // Contained here, not by each caller: the page host's mail has no
+        // other guard, and a parser or projection panic must reach it as an
+        // unreadable page, never unwind through its driver (merge review F1).
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::dto_of(&entry, content)
+        }))
+        .map(Some)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
     }
 
-    fn dto_of(entry: &PageEntry, abs: &Path, content: &str) -> PageDto {
-        let mut doc = parse_doc(abs, content);
-        assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
+    fn dto_of(entry: &PageEntry, content: &str) -> PageDto {
+        let (doc, observed) = parse_page_content(entry, content);
         let mut dto = page_dto(entry, &doc);
-        dto.read_only = read_only_org(abs, content);
-        dto.rev = Some(content_rev(content));
+        dto.read_only = read_only_org(&entry.path, content);
+        dto.rev = Some(observed.rev);
         dto
     }
 
@@ -4413,8 +4413,11 @@ impl Graph {
         path: &Path,
         existing: Option<&str>,
     ) -> io::Result<(Vec<u8>, Document)> {
-        self.prepare_page_content(page, path, existing)
-            .map(|(content, doc)| (content.into_bytes(), doc))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.prepare_page_content(page, path, existing)
+        }))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))?
+        .map(|(content, doc)| (content.into_bytes(), doc))
     }
 
     pub(crate) fn transaction_note_page(&self, path: &Path, bytes: &[u8]) {
@@ -4454,6 +4457,7 @@ impl Graph {
                 #[cfg(feature = "test-faults")]
                 crate::cost_counters::old_source_parse();
                 let (old, opts) = parse_doc_with_opts(path, source);
+                prime_projections(&old);
                 (Some(old), opts)
             },
         );

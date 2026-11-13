@@ -10,7 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
+- Remove author works on a block selection, including folded descendants, from Commands, a bound shortcut or the context menu. It skips read-only blocks and removes all selected attributions in one undo step (#918).
 - Block selections now include each selected block's whole subtree, folded children included. Shift+Up/Down extend by sibling subtrees, and Shift+click, dragging, select-all and bulk actions use the same selection. Copying a parent always includes its children; the parent-copy setting has been retired (#941).
+- Search labels matching margin comments and replies as comments, with their host breadcrumbs (COMMENT-OUT-V2).
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
 - An unreadable `config.edn` is explained on page banners and in Settings errors. A live arrival raises one notice and makes open pages read-only; repairing it clears the graph restriction without reopening (Hl2_0).
 - A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).
@@ -70,6 +72,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A page whose properties cannot be parsed is refused consistently while opening, including during startup, and an edit cannot overwrite its unreadable bytes (internal: REG-READABLE-OWNER-COLD; HbcTw).
 - The sidebar keeps workspace creation and menu controls within reach instead of clipping them into the editor (IcYyc).
 - All Pages keeps timestamps and backlink counts current when updates for different pages arrive out of order (REG-ALLPAGES-METRIC-ORDER).
 - Enter after text in a query or linked-reference result creates a child and keeps editing it, even when the child does not match the query (internal: UI-QUERY-REF-ENTER-EDITOR-1113).

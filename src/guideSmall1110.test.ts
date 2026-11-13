@@ -15,4 +15,6 @@ it("the Guide names the Remove author command and how to run it (GH #918)", () =
   const tips = template("tips");
   expect(tips).toContain("**Remove author** is also a command");
   expect(tips).toContain("with the block selected, or assign it a key under **Settings → Shortcuts**");
+  expect(tips).toContain("With several blocks selected, it removes authors from the whole selection, including folded descendants, in one undo step");
+  expect(tips).toContain("Blocks without an author and read-only pages are skipped");
 });

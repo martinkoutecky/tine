@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::model::{TEST_INDEX_PANIC_SENTINEL, TEST_PAGE_PARSE_PANIC_SENTINEL};
+use crate::{Refusal, Why};
 use tine_core::doc::TEST_PROJECTION_PANIC_SENTINEL;
 
 pub(super) fn graph_with_bad_page(tag: &str, bad: &str, fillers: usize) -> PathBuf {
@@ -171,6 +172,130 @@ fn a_page_property_projection_panic_leaves_one_unreadable_file_and_a_ready_graph
             fillers,
             &format!("page-property-{fillers}"),
         );
+    }
+}
+
+fn unreadable_property_page(loading: bool) -> (tempfile::TempDir, Arc<Store>, String) {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("pages")).unwrap();
+    let bad = format!("note:: {TEST_PROJECTION_PANIC_SENTINEL}\n\n- body\n");
+    fs::write(root.path().join("pages/Bad.md"), &bad).unwrap();
+    fs::write(root.path().join("pages/Good.md"), "- editable\n").unwrap();
+    if loading {
+        fs::write(root.path().join(".tine-test-pause-load"), "").unwrap();
+    }
+    let store = Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+    if !loading {
+        assert!(matches!(settled(&store), Ok(true)));
+        store.watch.stop_background_for_test();
+        assert_eq!(
+            store.whole_graph().unwrap().unreadable_files()[0]
+                .0
+                .as_str(),
+            "pages/Bad.md"
+        );
+    }
+    (root, store, bad)
+}
+
+#[test]
+fn an_unreadable_page_refuses_cold_and_warm_reads() {
+    // Cost counters are process-global: run this test alone in its own image.
+    const CHILD: &str = "TINE_READABLE_OWNER_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(crate::test_binary::own_test_binary())
+            .args([
+                "--exact",
+                "store::load_panic_tests::an_unreadable_page_refuses_cold_and_warm_reads",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    let id = PageId::from("pages/Bad.md");
+    for (cold, loading) in [(true, false), (false, false), (true, true)] {
+        let (root, store, bad) = unreadable_property_page(loading);
+        if cold {
+            store.graph.invalidate_cache();
+        }
+        crate::cost_counters::reset();
+        let opened = store.page(&id);
+        let cost = crate::cost_counters::snapshot();
+        assert_eq!(cost.full_reads, 1, "cold={cold}: {cost:?}");
+        assert_eq!((cost.files_written, cost.fsyncs), (0, 0));
+        assert!(
+            matches!(opened, Err(StoreError::Unparseable(_))),
+            "cold={cold}: opening an unreadable page returned {:?}",
+            opened.as_ref().map(|read| read.doc.read_only)
+        );
+        let named = store.page_named("Bad", PageKind::Page);
+        assert!(
+            matches!(named, Err(StoreError::Unparseable(_))),
+            "cold={cold}"
+        );
+        crate::cost_counters::reset();
+        let supplied = store.page_of(&id, bad.as_bytes());
+        assert_eq!(crate::cost_counters::snapshot().full_reads, 0);
+        assert!(
+            matches!(supplied, Err(StoreError::Unparseable(_))),
+            "cold={cold}"
+        );
+        // Repair is observed from the next read's bytes, without a graph rebuild.
+        fs::write(root.path().join(id.as_str()), "- repaired\n").unwrap();
+        assert!(!store.page(&id).unwrap().doc.read_only);
+        store.close();
+    }
+}
+
+#[test]
+fn an_unreadable_pages_edit_cannot_be_saved_cold_or_warm() {
+    for cold in [true, false] {
+        let (root, store, bad) = unreadable_property_page(false);
+        let id = PageId::from("pages/Bad.md");
+        let mut doc = store.page(&PageId::from("pages/Good.md")).unwrap().doc;
+        doc.name = "Bad".into();
+        doc.title = "Bad".into();
+        doc.pre_block = Some("note:: proposed replacement\n".into());
+        doc.blocks[0].raw = "an edit that must not replace unreadable bytes".into();
+        let (_, rev) = store.read(&id.file(), None).unwrap();
+        if cold {
+            store.graph.invalidate_cache();
+        }
+        let mut tx = store.page_plan(Some(crate::EditKind::SaveBlock));
+        tx.save_page(
+            &[crate::EditKind::SaveBlock],
+            &id,
+            SaveBase::Existing(rev),
+            &doc,
+        );
+        match tx.plan() {
+            Err(Why::Refused(Refusal::ReadOnly(_))) => {}
+            Err(other) => panic!("cold={cold}: expected parse refusal, got {other:?}"),
+            Ok(op) => {
+                let writer = crate::test_host_writer::HostWriter::start(&store);
+                let saved = writer.apply(op);
+                let changed = fs::read(root.path().join(id.as_str())).unwrap() != bad.as_bytes();
+                panic!("cold={cold}: unreadable edit admitted: {saved:?}; disk changed={changed}");
+            }
+        }
+        let submitted =
+            store
+                .page_plan(None)
+                .serialize_host_input(&id.file(), &doc, Some(bad.as_bytes()));
+        assert!(matches!(submitted, Err(Why::Refused(Refusal::ReadOnly(_)))));
+        assert_eq!(
+            fs::read(root.path().join(id.as_str())).unwrap(),
+            bad.as_bytes()
+        );
+        store.close();
     }
 }
 
