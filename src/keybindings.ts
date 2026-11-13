@@ -1192,6 +1192,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   // and macOS/iOS/Android use DOM input.
   // Select one owner, rather than guessing duplicate presses from their timing.
   const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
+  let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
   const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();
     else goForward();
@@ -1205,7 +1206,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
           "history-navigate",
           (e) => {
-            if (!nativeMainHistory || e.payload?.target !== target) return;
+            if (!nativeMainHistory || e.payload?.target !== target || mainMouse?.gestureActive()) return;
             if (e.payload.direction === "back" || e.payload.direction === "forward") {
               navigateMouseHistory(e.payload.direction);
             }
@@ -1229,12 +1230,14 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     const disposeMouse = installMouseHistory(win, win.document, direction => {
       if (!nativeMainHistory || id !== MAIN_WINDOW_ID) navigateMouseHistory(direction);
     });
+    if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
+      if (mainMouse === disposeMouse) mainMouse = undefined;
       disposeMouse();
     };
   });

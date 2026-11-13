@@ -362,6 +362,33 @@ describe("mouse side-button navigation (#156)", () => {
     }
   });
 
+  it.each(["windows", "linux"])("%s native presses wait while the primary button selects or drags, and never stay blocked (GH #948)", async () => {
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Gesture ${i}`, "page");
+      const back = () => { nativeHistory.listener?.({ payload: { direction: "back", target: "main" } }); return router.route(); };
+      const at = (i: number) => ({ kind: "page", name: `Gesture ${i}` });
+      fake.dispatchMouse("mousedown", 0, 1);
+      expect(back()).toMatchObject(at(3));
+      fake.dispatchMouse("mouseup", 0);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragstart", 0, 1);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragend", 0);
+      expect(back()).toMatchObject(at(1));
+      // A primary release the webview never delivered must not block later presses.
+      fake.dispatchMouse("mousedown", 0, 1);
+      fake.dispatchMouse("mousemove", 0, 0);
+      expect(back()).toMatchObject(at(0));
+    } finally {
+      dispose();
+    }
+  });
+
   it("routes the macOS Wry down/up events into page history (GH #780)", () => {
     const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
     const fake = installFakeWindow();

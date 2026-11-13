@@ -15,6 +15,8 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
       cancelled: event.defaultPrevented || primaryHeld || dragging || !!(event.buttons & 7) };
   };
   const move = (event: MouseEvent) => {
+    // A release the webview never delivered must not leave a gesture held.
+    if (!(event.buttons & 7)) { primaryHeld = false; dragging = false; }
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 5) cancel();
   };
   const up = (event: MouseEvent) => {
@@ -50,5 +52,7 @@ export function installMouseHistory(win: Window, doc: Document, navigate: (direc
     for (const [name, listener] of Object.entries(listeners)) win.removeEventListener(name, listener as EventListener, capture);
     doc.removeEventListener?.("selectionchange", cancel);
   };
+  /** True while a selection or drag holds the mouse; the native side-button hook checks it in O(1). */
+  dispose.gestureActive = () => primaryHeld || dragging;
   return dispose;
 }
