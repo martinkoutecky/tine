@@ -34,7 +34,7 @@ import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission"
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
-import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
+import { promotePagePreamble, pageInstanceGeneration, topSelected } from "../document";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
@@ -152,7 +152,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   onCleanup(() => { alive = false; });
   const windowed = () => props.surface === "ref" && !props.eager;
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
-    || selectedIds().some(id => docNode(id)?.page === props.page);
+    || topSelected().some(id => docNode(id)?.page === props.page);
   const wanted = () => inWindow() || forced() || (visited() && inPageFindOpen()) || (near() && (pinned() || printingOutline()));
   const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {

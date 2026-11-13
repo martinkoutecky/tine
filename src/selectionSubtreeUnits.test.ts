@@ -1,5 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-const counts = vi.hoisted(() => ({ orders: 0 }));
+const counts = vi.hoisted(() => ({ orders: 0, children: 0 }));
+vi.mock("./document/commentOrder", async original => {
+  const order = await original<typeof import("./document/commentOrder")>();
+  return { ...order,
+    commentsFirst: (...args: Parameters<typeof order.commentsFirst>) => { counts.children++; return order.commentsFirst(...args); },
+  };
+});
 vi.mock("./document/tree", async original => {
   const tree = await original<typeof import("./document/tree")>();
   return { ...tree,
@@ -142,4 +148,27 @@ describe("complete subtree selection units (GH #941)", () => {
     expect(selectionMarkdown()).toBe("- parent\n\t- child");
   });
 
+  it("Shift+click into a selected parent, then Shift+Down, continues after that parent (review round 3 F1)", () => {
+    loadSingle({ name: "Units", title: "Units", kind: "page", pre_block: null,
+      blocks: [block("B", [block("B1"), block("B2")]), block("C")] });
+    selectBlock("B");
+    extendSelectionTo("B1");
+    expect(selectedIds()).toEqual(["B", "B1", "B2"]);
+    moveSelection(1, true);
+    expect(selectedIds()).toEqual(["B", "B1", "B2", "C"]);
+  });
+
+  it.each([32, 4096])("query-scope keypresses never walk %i folded descendants (review round 3 F2)", hidden => {
+    loadSingle({ name: "Units", title: "Units", kind: "page", pre_block: null, blocks: [block("R1"),
+      block("P", Array.from({ length: hidden }, (_, at) => block(`P${at}`)), true), block("R3")] });
+    const scope: OutlineScope = { roots: ["R1", "P", "R3"], navOnly: true };
+    selectBlock("R1", scope);
+    expect(topSelected()).toEqual(["R1"]);
+    counts.children = 0;
+    moveSelection(1, true); expect(topSelected()).toEqual(["R1", "P"]);
+    moveSelection(1, true); expect(topSelected()).toEqual(["R1", "P", "R3"]);
+    moveSelection(-1, true); expect(topSelected()).toEqual(["R1", "P"]);
+    expect(counts.children).toBeLessThanOrEqual(16);
+    expect(selectedIds()).toHaveLength(hidden + 2);
+  });
 });

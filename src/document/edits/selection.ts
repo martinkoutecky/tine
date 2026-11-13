@@ -126,34 +126,51 @@ const selectionState = createRoot(() => createMemo(() => {
     hi = fullEnd[fullIndex.get(last)!];
   }
   if (!arbitrary) return { topology, lo, hi, exact: null };
-  const ids: string[] = [], roots: string[] = [];
-  const set = new Set<string>();
-  const add = (id: string) => {
-    if (set.has(id) || !doc.byId[id]) return;
-    set.add(id); ids.push(id);
-    for (const child of commentsFirst(doc.byId[id].children)) add(child);
-  };
+  // O(view rows in range): keep the selected roots only. Membership is an
+  // ancestor walk and the descendant list is materialized on demand, so an
+  // endpoint step never pays for folded subtrees.
+  const roots: string[] = [];
+  const rootSet = new Set<string>();
   if (i !== undefined && j !== undefined) {
     for (let at = Math.min(i, j); at <= Math.max(i, j); at = end[at] + 1) {
-      if (set.has(order[at])) continue;
-      roots.push(order[at]); add(order[at]);
+      if (doc.byId[order[at]] && !rootSet.has(order[at])) { rootSet.add(order[at]); roots.push(order[at]); }
     }
   }
   // Query rows may list a child before its (folded) parent: keep only roots no
   // selected ancestor already carries, so each block is emitted once.
   const covered = (id: string) => {
-    for (let p = doc.byId[id]?.parent; p; p = doc.byId[p]?.parent) if (set.has(p)) return true;
+    for (let p = doc.byId[id]?.parent; p; p = doc.byId[p]?.parent) if (rootSet.has(p)) return true;
     return false;
   };
-  if (roots.some(covered)) roots.splice(0, roots.length, ...roots.filter((id) => !covered(id)));
-  return { topology, lo, hi, exact: { ids, roots, set } };
+  if (roots.some(covered)) {
+    const kept = roots.filter((id) => !covered(id));
+    rootSet.clear();
+    for (const id of kept) rootSet.add(id);
+    roots.splice(0, roots.length, ...kept);
+  }
+  return { topology, lo, hi, exact: { roots, rootSet } };
 }));
+
+/** Subtree ids of `roots` in display preorder; stops and returns null once more
+ *  than `limit` ids would be listed, so callers can bound their work. */
+function subtreeIds(roots: readonly string[], limit = Infinity): string[] | null {
+  const ids: string[] = [];
+  const stack = [...roots].reverse();
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (!doc.byId[id]) continue;
+    if (ids.push(id) > limit) return null;
+    const children = commentsFirst(doc.byId[id].children);
+    for (let at = children.length - 1; at >= 0; at--) stack.push(children[at]);
+  }
+  return ids;
+}
 
 const selectionSnapshot = createRoot(() => createMemo(() => {
   const state = selectionState();
   let ids: string[] | undefined, roots: string[] | undefined;
   return {
-    ids: () => ids ??= state.exact?.ids ?? state.topology.fullOrder.slice(state.lo, state.hi + 1),
+    ids: () => ids ??= state.exact ? subtreeIds(state.exact.roots)! : state.topology.fullOrder.slice(state.lo, state.hi + 1),
     roots: () => {
       if (roots) return roots;
       if (state.exact) return roots = state.exact.roots;
@@ -180,7 +197,10 @@ export function singleSelectedId(): string | null {
 const selectedMembership = new ChangeKeyRegistry();
 function membership(state: ReturnType<typeof selectionState> | null, id: string): boolean {
   if (!state) return false;
-  if (state.exact) return state.exact.set.has(id);
+  if (state.exact) {
+    for (let p: string | null | undefined = id; p; p = doc.byId[p]?.parent) if (state.exact.rootSet.has(p)) return true;
+    return false;
+  }
   const at = state.topology.fullIndex.get(id);
   return at !== undefined && at >= state.lo && at <= state.hi;
 }
@@ -192,16 +212,26 @@ createRoot(() => {
     // keys, whichever is fewer, so extending past a folded parent never pays for
     // its hidden descendants (advance() on an unread key is a no-op anyway).
     const prev = previous;
-    const size = (state: ReturnType<typeof selectionState> | null) => !state ? 0
-      : state.exact ? state.exact.ids.length : state.hi - state.lo + 1;
     const interval = prev && !prev.exact && !next.exact && prev.topology === next.topology;
     // O(1): the changed source intervals of an outline selection; otherwise both member lists bound it.
     const ranges: [number, number][] = interval ? [
       [prev.lo, Math.min(prev.hi, next.lo - 1)], [Math.max(prev.lo, next.hi + 1), prev.hi],
       [next.lo, Math.min(next.hi, prev.lo - 1)], [Math.max(next.lo, prev.hi + 1), next.hi]] : [];
-    const changed = interval ? ranges.reduce((n, [lo, hi]) => n + Math.max(0, hi - lo + 1), 0) : size(prev) + size(next);
+    const changed = interval ? ranges.reduce((n, [lo, hi]) => n + Math.max(0, hi - lo + 1), 0) : 0;
+    // Otherwise list both member sets, but give up (and walk the registered keys)
+    // once that exceeds the registry: O(min(changed members, read keys)).
+    const roots = (state: ReturnType<typeof selectionState> | null) => !state ? []
+      : state.exact ? state.exact.roots : null;
+    const listed = (state: ReturnType<typeof selectionState> | null) => {
+      const r = roots(state);
+      if (r) return subtreeIds(r, selectedMembership.size);
+      const s = state!;
+      return s.hi - s.lo + 1 > selectedMembership.size ? null : s.topology.fullOrder.slice(s.lo, s.hi + 1);
+    };
+    const prevIds = interval ? [] : listed(prev);
+    const nextIds = interval || !prevIds ? [] : listed(next);
     batch(() => {
-      if (changed > selectedMembership.size) {
+      if (changed > selectedMembership.size || !prevIds || !nextIds) {
         for (const id of [...selectedMembership.keys()]) {
           if (membership(prev, id) !== membership(next, id)) selectedMembership.advance(id);
         }
@@ -210,10 +240,8 @@ createRoot(() => {
           for (let at = lo; at <= hi; at++) selectedMembership.advance(next.topology.fullOrder[at]);
         }
       } else {
-        const ids = (state: ReturnType<typeof selectionState> | null) => !state ? [] : state.exact?.ids
-          ?? state.topology.fullOrder.slice(state.lo, state.hi + 1);
-        for (const id of ids(prev)) if (!membership(next, id)) selectedMembership.advance(id);
-        for (const id of ids(next)) if (!membership(prev, id)) selectedMembership.advance(id);
+        for (const id of prevIds) if (!membership(next, id)) selectedMembership.advance(id);
+        for (const id of nextIds) if (!membership(prev, id)) selectedMembership.advance(id);
       }
     });
     previous = next;
@@ -278,7 +306,20 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   keyboardTopology = topology;
   const prior = keyboardPath.at(-2);
   const reversing = extend && prior !== undefined && Math.sign(i - prior) !== dir;
-  const ni = reversing ? prior : !extend ? i + dir : dir > 0 ? end[i] + 1 : previous[i];
+  // Downward, skip the subtree of the outermost selected ancestor of the focus
+  // too (Logseq get-next-block-non-collapsed-skip): Shift+click into a selected
+  // parent, then Shift+Down, continues after that parent.
+  let skip = i;
+  if (extend && !reversing && dir > 0) {
+    const a = selAnchor();
+    const lo = Math.min(i, a ? index.get(a) ?? i : i);
+    for (let p = doc.byId[f]?.parent; p; p = doc.byId[p]?.parent) {
+      const at = index.get(p);
+      if (at === undefined || at < lo) break;
+      skip = at;
+    }
+  }
+  const ni = reversing ? prior : !extend ? i + dir : dir > 0 ? end[skip] + 1 : previous[i];
   if (ni < 0 || ni >= order.length) return;
   if (!extend) keyboardPath = [];
   else if (reversing) keyboardPath.pop();
