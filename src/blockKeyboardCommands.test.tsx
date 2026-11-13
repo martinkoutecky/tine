@@ -609,11 +609,13 @@ describe("Remove author (GH #918)", () => {
     selectBlock(blocks[0].id); extendSelectionTo(blocks.at(-1)!.id);
     const dirty = vi.spyOn(wiring, "markDirty");
     const submit = vi.spyOn(backend(), "pageSubmit");
-    const publish = vi.spyOn(model, "setDoc");
+    const structure = model.structureRevision();
     const started = performance.now();
     run("editor/remove-author");
     expect(performance.now() - started).toBeLessThan(500);
-    expect(publish).toHaveBeenCalledTimes(1);
+    // Raw edits only: no structural publication that would make unrelated
+    // mounted outlines rescan (merge review F1).
+    expect(model.structureRevision()).toBe(structure);
     expect(dirty).toHaveBeenCalledTimes(1);
     expect(dirty).toHaveBeenCalledWith("P", "save-block");
     await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(1));

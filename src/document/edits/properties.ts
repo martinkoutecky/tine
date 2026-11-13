@@ -11,6 +11,7 @@ import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
 import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty, isEditorEmpty } from "../../editor/properties";
 import { produce } from "solid-js/store";
+import { batch } from "solid-js";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { dismissToast, pushToast, toasts } from "../../toasts";
@@ -88,10 +89,10 @@ export function setBlockProperty(target: string | readonly string[], key: string
   if (!changes.length) return;
   const pages = [...new Set(changes.map(change => change.page))];
   pushUndo(`prop:${typeof target === "string" ? target : "selection"}:${key}`, pages);
-  if (changes.length === 1) setDoc("byId", changes[0].id, "raw", changes[0].raw);
-  else setDoc(produce(state => {
-    for (const change of changes) writeRaw(state, change.id, change.raw);
-  }));
+  // Raw-field writes only: a whole-state producer would republish the page index
+  // and advance the global structure revision, making unrelated mounted outlines
+  // rescan (merge review F1). One Solid batch keeps it one reactive publication.
+  batch(() => { for (const change of changes) setDoc("byId", change.id, "raw", change.raw); });
   for (const page of pages) markDirty(page, "save-block");
 }
 
