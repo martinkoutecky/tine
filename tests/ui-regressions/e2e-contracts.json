@@ -43,9 +43,9 @@
       "stability":"burn-in"
     },
     "scripts/e2e-cli-page-current.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A script obtains the focused page name and URL, the editing block URL when it has an authored id:: (none for a plain block), and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; discussion 925"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"With two graphs open, a script obtains each focused page name and a URL naming its own graph, creating the guarded graph identity once and reusing it; it obtains the editing block URL when it has an authored id:: (none for a plain block), and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; D-20261113-PG; discussion 925"}],
       "acceptableVariations": ["URL encoding follows the shared link producer; CLI prose may vary while JSON fields and exit codes follow the contract."],
-      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, graph-qualified page bookmarks, and other platform runtime certification."],
+      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, and other platform runtime certification."],
       "stability":"burn-in"
     },
     "scripts/e2e-shift-click-selection.mjs": {

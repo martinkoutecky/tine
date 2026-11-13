@@ -103,8 +103,15 @@ its reason: `no-owner-endpoint` (no endpoint for the selected graph),
 A frontend that fails to answer within 5 seconds
 returns `busy` on stderr; it is not reported as an absent page.
 
-Page URLs are the existing current-graph `tine://page/NAME` route: they open in the active
-graph and are not graph UUID bookmarks (Copy Tine link makes those). `block_url` is
+Page URLs are `tine://page/NAME?graph=UUID`, made by the same `pageLink`
+producer as Copy Tine link. Before asking a graph window, the owner obtains the
+UUID through `Store::ensure_link_identity`: one bounded identity read, or a
+one-time guarded create of `logseq/tine-graph-id` when missing. If that fails
+(including a read-only graph, refused publication or malformed existing identity),
+the command returns the existing `internal` error (`cli-write-failed`, exit 1),
+with the cause on stderr and no page payload. A failed publication may have left
+the complete identity visible; retry reuses it. An unqualified page link would
+open the active graph rather than reliably naming the requested graph. `block_url` is
 `tine://block/UUID` for the editing block's authored `id::`, the address Copy Tine link
 gives a block, and is null for a block with no authored `id::` (including one just inserted
 or loaded without one): its runtime id changes at the next load, so a saved link would
@@ -112,14 +119,20 @@ silently stop resolving. The verb never writes an `id::`; Copy block ref or Copy
 on the block does that explicitly.
 
 The operation's lower bound and implementation are one owner request/reply and
-one frontend question/answer, O(name + URL bytes), zero graph reads, writes,
-stats, fsyncs or renders after ordinary CLI endpoint discovery. There is no
+one frontend question/answer, O(name + URL bytes + bounded identity I/O).
+After ordinary CLI endpoint discovery, a graph-window request reads only the
+small identity (at most 128 bytes) through its existing bounded metadata checks;
+the first request creates one 37-byte file through the guarded transaction
+(temp, fsync, no-clobber publication, lock). Repeated requests only read it.
+There are zero other graph reads, writes, stats, fsyncs or renders. A missing
+owner/window returns absence without identity work. There is no
 cached route: the frontend reads its existing focused-window/pane state once, and
 the authored `id::` from the block's loaded text.
 The existing owner hello exchange remains part of connection setup: including
 it, a successful invocation has two owner socket round trips and one frontend
 question/answer. Only one owner verb is sent. A test pins the question and answer
-counts, zero store work and a 50 ms budget per request below the socket
+counts, one identity read per request and exactly one create across repeats,
+zero other store work and a 50 ms budget per request below the socket
 (`owner::window::current_page_tests`), and the real-app journey pins one
 `owner_current_page_answer` per invocation and a 1.5 s median for the whole command.
 
@@ -128,7 +141,7 @@ counts, zero store work and a 50 ms budget per request below the socket
 | `schema` | string | always | no | `"tine.cli/1"` |
 | `kind` | string | always | no | `"current-page"` or `"no-current-page"` |
 | `name` | string | optional | no | current page's displayed name; present on `current-page` |
-| `url` | string | optional | no | current-graph page URL; present on `current-page` |
+| `url` | string | optional | no | graph-qualified page URL; present on `current-page` |
 | `block_url` | string or null | optional | no | focused editor's block URL; present on `current-page`, null without an editor or without an authored `id::` on its block |
 | `reason` | string | optional | yes | why there is no page; present on `no-current-page` |
 
@@ -832,4 +845,4 @@ The set is closed (`verbs.rs::Diag`) and this table is pinned to it.
 | `cli-read-failed` | a references, block preview or search read failed |
 | `cli-query-failed` | a parsed query failed to run |
 | `cli-store-failed` | the Store failed a page read in a way no code names |
-| `cli-write-failed` | a write's plan failed on an I/O error, or planned no bytes |
+| `cli-write-failed` | a write's plan failed on an I/O error, planned no bytes, or `page.current` could not obtain the graph link identity |

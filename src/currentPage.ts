@@ -13,7 +13,7 @@ import { activeElement, activeWindowId } from "./windowRealm";
  * no graph I/O, mutation or rendering. The block link is the editing block's
  * authored `id::` only: a runtime key changes at the next load and would be a
  * link that silently stops resolving. Another pane's retained edit is not focus. */
-export function currentPage(): CurrentPage {
+export function currentPage(graphId: string): CurrentPage {
   const router = focusedRouterOf(activeWindowId());
   const route = router.route();
   if (route.kind !== "page" && route.kind !== "journals") return { kind: "no-current-page", reason: "not-page" };
@@ -27,7 +27,7 @@ export function currentPage(): CurrentPage {
   if (!name) return { kind: "no-current-page", reason: "journals" };
   const authored = editing && key ? authoredBlockId(key) : null;
   const block_url = authored && isTineLinkId(authored) ? blockLink(authored) : null;
-  return { kind: "current-page", name, url: pageLink(name), block_url };
+  return { kind: "current-page", name, url: pageLink(name, graphId), block_url };
 }
 
 /** One frontend answer per current binding request. Subscription belongs to
@@ -39,7 +39,7 @@ export function subscribeCurrentPage(): () => void {
   const owner = ownedWhen(() => alive);
   if (api?.onCurrentPageRequest) void readOwnedResource(owner, api.onCurrentPageRequest((request) => {
     if (!alive || request.binding_generation !== captureBinding().backendGeneration) return;
-    if (api.currentPageAnswer) void readOwned(owner, api.currentPageAnswer(request.id, currentPage(), request.binding_generation))
+    if (api.currentPageAnswer) void readOwned(owner, api.currentPageAnswer(request.id, currentPage(request.graph_id), request.binding_generation))
       .catch(() => console.error("current page answer failed"));
   }), (dispose) => dispose()).then((result) => {
     if (result.kind === "current") {

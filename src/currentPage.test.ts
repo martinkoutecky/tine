@@ -20,10 +20,11 @@ vi.mock("./windowRealm", () => ({
 }));
 vi.mock("./editorController", () => ({ editingId: () => state.editing }));
 vi.mock("./document", () => ({ node: () => ({ page: state.sourcePage }), authoredBlockId: () => state.authored }));
-import { currentPage, subscribeCurrentPage } from "./currentPage";
+import { currentPage as snapshot, subscribeCurrentPage } from "./currentPage";
 import { focusedRouterOf } from "./panes";
 
 const uuid = "11111111-1111-4111-8111-111111111111";
+const currentPage = () => snapshot(uuid);
 /** Focus the editor of a block whose text carries `authored` as its `id::` (null: none). */
 function focusEditor(pane = "focused-pane", authored: string | null = uuid) {
   state.editing = "runtime-key";
@@ -44,7 +45,7 @@ describe("current page snapshot", () => {
   it("answers the focused pane with the existing page URL producer and no identity I/O", () => {
     state.window = "ws-main-2";
     expect(currentPage()).toEqual({ kind: "current-page", name: state.page,
-      url: "tine://page/%E6%97%A5%E6%9C%AC%20%2F%20A%3F%23%25", block_url: null });
+      url: `tine://page/%E6%97%A5%E6%9C%AC%20%2F%20A%3F%23%25?graph=${uuid}`, block_url: null });
     expect(api.identity).not.toHaveBeenCalled();
     expect(focusedRouterOf).toHaveBeenCalledExactlyOnceWith("ws-main-2");
   });
@@ -89,17 +90,31 @@ describe("current page snapshot", () => {
     expect(currentPage()).toMatchObject({ name: state.page, block_url: `tine://block/${uuid}` });
   });
   it("answers once and rejects a request from an old graph binding", async () => {
-    let receive!: (request: { id: number; binding_generation: number }) => void;
+    let receive!: (request: { id: number; binding_generation: number; graph_id: string }) => void;
     const stop = vi.fn();
     api.onCurrentPageRequest.mockImplementation(async (cb) => { receive = cb; return stop; });
     const dispose = subscribeCurrentPage();
     await vi.waitFor(() => expect(receive).toBeDefined());
-    receive({ id: 1, binding_generation: 6 });
+    receive({ id: 1, binding_generation: 6, graph_id: uuid });
     expect(api.currentPageAnswer).not.toHaveBeenCalled();
-    receive({ id: 2, binding_generation: 7 });
+    receive({ id: 2, binding_generation: 7, graph_id: uuid });
     expect(api.currentPageAnswer).toHaveBeenCalledExactlyOnceWith(2, currentPage(), 7);
     dispose();
     await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
+  it("names each requesting graph when two graph windows show the same page", async () => {
+    let receive!: (request: { id: number; binding_generation: number; graph_id: string }) => void;
+    api.onCurrentPageRequest.mockImplementation(async (cb) => { receive = cb; return () => {}; });
+    const dispose = subscribeCurrentPage();
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    for (const graph of [uuid, "22222222-2222-4222-8222-222222222222"]) {
+      receive({ id: 1, binding_generation: 7, graph_id: graph });
+      expect(api.currentPageAnswer).toHaveBeenLastCalledWith(1, {
+        kind: "current-page", name: state.page,
+        url: `tine://page/%E6%97%A5%E6%9C%AC%20%2F%20A%3F%23%25?graph=${graph}`, block_url: null,
+      }, 7);
+    }
+    dispose();
   });
   it("disposes a subscription that finishes registering after unmount", async () => {
     let finish!: (stop: () => void) => void;

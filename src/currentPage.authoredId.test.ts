@@ -16,7 +16,7 @@ vi.mock("./windowRealm", async (importOriginal) => ({
 vi.mock("./editorController", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./editorController")>()), editingId: () => state.editing,
 }));
-import { currentPage } from "./currentPage";
+import { currentPage as snapshot } from "./currentPage";
 import * as parser from "./render/parse";
 import { doc, setDoc } from "./document/model";
 import { blockExternalId } from "./document";
@@ -24,6 +24,7 @@ import { loadSingle, resetStore } from "./document/workingSet";
 import { clearSeededFacets } from "./render/facets";
 
 const authoredId = "92500000-0000-4000-8000-000000000001";
+const currentPage = () => snapshot("11111111-1111-4111-8111-111111111111");
 const runtimeId = "7e57ab1e-0000-4000-8000-000000000002";
 beforeAll(() => parser.initParser());
 afterEach(() => { resetStore(); clearSeededFacets(); state.editing = null; state.element = null; });
