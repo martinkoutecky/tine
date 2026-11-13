@@ -7,11 +7,11 @@ import { OutlineScope, depthOf, scopedVisibleOrder, visibleData, visibleOrder, p
 import { commentsFirst } from "../commentOrder";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
-import { batch, createSignal, createRoot, createMemo, createComputed, getOwner, runWithOwner, untrack, type Accessor } from "solid-js";
+import { batch, createSignal, createRoot, createMemo, createComputed, getOwner, onCleanup, runWithOwner, untrack, type Accessor } from "solid-js";
 import { ChangeKeyRegistry } from "../../changeKeyRegistry";
 import { threadRootOf } from "../commentThreads";
 import { previousBodySibling } from "../bodyStructure";
-import { endEdit, editingId } from "../../editorController";
+import { activeSurface, endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
 import { blockWritable, rawWithHeading, type HeadingState } from "./properties";
@@ -32,6 +32,33 @@ installClearOutlineSelection(() => clearSelection());
 clearOnBindingInvalidated(() => clearSelection());
 
 let activeSelectionScope: OutlineScope | null = null;
+type SelectionSurface = { parent?: SelectionSurface };
+// Ifods deliberately retires selection on every route change; Logseq comparison is in the receipt.
+const selectionSurfaces = new Map<string, SelectionSurface>();
+let selectedSurfaces: Set<SelectionSurface> | undefined;
+// The surface key the current selection was started in: a selection the owner makes
+// itself (the survivor of a delete) stays in it, never in a surface since unmounted.
+let selectedSurfaceKey: string | undefined;
+
+/** Own a rendered surface's selection lifetime. A changed route accessor or
+ * unmount retires only selections initiated here or in a registered child
+ * surface. Call under the component's Solid owner; `parent` is its enclosing
+ * SurfaceContext key. Registration and retirement are O(1), plus existing
+ * selection notifications. Starting selection carries its O(nesting) ancestry
+ * once; no I/O or document/DOM scan is needed.
+ * Route equality belongs to the supplied accessor (PageView uses sameRoute).
+ * No failure or readiness state escapes to callers. */
+export function ownSelectionSurface(surface: string, route: () => unknown = () => null, parent?: string): void {
+  createComputed(() => {
+    route();
+    const owner: SelectionSurface = { parent: parent ? selectionSurfaces.get(parent) : undefined };
+    selectionSurfaces.set(surface, owner);
+    onCleanup(() => {
+      if (selectionSurfaces.get(surface) === owner) selectionSurfaces.delete(surface);
+      if (selectedSurfaces?.has(owner)) clearSelection();
+    });
+  });
+}
 
 export function selectionScope(): OutlineScope | null { return activeSelectionScope; }
 
@@ -276,9 +303,14 @@ let selectAllHead: string | null = null;
 let keyboardPath: number[] = [];
 let keyboardTopology: number | null = null;
 
-export function selectBlock(id: string, scope: OutlineScope | null = null) {
+export function selectBlock(id: string, scope: OutlineScope | null = null, surface = activeSurface() ?? "main") {
+  const owner = selectionSurfaces.get(surface);
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
+  if (owner && selectionSurfaces.get(surface) !== owner) return;
+  selectedSurfaces = owner ? new Set() : undefined;
+  selectedSurfaceKey = owner ? surface : undefined;
+  for (let selected = owner; selected; selected = selected.parent) selectedSurfaces!.add(selected);
   activeSelectionScope = scope;
   selectAllHead = null;
   keyboardPath = [];
@@ -286,6 +318,8 @@ export function selectBlock(id: string, scope: OutlineScope | null = null) {
   batch(() => { setSelectionView({ id, scope }); setSelAnchor(id); setSelFocus(id); });
 }
 export function clearSelection() {
+  selectedSurfaces = undefined;
+  selectedSurfaceKey = undefined;
   batch(() => { setSelAnchor(null); setSelFocus(null); setSelectionView(null); });
   activeSelectionScope = null;
   selectAllHead = null;
@@ -356,8 +390,8 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
 /** Ctrl/Cmd+A while editing a block, with the block's text already fully
  *  selected: escalate to a block selection covering the block's whole source
  *  subtree, and mark it the head of the hierarchy ladder (GH #262). */
-export function selectBlockSubtree(id: string, scope: OutlineScope | null = null) {
-  selectBlock(id, scope);
+export function selectBlockSubtree(id: string, scope: OutlineScope | null = null, surface?: string) {
+  selectBlock(id, scope, surface);
   selectAllHead = id;
 }
 
@@ -460,8 +494,10 @@ function selectionRemovalSurvivor(): string | null {
   return order[end[index.get(last)!] + 1] ?? order[index.get(first)! - 1] ?? doc.byId[first]?.parent ?? null;
 }
 
-function reselectSurvivingBlock(id: string | null) {
-  if (id && doc.byId[id]) selectBlock(id);
+function reselectSurvivingBlock(id: string | null, surface: string | undefined) {
+  // An unowned selection (no registered surface) reselects as before: `undefined`
+  // takes selectBlock's default surface.
+  if (id && doc.byId[id]) selectBlock(id, null, surface);
   else clearSelection();
 }
 
@@ -517,6 +553,7 @@ export function outdentSelection() {
 
 export function deleteSelection() {
   const survivor = selectionRemovalSurvivor();
+  const surface = selectedSurfaceKey;
   const ids = topSelected().filter((id) => doc.byId[id]);
   if (!ids.length) return;
   const pages = [...new Set(ids.map((id) => doc.byId[id].page))];
@@ -531,7 +568,7 @@ export function deleteSelection() {
   const ed = editingId();
   if (ed && !doc.byId[ed]) endEdit("delete-selection");
   markOutlineDirty(change);
-  reselectSurvivingBlock(survivor);
+  reselectSurvivingBlock(survivor, surface);
   notice.show();
 }
 
@@ -551,6 +588,7 @@ export function mergeSelection(): boolean {
     return false;
   }
   const scope = activeSelectionScope;
+  const surface = selectedSurfaceKey;
   // A result list orders blocks by the query, not by the outline.
   if (scope?.navOnly) {
     pushToast(msg("selection-merge-not-in-results"), "warn");
@@ -586,7 +624,7 @@ export function mergeSelection(): boolean {
   pushUndo(notice.tag, outlineChangePages(change));
   applyOutlineChange(change);
   markOutlineDirty(change);
-  selectBlock(survivor, scope);
+  selectBlock(survivor, scope, surface);
   notice.show();
   return true;
 }

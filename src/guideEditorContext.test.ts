@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
+it("the block-selection tips explain route departure and journal scrolling", () => {
+  const page = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
+  expect(page).toContain("Leaving a page clears its block selection");
+  expect(page).toContain("Scrolling between days in the Journals feed keeps the selection");
+});
+
 it("the search tour teaches pointer and keyboard activation in the focused split", () => {
   const page = readFileSync("crates/tine-guide/src/templates/find-and-revisit.md", "utf8");
   expect(page).toContain("Click or tap a result to open it in the pane you were using");
