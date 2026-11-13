@@ -700,3 +700,39 @@ fn closing_a_stale_sidebar_path_does_not_create_a_phantom_file_claimant() {
         _ => panic!("the real file must remain the unique claimant"),
     }
 }
+
+/// Merge review F1 (HbcTw): an external edit that makes a clean, held page's
+/// projections panic reaches the host as an unreadable page. The panic must not
+/// unwind through the mail bridge and end the graph's page-host driver: the
+/// next edit of another page is still admitted and answered.
+#[test]
+fn an_external_edit_that_panics_a_held_pages_projection_mails_it_unreadable() {
+    let live = Live::watching(
+        &[
+            ("pages/Bad.md", "- fine\n"),
+            ("pages/Good.md", "- editable\n"),
+        ],
+        crate::WatchMode::Notify,
+    );
+    let (bad, _) = live.open("pages/Bad.md");
+    let bytes = format!(
+        "note:: {}\n\n- body\n",
+        tine_core::doc::TEST_PROJECTION_PANIC_SENTINEL
+    );
+    fs::write(live.root.join(&bad), bytes).unwrap();
+    live.wait(
+        &bad,
+        "the host mails the edited page as unreadable",
+        |mail| {
+            matches!(
+                mail.page.as_ref().map(|page| &page.text),
+                Some(MailText::Unreadable { .. })
+            )
+        },
+    );
+    let (good, _) = live.open("pages/Good.md");
+    fs::write(live.root.join(&good), "- edited outside\n").unwrap();
+    live.wait(&good, "the host still follows other pages", |mail| {
+        shows(mail, "- edited outside\n")
+    });
+}

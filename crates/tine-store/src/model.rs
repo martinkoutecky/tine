@@ -3310,7 +3310,14 @@ impl Graph {
         let Some(entry) = self.page_entry_in(abs, Some(content)) else {
             return Ok(None);
         };
-        Ok(Some(Self::dto_of(&entry, content)))
+        // Contained here, not by each caller: the page host's mail has no
+        // other guard, and a parser or projection panic must reach it as an
+        // unreadable page, never unwind through its driver (merge review F1).
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::dto_of(&entry, content)
+        }))
+        .map(Some)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
     }
 
     fn dto_of(entry: &PageEntry, content: &str) -> PageDto {
