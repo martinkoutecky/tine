@@ -30,7 +30,7 @@ import { isBlockMoving } from "../edits/moves";
 import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
-import { doc, pageByName, setPageId } from "../model";
+import { doc, pageByName, pageReadOnly, setPageId } from "../model";
 import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { applyOwnerPageRename } from "../graphRewrite";
@@ -217,7 +217,7 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
  * Input was flushed and frozen before the native saved-stop/relaunch. Cost is
  * one Open/Close per loaded graph page, only on this explicit recovery action. */
 async function refreshLoadedHostPages(c: HostClient): Promise<void> {
-  const names = doc.pages.filter(page => !page.guide && !page.readOnly).map(page => page.name);
+  const names = doc.pages.filter(page => !page.guide && !pageReadOnly(page)).map(page => page.name);
   const releases = names.map(name => c.acquire(name));
   try { await c.drain(names); }
   finally { for (const release of releases) release(); }
@@ -538,7 +538,7 @@ function reportProblems(c: HostClient | null, names: string[]): void {
 /** The dirty funnel: every programmatic page mutation, with its edit kinds. */
 export function markDirty(name: string, kinds: EditKind | EditKinds): void {
   const page = pageByName(name);
-  if (!page || page.readOnly || page.guide || deletedPages.has(name)) return;
+  if (!page || pageReadOnly(page) || page.guide || deletedPages.has(name)) return;
   noteQueryInput();
   const c = host();
   if (!c) {

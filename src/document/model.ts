@@ -4,6 +4,7 @@ import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { ChangeKeyRegistry } from "../changeKeyRegistry";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
+import { graphConfigUnreadable } from "../graphConfig";
 import { ownerPath, resolvedTarget } from "../pageIndex";
 import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { sheetConfigFromRaw } from "../sheet/config";
@@ -184,6 +185,12 @@ export const clearCollapseEpochs = (): void => setCollapseEpochState("byId", {})
 
 export type ReadonlyNode = Readonly<Omit<Node, "children">> & { readonly children: readonly string[] };
 export type ReadonlyFeedPage = Readonly<Omit<FeedPage, "roots">> & { readonly roots: readonly string[] };
+
+/** Effective read-only presentation: the store's graph restriction plus the
+ * page's intrinsic round-trip restriction. O(1), reactive, no page reload. */
+export function pageReadOnly(page: ReadonlyFeedPage | undefined): boolean {
+  return graphConfigUnreadable() || !!page?.readOnly;
+}
 
 /** Live document queries. Each call reads the Solid store in the caller's tracking scope. */
 export function node(id: string): ReadonlyNode { return doc.byId[id]; }

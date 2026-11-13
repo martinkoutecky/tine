@@ -3,7 +3,7 @@ import type { PageDto } from "../../types";
 import { ordered_list_glyph, page_alias_spellings } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, pageReadOnly, setDoc, freshId, writeRaw, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
@@ -62,7 +62,7 @@ export function pageWritable(name: string): boolean {
   const page = pageByName(name);
   // A pending delete, transfer endpoint or frozen page takes no input: no
   // mutation may precede markDirty's tombstone guard (audit L9-06).
-  return !graphRewriteFrozen() && !!page && !page.readOnly && !page.guide && !pageFrozen(name);
+  return !graphRewriteFrozen() && !!page && !pageReadOnly(page) && !page.guide && !pageFrozen(name);
 }
 
 export function blockWritable(id: string): boolean {
