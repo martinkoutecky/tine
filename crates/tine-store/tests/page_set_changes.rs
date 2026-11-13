@@ -7,20 +7,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tine_store::{Depth, InventoryScope, OpenOptions, Store, Subscription, WatchMode};
 
 fn graph(files: &[(&str, &[u8])]) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-page-set-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-page-set-");
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

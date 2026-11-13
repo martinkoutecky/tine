@@ -1,17 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tine_store::{Area, OpenOptions, RestoreFile, Store, TrashKind};
 
-static SEQ: AtomicU64 = AtomicU64::new(0);
-
 fn scratch(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "tine-store-restore-{tag}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let path = crate::test_support::fresh_dir(&format!("tine-store-restore-{tag}-"));
     fs::create_dir_all(&path).unwrap();
     path
 }

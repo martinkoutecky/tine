@@ -14,8 +14,7 @@ use tine_store::Store;
 const LIMIT: &str = "macro expansion limit";
 
 fn graph(tag: &str, pages: &[(&str, String)]) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("tine-i22-fanout-{tag}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-i22-fanout-{tag}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     for (name, text) in pages {

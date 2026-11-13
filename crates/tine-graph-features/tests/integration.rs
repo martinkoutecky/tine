@@ -1,5 +1,8 @@
 //! One integration executable; module names retain each source suite in test filters.
 
+#[path = "../../test-support/temp_dir.rs"]
+mod test_support;
+
 use tine_store as store_crate;
 #[path = "../../tine-store/src/test_host_writer.rs"]
 mod test_host_writer;

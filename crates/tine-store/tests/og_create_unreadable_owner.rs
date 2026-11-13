@@ -8,19 +8,12 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{OpenOptions, PageId, Resolved, SaveBase, Store, WatchMode};
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 
 fn graph(files: &[(&str, &[u8])]) -> (PathBuf, std::sync::Arc<Store>) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-og-create-unreadable-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-og-create-unreadable-");
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

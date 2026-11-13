@@ -2,18 +2,11 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::publish_query::publish_static;
 use tine_store::Store;
 
 fn graph(label: &str, config: &str, pages: &[(&str, &str)]) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-c3v-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir(&format!("tine-c3v-{label}-"));
     for sub in ["pages", "journals", "logseq"] {
         fs::create_dir_all(dir.join(sub)).unwrap();
     }
