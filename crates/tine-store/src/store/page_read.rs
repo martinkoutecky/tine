@@ -31,11 +31,12 @@ pub struct PageRead {
     /// Exact disk path identity. A case-alias request on a case-insensitive
     /// volume returns the file's disk spelling.
     pub id: PageId,
-    /// Parsed document.
+    /// Parsed document, retaining its intrinsic Org round-trip flag separately
+    /// from the graph's config restriction in `read_only`.
     pub doc: PageDto,
     /// Revision of the bytes that produced `doc`.
     pub rev: FileRev,
-    /// Reason a file cannot round-trip safely, if any. Reflects the parsed
+    /// Reason the read is read-only: unreadable graph config or an intrinsic
     /// `doc.read_only` flag; a twin claim alone does not set it. Save checks
     /// disk safety again rather than trusting either caller-supplied flag.
     pub read_only: Option<String>,
@@ -331,12 +332,11 @@ impl Store {
     pub(super) fn page_read(
         &self,
         id: PageId,
-        mut doc: PageDto,
+        doc: PageDto,
         source: PageReadSource,
     ) -> Result<PageRead, StoreError> {
         let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound(source))?);
         let read_only = if self.config().problem.is_some() {
-            doc.read_only = true;
             Some("config.edn could not be read; graph is read-only".to_owned())
         } else {
             doc.read_only
@@ -487,6 +487,23 @@ fn page_dto(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_config_restriction_does_not_erase_the_pages_intrinsic_read_only_reason() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("pages")).unwrap();
+        fs::create_dir_all(temp.path().join("logseq")).unwrap();
+        fs::write(temp.path().join("pages/a.md"), "- disk\n").unwrap();
+        fs::write(temp.path().join("logseq/config.edn"), b"{:a \"\xff\"}\n").unwrap();
+        let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
+        let read = store.page(&PageId::from("pages/a.md")).unwrap();
+        assert!(
+            read.read_only.is_some(),
+            "the graph restriction still applies"
+        );
+        assert!(!read.doc.read_only, "the Markdown file itself round-trips");
+        store.close();
+    }
 
     #[test]
     fn page_read_carries_the_selected_source_including_absence() {

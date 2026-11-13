@@ -19,7 +19,12 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
     assert!(config.problem.is_some());
     fs::write(root.join("pages/Existing.md"), "- still readable\n").unwrap();
     let existing = store.file_id(Area::Pages, "Existing.md").unwrap();
-    assert!(store.page(&existing.as_str().into()).unwrap().doc.read_only);
+    let read = store.page(&existing.as_str().into()).unwrap();
+    assert!(
+        read.read_only.is_some(),
+        "the graph restriction still applies"
+    );
+    assert!(!read.doc.read_only, "the Markdown file itself round-trips");
     let id = store.file_id(Area::Pages, "Wrong.md").unwrap();
     let mut tx = store.page_plan(Some(EditKind::CreatePage));
     tx.create(&id, Content::Bytes(b"- wrong\n".to_vec()));

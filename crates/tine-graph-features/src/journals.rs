@@ -112,7 +112,6 @@ pub struct FeedRead {
 fn feed_read(read: tine_store::PageRead) -> FeedRead {
     let mut doc = read.doc;
     doc.rev = Some(read.rev.into());
-    doc.read_only = read.read_only.is_some();
     FeedRead { id: read.id, doc }
 }
 
