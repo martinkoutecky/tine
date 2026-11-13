@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Search labels matching margin comments and replies as comments, with their host breadcrumbs (COMMENT-OUT-V2).
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
 - A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).
 - CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).

@@ -1293,6 +1293,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                                   page={blockHit().page}
                                   breadcrumb={blockHit().block.breadcrumb ?? []}
                                   text={blockHit().display_text}
+                                  isComment={blockHit().is_comment}
                                   spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
                                 />
                               </button>
