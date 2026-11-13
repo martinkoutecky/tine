@@ -992,7 +992,7 @@ const METRIC_LIST = [
     [`${p}.publishedMs`, "ms", "query scenario edit: last key -> publish carrying the typed text"],
     [`${p}.reflectMs`, "ms", `query scenario edit (${p === "query" ? "cold" : "warm"}): last key -> every rendered matching query shows the typed text (live state: single-digit ms is normal)`, { absFloor: QUERY_ABS_MS }],
     [`${p}.reflectFirstMs`, "ms", "same, until the FIRST query shows it", { absFloor: QUERY_ABS_MS }],
-    [`${p}.settledMs`, "ms", `query scenario edit (${p === "query" ? "cold" : "warm"}): last key -> no query busy any more (the save published and the queries re-ran)`, { absFloor: QUERY_ABS_MS }],
+    [`${p}.settledMs`, "ms", `candidate: query scenario edit (${p === "query" ? "cold" : "warm"}): last key -> no query busy any more; v0.7.4 has no busy signal`, { candidateOnly: true, absFloor: QUERY_ABS_MS }],
     [`${p}.staleAfterSettle`, "count", "matching rendered queries that did NOT show the edit after it settled (must be 0)", { neutral: true }],
   ]),
   ["queryExt.reflectMs", "ms", "an external rewrite of the open, clean page: write -> every rendered matching query shows the new text (file -> index -> query)", { absFloor: QUERY_ABS_MS }],

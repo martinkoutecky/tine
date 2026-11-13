@@ -77,6 +77,11 @@ graph-publish-choose-a-destination-outside-the-graph-the-export = Choose a desti
 in-page-find-find-in-page = Find in page
 in-page-find-retired-days = { $count } older days not searched
 in-page-find-search-journals = search all journals
+in-page-find-references-linked = Linked references not searched
+in-page-find-references-unlinked = Unlinked references not searched
+in-page-find-references-block = Block references not searched
+in-page-find-search-references-linked = search linked references
+in-page-find-search-references-unlinked = search unlinked references
 
 in-page-find-find-and-replace = Find and replace
 

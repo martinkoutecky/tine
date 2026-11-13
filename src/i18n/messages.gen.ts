@@ -1268,6 +1268,9 @@ export interface MessageArgs {
   "in-page-find-find-in-page": {};
   "in-page-find-next-match-enter": {};
   "in-page-find-previous-match-shift-enter": {};
+  "in-page-find-references-block": {};
+  "in-page-find-references-linked": {};
+  "in-page-find-references-unlinked": {};
   "in-page-find-replace": {};
   "in-page-find-replace-all": {};
   "in-page-find-replace-every-match-on-this-page-ctrl-cmd": {};
@@ -1275,6 +1278,8 @@ export interface MessageArgs {
   "in-page-find-replace-with": {};
   "in-page-find-retired-days": { "count": string | number };
   "in-page-find-search-journals": {};
+  "in-page-find-search-references-linked": {};
+  "in-page-find-search-references-unlinked": {};
   "inpage-replace-no-matches-on-this-page-to-replace": {};
   "inpage-replace-nothing-was-replaced-this-page-cannot-be-edited": {};
   "inpage-replace-replace-changes-only-the-page-you-opened-find": {};

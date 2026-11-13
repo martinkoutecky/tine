@@ -455,7 +455,10 @@ within a column; merged cells are still v2+.
 - `Mod+F` in-page find on normal pages: a slim find bar with next/previous,
   `n / total` counts, and highlights for the current page. The match list is built
   from the block model, so collapsed or lazy-rendered branches are found and opened
-  before the active match is highlighted.
+  before the active match is highlighted. Linked and Unlinked References are not
+  counted (their groups load as you scroll, so the count would change silently): the
+  bar says so, and "search linked references" opens that section's own search with the
+  query.
 - Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible
   **namespace tree** in the sidebar, the **`{{namespace X}}`** macro (a bold
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
