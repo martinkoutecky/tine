@@ -4,7 +4,7 @@
 .SH NAME
 tine\-export\-query \- Publish the pages selected by one query block UUID into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
 .SH SYNOPSIS
-\fBtine export query\fR [\fB\-\-name\fR] [\fB\-\-debug\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> <\fI((UUID))\fR> 
+\fBtine export query\fR [\fB\-\-name\fR] [\fB\-\-debug\fR] [\fB\-\-force\fR] [\fB\-\-no\-comments\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> <\fI((UUID))\fR> 
 .SH DESCRIPTION
 Publish the pages selected by one query block UUID into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
 .SH OPTIONS
@@ -17,6 +17,9 @@ Enable diagnostic logging for the desktop app
 .TP
 \fB\-\-force\fR
 Replace an existing output, keeping the previous export in recovery
+.TP
+\fB\-\-no\-comments\fR
+Leave comment threads out of this export
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

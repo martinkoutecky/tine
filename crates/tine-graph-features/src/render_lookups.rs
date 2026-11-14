@@ -44,13 +44,15 @@ pub(super) struct BlockHit {
 }
 
 impl BlockHit {
-    pub(super) fn block(&self) -> &DocBlock {
+    pub(super) fn block(&self) -> (&DocBlock, bool) {
         let (first, rest) = self.path.split_first().expect("a block path is non-empty");
         let mut block = &self.page.document.roots[*first];
+        let mut comment = false;
         for i in rest {
             block = &block.children[*i];
+            comment |= crate::output_comments::is_comment(block, true);
         }
-        block
+        (block, comment)
     }
 }
 

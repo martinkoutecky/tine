@@ -45,7 +45,7 @@ import { codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { codeFences } from "../editor/fences";
 import { calcSource, evalCalc, serializeCalcExitCommit } from "../editor/calc";
 import { codeWrapping } from "../codeDisplay";
-import { LineGutter } from "../render/LineGutter";
+import { codeGutterStyle, LineGutter } from "../render/LineGutter";
 import { AstBody } from "../render/body";
 import { CopyButton } from "../render/inline";
 import { t as translate } from "../i18n";
@@ -87,6 +87,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const literal = () => isCalc() || code() !== null;
   const shown = () => isCalc() ? calcSource(visible()) ?? visible() : code()?.body ?? visible();
   const codeEditing = () => code() !== null || codeFenceOnly(visible(), format) !== null;
+  const codeLines = createMemo(() => codeEditing() ? shown().split("\n") : []);
   const calcRows = createMemo(() => isCalc() ? evalCalc(shown()) : []);
   const mixedContext = createMemo(() => {
     const p = code();
@@ -538,13 +539,13 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   });
   return <div class="cm6-block-editor editor-wrap" dir={blockDirAttr(source(), format)} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
     <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>
-    <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedContext() }}>
+    <div class="code-editor-region" style={codeGutterStyle(codeLines().length)} dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(code() ?? codeFenceOnly(visible(), format))?.lang.toLowerCase()}</span>
         <Show when={code() ?? codeBodyProjection(visible(), format)}>
           {body => <CopyButton text={body().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
         </Show>
-        <LineGutter lines={shown().split("\n")} code />
+        <LineGutter lines={codeLines()} code />
       </Show>
       <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>
       <div ref={editorHost} />

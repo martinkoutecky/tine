@@ -14,6 +14,7 @@ import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBud
 import { activeWindow, listen } from "../windowRealm";
 import { registerTransientLayer } from "../transientLayers";
 import { FolderExportMembership } from "./FolderExportMembership";
+import { saveExportComments } from "../exportComments";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -29,19 +30,21 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [acknowledged, setAcknowledged] = createSignal(false);
   // PK3: the query itself ships only when asked for; the default export is the page list.
   const [includeQueryText, setIncludeQueryText] = createSignal(props.request.includeQueryText ?? false);
+  const [includeComments, setIncludeComments] = createSignal(props.request.includeComments);
+  let commentsChanged = false;
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const [overBudget, setOverBudget] = createSignal(false);
   let mounted = true;
   onCleanup(() => { mounted = false; });
-  const [plan] = createResource(plannedName, async (value) => {
-    if (!value.trim()) throw new Error("Give the export a name.");
+  const [plan] = createResource(() => ({ name: plannedName(), includeComments: includeComments() }), async (value) => {
+    if (!value.name.trim()) throw new Error("Give the export a name.");
     await initQueryExportBudget();
-    return backend().publishQueryPlan({ ...props.request, name: value });
+    return backend().publishQueryPlan({ ...props.request, ...value });
   });
   const reviewed = () => readOr(plan, undefined, "export plan");
   const folder = () => destination() === "separate" ? reviewed()?.suggestedFolder : reviewed()?.folder;
-  const canExport = () => !!reviewed()?.pages.length && !busy() && (!reviewed()!.exists || destination() !== "create")
+  const canExport = () => !!reviewed()?.pages.length && !busy() && !plan.loading && !plan.error && (!reviewed()!.exists || destination() !== "create")
     && (reviewed()!.anchor !== "block" || acknowledged());
   const changeName = () => { setDestination("create"); setAcknowledged(false); setPlannedName(name().trim()); };
   const publish = async () => {
@@ -51,16 +54,17 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     setBusy(true);
     setError(""); setOverBudget(false);
     try {
-      const request = { ...props.request, name: plannedName(), folder: folder(), includeQueryText: includeQueryText(), replace: destination() === "replace", assetBudgetBytes: queryExportBudgetBytes() };
+      const request = { ...props.request, name: plannedName(), folder: folder(), includeComments: includeComments() ?? reviewed()?.includeComments ?? true, includeQueryText: includeQueryText(), replace: destination() === "replace", assetBudgetBytes: queryExportBudgetBytes() };
       const sheets = await exportSheets(undefined, { kind: "query", request });
       if (!owner()) return;
       const receipt = await writeOwned(owner, backend().publishQuery(request, selection.fingerprint, sheets));
       if (receipt.kind === "current") {
         // What to do once the folder is written (the share dialog saves its definition then).
         const after = queryExportAfter(props.request);
-        closeQueryExport();
         // The hook reports its own failures; a rejection it let through is shown, not dropped.
-        if (after) void Promise.resolve(after({ folder: request.folder! })).catch((cause) => pushToast(rawText(String((cause as Error)?.message ?? cause)), "error"));
+        if (after) await after({ folder: request.folder!, includeComments: request.includeComments, commentsChanged });
+        else if (commentsChanged && props.request.hostBlockId) await saveExportComments(props.request.hostBlockId, request.includeComments, owner);
+        closeQueryExport();
         pushToast(msg("query-export-dialog-exported", { pages: String(receipt.value.pages), path: receipt.value.path, retired: receipt.value.retired ?? "", previous: receipt.value.retired ? 1 : 0 }), "success", { sticky: true });
         if (receipt.value.warnings.length) pushToast(rawText(receipt.value.warnings.join(" ")), "warn", { sticky: true });
       }
@@ -122,6 +126,8 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             </Show>
             <label class="query-export-ack query-export-include-query"><input type="checkbox" checked={includeQueryText()}
               onChange={(event) => setIncludeQueryText(event.currentTarget.checked)} />{t("query-export-dialog-include-query-text")}</label>
+            <label class="query-export-ack"><input type="checkbox" checked={includeComments() ?? reviewed()?.includeComments ?? true} disabled={busy()}
+              onChange={event => { commentsChanged = true; setIncludeComments(event.currentTarget.checked); }} />{t("export-include-comments")}</label>
             <Show when={selection().exists}>
               <div role="group" aria-label={t("query-export-dialog-destination")}><Rich message={msg("query-export-dialog-existing", { folder: selection().folder })} /><label><input type="radio" name="query-export-destination" checked={destination() === "replace"}
                   onChange={() => setDestination("replace")} />{t("query-export-dialog-replace-it-the-previous-export-is-kept-in")}</label>

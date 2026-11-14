@@ -20,6 +20,7 @@ import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
 import { QUICK_SHARE_OFF } from "../quickShare/commands";
 import { pendingRecordId, shareGistId } from "../quickShare/definitions";
 import { createGraphResource } from "../graphResource";
+import { COMMENTS_PROPERTY, saveExportComments } from "../exportComments";
 
 /** Quiet time before a changed selection is reviewed again (the live preview's own window). */
 export const SHARE_REVIEW_DEBOUNCE_MS = 250;
@@ -46,6 +47,7 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
   const [mode, setMode] = createSignal<Mode>(block || !contextPage ? "query" : "page");
   const [edited, setEdited] = createSignal<string | undefined>(undefined);
   const [includeQueryText, setIncludeQueryText] = createSignal(false);
+  const [includeComments, setIncludeComments] = createSignal<boolean | undefined>();
   const initialShare = hostBlockId ? blockProperty(hostBlockId, SHARE_PROPERTY) : null;
   const [where, setWhere] = createSignal<Where>(initialShare && !pendingRecordId(initialShare) ? "link" : "folder");
   // Quick share is gated off in shipped builds until its viewer is deployed (DESIGN §5 phase 3).
@@ -83,11 +85,11 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
   const request = createMemo<QueryPublicationRequest | undefined>(() => {
     const text = macro();
     if (!text) return undefined;
-    if (unchanged()) return { ...block!.query, includeQueryText: false };
+    if (unchanged()) return { ...block!.query, includeComments: includeComments(), includeQueryText: false };
     const source = queryWorkspaceDsl(text);
     const name = mode() === "page" ? pageName() : (block?.query.name || pageName() || contextPage);
     return { argument: source.argument, dialect: source.dialect, properties: [], currentPage: contextPage || null,
-      hostBlockId: null, name: name || "Query", includeQueryText: false };
+      hostBlockId: null, name: name || "Query", includeComments: includeComments(), includeQueryText: false };
   });
 
   // The review runs after a quiet window, except for the first answer.
@@ -155,28 +157,32 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
     if (where() === "link" && linkAvailable()) {
       closeShareDialog();
       // The created share's `tine.share::` goes where a folder export's `tine.export::` would (D-20261018-Q1).
-      openQuickShare({ ...base, includeQueryText: includeQueryText() }, { hostBlockId: asBlock ? hostBlockId : null, macro: text });
+      openQuickShare({ ...base, includeComments: includeComments() ?? reviewed()?.includeComments ?? true, includeQueryText: includeQueryText() },
+        { hostBlockId: asBlock ? hostBlockId : null, macro: text, ...(includeComments() !== undefined ? { commentsChanged: true } : {}) });
       return;
     }
     const binding = captureBinding();
-    const saveDefinition = async ({ folder }: { folder: string }) => {
+    const saveDefinition = async ({ folder, includeComments: include = true, commentsChanged = false }: { folder: string; includeComments?: boolean; commentsChanged?: boolean }) => {
       if (!bindingCurrent(binding)) return;
       try {
         if (asBlock) {
           if (!blockWritable(hostBlockId!)) throw new Error("the query block can't be edited");
           if (blockProperty(hostBlockId!, EXPORT_PROPERTY) !== folder) setBlockProperty(hostBlockId!, EXPORT_PROPERTY, folder);
+          if (commentsChanged || includeComments() !== undefined) await saveExportComments(hostBlockId!, include);
           return;
         }
         const page = await ensureExportsPage();
         if (!bindingCurrent(binding)) return;
-        if (!(await appendQueryBlock(page, text, [[EXPORT_PROPERTY, folder]]))) throw new Error(`couldn't write to ${page}`);
+        const properties: [string, string][] = [[EXPORT_PROPERTY, folder]];
+        if (!include) properties.push([COMMENTS_PROPERTY, "false"]);
+        if (!(await appendQueryBlock(page, text, properties))) throw new Error(`couldn't write to ${page}`);
         if (bindingCurrent(binding)) pushToast(msg("share-dialog-definition-saved", { page }), "success");
       } catch (error) {
         if (bindingCurrent(binding)) pushToast(msg("share-dialog-definition-failed", { error: error instanceof Error ? error.message : String(error) }), "error");
       }
     };
     closeShareDialog();
-    openQueryExportThen({ ...base, includeQueryText: includeQueryText() }, saveDefinition);
+    openQueryExportThen({ ...base, includeComments: includeComments() ?? reviewed()?.includeComments ?? true, includeQueryText: includeQueryText() }, saveDefinition);
   };
 
   // ---- shell: transient layer, focus trap ----
@@ -259,6 +265,8 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
               </>}</Show>
               <label class="query-export-ack query-export-include-query"><input type="checkbox" checked={includeQueryText()}
                 onChange={(event) => setIncludeQueryText(event.currentTarget.checked)} />{t("query-export-dialog-include-query-text")}</label>
+              <label class="query-export-ack"><input type="checkbox" checked={includeComments() ?? reviewed()?.includeComments ?? true}
+                onChange={event => setIncludeComments(event.currentTarget.checked)} />{t("export-include-comments")}</label>
             </div>
 
             <div class="settings-section">{t("share-dialog-where")}</div>

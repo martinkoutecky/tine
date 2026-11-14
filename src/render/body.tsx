@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
-import { LineGutter } from "./LineGutter";
+import { codeGutterStyle, LineGutter } from "./LineGutter";
 import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
@@ -42,6 +42,7 @@ function loadHljs() {
 // syntax-highlighted once highlight.js loads. The highlight result is memoized
 // (highlightAuto is expensive) so re-renders don't re-tokenize.
 function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const lines = createMemo(() => (props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n"));
   const [hljs] = createResource(loadHljs);
   const html = createMemo(() => {
     const h = readOr(hljs, undefined, "highlight.js");
@@ -56,9 +57,9 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     }
   });
   return (
-    <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
+    <pre class="code-block" style={codeGutterStyle(lines().length)} classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
       <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
-      <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
+      <LineGutter lines={lines()} code />
       <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
@@ -367,6 +368,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: Sp
         {(item) => (
           <li
             class="md-list-item"
+            value={item.checkbox === undefined ? item.number : undefined}
             classList={{
               "has-checkbox": item.checkbox !== undefined,
               "has-term": !!item.name && item.name.length > 0,
