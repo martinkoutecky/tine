@@ -1,4 +1,5 @@
-settings-cm6-label = آزمایشی: ویرایشگر CodeMirror
+settings-cm6-label = استفاده از ویرایشگر کلاسیک
+settings-cm6-description = CodeMirror ویرایشگر پیش‌فرض است. اگر به‌دلیل مشکلی برمی‌گردید، لطفاً آن را گزارش کنید ({ settings-ui-about } → { about-report-an-issue })؛ قرار است ویرایشگر کلاسیک در آینده کنار گذاشته شود.
 settings-pinyin-label = تطبیق نام صفحه‌های چینی با Pinyin
 settings-pinyin-description = عنوان‌ها و نام‌های مستعار هان را با Pinyin ماندارین یا حروف آغازین هجا پیدا می‌کند. تطبیق نام اصلی اول می‌آید. این ترجیح روی همین دستگاه می‌ماند.
 settings-pinyin-reset = بازنشانی تطبیق Pinyin به پیش‌فرض زبان

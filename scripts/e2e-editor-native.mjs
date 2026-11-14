@@ -8,6 +8,7 @@ import net from "node:net";
 import crypto from "node:crypto";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { remote } from "webdriverio";
+import { chooseEditor } from "./lib/e2e-editor-choice.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
@@ -182,14 +183,7 @@ try {
   await browser.$(".app-container").waitForExist({ timeout: 30000 });
   await assertAppLease(fixture);
   stage = "Choose editor through Settings";
-  await browser.$('button[title^="Settings"]').click();
-  await browser.$(".settings-search-input").setValue("CodeMirror");
-  await browser.$(".settings-search-result").click();
-  const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
-  await toggle.waitForDisplayed();
-  if (await toggle.getAttribute("aria-checked") !== String(mode === "cm6")) await toggle.click();
-  await browser.waitUntil(async () => await toggle.getAttribute("aria-checked") === String(mode === "cm6"));
-  await keys("Escape");
+  await chooseEditor(browser, mode);
 
   if (!propertyValuesOnly) {
   stage = "Typing, Enter, Tab, Shift+Tab and Backspace merge";

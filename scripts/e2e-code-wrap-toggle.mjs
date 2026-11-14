@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
+import { chooseEditor } from "./lib/e2e-editor-choice.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
@@ -89,9 +90,7 @@ try {
   }));
   for (const mode of modes) {
     stage = `choose ${mode}`;
-    // The fresh device starts with the classic editor. Only the opt-in needs a
-    // setting change, keeping the classic journey usable on older Betas too.
-    if (mode === "cm6") await setting("Experimental: CodeMirror editor", "CodeMirror", true);
+    await chooseEditor(browser, mode);
     // Verify the chosen engine mounts, then return to its rendered code card.
     await browser.$(".main-content pre.code-block").click();
     await browser.$(mode === "cm6" ? '.main-content [data-block-editor="cm6"]' : ".main-content textarea.block-editor").waitForDisplayed();

@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- CodeMirror is now the default editor on every platform. To switch back, enable **Settings → Editor → Advanced → Use classic editor** (DkyqG).
+
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
 - Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).

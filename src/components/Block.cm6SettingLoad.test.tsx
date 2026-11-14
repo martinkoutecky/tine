@@ -43,12 +43,14 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it("the first editor opened while the stored choice is still being read gets the stored engine", async () => {
+it.each([false, true])("the first editor waits for the stored CM6 choice %s", async stored => {
+  setCm6EditorEnabled(true);
+  await flush();
   // A big graph keeps the backend busy at launch: the reply to the startup read lands after the first click.
   let reply!: (value: boolean) => void;
   vi.spyOn(backend(), "getAppBool").mockReturnValue(new Promise<boolean>(resolve => { reply = resolve; }));
   const loading = initCm6EditorSetting();
-  expect(cm6EditorEnabled()).toBe(false);
+  expect(cm6EditorEnabled()).toBe(true);
 
   loadSingle({ name: "Slow load", title: "Slow load", kind: "page", format: "md", pre_block: null,
     blocks: [{ id: "only", raw: "hello", collapsed: false, children: [] }] });
@@ -62,11 +64,11 @@ it("the first editor opened while the stored choice is still being read gets the
   // Not the default engine: the editor waits for the reply instead of mounting on the default.
   expect(kinds(host)).toEqual({ cm6: false, textarea: false });
 
-  reply(true);
+  reply(stored);
   await loading;
   await flush();
-  expect(cm6EditorEnabled()).toBe(true);
-  expect(kinds(host)).toEqual({ cm6: true, textarea: false });
+  expect(cm6EditorEnabled()).toBe(stored);
+  expect(kinds(host)).toEqual({ cm6: stored, textarea: !stored });
   expect(maybeEditorIn(host)!.value()).toBe("hello");
   expect(maybeEditorIn(host)!.selection()).toEqual([0, 0]);
 });

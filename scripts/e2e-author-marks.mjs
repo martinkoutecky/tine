@@ -134,7 +134,7 @@ try {
     await browser.$(".settings-search-input").setValue("CodeMirror");
     await browser.$(".settings-search-result").click();
     const cm = await browser.$('[data-setting-id="settings-cm6-label"] [role="switch"]');
-    if (await cm.getAttribute("aria-checked") !== String(editor === "cm6")) await cm.click();
+    if (await cm.getAttribute("aria-checked") !== String(editor === "textarea")) await cm.click();
     await keys("Escape");
     await browser.$(`${rowSelector(ids["Run gamma"])} .block-content`).click();
     const input = await browser.$(editor === "cm6" ? '[data-block-editor="cm6"] .cm-content' : "textarea.block-editor");

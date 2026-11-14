@@ -7,7 +7,13 @@ vi.mock("./Cm6BlockEditor", async () => {
   throw new Error("unreachable");
 });
 vi.mock("../appIdentity", () => ({ APP_UPDATE_CHANNEL: "beta", APP_PRODUCT_NAME: "Tine" }));
-vi.unmock("../editor/cm6Setting");
+// This fixture owns engine activation: the driver must not await the held
+// import before the test can reject it and exercise the classic fallback.
+vi.mock("../editor/cm6Setting", async original => {
+  const setting = await original<typeof import("../editor/cm6Setting")>();
+  setting.setCm6EditorEnabled(false);
+  return setting;
+});
 vi.mock("../uiFailure", () => ({ reportUiFailure: chunk.report }));
 
 import { Block } from "./Block";

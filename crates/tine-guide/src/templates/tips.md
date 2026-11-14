@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Tips & shortcuts
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- **CodeMirror is the default editor** on desktop and mobile, showing formatting as you type. To switch back, turn on **Settings → Editor → Advanced → Use classic editor**. Your choice is saved on this device. If a problem makes you switch back, please [report it](https://github.com/martinkoutecky/tine/issues): the classic editor is planned to be retired.
 	- On Linux and Windows, **Ctrl+Q** runs **Quit Tine**, closing every graph window after saving pending edits. You can remap or disable `app/quit` in **Settings → Keyboard shortcuts**. On macOS use the app menu's **Cmd+Q**. If a page cannot be saved, the usual close warning keeps it available for recovery.
 	- In **Settings → Shortcuts**, use **Add keybinding** to keep a command's default and add another key. Click a binding to replace it, or remove one binding while keeping the others. Every alternative runs the same command; conflicts with other commands are shown beside it. Changes are saved on this device. In a graph's `config.edn`, OG-compatible alternatives use a vector, for example `:shortcuts {:go/search ["mod+k" "mod+shift+k"]}`.
 	- On desktop, the formatting toolbar follows your selection, even near the bottom of a long block. It appears below the selection when there is no room above; choose an action there to format the selected words.

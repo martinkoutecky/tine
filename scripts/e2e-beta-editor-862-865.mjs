@@ -6,6 +6,7 @@ import net from "node:net";
 import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
+import { chooseEditor } from "./lib/e2e-editor-choice.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
@@ -60,6 +61,7 @@ try {
   await ensureMainWindow(browser);
   await browser.$(".app-container").waitForExist({ timeout: 30000 });
   await assertAppLease(fixture);
+  await chooseEditor(browser, "textarea");
   for (const [name, format, raw] of cases) {
     stage = name;
     console.log(`Case: ${name}`);
@@ -103,18 +105,7 @@ try {
     shot(`${name}.png`);
   }
   stage = "Enable CodeMirror in Settings";
-  await browser.$('button[title^="Settings"]').click();
-  await browser.$(".settings-modal").waitForDisplayed();
-  await browser.$(".settings-search-input").setValue("CodeMirror");
-  const result = await browser.$(".settings-search-result");
-  await result.waitForDisplayed();
-  await result.click();
-  const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
-  await toggle.waitForDisplayed();
-  assert.equal(await toggle.getAttribute("aria-checked"), "false");
-  await toggle.click();
-  await browser.waitUntil(async () => await toggle.getAttribute("aria-checked") === "true");
-  await browser.keys("Escape");
+  await chooseEditor(browser, "cm6");
   const cmText = () => browser.execute(() => [...document.querySelectorAll(".main-content .cm-content .cm-line")].map(line => line.textContent).join("\n"));
   for (const [name, format, raw] of cm6Cases) {
     stage = name;

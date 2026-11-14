@@ -1,5 +1,5 @@
 // CodeMirror editor setting across an app restart, in the real app (development build only).
-// The user turns the experiment on in Settings, quits, relaunches, and the first block
+// A fresh profile uses CM6. The user changes engines in Settings, quits, relaunches, and the first block
 // edit must mount the CodeMirror editor, with no off/on in Settings first. Judged by
 // which editor element the DOM mounts, on the routed page and the right sidebar.
 import { spawn, execFileSync } from "node:child_process";
@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 
 ensurePrivateSessionBus();
@@ -44,7 +45,7 @@ let driver = startDriver();
 function myAppPids() {
   const own = [];
   for (const pid of fs.readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
-    try { if (fs.readlinkSync(`/proc/${pid}/exe`) === fs.realpathSync(APP) && fs.readFileSync(`/proc/${pid}/environ`, "utf8").includes(TMP)) own.push(Number(pid)); } catch { /* gone or not ours */ }
+    try { if (fs.readlinkSync(`/proc/${pid}/exe`) === fs.realpathSync(process.env.TINE_APP_BINARY || APP) && fs.readFileSync(`/proc/${pid}/environ`, "utf8").includes(TMP)) own.push(Number(pid)); } catch { /* gone or not ours */ }
   }
   return own;
 }
@@ -57,6 +58,17 @@ async function launch() {
   await session.$(".app-container").waitForExist({ timeout: 30_000 });
   await session.execute(() => { for (const close of document.querySelectorAll(".toast-sticky .toast-close")) close.click(); });
   return session;
+}
+
+async function restart() {
+  for (const pid of myAppPids()) process.kill(pid, "SIGKILL");
+  try { await browser.deleteSession(); } catch { /* the app is gone */ }
+  const exited = driver.exitCode === null && driver.signalCode === null
+    ? new Promise(resolve => driver.once("exit", resolve)) : Promise.resolve();
+  try { process.kill(-driver.pid, "SIGTERM"); } catch { /* already gone */ }
+  await exited;
+  driver = startDriver();
+  browser = await launch();
 }
 
 const EDITOR = '[data-block-editor="cm6"], textarea.block-editor';
@@ -79,35 +91,33 @@ async function kindAfterClick(scope, text) {
 
 try {
   browser = await launch();
-  // 1. Turn the experiment on in Settings (search reveals it inside the collapsed Advanced section).
+  await openPageByName(browser, "Restart Demo");
+  if (await kindAfterClick(".main-content", "alpha") !== "cm6") throw new Error("fresh profile did not use CodeMirror");
+  proof.steps.push("fresh profile: first routed-page edit uses CM6");
+  // 1. Exercise the classic opt-out, then store an explicit CM6 choice before restart.
   await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForDisplayed({ timeout: 10_000 });
   await browser.$(".settings-search-input").setValue("CodeMirror");
   const result = await browser.$(".settings-search-result");
   await result.waitForDisplayed({ timeout: 10_000 });
   await result.click();
-  const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
+  const toggle = await browser.$('[data-setting-id="settings-cm6-label"] [role="switch"]');
   await toggle.waitForDisplayed({ timeout: 10_000 });
-  if (await toggle.getAttribute("aria-checked") !== "false") throw new Error("CodeMirror was not off on a fresh profile");
+  if (await toggle.getAttribute("aria-checked") !== "false") throw new Error("classic opt-out was on in a fresh profile");
   await toggle.click();
   await browser.waitUntil(async () => (await toggle.getAttribute("aria-checked")) === "true", { timeout: 5000 });
-  proof.steps.push("Settings: CodeMirror switched on");
+  await toggle.click();
+  await browser.waitUntil(async () => (await toggle.getAttribute("aria-checked")) === "false", { timeout: 5000 });
+  proof.steps.push("Settings: classic on, then off to store CM6");
   await browser.keys(["Escape"]);
   // Persisted before the restart: the device preference file holds the choice.
   const settingsFile = path.join(TMP, "data", APP_ID, "tine-settings.json");
-  for (let i = 0; i < 50 && !(fs.existsSync(settingsFile) && /experimental_cm6_editor"\s*:\s*true/.test(fs.readFileSync(settingsFile, "utf8"))); i += 1) await new Promise((r) => setTimeout(r, 100));
-  if (!/experimental_cm6_editor"\s*:\s*true/.test(fs.readFileSync(settingsFile, "utf8"))) throw new Error(`setting not persisted in ${settingsFile}`);
+  await waitForFileText(settingsFile, text => JSON.parse(text).experimental_cm6_editor === true);
   proof.steps.push("tine-settings.json holds experimental_cm6_editor=true");
 
   // 2. The app dies uncleanly (kill -9, as after a crash) and is relaunched with the same profile;
   //    Tine then reports "did not close cleanly".
-  for (const pid of myAppPids()) process.kill(pid, "SIGKILL");
-  try { await browser.deleteSession(); } catch { /* the app is gone */ }
-  try { process.kill(-driver.pid, "SIGTERM"); } catch { /* already gone */ }
-  await new Promise((r) => setTimeout(r, 1500));
-  driver = startDriver();
-  await new Promise((r) => setTimeout(r, 2000));
-  browser = await launch();
+  await restart();
   proof.steps.push("killed with SIGKILL and relaunched");
 
   // Journal view straight after launch: whatever editor is open on its own, or opened by the first click.
@@ -190,15 +200,15 @@ try {
     const hit = await browser.$(".settings-search-result");
     await hit.waitForDisplayed({ timeout: 10_000 });
     await hit.click();
-    const control = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
+    const control = await browser.$('[data-setting-id="settings-cm6-label"] [role="switch"]');
     await control.waitForDisplayed({ timeout: 10_000 });
     return control;
   };
   const flip = async (want) => {
     const control = await settingSwitch();
-    if ((await control.getAttribute("aria-checked")) !== String(!want)) throw new Error(`Settings did not show the setting ${want ? "off" : "on"} before the change`);
+    if ((await control.getAttribute("aria-checked")) !== String(want)) throw new Error(`Settings did not show classic ${want ? "on" : "off"} before the change`);
     await control.click();
-    await browser.waitUntil(async () => (await control.getAttribute("aria-checked")) === String(want), { timeout: 5000 });
+    await browser.waitUntil(async () => (await control.getAttribute("aria-checked")) === String(!want), { timeout: 5000 });
     await browser.keys(["Escape"]);
   };
   const settleKind = async (scope, text, want, where) => {
@@ -237,6 +247,11 @@ try {
   if (slow !== "textarea") throw new Error(`a block opened while the stored choice was still being read got ${slow}, wanted textarea`);
   if (routed !== "cm6" || sidebar !== "cm6" || !proof.capture?.cm6) throw new Error(`stored CodeMirror choice ignored after restart: routed=${routed} sidebar=${sidebar} capture=${JSON.stringify(proof.capture)}`);
   if (!proof.capture.focusedInEditor) throw new Error(`Quick Capture opened with CodeMirror but the caret is not in it: ${JSON.stringify(proof.capture)}`);
+  await waitForFileText(settingsFile, text => JSON.parse(text).experimental_cm6_editor === false);
+  await restart();
+  await openPageByName(browser, "Restart Demo");
+  if (await kindAfterClick(".main-content", "alpha") !== "textarea") throw new Error("stored classic choice was lost after restart");
+  proof.steps.push("explicit classic choice survives another process restart");
   console.log("PASS", JSON.stringify(proof));
 } catch (error) {
   proof.observed = String(error);

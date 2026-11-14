@@ -10,23 +10,22 @@ vi.mock("../backend", () => ({ backend: () => ({ getAppBool: env.get, setAppBool
 vi.mock("../toasts", () => ({ pushToast: env.toast }));
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
-// A Beta module registers its change listener after a dynamic import; under a loaded
+// The module registers its change listener after a dynamic import; under a loaded
 // suite that can land after the next test began, so wait for it before resetting.
 afterEach(async () => {
-  if (env.channel === "beta") await vi.waitFor(() => expect(env.handlers.length).toBeGreaterThan(0), { timeout: 10_000 });
+  await vi.waitFor(() => expect(env.handlers.length).toBeGreaterThan(0), { timeout: 10_000 });
   vi.resetModules(); vi.clearAllMocks(); env.handlers.length = 0;
 });
 
-it("defaults off in Beta, loads the device opt-in and rolls back a failed save", async () => {
+it("defaults to CM6, loads the device choice and rolls back a failed save", async () => {
   env.channel = "beta";
   env.get.mockResolvedValue(true);
   env.set.mockResolvedValue(undefined);
   const setting = await import("./cm6Setting");
-  expect(setting.cm6EditorAvailable).toBe(true);
-  expect(setting.cm6EditorEnabled()).toBe(false);
+  expect(setting.cm6EditorEnabled()).toBe(true);
   setting.initCm6EditorSetting();
   await tick();
-  expect(env.get).toHaveBeenCalledWith("experimental_cm6_editor", false);
+  expect(env.get).toHaveBeenCalledWith("experimental_cm6_editor", true);
   expect(setting.cm6EditorEnabled()).toBe(true);
   env.set.mockRejectedValueOnce(new Error("disk full"));
   setting.setCm6EditorEnabled(false);
@@ -49,17 +48,17 @@ it("does not let an older startup read undo a user's choice", async () => {
   expect(setting.cm6EditorEnabled()).toBe(true);
 });
 
-it("stable refuses stored and programmatic opt-ins without preference IO", async () => {
+it("stable loads the stored choice and saves an explicit classic choice", async () => {
   env.channel = "stable";
   env.get.mockResolvedValue(true);
   const setting = await import("./cm6Setting");
-  setting.initCm6EditorSetting();
-  setting.setCm6EditorEnabled(true);
+  await setting.initCm6EditorSetting();
+  expect(setting.cm6EditorEnabled()).toBe(true);
+  setting.setCm6EditorEnabled(false);
   await tick();
-  expect(setting.cm6EditorAvailable).toBe(false);
   expect(setting.cm6EditorEnabled()).toBe(false);
-  expect(env.get).not.toHaveBeenCalled();
-  expect(env.set).not.toHaveBeenCalled();
+  expect(env.get).toHaveBeenCalledWith("experimental_cm6_editor", true);
+  expect(env.set).toHaveBeenCalledWith("experimental_cm6_editor", false);
 });
 
 it("settles only after the stored choice has landed, so a window that mounts an editor first can wait for it", async () => {
@@ -71,7 +70,7 @@ it("settles only after the stored choice has landed, so a window that mounts an 
   const loading = setting.initCm6EditorSetting().then(() => { landed = true; });
   await tick();
   expect(landed).toBe(false);
-  expect(setting.cm6EditorEnabled()).toBe(false);
+  expect(setting.cm6EditorEnabled()).toBe(true);
   finish(true);
   await loading;
   expect(setting.cm6EditorEnabled()).toBe(true);

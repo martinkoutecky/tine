@@ -23,7 +23,8 @@ function project(files: Record<string, string>): string {
 describe("CM6 pass file selection", () => {
   it("selects exactly the tests whose runtime imports reach an overridden module, global or patched member", () => {
     const dir = project({
-      "src/setup.ts": `import { vi } from "vitest";\nvi.mock("./editor/switch", async () => ({}));\n(globalThis as { __forced?: boolean }).__forced = true;\nRange.prototype.measureRows = () => [];\n`,
+      "src/setup.ts": `import { vi } from "vitest";\nimport "./layout";\nvi.mock("./editor/switch", async () => ({}));\n(globalThis as { __forced?: boolean }).__forced = true;\n`,
+      "src/layout.ts": "Range.prototype.measureRows = () => [];\n",
       "node_modules/viewpkg/dist/index.js": "export const view = range => range.measureRows();\n",
       "node_modules/otherpkg/index.js": "export const other = 1;\n",
       "src/editor/switch.ts": "export const on = () => false;\n",

@@ -6,6 +6,7 @@ import net from "node:net";
 import crypto from "node:crypto";
 import assert from "node:assert/strict";
 import { remote } from "webdriverio";
+import { chooseEditor } from "./lib/e2e-editor-choice.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
@@ -233,11 +234,8 @@ try {
     const file = path.join(graph, `pages/Comments ${mode}.md`);
     await browser.setWindowSize(1700, 1000);
     stage = `${mode}: choose editor`;
-    await browser.$('button[title^="Settings"]').click();
-    await browser.$(".settings-search-input").setValue("CodeMirror"); await browser.$(".settings-search-result").click();
-    const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
-    await toggle.waitForDisplayed(); if (await toggle.getAttribute("aria-checked") !== String(mode === "cm6")) await toggle.click();
-    await keys("Escape"); await openPageByName(browser, `Comments ${mode}`);
+    await chooseEditor(browser, mode);
+    await openPageByName(browser, `Comments ${mode}`);
     stage = `${mode}: grouped card and collapsed count`;
     await browser.$(".margin-column .comment-group").waitForExist({ timeout: 10000 });
     const initial = await browser.execute(ids => {

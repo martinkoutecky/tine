@@ -1,13 +1,12 @@
 import { msg } from "../i18n";
-// Device-local, default-off experiment. The shipping identity is the only
-// availability gate; stable builds ignore even a previously stored opt-in.
+// Device-local engine choice. Absence means CM6; stored choices remain explicit.
 import { createSignal } from "solid-js";
-import { APP_UPDATE_CHANNEL } from "../appIdentity";
 import { backend } from "../backend";
 import { revisionOwner, writeOwned } from "../owned";
 import { loadPreference, preferenceRevision, preferenceChangedElsewhere, writePreference } from "../preferenceWrites";
 
 const KEY = "experimental_cm6_editor";
+const DEFAULT_ENABLED = true;
 const CHANGED = "cm6-editor-setting-changed";
 const thisWindow = crypto.randomUUID();
 let changeListener: Promise<void> | undefined;
@@ -25,7 +24,7 @@ function listenForChanges(): Promise<void> {
     } catch { /* Published pages and tests have no native event bus. */ }
   })();
 }
-const [enabled, setEnabled] = createSignal(false);
+const [enabled, setEnabled] = createSignal(DEFAULT_ENABLED);
 const [loading, setLoading] = createSignal(false);
 let loadsInFlight = 0;
 /** True while a read of the stored choice is in flight. An editor chooses its
@@ -33,13 +32,11 @@ let loadsInFlight = 0;
  * it (Block `Editor`); otherwise a slow reply (a big graph keeping the backend
  * busy at launch) leaves the first editor on the default until the next one. */
 export const cm6EditorLoading = loading;
-export const cm6EditorAvailable = APP_UPDATE_CHANNEL === "beta";
-export const cm6EditorEnabled = () => cm6EditorAvailable && enabled();
+export const cm6EditorEnabled = enabled;
 
 /** Apply to the next editor activation and persist through the existing
  * device preference queue. A failed write rolls back and reports the failure. */
 export function setCm6EditorEnabled(on: boolean): void {
-  if (!cm6EditorAvailable) return;
   writePreference(enabled, setEnabled, on,
     async next => {
       await writeOwned(revisionOwner(enabled, preferenceRevision(enabled)), backend().setAppBool(KEY, next));
@@ -50,12 +47,10 @@ export function setCm6EditorEnabled(on: boolean): void {
     }, msg("toast-save-codemirror-failed"));
 }
 
-/** Stable builds neither read nor write this experimental preference. The
- * promise settles once the stored choice has landed (or failed to load): an
+/** The promise settles once the stored choice has landed (or failed to load): an
  * editor mounted earlier keeps the default, so a window that mounts one before
  * its first user edit (Quick Capture) waits for this. */
 export function initCm6EditorSetting(): Promise<void> {
-  if (!cm6EditorAvailable) return Promise.resolve();
   void listenForChanges();
   return loadStored();
 }
@@ -64,6 +59,6 @@ function loadStored(): Promise<void> {
   loadsInFlight++;
   setLoading(true);
   const landed = loadPreference(enabled, setEnabled,
-    () => backend().getAppBool(KEY, false), value => value, "CodeMirror editor");
+    () => backend().getAppBool(KEY, DEFAULT_ENABLED), value => value, "CodeMirror editor");
   return landed.finally(() => { if (--loadsInFlight === 0) setLoading(false); });
 }

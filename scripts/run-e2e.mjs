@@ -7,7 +7,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
+import { allowsLocalDirtyBuild, buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 import { privateSessionLaunch } from "./lib/e2e-session-bus.mjs";
 import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
@@ -94,6 +94,9 @@ const suites = {
     ["sheets", "scripts/e2e-sheets.mjs", {}],
   ],
   "linux-release": [
+    ["empty-page-edit", "scripts/e2e-empty-page-edit.mjs", {}, BY_NAME],
+    ["editor-content-height", "scripts/e2e-editor-content-height.mjs", {}, BY_NAME],
+    ["cm6-setting-restart", "scripts/e2e-cm6-setting-restart.mjs", { E2E_CLASSIC_PROFILE: "0" }, BY_NAME],
     ["cm6-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "cm6" }],
     ["textarea-native", "scripts/e2e-editor-native.mjs", { E2E_EDITOR: "textarea" }],
     ["wayland-app-id", "scripts/e2e-wayland-app-id.mjs", {}],
@@ -326,7 +329,7 @@ function validateBuildReceiptInputs() {
   if (receipt.sourceRevision !== checkoutRevision) {
     throw receiptRemediation(`build receipt ${receiptPath} was built from ${receipt.sourceRevision}, not checkout ${checkoutRevision}`);
   }
-  if (receipt.buildInputsDirty) {
+  if (receipt.buildInputsDirty && !allowsLocalDirtyBuild(e2eMode)) {
     throw receiptRemediation(`build receipt ${receiptPath} records dirty binary/frontend inputs`);
   }
   return receipt;
@@ -442,7 +445,8 @@ function privateTempAppLauncher(dir, binary) {
   fs.mkdirSync(appTmp, { recursive: true });
   const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
   const launcher = path.join(dir, "tine-app-launcher.sh");
-  fs.writeFileSync(launcher, `#!/bin/sh\nTMPDIR=${quote(appTmp)}\nexport TMPDIR\nexec ${quote(binary)} "$@"\n`, { mode: 0o755 });
+  const seed = path.join(root, "scripts/lib/e2e-classic-profile.mjs");
+  fs.writeFileSync(launcher, `#!/bin/sh\nTMPDIR=${quote(appTmp)}\nexport TMPDIR\n${quote(process.execPath)} ${quote(seed)} || exit $?\nexec ${quote(binary)} "$@"\n`, { mode: 0o755 });
   return launcher;
 }
 
@@ -458,8 +462,13 @@ async function runScenario([id, script, extraEnv], contractEntry) {
     const previewPort = await freePort();
     const env = {
       ...baseProcessEnv,
+      // Unmigrated journeys exercise classic; engine-choice journeys can still
+      // choose in Settings or seed their own preference. Fresh-default proofs
+      // explicitly opt out, including on every restart in the same scenario.
+      E2E_CLASSIC_PROFILE: process.env.E2E_CLASSIC_PROFILE ?? "1",
       ...extraEnv,
       TINE_APP: app,
+      TINE_APP_BINARY: app,
       E2E_ARTIFACT_DIR: dir,
       E2E_DRIVER_PORT: String(driverPort),
       E2E_NATIVE_PORT: String(nativePort),
@@ -495,7 +504,7 @@ async function runScenario([id, script, extraEnv], contractEntry) {
     const nativeLinux = process.platform === "linux" && id !== "selection-wrap" && id !== "wayland-app-id";
     const owner = process.platform === "linux" && id !== "selection-wrap"
       ? accountHomeFixture(dir, dir, env) : undefined;
-    if (owner) Object.assign(env, owner.env);
+    if (owner) Object.assign(env, owner.env, { HOME: owner.env.TINE_E2E_ACCOUNT_HOME });
     // Tauri's Linux single-instance plugin owns a well-known session-bus name.
     // Give each native scenario a private bus so a slow WebKit/Tauri teardown
     // cannot forward the next scenario into the previous app. Processes spawned
@@ -506,7 +515,7 @@ async function runScenario([id, script, extraEnv], contractEntry) {
     const args = nativeLinux
       // Xvfb must wrap the private bus: D-Bus-activated GTK portal services need
       // DISPLAY in the activation environment for auxiliary-window behavior.
-      ? ["-a", session.command, ...session.args]
+      ? ["-a", "-s", "-screen 0 1920x1080x24", session.command, ...session.args]
       : [path.join(root, script)];
     const child = spawn(command, args, { cwd: root, env: session?.env ?? env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
     let timedOut = false;

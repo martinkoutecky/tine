@@ -22,8 +22,14 @@ vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({
 // Capture owns its root for the life of this WebView; drain its layout timers.
 afterAll(() => new Promise<void>(resolve => setTimeout(resolve, 300)));
 
-it("preloads the stored CM6 choice while Quick Capture is still hidden and starts loading on toggle-on", async () => {
-  vi.spyOn(backend(), "getAppBool").mockImplementation(async (key, fallback) => key === "experimental_cm6_editor" || fallback);
+it("waits for a stored classic choice before preloading hidden Quick Capture, then preloads on toggle-on", async () => {
+  const { cm6EditorEnabled, cm6EditorLoading, setCm6EditorEnabled } = await import("./editor/cm6Setting");
+  // Begin with the production default, even in the explicit-classic render suite.
+  setCm6EditorEnabled(true);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  let finish!: (value: boolean) => void;
+  const stored = new Promise<boolean>(resolve => { finish = resolve; });
+  vi.spyOn(backend(), "getAppBool").mockImplementation(async (key, fallback) => key === "experimental_cm6_editor" ? stored : fallback);
   vi.spyOn(backend(), "setAppBool").mockResolvedValue();
   vi.spyOn(backend(), "getCaptureEnterFiles").mockResolvedValue(false);
   vi.spyOn(backend(), "captureTarget").mockResolvedValue("main");
@@ -31,9 +37,15 @@ it("preloads the stored CM6 choice while Quick Capture is still hidden and start
   const root = document.createElement("div"); root.id = "capture-root"; document.body.append(root);
   await import("./capture");
   await vi.waitFor(() => expect(h.listeners.has("capture-shown")).toBe(true));
-  await vi.waitFor(() => expect(h.preload).toHaveBeenCalledTimes(1));
-  expect(backend().getAppBool).toHaveBeenCalledWith("experimental_cm6_editor", false);
-  const { setCm6EditorEnabled } = await import("./editor/cm6Setting");
+  expect(cm6EditorLoading()).toBe(true);
+  expect(h.preload).not.toHaveBeenCalled();
+  finish(false);
+  await vi.waitFor(() => expect(cm6EditorLoading()).toBe(false));
+  expect(cm6EditorEnabled()).toBe(false);
+  expect(h.preload).not.toHaveBeenCalled();
+  expect(backend().getAppBool).toHaveBeenCalledWith("experimental_cm6_editor", true);
+  setCm6EditorEnabled(true);
+  expect(h.preload).toHaveBeenCalledTimes(1);
   setCm6EditorEnabled(false);
   expect(h.preload).toHaveBeenCalledTimes(1);
   setCm6EditorEnabled(true);

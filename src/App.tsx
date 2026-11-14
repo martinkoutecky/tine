@@ -95,7 +95,7 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { cm6EditorEnabled, initCm6EditorSetting } from "./editor/cm6Setting";
+import { cm6EditorEnabled, cm6EditorLoading, initCm6EditorSetting } from "./editor/cm6Setting";
 import { preloadCm6Editor } from "./components/EditorGate";
 import { initNoteLayoutSetting } from "./noteLayoutSetting";
 import { rootIsRtl } from "./render/textDirection";
@@ -921,7 +921,7 @@ export function App(): JSX.Element {
   onMount(() => void initLinkDefault());
   onMount(() => void initCm6EditorSetting());
   createEffect(() => {
-    if (cm6EditorEnabled()) void preloadCm6Editor();
+    if (!cm6EditorLoading() && cm6EditorEnabled()) void preloadCm6Editor();
   });
   onMount(initNoteLayoutSetting);
 

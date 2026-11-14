@@ -70,7 +70,8 @@ try {
     await page.keyboard.press("Control+,");
     await page.locator(".settings-search-input").fill("CodeMirror");
     await page.locator(".settings-search-result").first().click();
-    await page.locator(".settings-field").filter({ hasText: "Experimental: CodeMirror editor" }).getByRole("switch").click();
+    const classic = page.locator('[data-setting-id="settings-cm6-label"]').getByRole("switch");
+    if (await classic.getAttribute("aria-checked") === "true") await classic.click();
     await page.keyboard.press("Escape");
     await page.keyboard.press("Control+k");
     await page.locator(".switcher-input").fill("CM6 code highlight regression");

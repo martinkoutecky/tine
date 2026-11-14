@@ -20,8 +20,7 @@ stable after a soak with no open severe regression.
 
 ## 0.10: in development
 
-- **The CodeMirror editor**, an optional editor that shows formatting as you type. Martin has used it daily
-  since early November.
+- **The CodeMirror editor** shows formatting as you type and is the default. **Settings → Editor → Advanced → Use classic editor** switches back; please report problems, because the classic editor is planned to be retired.
 - **A written model of what pages, journals, names and renames mean** ([conceptual model](conceptual-model/SPEC.md)),
   with machine-checked proofs, and Tine changed to follow it. This is where edge cases such as renaming onto
   a date or an alias get one consistent answer.

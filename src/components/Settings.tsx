@@ -37,7 +37,7 @@ import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
 import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds, previewsEnabled, changePreviewsEnabled } from "../hoverPreviewSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
-import { cm6EditorAvailable, cm6EditorEnabled, setCm6EditorEnabled } from "../editor/cm6Setting";
+import { cm6EditorEnabled, setCm6EditorEnabled } from "../editor/cm6Setting";
 import {
   spellcheckEnabled,
   setSpellcheckEnabled,
@@ -836,11 +836,9 @@ function EditorTab(props: { search: string }): JSX.Element {
             }}
           />
         </Field>
-        <Show when={cm6EditorAvailable}>
-          <Field setting={settings["settings-cm6-label"]}>
-            <Toggle on={cm6EditorEnabled()} onClick={() => setCm6EditorEnabled(!cm6EditorEnabled())} />
-          </Field>
-        </Show>
+        <Field setting={settings["settings-cm6-label"]}>
+          <Toggle on={!cm6EditorEnabled()} onClick={() => setCm6EditorEnabled(!cm6EditorEnabled())} />
+        </Field>
         <Field
           setting={settings["settings-ui-link-autocomplete-default"]}
 

@@ -16,7 +16,7 @@ import { For, Show, createSignal, createEffect, onCleanup, onMount } from "solid
 import { initParser } from "./render/parse";
 import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
-import { cm6EditorEnabled, initCm6EditorSetting } from "./editor/cm6Setting";
+import { cm6EditorEnabled, cm6EditorLoading, initCm6EditorSetting } from "./editor/cm6Setting";
 import { preloadCm6Editor } from "./components/EditorGate";
 import { DatePicker } from "./components/DatePicker";
 import { applyTaskWorkflow, datePicker } from "./ui";
@@ -279,9 +279,6 @@ function Capture() {
       applyTaskWorkflow(result.value);
     return result;
   };
-  createEffect(() => {
-    if (cm6EditorEnabled()) void preloadCm6Editor();
-  });
   const refreshPolicyThenResettleAndActivate = async () => {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
     const result = await readOwned(owner, Promise.all([initCm6EditorSetting(), initLinkDefault(), refreshCaptureConfig(owner)]));
@@ -635,6 +632,9 @@ function Capture() {
     void initPasteSettings();
     // Resolve and preload the stored editor choice while the window is hidden.
     void initCm6EditorSetting();
+    createEffect(() => {
+      if (!cm6EditorLoading() && cm6EditorEnabled()) void preloadCm6Editor();
+    });
     seed();
     let stopConfig = () => {};
     onCleanup(() => stopConfig());

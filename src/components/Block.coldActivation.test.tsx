@@ -9,7 +9,13 @@ vi.mock("./Cm6BlockEditor", async original => {
   return original();
 });
 vi.mock("../appIdentity", () => ({ APP_UPDATE_CHANNEL: "beta", APP_PRODUCT_NAME: "Tine" }));
-vi.unmock("../editor/cm6Setting");
+// This case owns both engines even in the forced-CM6 suite, starting classic
+// without preloading the deliberately held-back chunk in the driver's hook.
+vi.mock("../editor/cm6Setting", async original => {
+  const setting = await original<typeof import("../editor/cm6Setting")>();
+  setting.setCm6EditorEnabled(false);
+  return setting;
+});
 
 import { Block, SurfaceContext } from "./Block";
 import { backend } from "../backend";
@@ -23,16 +29,23 @@ import { preloadCm6Editor } from "./EditorGate";
 let dispose: (() => void) | undefined;
 afterEach(() => {
   dispose?.(); endEdit("page-navigation"); resetStore();
-  setCm6EditorEnabled(false); document.body.replaceChildren(); vi.restoreAllMocks();
+  setCm6EditorEnabled(false); document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
 it("keeps cold typing, input-only Backspace and native caret movement across block switches; the next activation uses CM6", async () => {
+  // Keep the large page's offscreen bodies deferred, as on a real first open.
+  vi.stubGlobal("IntersectionObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   vi.spyOn(backend(), "setAppBool").mockResolvedValue();
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
   if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = () => new DOMRect();
   loadSingle({ name: "Cold editor", title: "Cold editor", kind: "page", pre_block: null,
-    blocks: ["typed", "deleted", "moved"].map(id => ({ id, raw: "hello", collapsed: false, children: [] })) });
+    blocks: [...["typed", "deleted", "moved"], ...Array.from({ length: 1497 }, (_, i) => `filler-${i}`)]
+      .map(id => ({ id, raw: "hello", collapsed: false, children: [] })) });
   const host = document.createElement("div"); document.body.append(host);
   dispose = render(() => <>
     <section data-main><SurfaceContext.Provider value="main"><For each={pageByName("Cold editor")?.roots}>{id => <Block id={id} />}</For></SurfaceContext.Provider></section>
@@ -50,8 +63,9 @@ it("keeps cold typing, input-only Backspace and native caret movement across blo
   for (let i = 0; i < 9; i++) {
     const at = performance.now();
     startEditing("typed", 5);
-    expect(editorIn(sidebar).kind).toBe("textarea");
     coldSamples.push(performance.now() - at);
+    // The driver's DOM-wide editor lookup is an assertion, not activation work.
+    expect(editorIn(sidebar).kind).toBe("textarea");
     if (i < 8) endEdit("page-navigation");
   }
   // The asset is deliberately still pending. Budget the usable first-edit

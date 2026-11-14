@@ -79,6 +79,14 @@ try {
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForSelector(".ls-block", { timeout: 5000 });
+  // This journey exercises the classic editor's wrapping path.
+  if (process.env.E2E_CLASSIC_PROFILE !== "0") {
+    await page.keyboard.press("Control+,");
+    await page.locator(".settings-search-input").fill("CodeMirror");
+    await page.locator(".settings-search-result").first().click();
+    await page.locator('[data-setting-id="settings-cm6-label"]').getByRole("switch").click();
+    await page.keyboard.press("Escape");
+  }
 
   // 1) select "foo" in "hello foo world", type [ [ → page ref + search open
   {

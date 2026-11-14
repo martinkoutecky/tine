@@ -2525,6 +2525,7 @@ export interface MessageArgs {
   "settings-back-to-list": {};
   "settings-backup-load-failed": { "error": string | number };
   "settings-close": {};
+  "settings-cm6-description": {};
   "settings-cm6-label": {};
   "settings-color-indent-guides-by-level": {};
   "settings-color-indent-guides-by-level-hint": {};

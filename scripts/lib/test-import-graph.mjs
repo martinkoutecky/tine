@@ -61,29 +61,39 @@ function packageReads(root, name, members) {
     && members.some(member => fs.readFileSync(path.join(dir, rel), "utf8").includes(member)));
 }
 
-/** What a setup file overrides for every test file it runs with: the modules it mocks,
- * the `globalThis` properties it assigns, and the prototype members it patches. */
+/** What a setup file and its static runtime imports override: the modules they mock,
+ * the `globalThis` properties they assign, and the prototype members they patch. */
 function setupOverrides(setupFile) {
-  const { source } = moduleEdges(setupFile);
   const modules = [];
   const globals = [];
   const members = [];
-  const visit = node => {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
-      && node.expression.expression.text === "vi" && node.expression.name.text === "mock" && ts.isStringLiteralLike(node.arguments[0])) {
-      const target = resolveRelative(setupFile, node.arguments[0].text);
-      if (!target) throw new Error(`${setupFile}: cannot resolve vi.mock target ${node.arguments[0].text}`);
-      modules.push(target);
-    }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(node.left)) {
-      let target = node.left.expression;
-      while (ts.isParenthesizedExpression(target) || ts.isAsExpression(target)) target = target.expression;
-      if (ts.isIdentifier(target) && target.text === "globalThis") globals.push(node.left.name.text);
-      if (ts.isPropertyAccessExpression(target) && target.name.text === "prototype") members.push(node.left.name.text);
-    }
-    ts.forEachChild(node, visit);
+  const scanned = new Set();
+  const scan = file => {
+    if (scanned.has(file)) return;
+    scanned.add(file);
+    const { source } = moduleEdges(file);
+    const visit = node => {
+      if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly) {
+        const target = resolveRelative(file, node.moduleSpecifier.text);
+        if (target) scan(target);
+      }
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+        && node.expression.expression.text === "vi" && node.expression.name.text === "mock" && ts.isStringLiteralLike(node.arguments[0])) {
+        const target = resolveRelative(file, node.arguments[0].text);
+        if (!target) throw new Error(`${file}: cannot resolve vi.mock target ${node.arguments[0].text}`);
+        modules.push(target);
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(node.left)) {
+        let target = node.left.expression;
+        while (ts.isParenthesizedExpression(target) || ts.isAsExpression(target)) target = target.expression;
+        if (ts.isIdentifier(target) && target.text === "globalThis") globals.push(node.left.name.text);
+        if (ts.isPropertyAccessExpression(target) && target.name.text === "prototype") members.push(node.left.name.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
   };
-  visit(source);
+  scan(setupFile);
   return { modules, globals, members };
 }
 

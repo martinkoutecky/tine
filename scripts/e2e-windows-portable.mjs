@@ -60,7 +60,7 @@ function snapshot(dir) {
 }
 const hostBefore = hostFolders.map(snapshot);
 
-const env = { ...process.env, TINE_GRAPH: graph };
+const env = { ...process.env, TINE_GRAPH: graph, E2E_CLASSIC_SETTINGS_DIR: path.join(data, "roaming") };
 delete env.WEBVIEW2_USER_DATA_FOLDER;
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 const webviewTarget = await startWebdriverApplication(APP, env, NATIVE_PORT, "default", process.platform, { appOwnsUserDataFolder: true });
