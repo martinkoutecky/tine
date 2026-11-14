@@ -359,7 +359,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   (`JournalFormat::absent_link_is_journal`, the rule `WholeGraph::link_target` uses), never a second file under
   `pages/`; an ordinary page file with exactly that name keeps its own file (D-20261107-KD, where OG would
   count that file as the same page as the journal: `convert-page-if-journal-impl`). Content is a page fragment in the
-  page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
+  page's format (Markdown `- ` or Org outline). By default, every created block gets `tine.author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. Names are trimmed for both block attribution and run commits. An explicit blank `--author` is refused; blank or whitespace-only `TINE_AUTHOR` counts as unset. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
   When `--under` targets a comment or any descendant of its thread, each
@@ -368,7 +368,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   insertion gets no date. Existing threads and their nesting stay unchanged.
   When creating a page, a properties-only leading pre-block, or qualifying first Markdown
   properties-only bullet, becomes the page header. It receives no implicit `tine.author`;
-  outline blocks still do. Existing pages keep add's outline-insertion behavior.
+  outline blocks still do unless `--no-author` is set. Existing pages keep add's outline-insertion behavior.
 - **`page.prop`**: `tine prop set --page PAGE KEY VALUE` / `tine prop remove --page PAGE KEY`,
   or `--journal` / `--journal=DATE` instead of `--page`. Exactly one page/journal target is
   required; the page must already exist. Wire args: `page` or `journal`, `key`, `value`
@@ -400,7 +400,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   metadata nor counts as naming a key.
   `--author NAME` on the command line sets `tine.author::`, replacing a retained or supplied one and adding one
   to a block without it. An empty name is refused (`refused:kernel`, malformed input). `TINE_AUTHOR` alone names
-  the run's commits and leaves `tine.author::` alone: set once for a session, it would overwrite people's attribution
+  the run's commits and leaves `tine.author::` alone on edits (on adds it names new blocks by default): set once for a session, it would overwrite people's attribution
   on every edit.
   Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
   property ownership and creates no more property groups than canonical placement. Otherwise the join
