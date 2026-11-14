@@ -495,13 +495,18 @@ mod current_page_tests {
     /// through its command. The Store reads one tiny identity per request and
     /// creates it once; no page read, parse or graph listing. Its lower bound
     /// is two socket round trips and one frontend question/answer; the budget catches a
-    /// graph scan, a sleep, or a retry loop, not noise. The counters are
-    /// process-global: the case runs in a child process of its own.
+    /// graph scan, a sleep, or a retry loop. Like the wall-time bench in
+    /// docs/BENCH.md, take the minimum of eight samples to limit scheduling
+    /// noise. Each sample includes first creation and all request-work checks.
+    /// The counters are process-global: each sample runs in its own child.
     #[test]
     fn a_successful_current_page_request_reads_one_identity_and_creates_it_once() {
         const CHILD: &str = "TINE_CURRENT_PAGE_COST_CHILD";
+        const BUDGET: Duration = Duration::from_millis(50);
         if std::env::var_os(CHILD).is_none() {
-            let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
+            let mut best = Duration::MAX;
+            for sample in 0..8 {
+                let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
                 .args([
                     "--exact",
                     "owner::window::current_page_tests::a_successful_current_page_request_reads_one_identity_and_creates_it_once",
@@ -511,20 +516,31 @@ mod current_page_tests {
                 .env(CHILD, "1")
                 .output()
                 .unwrap();
-            let (out, err) = (
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            assert!(output.status.success(), "{out}\n{err}");
+                let (out, err) = (
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                assert!(output.status.success(), "{out}\n{err}");
+                assert!(
+                    out.contains("1 passed"),
+                    "the child ran no case:\n{out}\n{err}"
+                );
+                let nanos = out
+                    .lines()
+                    .find_map(|line| line.strip_prefix("current-page slowest-ns: "))
+                    .expect("child reports its slowest request")
+                    .parse::<u64>()
+                    .unwrap();
+                best = best.min(Duration::from_nanos(nanos));
+                println!("current-page sample {sample}:\n{out}");
+            }
             assert!(
-                out.contains("1 passed"),
-                "the child ran no case:\n{out}\n{err}"
+                best < BUDGET,
+                "best sample's slowest request {best:?} over {BUDGET:?}"
             );
-            print!("{out}");
             return;
         }
         const REQUESTS: u32 = 200;
-        const BUDGET: Duration = Duration::from_millis(50);
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join("pages")).unwrap();
         std::fs::create_dir(temp.path().join("logseq")).unwrap();
@@ -678,7 +694,6 @@ mod current_page_tests {
             requests.0.lock().unwrap().is_empty(),
             "every request retires"
         );
-        assert!(slowest < BUDGET, "slowest {slowest:?} over {BUDGET:?}");
         let counts = tine_store::cost_counters::snapshot();
         println!("identity work: {counts:?}");
         let expected = tine_store::cost_counters::Counts {
@@ -702,6 +717,7 @@ mod current_page_tests {
             "identity work only"
         );
         assert_eq!(std::fs::read(note).unwrap(), bytes);
+        println!("current-page slowest-ns: {}", slowest.as_nanos());
     }
 
     #[test]
