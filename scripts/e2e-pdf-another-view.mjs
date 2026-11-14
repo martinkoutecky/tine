@@ -18,7 +18,8 @@ const OTHER = path.join(ARTIFACTS, "graph-b");
 const SIDECAR = path.join(GRAPH, "assets/shared.edn");
 const NOTES = path.join(GRAPH, "pages/hls__shared.md");
 const ID = "6a5604f8-a337-4336-a711-2ba6bc14fbfd";
-const TEXT = "Shared text highlight";
+const TEXT_LINES = ["Shared text highlight", "continues on another line"];
+const TEXT = TEXT_LINES.join(" ");
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4890);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4891);
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -28,7 +29,9 @@ const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(proce
 // fixture, with two short lines that fit inside an ordinary split pane.
 function fixturePdf() {
   const stream = (text) => {
-    const content = `BT /F1 13 Tf 72 690 Td (${text}) Tj ET`;
+    const content = text === TEXT
+      ? `BT /F1 13 Tf 72 690 Td (${TEXT_LINES[0]}) Tj 0 -20 Td (${TEXT_LINES[1]}) Tj ET`
+      : `BT /F1 13 Tf 72 690 Td (${text}) Tj ET`;
     return `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`;
   };
   const objects = [
@@ -63,7 +66,7 @@ const rect = "{:x1 72 :y1 88 :x2 225 :y2 104 :width 612 :height 792}";
 fs.writeFileSync(SIDECAR, `{:highlights [{:id #uuid "${ID}" :page 1 :position {:bounding ${rect} :rects (${rect}) :page 1} :content {:text "Existing shared highlight"} :properties {:color "yellow"}}] :extra {:page 1 :scale 1.0}}\n`);
 fs.writeFileSync(NOTES, `file:: [Shared PDF](../assets/shared.pdf)\nfile-path:: ../assets/shared.pdf\n\n- Existing shared highlight\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: ${ID}\n`);
 const xdg = path.join(ARTIFACTS, "xdg");
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(xdg, dir), { recursive: true });
+for (const dir of ["data", "config", "cache", "state", "home"]) fs.mkdirSync(path.join(xdg, dir), { recursive: true });
 const appData = path.join(xdg, "data", APP_ID);
 fs.mkdirSync(appData, { recursive: true });
 fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({
@@ -73,6 +76,7 @@ fs.writeFileSync(path.join(appData, "tine-settings.json"), JSON.stringify({
 const env = {
   ...process.env, TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: path.join(xdg, "data"), XDG_CONFIG_HOME: path.join(xdg, "config"), XDG_CACHE_HOME: path.join(xdg, "cache"),
+  XDG_STATE_HOME: path.join(xdg, "state"), HOME: path.join(xdg, "home"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
 };
 const log = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
@@ -124,7 +128,9 @@ async function assertViews(expected, label) {
 async function overlay(id, color, present = true) {
   await browser.waitUntil(async () => (await snapshot()).every((v) => {
     const matches = v.highlights.filter((hl) => hl.id === id);
-    return present ? matches.length === 1 && (!color || matches[0].color === color) : matches.length === 0;
+    // Multiline selections have several rendered rectangles for one highlight.
+    // Logical ID uniqueness is checked in the sidecar and notes page below.
+    return present ? matches.length > 0 && (!color || matches.every((hl) => hl.color === color)) : matches.length === 0;
   }), { timeout: 10_000, timeoutMsg: `shared overlay ${id} did not become ${present ? color || "present" : "absent"}` });
 }
 
@@ -145,14 +151,17 @@ async function editExisting(id, highlightId, colorIndex) {
 async function selectText(id) {
   let target, previous, stable = 0;
   await browser.waitUntil(async () => {
-    target = await browser.execute((selector, text) => {
-      const span = [...document.querySelectorAll(`${selector} .textLayer span`)].find((s) => s.textContent === text);
-      if (!span?.firstChild) return null;
-      const range = document.createRange();
-      range.selectNodeContents(span);
-      const rect = range.getBoundingClientRect();
-      const y = Math.round(rect.top + rect.height / 2);
-      const endpoint = (edge, offset) => {
+    target = await browser.execute((selector, lines) => {
+      const spans = [...document.querySelectorAll(`${selector} .textLayer span`)];
+      const endpoint = (text, atEnd) => {
+        const span = spans.find((s) => s.textContent === text);
+        if (!span?.firstChild) return null;
+        const range = document.createRange();
+        range.selectNodeContents(span);
+        const rect = range.getBoundingClientRect();
+        const y = Math.round(rect.top + rect.height / 2);
+        const edge = atEnd ? rect.right : rect.left;
+        const offset = atEnd ? text.length : 0;
         for (let d = -3; d <= 3; d++) {
           const x = Math.round(edge) + d;
           const caret = document.caretRangeFromPoint(x, y);
@@ -160,9 +169,9 @@ async function selectText(id) {
         }
         return null;
       };
-      const start = endpoint(rect.left, 0), end = endpoint(rect.right, text.length);
+      const start = endpoint(lines[0], false), end = endpoint(lines[1], true);
       return start && end ? { start, end } : null;
-    }, view(id), TEXT);
+    }, view(id), TEXT_LINES);
     const current = JSON.stringify(target);
     stable = target && current === previous ? stable + 1 : 0;
     previous = current;
@@ -176,7 +185,8 @@ async function selectText(id) {
       { type: "pointerUp", button: 0 },
     ] }]);
   } finally { await browser.releaseActions(); }
-  check(await browser.execute(() => window.getSelection()?.toString()) === TEXT, "native drag did not select fixture text");
+  const selected = await browser.execute(() => window.getSelection()?.toString() ?? "");
+  check(/[\r\n]/.test(selected) && selected.split(/[\r\n]+/).join(" ") === TEXT, "native drag did not select both fixture lines");
 }
 
 try {
@@ -239,6 +249,7 @@ try {
   const newId = ids.find((id) => id !== ID);
   check(newId && ids.length === 2 && count(written, newId) === 1, "sidecar did not contain each highlight once");
   await waitForFileText(NOTES, (t) => count(t, newId) === 1 && count(t, TEXT) === 1);
+  await browser.saveScreenshot(path.join(ARTIFACTS, "wrapped-highlight.png"));
   await overlay(newId, purple);
   await assertViews(expected, "create");
 
@@ -248,6 +259,7 @@ try {
   await overlay(ID, undefined, false);
   await waitForFileText(SIDECAR, (t) => !t.includes(ID) && count(t, newId) === 1);
   await waitForFileText(NOTES, (t) => !t.includes(ID) && count(t, newId) === 1);
+  check(fs.readFileSync(NOTES, "utf8").includes(TEXT), "#953: refreshing metadata split the selected text");
   await assertViews(expected, "delete");
 
   journey = "close B, edit A, drain graph";

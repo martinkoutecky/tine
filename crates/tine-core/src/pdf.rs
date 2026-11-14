@@ -592,8 +592,7 @@ fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> St
 
 /// Refresh an existing annotation block's `hl-color::` / `hl-page::` to match the
 /// (possibly recolored / re-paged) highlight, preserving everything else — the
-/// user's highlight-text line, any extra properties, and the note children. The
-/// old block was previously kept verbatim, so a recolor never reached the page.
+/// user's text body, any extra properties, and the note children.
 fn refresh_annotation(
     mut block: DocBlock,
     h: &Highlight,
@@ -601,9 +600,44 @@ fn refresh_annotation(
     regions: &crate::block_regions::BlockRegions,
 ) -> DocBlock {
     use crate::block_regions::Edit;
-    let raw = regions
+    // Keep Markdown annotation metadata in one trailing group. The ordinary
+    // property editor hoists user properties after the headline; on multiline
+    // highlights that splits the group containing the Logseq block identity.
+    let (body, metadata) = if format == Format::Md {
+        // A display projection trims whitespace; saving uses the original spans.
+        let mut body = String::new();
+        let mut metadata = String::new();
+        let mut at = 0;
+        let mut previous_region = None;
+        for property in &regions.properties {
+            if previous_region == Some(property.region) {
+                continue;
+            }
+            previous_region = Some(property.region);
+            let range = regions.property_regions[property.region];
+            body.push_str(&block.raw()[at..range.0]);
+            at = range.1;
+            if !metadata.is_empty() {
+                metadata.push('\n');
+            }
+            metadata.push_str(range.slice(block.raw()).trim_end_matches(['\r', '\n']));
+        }
+        body.push_str(&block.raw()[at..]);
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        (Some(body), Some(metadata))
+    } else {
+        (None, None)
+    };
+    let metadata_regions = metadata
+        .as_ref()
+        .map(|raw| crate::block_regions::parse(raw, false));
+    let raw = metadata_regions
+        .as_ref()
+        .unwrap_or(regions)
         .apply(
-            block.raw(),
+            metadata.as_deref().unwrap_or(block.raw()),
             format == Format::Org,
             Edit::Properties {
                 values: vec![
@@ -613,17 +647,26 @@ fn refresh_annotation(
             },
         )
         .expect("parsed annotation");
+    let raw = if let Some(body) = body {
+        format!("{body}{raw}")
+    } else {
+        raw
+    };
     block.set_raw(raw);
     block
 }
 
 fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
     let mut lines = Vec::new();
-    if let Some(t) = &h.text {
-        lines.push(t.clone());
+    let text = h.text.as_deref().unwrap_or_default();
+    // Org owns a drawer only directly below its heading. Keep multiline text
+    // together below the drawer, rather than interleaving it with metadata.
+    let body = format == Format::Org && text.contains('\n');
+    lines.push(if body {
+        String::new()
     } else {
-        lines.push(String::new());
-    }
+        text.to_string()
+    });
     if format == Format::Org {
         lines.push(":PROPERTIES:".to_string());
     }
@@ -639,11 +682,14 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
     lines.push(property_line("id", &h.id, format));
     if format == Format::Org {
         lines.push(":END:".to_string());
+        if body {
+            lines.push(text.to_string());
+        }
     }
     DocBlock {
         raw: lines.join("\n"),
         children: Vec::new(),
-        uuid: String::new(),
+        uuid: Default::default(),
         is_org: format == Format::Org,
         property_ref_config: None,
         proj: std::sync::OnceLock::new(),
@@ -653,6 +699,40 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multiline_highlight_keeps_one_property_group_after_refresh() {
+        for format in [Format::Md, Format::Org] {
+            let mut h = sample();
+            h.text = Some("First text line\n\n#+BEGIN_NOTE\nexample:: keep\n#+END_NOTE\nSecond text line\nThird text line\n\n".into());
+            let first = hls_page_document_for_format("paper.pdf", "Paper", &[h.clone()], format);
+            h.color = "green".into();
+            let refreshed = merge_hls_page_for_format(
+                Some(&first),
+                "paper.pdf",
+                "Paper",
+                &[h.clone()],
+                &HashSet::new(),
+                format,
+            );
+            for doc in [&first, &refreshed] {
+                let raw = doc.roots[0].raw();
+                assert!(
+                    raw.contains(h.text.as_deref().unwrap()),
+                    "text split by properties: {raw}"
+                );
+                assert_eq!(doc.roots[0].property("id").as_deref(), Some(h.id.as_str()));
+                assert_eq!(
+                    doc.roots[0].property("ls-type").as_deref(),
+                    Some("annotation")
+                );
+            }
+            assert_eq!(
+                refreshed.roots[0].property("hl-color").as_deref(),
+                Some("green")
+            );
+        }
+    }
 
     fn sample() -> Highlight {
         Highlight {
