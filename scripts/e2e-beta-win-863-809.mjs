@@ -63,11 +63,12 @@ if (referenced) fs.writeFileSync(path.join(graph, "pages/Journal mentions.md"), 
 const fixture = accountHomeFixture(run, out);
 // The shared Windows launcher takes its profile root from the harness process.
 process.env.E2E_WEBVIEW_USER_DATA_ROOT = path.join(run, "webview");
-const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
+const env = { ...fixture.env, TINE_GRAPH: graph,
+  ...(process.platform === "linux" ? { HOME: path.join(run, "home"),
   XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"),
   XDG_CACHE_HOME: path.join(run, "cache"), XDG_STATE_HOME: path.join(run, "state"),
-  APPDATA: path.join(run, "appdata"), LOCALAPPDATA: path.join(run, "localappdata"),
-  WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
+  WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" } : {}),
+  APPDATA: path.join(run, "appdata"), LOCALAPPDATA: path.join(run, "localappdata") };
 const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   journey: "scripts/e2e-beta-win-863-809.mjs", platform: process.platform, app, issues, stage: "launch", steps: [], status: "running",
   scalingEnvironment: { GDK_SCALE: env.GDK_SCALE ?? null, GDK_DPI_SCALE: env.GDK_DPI_SCALE ?? null,
@@ -137,6 +138,15 @@ const watchdog = setTimeout(() => {
   write(); stop(); fixture.close?.(); process.exit(1);
 }, 150_000);
 try {
+  if (process.platform === "win32" && process.env.E2E_WINDOWS_SCALE_150 === "1") {
+    step("809-display-scale", "Selecting Windows display scale 150%; native geometry must confirm it");
+    const setup = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(root, "scripts/e2e-gh809-display-scale.ps1")], { stdio: "inherit", timeout: 60_000 });
+    if (setup.error || setup.status !== 0) {
+      report.classification = "infrastructure";
+      throw setup.error ?? new Error(`Windows display scale setup exited ${setup.status}`);
+    }
+  }
   if (process.platform === "linux") {
     wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], { env, stdio: "ignore" });
   }

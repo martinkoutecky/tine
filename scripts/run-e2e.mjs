@@ -161,6 +161,7 @@ const suites = {
     ["windows-portable", "scripts/e2e-windows-portable.mjs", {}],
     // GH #809: new-window stage diagnostics on WebView2; dispatch by name.
     ["beta-win-809", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809" }],
+    ["gh809-scaled-window", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809", E2E_WINDOWS_SCALE_150: "1", E2E_EXPECT_NATIVE_SCALE: "1.5" }],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
   ],
