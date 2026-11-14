@@ -142,6 +142,8 @@ const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or h
   + "exemplar src/lazyObserve.ts renderedBlocks and src/binding.ts clearOnBindingInvalidated. "
   + "The existing collection baseline may only shrink";
 const BOUNDED_COLLECTIONS: Record<string, string> = {
+  "src/document/model.ts#pageNamesByKey": "one entry per loaded page identity, rebuilt with the existing membership index; eviction and resetStore remove the same rows, bounded by doc.pages rather than session history",
+  "src/document/model.ts#pageNamesByPath": "one entry per loaded physical owner, rebuilt with the existing membership index; eviction and resetStore remove the same rows, bounded by doc.pages rather than session history",
   "src/document/edits/selection.ts#selectionSurfaces": "one token per live rendered surface key; ownSelectionSurface's Solid cleanup deletes it on unmount, with route replacement renewing the same key; selectionSurface.test.ts pins replacement/unmount bounds; no graph payload",
   "src/document/workingSet.ts#viewportPins": "one accessor per mounted live reference row; MountedRefGroup registers on mount and its Solid cleanup removes it, so a graph switch empties it with its surfaces",
   "src/editorController.ts#editEntryGuards": "one guard per mounted native property input; FieldCell registers on mount and its Solid cleanup removes it on commit, cancel or unmount; captureResultDraft still guards the write's binding",

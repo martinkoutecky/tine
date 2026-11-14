@@ -172,6 +172,46 @@ A routed load refused by the working-set gate retries when that owner becomes
 replaceable, including a host close still in flight after leaving a feed edit.
 The retry belongs to that route and graph; leaving either cancels it. Reads and
 exact-path checks run again, and unsaved or conflicted owners remain protected.
+
+File revisions are unordered content hashes: they prove byte equality and
+guard saves, never the age of a frontend answer. Working-set reads capture a
+local admission generation before issuance and compare each returned page's
+generation immediately before installation, including a queued reference
+commit. Taking local input into host custody, installing host content or a
+read, receiving an own or external publication, releasing a host page,
+rekeying an identity, and retiring/evicting a loaded page invalidate earlier
+reads. A still-owned stale read retries once; a second stale answer installs
+nothing. Graph/route retirement cancels the retry. Satellite, routed, single
+and feed admission (including retained days and pagination) use this same
+owner. The check includes a feed's synthesized today placeholder even when
+the backend returned no day for it. A routed load that exhausts its retry
+still shows a matching current
+loaded copy, preserving its physical-file and kind checks. Generations live
+only while reads are outstanding; no hash ordering,
+persisted state or protocol field is added. A later return to identical bytes
+(A → B → A) is admitted normally.
+Native publication keys are carried unchanged; raw page names use Rust's
+normalization once.
+
+Own publications deliver their existing changed-page summary keys to loaded,
+unheld pages through the document publication consumer. It reads each loaded
+physical owner once, shares the ordinary reload/dirty/draft gate, and retains
+own origin across a deferral so the outside-change prompt does not intercept
+the app's own result. Held pages receive host mail. Unloaded pages cause no
+page read, feed restart or loaded-page render. Dispatch visits the changed
+keys only, using the working-set membership index; feature writers issue no
+synthetic watcher notifications after a merge or resolution.
+When the loaded physical owner is gone, the consumer retires its replaceable
+copy and uses the ordinary removal/navigation/feed handling to resolve any
+survivor. Retirement rechecks the input/draft gate after the read; a hold
+defers the same publication until release. A different file returned for an
+exact-path read cannot replace or retire the loaded owner.
+Cold Capture may seed a working-set page before the parser is initialized.
+Admission initializes the parser before capturing a read. Publication-key
+lookup initializes and derives the loaded names' native keys once if needed;
+subsequent membership updates carry those keys without normalizing unchanged
+names again.
+
 A pinned route whose file is temporarily missing during sync retries when its
 page's publication changes. While the exact path remains missing, silent reads
 probe it after 3 seconds, then double the delay after each completed probe

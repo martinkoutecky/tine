@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
 - Find in page says how many embeds and queries are not searched yet, and updates matches as they load without retyping (#935).
 
+- Late page reads preserve newer saved text, and merges and conflict resolutions refresh pages already on screen (Hd-bI).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
 - Remove author works on a block selection, including folded descendants, from Commands, a bound shortcut or the context menu. It skips read-only blocks and removes all selected attributions in one undo step (#918).
 - Leaving a page clears its block selection, preventing Delete and other selection keys from changing blocks on the hidden page (Ifods).
