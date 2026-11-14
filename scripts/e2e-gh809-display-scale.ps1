@@ -23,7 +23,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
     # scale selector has a percentage among these Settings combo values.
     $value = $combo.Current.Name
     Write-Host "Display combo: $value ($($combo.Current.AutomationId))"
-    if ($value -match '\d+%' -or $combo.Current.AutomationId -match '(^|_)SystemSettings_Display_Scale') {
+    if ($value -match '\d+%' -or $combo.Current.AutomationId -match '(^|_)SystemSettings_Display_Scal(e|ing)') {
       $scale = $combo
       break
     }
@@ -46,6 +46,6 @@ while ([DateTime]::UtcNow -lt $deadline) {
   if ($null -ne $choice) { break }
   Start-Sleep -Milliseconds 100
 }
-if ($null -eq $choice) { throw 'Infrastructure: this hosted display does not offer 150% scaling' }
+if ($null -eq $choice) { Write-Host "Scale choices offered: $(($items | ForEach-Object { $_.Current.Name }) -join ', ')"; throw 'Infrastructure: this hosted display does not offer 150% scaling' }
 $choice.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
 Write-Host 'Selected Windows display scale 150%; the app journey must verify native scale 1.5 on both windows.'
