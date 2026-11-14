@@ -4,7 +4,7 @@
 .SH NAME
 tine\-export\-static \- Write the static HTML site. A zero\-page public selection explains public:: true and \-\-all\-pages
 .SH SYNOPSIS
-\fBtine export static\fR <\fB\-\-output\fR> [\fB\-\-debug\fR] [\fB\-\-name\fR] [\fB\-\-all\-pages\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> 
+\fBtine export static\fR <\fB\-\-output\fR> [\fB\-\-debug\fR] [\fB\-\-name\fR] [\fB\-\-all\-pages\fR] [\fB\-\-no\-comments\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> 
 .SH DESCRIPTION
 Write the static HTML site. A zero\-page public selection explains public:: true and \-\-all\-pages
 .SH OPTIONS
@@ -20,6 +20,9 @@ Name of the created child and of the published site. Defaults to the graph folde
 .TP
 \fB\-\-all\-pages\fR
 Publish every page, ignoring `public:: true` selection for this run
+.TP
+\fB\-\-no\-comments\fR
+Leave comment threads out of this export
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

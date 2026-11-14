@@ -107,6 +107,7 @@ fn run_update_case(code: u16, changed: bool) {
         share_id: "unused".into(),
         membership: None,
         preview: SharePreview {
+            include_comments: true,
             title: "After".into(),
             pages: vec![tine_graph_features::publish_query::ExportPage {
                 name: "New member".into(),

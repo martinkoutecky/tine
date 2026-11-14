@@ -50,7 +50,7 @@ fn home(base: &std::path::Path, slug: &str) -> String {
 fn the_configured_home_opens_first_when_it_is_exported() {
     let _integration_guard = crate::integration_lock();
     let (base, store) = fixture("{:default-home {:page \"directory\"}}\n");
-    publish_live(&store, &base.join("output"), "Site", false, &bundle()).unwrap();
+    publish_live(&store, &base.join("output"), "Site", false, true, &bundle()).unwrap();
     assert_eq!(home(&base, "site"), "Directory");
 }
 
@@ -58,7 +58,7 @@ fn the_configured_home_opens_first_when_it_is_exported() {
 fn an_unexported_configured_home_falls_back_to_the_first_page() {
     let _integration_guard = crate::integration_lock();
     let (base, store) = fixture("{:default-home {:page \"Hidden\"}}\n");
-    publish_live(&store, &base.join("output"), "Site", false, &bundle()).unwrap();
+    publish_live(&store, &base.join("output"), "Site", false, true, &bundle()).unwrap();
     assert_eq!(home(&base, "site"), "Alpha");
 }
 
@@ -71,6 +71,7 @@ fn a_requested_home_wins_and_an_unexported_one_is_refused_before_writing() {
         &base.join("output"),
         "Site",
         false,
+        true,
         Some("alpha"),
         &bundle(),
     )
@@ -82,6 +83,7 @@ fn a_requested_home_wins_and_an_unexported_one_is_refused_before_writing() {
         &base.join("output"),
         "Other",
         false,
+        true,
         Some("Hidden"),
         &bundle(),
     )

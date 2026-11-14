@@ -3,6 +3,10 @@ import { expect, it } from "vitest";
 
 const template = (name: string) => readFileSync(`crates/tine-guide/src/templates/${name}.md`, "utf8");
 
+it("the Guide explains one history step for each repeated mouse press (GH #948)", () => {
+  expect(template("tips")).toContain("Each press steps once, including repeated presses before the page finishes displaying, just like **Alt+Left** and **Alt+Right**");
+});
+
 it("the Guide explains link completion inside a complete link (GH #888)", () => {
   expect(template("pages-links-references-search")).toContain("the list searches the whole link text, not only the part before the caret, so the linked page comes first");
 });

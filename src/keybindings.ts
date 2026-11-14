@@ -10,7 +10,7 @@ import { openWorkspaceCreation } from "./workspaceCreation";
 import { showWorkspaces } from "./navSettings";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
-import { isMobilePlatform } from "./nativeChrome";
+import { isMac as isMacDesktop, isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -1274,19 +1274,12 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
   type MouseHistoryDirection = "back" | "forward";
-  type MouseHistorySource = "dom" | "native";
-  const mouseGuards = new Set<ReturnType<typeof installMouseHistory>>();
-  let lastMouseHistory: { direction: MouseHistoryDirection; source: MouseHistorySource; at: number } | undefined;
-  const navigateMouseHistory = (direction: MouseHistoryDirection, source: MouseHistorySource) => {
-    if (source === "native" && [...mouseGuards].some(guard => !guard.nativeAllowed())) return;
-    const now = performance.now();
-    // A platform that exposes both its native command and DOM auxclick must not
-    // advance twice for one physical release. Repeated events from the same
-    // source remain distinct clicks and are never collapsed.
-    if (lastMouseHistory?.direction === direction && lastMouseHistory.source !== source && now - lastMouseHistory.at < 100) {
-      return;
-    }
-    lastMouseHistory = { direction, source, at: now };
+  // Linux/Windows graph webviews intercept native releases; workspace popups
+  // and macOS/iOS/Android use DOM input.
+  // Select one owner, rather than guessing duplicate presses from their timing.
+  const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
+  let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
+  const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();
     else goForward();
   };
@@ -1300,9 +1293,9 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
           "history-navigate",
           (e) => {
-            if (e.payload?.target !== target) return;
-            if (e.payload.direction === "back" || e.payload.direction === "forward") {
-              navigateMouseHistory(e.payload.direction, "native");
+            if (!nativeMainHistory || e.payload?.target !== target) return;
+            if ((e.payload.direction === "back" || e.payload.direction === "forward") && mainMouse?.acceptNative(e.payload.direction) !== false) {
+              navigateMouseHistory(e.payload.direction);
             }
           },
         );
@@ -1315,21 +1308,23 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   // One set of listeners per Tine window (OG-MULTIWINDOW P1): a shortcut typed
   // in a workspace window reaches the same handler, and its window's listeners
   // go away with it.
-  const uninstallWindows = onEachWindow((win) => {
+  const uninstallWindows = onEachWindow((win, id) => {
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
-    const disposeMouse = installMouseHistory(win, win.document, direction => navigateMouseHistory(direction, "dom"));
-    mouseGuards.add(disposeMouse);
+    const disposeMouse = installMouseHistory(win, win.document, direction => {
+      if (!nativeMainHistory || id !== MAIN_WINDOW_ID) navigateMouseHistory(direction);
+    });
+    if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
-      mouseGuards.delete(disposeMouse);
+      if (mainMouse === disposeMouse) mainMouse = undefined;
       disposeMouse();
     };
   });

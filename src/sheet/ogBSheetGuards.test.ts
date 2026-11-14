@@ -24,7 +24,7 @@ it("I-12: sheet transfers use the shared hidden-key answerer, rename uses parser
 
 it("I-12/I-22: native grid layout uses the same row cap as export inputs and charges bounded area", () => {
   const native = readFileSync(new URL("../../crates/tine-graph-features/src/render_sheets.rs", import.meta.url), "utf8");
-  expect(native).toContain("owner.children.iter().take(MAX_INPUT_ROWS).enumerate()");
+  expect(native.replace(/\s/g, "")).toContain("owner.children.iter().take(MAX_INPUT_ROWS).enumerate()");
   expect(native).toContain("rows.min(MAX_INPUT_ROWS).saturating_mul(cols)");
   expect(native).toContain("sheets.admit_grid(owner.children.len(), *cols)");
 });
