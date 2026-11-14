@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
 - Automatic git commits also attempt a recovery point during continuous editing, after an hour or the configured interval if longer (#951).
 - Git Settings separates commit timing, sync and ignored-file explanations from this device's status (#952).
 - Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chooseMainWindow, ensureMainWindow, isAuxiliaryWindow } from "./lib/e2e-main-window.mjs";
+import "./gh944-probe.test.mjs";
 
 const APP = "http://tauri.localhost/";
 const CAPTURE = "http://tauri.localhost/capture.html";

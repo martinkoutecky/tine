@@ -6,6 +6,7 @@ icon:: 🔎
 	- Edit a query result or Linked Reference in place. **Enter** after some text in a result's top block creates a child and keeps typing there, even when the child does not match the query, as in Logseq.
 	- Block queries also find matching prose before a page's first Markdown bullet or Org heading. In List view it appears as a row under its source page, separate from that page's properties.
 	- Queries refresh when an edit can affect their results. Queries over links, graph-wide tag targets or the property registry wait until you pause typing for 1.5 seconds, then read the latest saved publication. Continuous typing keeps the last answer visible until that pause.
+	- While a query refreshes, its previous results stay visible, including in **Scheduled & Deadline** and other journal sections. A journal section with no results hides once the refresh finishes.
 	- Every open task in this graph:
 	- {{query (task TODO DOING)}}
 - ## Create one yourself
