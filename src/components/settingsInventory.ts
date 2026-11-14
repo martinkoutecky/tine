@@ -29,7 +29,7 @@ export function generatedSettingsInventory(): string {
     lines.push("");
   }
   lines.push("## Device and registry entries", "",
-    "In addition to the rows above, search and Appearance use the same installed theme and signed community theme registries: each package contributes its name and description, with a distinct ID for its row. Built-in gallery cards use the gallery registry.", "",
+    "In addition to the rows above, search and Themes use the same installed theme and signed community theme registries: each package contributes its name and description, with a distinct ID for its row. Built-in gallery cards use the gallery registry.", "",
     "Installed plugins contribute each manifest setting's label and description, plus the plugin name. Choosing a result opens that exact plugin version's settings form. Plugin and theme text is supplied by its author and stays verbatim in every interface language.", "");
   return lines.join("\n");
 }

@@ -318,6 +318,7 @@
   justify-content: flex-end;
   gap: 6px;
 }
+.help-shortcut-buttons { display: flex; gap: 6px; }
 
 .help-reset {
   flex: 0 0 auto;
@@ -404,7 +405,7 @@
   }
 
   .help-shortcut-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
     gap: 5px;
     padding: 7px 0;
@@ -415,13 +416,18 @@
   }
 
   .help-shortcut-tail {
-    justify-content: flex-start;
+    display: contents;
   }
-
-  /* One column: the command id starts every row's last line and Unbind/Reset
-     sit at its end, so ids line up whether or not a row has buttons (GH #926). */
+  .help-shortcut-label { grid-column: 1; grid-row: 1; }
+  .help-shortcut-keys, .help-builtin-row > .help-keycap { grid-column: 1; grid-row: 2; }
+  .help-shortcut-buttons, .help-builtin-pill { grid-column: 2; grid-row: 1; justify-self: end; }
+  /* Stable columns keep ids aligned, with description/Unbind above and the
+     readable binding/id below (#926, D-20261113). */
   .help-shortcut-tail .help-shortcut-id {
-    order: -1;
-    margin-inline-end: auto;
+    grid-column: 2;
+    grid-row: 2;
+    overflow-wrap: anywhere;
+    align-self: center;
   }
+  .help-keycap { max-width: 100%; overflow-wrap: anywhere; }
 }

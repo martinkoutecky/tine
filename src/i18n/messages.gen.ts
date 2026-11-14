@@ -2522,7 +2522,9 @@ export interface MessageArgs {
   "settings-auto-embed-video-links-hint": {};
   "settings-autodetect": {};
   "settings-available-snapshots": {};
+  "settings-back-to-list": {};
   "settings-backup-load-failed": { "error": string | number };
+  "settings-close": {};
   "settings-cm6-label": {};
   "settings-color-indent-guides-by-level": {};
   "settings-color-indent-guides-by-level-hint": {};

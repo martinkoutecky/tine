@@ -40,7 +40,7 @@ it.each(["en", "zh-CN"].flatMap(locale => ["Orchard dusk", "Apricot paper and in
   const dispose = render(() => <Settings />, root);
   const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
   try {
-    openSettings("appearance");
+    openSettings("themes");
     await tick();
     expect(root.querySelector(".installed-theme-row")?.textContent).toContain("Orchard dusk");
     const search = root.querySelector<HTMLInputElement>(".settings-search-input")!;
@@ -49,7 +49,7 @@ it.each(["en", "zh-CN"].flatMap(locale => ["Orchard dusk", "Apricot paper and in
       await tick();
       const result = [...root.querySelectorAll<HTMLButtonElement>(".settings-search-result")]
         .find(button => button.textContent?.includes("Orchard dusk"));
-      expect(result, `theme visible in Appearance must be found by ${query}`).toBeDefined();
+      expect(result, `theme visible in Themes must be found by ${query}`).toBeDefined();
       result!.click();
       await tick();
       const target = root.querySelector(".installed-theme-row");
