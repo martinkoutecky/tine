@@ -14,11 +14,58 @@ import { SurfaceContext } from "./Block";
 import { RightSidebar } from "./RightSidebar";
 import { applySidebarSession } from "../ui";
 import { AstBody } from "../render/body";
+import { parseBlock } from "../render/parse";
 
 installBlockEditorLifecycle();
 afterEach(() => { endEdit("page-navigation"); resetTabsToJournals(); resetPaneLayoutToSingle(); applySidebarSession({ right: false, items: [] }); vi.restoreAllMocks(); });
 describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kind => {
   useEditorKind(kind);
+  // lsdoc v0.5.11 parse.rs/org.rs: fence_marker/fence_lang and block_begin/begin_lang.
+  it.each((["md", "org"] as const).flatMap(format => [
+    ["```", "```", ""], ["~~~", "~~~", ""],
+    ["```js :results output", "```", "js"], ["~~~\t js :results output", "~~~", "js"],
+    ["````js :results output", "````", "`js"], ["~~~~~", "~~~~~", "~~"],
+    ["  ```", "  ```", ""], ["  #+BEGIN_SRC", "  #+END_SRC", ""],
+    ["#+BEGIN_SRC", "#+END_SRC", ""], ["#+begin_src", "#+end_src", ""],
+    ["#+BeGiN_sRc", "#+EnD_sRc", ""],
+    ["#+BEGIN_SRC js :results output", "#+END_SRC", "js"],
+    ["#+begin_src\tjs :results output", "#+end_src", "js"],
+    ["#+BEGIN_SRC ", "#+END_SRC", ""],
+  ].flatMap(([open, close, lang]) => [false, true].flatMap(mixed => [false, true].map(typing => ({ format, open, close, lang, mixed, typing })))))) (
+    "keeps the source block and language after label activation: %j", async ({ format, open, close, lang, mixed, typing }) => {
+      const raw = `${mixed ? "前 🐈\n" : ""}${open}\nx\n${close}${mixed ? "\nAfter" : ""}`;
+      const parsed = parseBlock(raw, format === "org").find(block => block.kind === "src")!;
+      expect(parsed).toMatchObject({ kind: "src", lang });
+      vi.spyOn(backend(), "getPage").mockResolvedValue({ id: `pages/Code.${format}`, name: "Code", title: "Code", kind: "page", pre_block: null,
+        blocks: [{ id: "code", raw, children: [], collapsed: false }] });
+      mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Code", pageKind: "page" });
+      const { root, dispose } = mount(() => <PageView />);
+      try {
+        await vi.waitFor(() => expect(root.querySelector("button.code-language")).not.toBeNull());
+        await bindTestHost();
+        const submits = vi.spyOn(backend(), "pageSubmit");
+        const reads = vi.mocked(backend().getPage).mock.calls.length;
+        root.querySelector<HTMLButtonElement>("button.code-language")!.click();
+        await vi.waitFor(() => expect(editorIn(root).value()).toBe(raw));
+        expect(submits).not.toHaveBeenCalled();
+        expect(vi.mocked(backend().getPage).mock.calls).toHaveLength(reads);
+        if (!typing) {
+          endEdit("page-navigation");
+          expect(node("code").raw, "activation without typing preserves every byte").toBe(raw);
+          expect(submits).not.toHaveBeenCalled();
+          return;
+        }
+        const editor = editorIn(root), [at] = editor.selection();
+        editor.select(at, at + lang.length);
+        for (const ch of "rust") editorIn(root).type(ch);
+        endEdit("page-navigation");
+        await flushPage("Code");
+        const saved = submittedPages(submits, "Code").at(-1)!.blocks[0].raw;
+        const expected = raw.slice(0, at) + (open.trimStart().toLowerCase() === "#+begin_src" ? " " : "") + "rust" + raw.slice(at + lang.length);
+        expect(saved).toBe(expected);
+        expect(parseBlock(saved, format === "org").find(block => block.kind === "src")).toMatchObject({ kind: "src", lang: "rust", code: (parsed as { code: string }).code });
+      } finally { dispose(); }
+    });
   it.each(["before", "after"])("opens another fence %s the currently edited fence", async side => {
     const raw = "```js\nx\n```\nMiddle 汉字\n```python\ny\n```";
     vi.spyOn(backend(), "getPage").mockResolvedValue({ id: "pages/Code.md", name: "Code", title: "Code", kind: "page", pre_block: null,

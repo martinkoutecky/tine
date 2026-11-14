@@ -180,7 +180,7 @@ pub struct LiteralBlock {
     pub range: Range,
     pub open_end: usize,
     pub close_start: usize,
-    /// End of the opener's delimiter token (the backtick/tilde run, or
+    /// End of the opener's delimiter token (three backticks/tildes, or
     /// `#+BEGIN_X`); the info string / language follows it.
     pub delim_end: usize,
 }
@@ -198,12 +198,12 @@ pub struct OpenFence {
     pub delim_end: usize,
 }
 
-fn opener_delim_end(opener: &str) -> usize {
+fn opener_delim_end(opener: &str, marker_limit: usize) -> usize {
     let t = opener.trim_start();
     let lead = opener.len() - t.len();
     let c = t.as_bytes().first().copied();
     lead + if matches!(c, Some(b'`' | b'~')) {
-        t.bytes().take_while(|&b| Some(b) == c).count()
+        t.bytes().take_while(|&b| Some(b) == c).take(marker_limit).count()
     } else {
         t.find(char::is_whitespace).unwrap_or(t.len())
     }
@@ -215,7 +215,8 @@ impl LiteralBlock {
         let open_end = range.0 + text.find('\n').map_or(text.len(), |at| at + 1);
         let body = text.trim_end();
         let close_start = range.0 + body.rfind('\n').map_or(0, |at| at + 1);
-        let delim_end = range.0 + opener_delim_end(&raw[range.0..open_end]);
+        // lsdoc fence_marker: exactly three marker bytes; extras are language.
+        let delim_end = range.0 + opener_delim_end(&raw[range.0..open_end], 3);
         LiteralBlock {
             kind,
             lang: lang.to_owned(),
@@ -248,7 +249,7 @@ fn open_fence(raw: &str, literals: &[Range]) -> Option<OpenFence> {
                 .iter()
                 .any(|n| t.get(..n.len()).is_some_and(|h| h.eq_ignore_ascii_case(n)));
         if opens {
-            let delim_end = start + opener_delim_end(line);
+            let delim_end = start + opener_delim_end(line, usize::MAX);
             let fence_start = start + (line.len() - t.len());
             let info = raw[delim_end..start + line.trim_end().len()].trim();
             return Some(OpenFence {

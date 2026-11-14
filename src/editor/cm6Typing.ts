@@ -7,6 +7,7 @@ import { autoPairInsertOnInput } from "./autopair";
 import { rangeInLiteral } from "./inlineLiteral";
 import { calcSource } from "./calc";
 import { typoTypeReplace } from "../render/typography";
+import { codeLanguageInput } from "./codeFence";
 
 const ownNumbered = StateEffect.define<null>();
 
@@ -42,8 +43,11 @@ export function cm6Typing(ctx: {
     if (composing || tr.isUserEvent("input.type.compose") || !tr.isUserEvent("input.type")) return tr;
     let typed = "", count = 0;
     tr.changes.iterChanges((_a, _b, _c, _d, insert) => { count++; typed = insert.toString(); });
-    if (count !== 1 || typed.length !== 1 || !tr.newSelection.main.empty) return tr;
+    if (count !== 1 || !tr.newSelection.main.empty) return tr;
     const text = tr.newDoc.toString(), caret = tr.newSelection.main.head;
+    const language = !ctx.literal() && codeLanguageInput(text, ctx.format, caret, typed);
+    if (language) return [tr, { changes: { from: 0, to: text.length, insert: language.value }, selection: { anchor: language.caret }, sequential: true }];
+    if (typed.length !== 1) return tr;
     if (!ctx.literal() && ctx.format === "md" && text === "```" && typed === "`" && caret === 3)
       return [tr, { changes: { from: 0, to: text.length, insert: "```\n\n```" }, selection: { anchor: 3 }, sequential: true }];
     let edit = typed === "【" || typed === "（" || typed === "〈" ? fullWidthRefReplace(text, caret)

@@ -104,7 +104,7 @@ import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeSourceCaret } from "../editor/codeFence";
+import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageInput, codeSourceCaret } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
@@ -1077,11 +1077,11 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const duplicate = compositionEndValue === ref.value;
     compositionEndValue = null;
     if (duplicate) return;
-    // Editor keystroke post-processing on a single inserted char (not paste/IME/
-    // delete). All branches edit ref.value BEFORE commit so the store sees it.
+    const language = !codeShown() && !isCalc() && e.inputType === "insertText" && ref.selectionStart === ref.selectionEnd && codeLanguageInput(ref.value, pageFmt(), ref.selectionStart, e.data ?? "");
+    if (language) { ref.value = language.value; ref.setSelectionRange(language.caret, language.caret); }
+    // Single-key transforms (not paste/IME/delete) edit ref.value BEFORE commit.
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
-      const ch = e.data;
-      let handled = false;
+      const ch = e.data; let handled = false;
       // OG parity: typing `::` at the beginning of a property line places the
       // caret before the delimiter. Subsequent property-name characters are
       // authored as `name|::`, not the malformed `::name` that caused GH #306.

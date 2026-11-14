@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret } from "./codeFence";
+import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageInput } from "./codeFence";
 
 describe("codeFenceOnly", () => {
   it("detects a whole-block markdown fence with a language", () => {
@@ -229,5 +229,22 @@ describe("codeLanguageCaret", () => {
     const caret = codeLanguageCaret(text, "md");
     expect(caret).toBe(3);
     expect(codeFenceOnly(text.slice(0, caret) + "rust" + text.slice(caret), "md")?.lang).toBe("rust");
+  });
+});
+
+describe("codeLanguageInput", () => {
+  it.each((["md", "org"] as const).flatMap(format => ["\n", "\r\n"].flatMap(eol =>
+    ["", "  "].flatMap(indent => ["r", "rust"].map(inserted => ({ format, eol, inserted, indent }))))))("supplies Org's first separator only during input: %j", ({ format, eol, inserted, indent }) => {
+    const raw = `前 🐈${eol}${indent}#+BEGIN_SRC${eol}x${eol}#+END_SRC`;
+    const at = codeLanguageCaret(raw, format);
+    const edit = codeLanguageInput(raw.slice(0, at) + inserted + raw.slice(at), format, at + inserted.length, inserted)!;
+    expect(edit).toEqual({ value: raw.slice(0, at) + " " + inserted + raw.slice(at), caret: at + inserted.length + 1 });
+    expect(codeLanguageInput(raw, format, at, "")).toBeNull();
+    expect(codeLanguageInput(raw.slice(0, at) + " " + raw.slice(at), format, at + 1, " ")).toBeNull();
+  });
+  it.each(["```", "~~~", "#+BEGIN_SRC ", "#+BEGIN_SRC\t"])("preserves existing separators and Markdown syntax: %j", open => {
+    const raw = `${open}\nx\n${open.startsWith("#+") ? "#+END_SRC" : open}`;
+    const at = codeLanguageCaret(raw, "md");
+    expect(codeLanguageInput(raw.slice(0, at) + "rust" + raw.slice(at), "md", at + 4, "rust")).toBeNull();
   });
 });

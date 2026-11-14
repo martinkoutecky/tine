@@ -18,16 +18,29 @@ export interface CodeFenceShape {
 export function codeLanguageCaret(text: string, format: "md" | "org", bodyStart?: number): number {
   const fences = codeFences(text, format);
   const fence = bodyStart === undefined ? fences[0] : fences.find(f => f.openEnd === bodyStart);
-  return fence ? languageStart(text, fence) : 0;
+  return fence ? languageEntry(text, fence).at : 0;
 }
 
 /** On the info string's language: past the separator whitespace after the delimiter
  * (`#+BEGIN_SRC python`, "``` js"), so typing replaces or extends the language rather
- * than gluing text onto the delimiter. O(separator length). */
-function languageStart(text: string, fence: LiteralContainer): number {
+ * than gluing text onto the delimiter. A bare Org source delimiter needs a space
+ * when a language is typed, never just on activation. O(opener length). */
+function languageEntry(text: string, fence: LiteralContainer): { at: number; separator: string } {
   let at = fence.delimEnd;
   while (text[at] === " " || text[at] === "\t") at++;
-  return at;
+  return { at, separator: fence.kind === "src" && text.slice(fence.start, fence.delimEnd).trimStart().startsWith("#") && at === fence.delimEnd ? " " : "" };
+}
+
+/** Post-input language insertion, shared by both editors. Supply Org's separator
+ * only when typing at its parser-owned language slot. O(block text), cached
+ * parser regions; returns an edit for the existing guarded commit, never writes. */
+export function codeLanguageInput(text: string, format: "md" | "org", caret: number, inserted: string): { value: string; caret: number } | null {
+  if (!inserted || inserted.trimStart() !== inserted) return null;
+  const from = caret - inserted.length;
+  const before = text.slice(0, from) + text.slice(caret);
+  const fence = codeFences(before, format).find(fence => fence.delimEnd === from);
+  const entry = fence && languageEntry(before, fence);
+  return entry?.separator ? { value: text.slice(0, from) + entry.separator + text.slice(from), caret: caret + entry.separator.length } : null;
 }
 
 /** Map a rendered fence's parser source byte to its language caret in this
@@ -36,7 +49,7 @@ function languageStart(text: string, fence: LiteralContainer): number {
 export function codeSourceCaret(text: string, format: "md" | "org", sourceByte: number): number | null {
   const start = utf8ByteToUtf16Offset(text, rebulletedSourceByteToRawByte(text, sourceByte));
   const fence = codeFences(text, format).find(f => f.start === start);
-  return fence ? languageStart(text, fence) : null;
+  return fence ? languageEntry(text, fence).at : null;
 }
 
 /** The code container that IS the whole block's wrapper: the parser's first fence, source or
