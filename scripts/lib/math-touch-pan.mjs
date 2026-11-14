@@ -24,8 +24,9 @@ async function pan(page, target, direction = -1) {
 }
 
 export async function checkMathTouch(root) {
-  fs.mkdirSync(path.join(root, "target/artifacts/math-touch-pan"), { recursive: true });
-  const out = fs.mkdtempSync(path.join(root, "target/artifacts/math-touch-pan/touch-"));
+  const artifacts = process.env.E2E_ARTIFACT_DIR || path.join(root, "target/artifacts/math-touch-pan");
+  fs.mkdirSync(artifacts, { recursive: true });
+  const out = fs.mkdtempSync(path.join(artifacts, "touch-"));
   const proof = { base: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), outcomes: [] };
   const server = await createServer({ server: { port: 0, strictPort: false,
     fs: { allow: [root, fs.realpathSync(path.join(root, "node_modules/katex")), fs.realpathSync(path.join(root, "node_modules/inter-ui"))] } }, logLevel: "error",
