@@ -137,7 +137,23 @@ async function popupRendered(before) {
         { timeout: 20_000, timeoutMsg: "Popup stayed blank instead of showing the page" });
       label = await browser.execute(() => window.name);
     } catch (error) {
-      if (!/web view not found|no such window/i.test(String(error?.message ?? error))) throw error;
+      if (!/web view not found|no such window/i.test(String(error?.message ?? error))) {
+        // Record what the attached window actually shows, every handle's identity, and main's open stages.
+        const seen = await browser.execute(() => ({ url: location.href, name: window.name, title: document.title,
+          text: document.body.textContent.slice(0, 400) })).catch(e => String(e));
+        const handles = [];
+        for (const handle of await browser.getWindowHandles().catch(() => [])) {
+          try {
+            await browser.switchToWindow(handle);
+            handles.push({ handle, url: await browser.getUrl(), name: await browser.execute(() => window.name) });
+          } catch (e) { handles.push({ handle, error: String(e).slice(0, 120) }); }
+        }
+        await browser.switchToWindow(mainHandle).catch(() => {});
+        const opens = await diagnostics().then(d => d.sessions.current.filter(e => e.event === "workspace.open"))
+          .catch(e => String(e));
+        step("popup-blank-evidence", { popup, before: [...before], seen, handles, opens });
+        throw error;
+      }
       step("popup-driver-lost-handle", { attempt });
       await browser.switchToWindow(mainHandle);
       await browser.pause(1_000);
