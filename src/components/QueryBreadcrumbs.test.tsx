@@ -2,7 +2,9 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { resetStore } from "../document";
+import { blockProperty, resetStore, undo, redo } from "../document";
+import { setDoc } from "../document/model";
+import { openCalmQuery } from "../tests/calmQueryActions";
 import { loadSingle } from "../document/workingSet";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { QueryMacro } from "./Macro";
@@ -10,12 +12,21 @@ import { BeginQuery } from "./BeginQuery";
 import { inspectBeginQuery } from "../render/beginQuery";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { splitTrailingMap, readEdnOptions } from "../editor/edn";
+import { QueryDisplay } from "./QueryDisplay";
 
-beforeAll(initParser);
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn() }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
+  await initParser();
+});
 afterEach(() => { vi.restoreAllMocks(); resetStore(); resetSharedQueryResultsForTests(); document.body.innerHTML = ""; });
 
 const query = '[:find (pull ?b [*]) :where [?b :block/marker "TODO"]]';
-function engine(sorted = false, kind: "og" | "advanced" = "advanced") {
+function engine(sorted = false, kind: "og" | "tql" | "advanced" = "advanced") {
   vi.spyOn(backend(), "parseQuery").mockImplementation(async (text) => {
     const { form, opts } = splitTrailingMap(text);
     return { query: { anchor: "block", filter: { kind: "raw", text: form, diagnostic_kind: "not_applicable" },
@@ -100,7 +111,7 @@ it.each([false, true])("advanced ungrouped list keeps breadcrumb %s independent 
   } finally { dispose(); }
 });
 
-it("leaves simple-query breadcrumbs enabled while their switch awaits a decision", async () => {
+it("ignores advanced breadcrumb syntax on simple queries", async () => {
   engine(false, "og");
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <QueryMacro body="query (task TODO) {:breadcrumb-show? false}" />, root);
@@ -109,3 +120,64 @@ it("leaves simple-query breadcrumbs enabled while their switch awaits a decision
     expect(root.querySelector(".ref-breadcrumb")?.textContent).toBe("Shopping parent");
   } finally { dispose(); }
 });
+
+it.each([false, true])("simple list View switch hides context, persists and undoes (sorted=%s)", async sorted => {
+  engine(sorted, "og");
+  setDoc({ byId: { query: { id: "query", raw: "{{query (task TODO)}}", page: "Queries", parent: null, children: [], collapsed: false } },
+    pages: [{ name: "Queries", title: "Queries", kind: "page", roots: ["query"], preBlock: null, format: "md", readOnly: false, guide: false }],
+    feed: ["Queries"], loaded: true });
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <QueryMacro body="query (task TODO)" blockId="query" />, root);
+  try {
+    await vi.waitFor(() => expect(root.textContent).toContain("Shopping parent"));
+    const panel = await openCalmQuery(root, "View");
+    const toggle = () => panel.querySelector<HTMLInputElement>('input[aria-label="Show breadcrumbs"]')!;
+    expect(toggle()).not.toBeNull();
+    expect(toggle().checked).toBe(true);
+    const parses = vi.mocked(backend().parseQuery).mock.calls.length;
+    const runs = vi.mocked(backend().queryRun).mock.calls.length;
+    saveFixture.markDirty.mockClear();
+    toggle().click();
+    await vi.waitFor(() => {
+      expect(blockProperty("query", "tine.breadcrumbs")).toBe("false");
+      expect(root.querySelector(".query-page, .query-crumb, .ref-breadcrumb")).toBeNull();
+      expect(root.textContent).toContain("buy apples");
+    });
+    expect(saveFixture.markDirty).toHaveBeenCalledTimes(1);
+    expect(backend().parseQuery).toHaveBeenCalledTimes(parses);
+    expect(backend().queryRun).toHaveBeenCalledTimes(runs);
+    undo();
+    await vi.waitFor(() => expect(root.textContent).toContain("Shopping parent"));
+    expect(blockProperty("query", "tine.breadcrumbs")).toBeNull();
+    redo();
+    await vi.waitFor(() => expect(toggle().checked).toBe(false));
+    toggle().click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Shopping parent"));
+    expect(blockProperty("query", "tine.breadcrumbs")).toBeNull();
+  } finally { dispose(); }
+});
+
+it.each(["table", "board", "search", "page"] as const)("does not offer a breadcrumb switch for %s results", face => {
+  const root = document.createElement("div"); document.body.append(root);
+  const noop = () => {};
+  const dispose = render(() => <QueryDisplay inline view={() => ({ view: face === "page" ? "list" : face })}
+    apply={noop} rowKind={() => face === "page" ? "page" : "block"}
+    breadcrumbs={{ shown: () => true, set: noop }}
+    registry={{ rows: () => [], pending: () => false, failure: () => null, unavailable: () => false, request: noop, retry: noop }} />, root);
+  try { expect(root.querySelector('input[aria-label="Show breadcrumbs"]')).toBeNull(); }
+  finally { dispose(); }
+});
+
+for (const format of ["md", "org"] as const) {
+  it.each(["og", "tql"] as const)(`restores the saved choice from a ${format} %s host without an editable query block`, async kind => {
+    engine(false, kind);
+    const root = document.createElement("div"); document.body.append(root);
+    const body = kind === "tql" ? "tine-query @block and task = 'TODO'" : "query (task TODO)";
+    const raw = `{{${body}}}\n` + (format === "md" ? "tine.breadcrumbs:: false" : ":PROPERTIES:\n:tine.breadcrumbs: false\n:END:");
+    const dispose = render(() => <QueryMacro body={body} hostRaw={{ raw, format }} />, root);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("buy apples"));
+      expect(root.querySelector(".query-page, .query-crumb, .ref-breadcrumb")).toBeNull();
+    } finally { dispose(); }
+  });
+}

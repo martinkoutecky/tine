@@ -1773,6 +1773,7 @@ export interface MessageArgs {
   "query-display-aggregate-count": {};
   "query-display-aggregate-sum": {};
   "query-display-change": {};
+  "query-display-show-breadcrumbs": {};
   "query-display-view-board": {};
   "query-display-view-list": {};
   "query-display-view-search": {};
