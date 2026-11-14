@@ -1,10 +1,10 @@
 import { PageIcon } from "./PageIcon";
-import { readJournalFeedWindow } from "../journalFeedRead";
+import { readJournalFeedWindow, reportUnreadableJournals, responseMatches } from "../journalFeedRead";
 import { pageIcon } from "../pageIconBatch";
 import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
-import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
+import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { admitRead, mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, pageAliasNames, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, followPageIdentity, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PageTarget, type PaneRouter } from "../router";
@@ -48,7 +48,7 @@ import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
-import type { JournalFeedPage, PageRead, PageReadSource } from "../types";
+import type { PageRead, PageReadSource } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
@@ -145,14 +145,6 @@ function pageHasActiveEdit(name: string): boolean {
 
 /** A journal the backend skipped as unreadable is named, never silently
  *  missing from the feed (one bad file never blanks it, I-22). */
-function reportUnreadableJournals(response: JournalFeedPage): void {
-  if (response.unreadable?.length) reportUnreadableFiles(response.unreadable);
-}
-
-function responseMatches(day: number, response: JournalFeedPage): boolean {
-  return response.as_of_day === day && localDayKey() === day;
-}
-
 /** A window that has not yet bound a graph (startup, before `load_graph`
  *  returns) has no journals to read: the backend refuses every graph read with
  *  missing-graph-binding. That refusal is not a failed read — the bind bumps

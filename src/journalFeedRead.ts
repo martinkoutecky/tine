@@ -1,5 +1,8 @@
 import { backend } from "./backend";
 import { readOwned, type Owner } from "./owned";
+import { localDayKey } from "./journal";
+import { reportUnreadableFiles } from "./uiFailure";
+import type { JournalFeedPage } from "./types";
 
 /** Read an older feed window. Reference completion can replace a file-only
  * cursor while IPC waits; reread from that authoritative cursor once, keeping
@@ -16,4 +19,13 @@ export async function readJournalFeedWindow(owner: Owner, limit: number, cursor:
   cursor = current.before;
   const renewed = await readOwned(owner, backend().journalFeedPage(limit, cursor, true));
   return renewed.kind === "current" ? { response: renewed.value, cursor } : null;
+}
+
+export function reportUnreadableJournals(response: JournalFeedPage): void {
+  if (response.unreadable?.length) reportUnreadableFiles(response.unreadable);
+}
+
+/** A feed answer is current only for the day it was asked for, and only while that is still today. */
+export function responseMatches(day: number, response: JournalFeedPage): boolean {
+  return response.as_of_day === day && localDayKey() === day;
 }
