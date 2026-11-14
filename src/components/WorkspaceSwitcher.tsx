@@ -9,6 +9,7 @@ import { pushToast } from "../toasts";
 import { hoverIntent } from "./hoverIntent";
 import { useOwnerWindow, listen } from "../windowRealm";
 import { mobileDrawerMode } from "../mobileDrawers";
+import { sidebarOpen } from "../ui";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -22,7 +23,7 @@ import {
 
 type EditState = { kind: "new"; value: string } | { kind: "rename"; id: string; value: string };
 
-export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Element {
+export function WorkspaceSwitcher(props: { compact?: boolean; toolbarStyle?: JSX.CSSProperties } = {}): JSX.Element {
   let root: HTMLDivElement | undefined;
   let editInput: HTMLInputElement | undefined;
   const [hoverOpen, setHoverOpen] = createSignal(false);
@@ -38,12 +39,15 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
     setEditValue(state.value);
     setEdit(state);
   };
-  onCleanup(listen(useOwnerWindow(), "tine-new-workspace", () => {
-    // In drawer mode the drawer's switcher takes the command (openWorkspaceCreation).
-    if (props.compact && mobileDrawerMode()) return;
+  onCleanup(listen(useOwnerWindow(), "tine-open-workspace-menu", event => {
+    // One visible switcher claims creation. A hidden chosen toolbar control
+    // declines, letting the command reveal the sidebar instead.
+    if (event.defaultPrevented || (props.compact && (mobileDrawerMode() || sidebarOpen() || props.toolbarStyle?.display === "none"))) return;
+    event.preventDefault();
     setHoverOpen(false);
     setMenuOpen(true);
-    openEdit({ kind: "new", value: "" });
+    if (event.detail.create) openEdit({ kind: "new", value: "" });
+    else setEdit(null);
   }));
   const active = createMemo(() => workspaces().find((workspace) => workspace.id === activeWorkspaceId()));
 
@@ -105,6 +109,8 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
       class="workspace-switcher"
       classList={{ "workspace-switcher-compact": props.compact === true }}
       data-workspace-switcher
+      data-toolbar-action={props.toolbarStyle ? "workspaces" : undefined}
+      style={props.toolbarStyle}
       data-workspace-switcher-compact={props.compact ? "true" : undefined}
       ref={root}
       onMouseEnter={() => { hover.enter(); if (!menuOpen() && workspaces().length) setHoverOpen(true); }}

@@ -79,6 +79,14 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-13, GH #926 (D-20261113-UI, approved toolbar design section 3):
+  `settings.appearance.open` 31→53 for the seven actions' up/down and section-move
+  buttons (21), plus Reset (1). These are the approved accessible alternatives
+  to dragging in the two ordered lists. `menu.topbarOverflow` 8→10 for Workspaces
+  and Customize toolbar; its probe chooses all optional actions for the menu
+  and counts every menuitem, including the fixed Customize row. The default
+  toolbar count and all timing/memory budgets are unchanged. This records the
+  approved capability's controls, rather than raising a performance budget.
 - 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
   `settings.appearance.open` 30→31 for the explicitly requested **Comments**
   display selector, **In the margin** / **On click**, beside the other display

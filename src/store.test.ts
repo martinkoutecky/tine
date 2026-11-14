@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, isDirty, deletePage, splitBlock, insertOutlineAfter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { publishOwnPage } from "./document/ownPublication.test.support";
 import { pasteOutlineInto } from "./tests/pasteOutline";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
@@ -2044,9 +2045,9 @@ describe("save engine (persistence)", () => {
 
   it("drops an hls reload that resolves after a graph switch (I-20)", async () => {
     let finish!: (dto: PageRead | null) => void;
-    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const read = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
-    const reload = reloadHlsIfLoaded("hls__paper");
+    const reload = publishOwnPage("hls__paper");
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
     resetStore();
     loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("new graph notes")] });
@@ -2058,9 +2059,9 @@ describe("save engine (persistence)", () => {
 
   it("keeps a highlight note edit typed during its disk fetch", async () => {
     let finish!: (dto: PageRead | null) => void;
-    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const read = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
-    const reload = reloadHlsIfLoaded("hls__paper");
+    const reload = publishOwnPage("hls__paper");
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
     const id = pageByName("hls__paper")!.roots[0];
     setRaw(id, "typed during fetch", { timetracking: false });

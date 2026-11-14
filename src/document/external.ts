@@ -7,13 +7,15 @@ import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
 import { captureBinding, bindingCurrent } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
 import { pushToast } from "../toasts";
-import { readOwned, bindingOwner } from "../owned";
+import { bindingOwner, latestOwner, readOwned } from "../owned";
+import { reportUiFailure } from "../uiFailure";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
-import { doc, feedNames, pageByName } from "./model";
+import { readLoadedPublicationPages, loadedPageByPath, pageByName } from "./model";
+import { admitRead, invalidatePageRead, invalidatePageReadKey } from "./readAdmission";
 import { acceptHeldPush, hostHolds, isConflicted } from "./host/wiring";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
-import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
+import { forgetPage, rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -29,7 +31,8 @@ export interface ExternalChangeUi {
 // then (deferredReload.ts; GH #337).
 installDeferredReloadReplay({
   ready: (page) => reloadDisposition(page) === "reload",
-  run: (change) => void applyGraphChange(change),
+  run: (change, own) => void (own ? applyObservedChange(change, captureExternalChangeUi?.(), true, true) : applyGraphChange(change))
+    .catch(error => reportUiFailure("page-refresh", error)),
 });
 
 // "Always ask" (conflictPolicy.ts): Reload from disk re-enters this handler with
@@ -50,6 +53,9 @@ export function installExternalChangeUiHandler(capture: () => ExternalChangeUi):
 export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Promise<void> {
   const binding = captureBinding();
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
+  invalidatePageRead(c.name);
+  const loadedName = c.path && loadedPageByPath(c.path)?.name;
+  if (loadedName && loadedName !== c.name) invalidatePageRead(loadedName);
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
   const finish = beginResultsChange();
@@ -77,7 +83,28 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   const previous = changeSummary();
   applyGraphAnswers(bulk.answers);
   const changes = bulk.changes;
-  if (!changes.length) return;
+  if (!changes.length) {
+    // Own writes already publish their changed name keys. Only loaded pages
+    // need text; the host remains the delivery owner for pages it holds.
+    if (previous === changeSummary()) return;
+    const summary = bulk.answers?.summary;
+    if (!summary) return;
+    for (const key of summary.pages) invalidatePageReadKey(key);
+    const ui = captureExternalChangeUi?.();
+    const loaded = await readOwned(bindingOwner(), readLoadedPublicationPages(summary.pages));
+    if (loaded.kind === "stale") return;
+    for (const page of loaded.value) {
+      if (!bindingCurrent(binding)) return;
+      if (pageByName(page.name) !== page || hostHolds(page.name)) continue;
+      await applyObservedChange({ name: page.name, kind: page.kind, path: page.id, created: false, removed: false }, ui, true, true);
+    }
+    return;
+  }
+  for (const change of changes) {
+    invalidatePageRead(change.name);
+    const loadedName = change.path && loadedPageByPath(change.path)?.name;
+    if (loadedName && loadedName !== change.name) invalidatePageRead(loadedName);
+  }
   const finish = beginResultsChange();
   try {
   for (const change of changes) applyGraphAnswers(change.answers);
@@ -89,7 +116,7 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   const batchUi = ui && { ...ui, restartJournalFeed: () => { restart = true; } };
   for (const c of changes) {
     if (!bindingCurrent(binding)) return;
-    const name = (c.path && doc.pages.find((page) => page.id === c.path)?.name) || c.name;
+    const name = (c.path && loadedPageByPath(c.path)?.name) || c.name;
     // A page nothing loads or shows is refetched on navigation anyway.
     if (!c.removed && !ui?.pageOpen(c.name) && !pageByName(name) && reloadDisposition(name) === "reload") continue;
     await applyObservedChange(c, batchUi, false);
@@ -101,13 +128,14 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   } finally { finish(); }
 }
 
-async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean): Promise<void> {
-  const owner = bindingOwner();
+async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean, own = false): Promise<void> {
   const restartJournalFeed = () => {
-    if (c.kind === "journal") ui?.restartJournalFeed();
+    if (!own && c.kind === "journal") ui?.restartJournalFeed();
   };
-  const loadedName = c.path ? doc.pages.find((page) => page.id === c.path)?.name : undefined;
+  const loadedName = own ? pageByName(c.name)?.name : c.path ? loadedPageByPath(c.path)?.name : undefined;
   const currentName = loadedName ?? c.name;
+  const loaded = pageByName(currentName);
+  const owner = latestOwner(loaded ?? c, "publication", bindingOwner(() => pageByName(currentName) === loaded));
   // `c.path` names the loaded file only when `loadedName` was found by it.
   const disp = reloadDisposition(currentName, loadedName ? c.path : undefined);
   // A page the host holds for this window takes the change as host mail (its
@@ -116,14 +144,14 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   // a removal waits until the host lets go of the page.
   if (hostHolds(currentName)) {
     if (bypassPolicy) acceptHeldPush(currentName);
-    else if (c.removed) deferExternalReload(currentName, c);
+    else if (c.removed) deferExternalReload(currentName, c, own);
     restartJournalFeed();
     return;
   }
   // Input not yet with the host ("conflict") or a hold ("skip"): replayed
   // once the page is replaceable.
   if (disp !== "reload") {
-    deferExternalReload(currentName, c);
+    deferExternalReload(currentName, c, own);
     restartJournalFeed();
     return;
   }
@@ -146,37 +174,29 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     holdExternalChange(currentName, c);
     return;
   }
-  if (c.path && loadedName && loadedName !== c.name) {
-    const result = await readOwned(owner, backend().getPageByPath(c.path));
-    if (result.kind === "stale" || !result.value || result.value.id !== c.path) return;
-    if (!rekeyPageIdentityByPath(c.path, result.value.name, result.value.rev ?? null)) return;
-    reloadPageIfStillSafe(result.value.name, toLoadablePage(result.value, result.value.name));
-    restartJournalFeed();
-    return;
-  }
-  if (ui?.pageOpen(c.name)) {
-    const result = await readOwned(owner, backend().getPage(c.name, c.kind));
+  if (pageByName(currentName) || ui?.pageOpen(c.name)) {
+    const exact = c.path && loadedName && (own || loadedName !== c.name) ? c.path : null;
+    let disappeared = false;
+    const result = await admitRead(owner, () => exact ? backend().getPageByPath(exact) : backend().getPage(c.name, c.kind), dto => [currentName, ...(dto ? [dto.name] : [])], dto => {
+      if (!dto) { disappeared = !!loaded?.id; return; }
+      if (exact && dto.id !== exact) return;
+      if (exact && dto.name !== currentName && !rekeyPageIdentityByPath(exact, dto.name, dto.rev ?? null)) return;
+      if (!reloadPageIfStillSafe(dto.name, toLoadablePage(dto, dto.name))) deferExternalReload(currentName, c, own);
+    });
     if (result.kind === "stale") return;
-    // A decline here (the page turned busy during the read) is the same dropped
-    // reload as "skip": defer, don't drop.
-    if (result.value && !reloadPageIfStillSafe(c.name, toLoadablePage(result.value, c.name))) deferExternalReload(currentName, c);
-    restartJournalFeed();
-    return;
-  }
-  if (c.kind === "journal" && ui?.journalsOpen) {
-    if (pageByName(c.name)) {
-      const result = await readOwned(owner, backend().getPage(c.name, c.kind));
-      if (result.kind === "stale") return;
-      if (result.value && !reloadPageIfStillSafe(c.name, result.value)) deferExternalReload(currentName, c);
+    if (disappeared) {
+      if (!owner()) return;
+      // Retirement has a stricter gate than a same-file text replacement:
+      // input or a draft acquired during the read must keep its loaded owner.
+      if (reloadDisposition(currentName) !== "reload") {
+        deferExternalReload(currentName, c, own);
+        return;
+      }
+      forgetPage(currentName);
+      // A removed duplicate may leave a surviving day. Existing removal UI
+      // leaves a path-pinned route and restarts the feed to resolve that day.
+      return applyObservedChange({ ...c, name: currentName, removed: true }, ui, bypassPolicy);
     }
-    // The feed owner gates dirty/save/conflict/move state and records a pending
-    // restart when unsafe, so this watcher event is not lost.
-    restartJournalFeed();
-    return;
   }
-  if (pageByName(c.name) && !feedNames().includes(c.name)) {
-    const result = await readOwned(owner, backend().getPage(c.name, c.kind));
-    if (result.kind === "stale") return;
-    if (result.value && !reloadPageIfStillSafe(c.name, result.value)) deferExternalReload(currentName, c);
-  }
+  restartJournalFeed();
 }
