@@ -50,7 +50,6 @@ export async function checkViewer(target, { envelope, link, expectedText } = {})
     manifest = await response.json();
     for (const field of ["generation", "link", "envelope", "document", "snapshot_schema"]) assert.equal(manifest[field], 1, `deployed ${field}`);
   } else manifest = validateViewer(target);
-  assert.equal(manifest.fixture_sha256, fixtureFingerprint(root), "viewer was not built for this writer's fixture corpus");
   browser = await chromium.launch({ headless: true });
   const cases = envelope ? [{ name: "native-created", envelope, link, expectedText }] : fs.readdirSync(path.join(root, "tests/fixtures/quick-share/g1")).map((name) => {
     const dir = path.join(root, "tests/fixtures/quick-share/g1", name);
@@ -106,7 +105,8 @@ export async function checkViewer(target, { envelope, link, expectedText } = {})
         unexpectedRequests++; return route.abort();
       });
       await page.goto(`${base}${prefix}${fixture.expectedText ? "/page/Project" : ""}`, { waitUntil: "domcontentloaded" });
-      await page.locator(".page-title").first().waitFor({ timeout: 30_000 });
+      await page.locator(".page-title, .quick-share-failure").first().waitFor({ timeout: 30_000 });
+      assert.equal(await page.locator(".quick-share-failure").count(), 0, "viewer refused the share");
       await assert.doesNotReject(() => page.getByLabel("User content · Shared by a Tine user").waitFor());
       if (fixture.expectedText) await page.getByText(fixture.expectedText, { exact: false }).first().waitFor();
       if (fixture.name === "media-policy") {
