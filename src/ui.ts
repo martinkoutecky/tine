@@ -1421,8 +1421,8 @@ export const [settingsOpen, setSettingsOpen] = createSignal(false);
 // current editor has been committed and no UI interaction may create another
 // mutation until the transition either installs the new graph or aborts.
 export const [graphTransitioning, setGraphTransitioning] = createSignal(false);
-export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | null>(null);
-export function openSettings(tab?: SettingsTabId) {
+export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | "toolbar" | null>(null);
+export function openSettings(tab?: SettingsTabId | "toolbar") {
   if (tab) setSettingsTabRequest(tab);
   setSettingsOpen(true);
 }

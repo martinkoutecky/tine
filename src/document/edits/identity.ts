@@ -1,7 +1,8 @@
 import { type Format, type PageKind } from "../../types";
 import { authoredBlockClaims, doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, bindingCurrent } from "../../binding";
-import { readOwned, bindingOwner } from "../../owned";
+import { bindingOwner } from "../../owned";
+import { admitRead } from "../readAdmission";
 import { blockWritable } from "./properties";
 import { isConflicted, markDirty, settleWithWitness } from "../host/wiring";
 import { backend } from "../../backend";
@@ -265,12 +266,12 @@ export async function persistBlockRefTarget(
   // A pick whose only id is its runtime key names the block under that key.
   const locator = !!insertReference && externalId === uuid;
   if (!resolveBlockRef(ref, { locator })) {
-    const result = await readOwned(owner, path
+    const result = await admitRead(owner, () => path
       ? backend().getPageByPath(path)
-      : backend().getPage(page, kind));
+      : backend().getPage(page, kind), dto => [page, ...(dto ? [dto.name] : [])], dto => dto && ensurePageLoaded(dto));
     if (result.kind === "stale") return false;
     // A refused load leaves another file in the slot: nothing safe to stamp.
-    if (result.value && ensurePageLoaded(result.value)) return false;
+    if (result.value) return false;
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new

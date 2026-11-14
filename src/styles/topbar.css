@@ -3,9 +3,8 @@
    keeps its original cascade position relative to every app.css rule that
    could match the same elements (none share a selector at equal specificity). */
 
-/* Lower-priority toolbar actions collapse into a registry-owned popover when
-   the toolbar's REAL inline space is tight. Essentials stay inline: left
-   sidebar toggle, search, Settings, and (when shown) native window controls. */
+/* Optional placement is owned by toolbarLayout.ts. Container queries here
+   retain only the fixed navigation tiers and popover geometry. */
 .topbar-overflow {
   position: relative;
   display: none;
@@ -63,31 +62,21 @@
   min-width: 30px;
 }
 
-/* Two occupants reach the real fit boundary before a phone does: a frameless
-   desktop window's three window buttons, and a tab strip (shown only at 640px
-   and wider, tabStripFits() in viewportClass.ts), which needs room for at least one readable tab pill. Only those topbars
-   collapse here, not every phone (GH #205, master a006f1308; og H). */
-@container topbar (max-width: 28.75rem) {
-  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-optional-action,
-  .topbar:has(.win-controls) .topbar-sidebar-action {
-    display: none;
-  }
-  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-right {
-    margin-inline-start: auto;
-  }
-  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow {
-    display: block;
-  }
-  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow [data-topbar-overflow-action="back"],
-  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow [data-topbar-overflow-action="forward"],
-  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow .topbar-overflow-sep {
-    display: none;
-  }
-  /* Without window controls the frequent right-sidebar action stays direct
-     until the 250px floor; hide its duplicate menu row (master 945337d03). */
-  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
-    display: none;
-  }
+.topbar-right {
+  margin-inline-start: auto;
+}
+.topbar-overflow [data-topbar-overflow-action="back"],
+.topbar-overflow [data-topbar-overflow-action="forward"],
+.topbar-overflow .topbar-overflow-sep {
+  display: none;
+}
+.topbar[data-toolbar-customized] .workspace-switcher { position: static; }
+.topbar[data-toolbar-customized] .workspace-menu,
+.topbar[data-toolbar-customized] .workspace-quick-menu {
+  inset-inline-start: auto;
+  inset-inline-end: 4px;
+  min-width: min(220px, calc(100% - 8px));
+  max-width: calc(100% - 8px);
 }
 
 /* Every tier is in rem, never px: WebKit (iOS, macOS, Linux) compares a px
@@ -95,16 +84,6 @@
    engaged there and the toolbar ran off the screen (GH #926). rem resolves
    through the same zoom in every engine; Tine never sets the root font size. */
 @container topbar (max-width: 24.125rem) {
-  /* 386px is the measured CONTENT-BOX fit boundary (28px of inline padding) of a
-     phone topbar with the compact workspace switcher beside calendar, journals,
-     Share, theme and Settings: a 390px phone (362px) no longer fits them all, and
-     the "…" trigger is as wide as Share, so moving Share alone frees nothing.
-     The switcher gives way: its twin is the first row of the left drawer, one
-     tap away (TOOLBAR-390B, GH #926). Only a drawer-width window (< 640px) is
-     ever this narrow, so the full-size switcher is never affected. */
-  .topbar [data-workspace-switcher-compact] {
-    display: none;
-  }
   /* The menu may hold most actions here, and its trigger sits right of center:
      anchored to the trigger, a 174px menu runs off the left edge at high zoom
      (GH #926 review B1). Anchor it to the (relative) topbar instead, bound it
@@ -130,22 +109,6 @@
   .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
   .topbar .topbar-overflow .topbar-overflow-sep {
     display: none;
-  }
-}
-
-/* A phone topbar keeps calendar, journals, Share and theme inline down to a
-   333px content box (347px of controls; the last 14px may use the inline
-   padding): a 390px phone keeps them all (GH #205, #926). Narrower, they use the
-   "..." menu. */
-@container topbar (max-width: 20.75rem) {
-  .topbar .topbar-optional-action {
-    display: none;
-  }
-  .topbar .topbar-right {
-    margin-inline-start: auto;
-  }
-  .topbar .topbar-overflow {
-    display: block;
   }
 }
 
@@ -221,13 +184,21 @@
   .topbar .tab-bar {
     display: none;
   }
-  .topbar:not(:has(.win-controls)) .topbar-sidebar-action {
-    display: none;
-  }
-  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
-    display: block;
-  }
 }
+
+.toolbar-settings-section {
+  min-height: 48px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px;
+  margin-block: 8px;
+}
+.toolbar-settings-section h4 { margin: 0 0 6px; }
+.toolbar-settings-section ul { list-style: none; margin: 0; padding: 0; }
+.toolbar-settings-section li { display: flex; align-items: center; gap: 6px; padding-block: 4px; flex-wrap: wrap; }
+.toolbar-choice-name { flex: 1; min-width: 80px; }
+.toolbar-drag-handle { cursor: grab; touch-action: none; padding: 6px; }
+.toolbar-drop-target { background: var(--bg-tertiary); }
 
 /* Below the floor's measured 195px content box (a 390px phone above ~185%
    interface zoom), if the navigation cluster still does not fit, it shrinks and
