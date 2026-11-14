@@ -52,11 +52,49 @@ for (const [name, load] of Object.entries(loaders)) it(`${name}: a delayed A rea
   expect(read).toHaveBeenCalledTimes(2);
 });
 
-it("drops a second invalidated read without a retry loop", async () => {
+for (const invalidations of [0, 1, 2, 5, 20]) it(`${invalidations} relevant invalidations cost at most one read each and then admit newest text`, async () => {
   ensurePageLoaded(page("B"));
-  const read = vi.fn(async () => { invalidatePageRead("Fresh"); return page("A"); });
-  expect(await admitRead(bindingOwner(), read, dto => [dto.name], ensurePageLoaded)).toEqual({ kind: "stale" });
+  const read = vi.fn(async () => {
+    if (read.mock.calls.length <= invalidations) { invalidatePageRead("Fresh"); return page("A"); }
+    return page("newest");
+  });
+  const install = vi.fn(ensurePageLoaded);
+  expect(await admitRead(bindingOwner(), read, dto => [dto.name], install)).toEqual({ kind: "current", value: null });
+  expect(shown()).toEqual(["newest"]);
+  expect(read).toHaveBeenCalledTimes(invalidations + 1);
+  expect(install).toHaveBeenCalledOnce();
+});
+
+it("coalesces multiple relevant invalidations during one read", async () => {
+  const read = vi.fn(async () => {
+    if (read.mock.calls.length === 1) for (let i = 0; i < 10; i++) invalidatePageRead("Fresh");
+    return page("newest");
+  });
+  await admitRead(bindingOwner(), read, dto => [dto.name], ensurePageLoaded);
+  expect(shown()).toEqual(["newest"]);
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("stops invalidation-driven retries when the surface retires", async () => {
+  ensurePageLoaded(page("B"));
+  let live = true;
+  const read = vi.fn(async () => {
+    invalidatePageRead("Fresh");
+    if (read.mock.calls.length === 2) live = false;
+    return page("A");
+  });
+  expect(await admitRead(bindingOwner(() => live), read, dto => [dto.name], ensurePageLoaded)).toEqual({ kind: "stale" });
   expect(shown()).toEqual(["B"]);
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("propagates an actual read error after an invalidation", async () => {
+  const error = new Error("synthetic disk failure");
+  const read = vi.fn(async () => {
+    if (read.mock.calls.length === 1) { invalidatePageRead("Fresh"); return page("A"); }
+    throw error;
+  });
+  await expect(admitRead(bindingOwner(), read, dto => [dto.name], ensurePageLoaded)).rejects.toBe(error);
   expect(read).toHaveBeenCalledTimes(2);
 });
 
