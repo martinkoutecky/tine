@@ -4,6 +4,7 @@ import { batch, createMemo, createRoot, createSignal, onCleanup, untrack, type A
 import { mainPages, pageByName, feedNames, revealNode, resolveBlockRef, onBlockRawChanged, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
+import { createPendingFindHosts } from "./inpageFindHosts";
 import type { Format } from "./types";
 import { focusedPaneId, layoutPaneIds, visibleLayoutNode, paneRouter } from "./panes";
 import { sameRoute } from "./router";
@@ -118,6 +119,10 @@ const state = createRoot(() => {
   const [surfaceRevision, setSurfaceRevision] = createSignal(0);
   const [scopeRevision, setScopeRevision] = createSignal(0);
   const [panelRevision, setPanelRevision] = createSignal(0);
+  const pendingHosts = createPendingFindHosts(() => {
+    scopeRevision();
+    return open() ? findScopes().map(scope => ({ ...scope, element: findScopeElement(scope.id) })) : [];
+  });
   const matches = createLiveMatches(() => open() ? query() : "", surfaceRevision, scopeRevision);
   const matchesByKey = createMemo(() => {
     const groups = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
@@ -155,7 +160,7 @@ const state = createRoot(() => {
     surfaceRevision, setSurfaceRevision,
     scopeRevision, setScopeRevision,
     panelRevision, setPanelRevision,
-    matches, matchesByKey, referencePanels,
+    matches, matchesByKey, referencePanels, pendingHosts,
   };
 });
 
@@ -257,6 +262,9 @@ export const inPageFindOpen = state.open;
 export const inPageFindQuery = state.query;
 export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;
+/** In-outline embed/query hosts whose rendered content is not all searched yet.
+ * O(1); maintained independently of the query on scope, edit and mount changes. */
+export const inPageFindPendingHosts = state.pendingHosts.count;
 
 /** Count shared retired days once, even when several visible panes show Journals.
  * Find walks loaded roots only and never reads an unloaded day. */
@@ -550,6 +558,7 @@ function observeCurrentFindSurfaces() {
   const pane = win.document.body;
   const Observer = (win as Window & typeof globalThis).MutationObserver ?? MutationObserver;
   let scopesChanged = false, surfacesChanged = false, panelsChanged = false;
+  let pendingRecords: MutationRecord[] = [];
   surfaceObserver = new Observer((records) => {
     if (records.every((record) => {
       const target = isElementNode(record.target) ? record.target : record.target.parentElement;
@@ -557,15 +566,18 @@ function observeCurrentFindSurfaces() {
       return record.type === "childList" && [...record.addedNodes, ...record.removedNodes].every((node) =>
         isElementNode(node) && node.matches(".inpage-find-overlays,.inpage-find-bar"));
     })) return;
+    pendingRecords.push(...records);
     for (const record of records) {
       const target = isElementNode(record.target) ? record.target : record.target.parentElement;
-      if (record.type === "attributes") { panelsChanged = true; continue; }
-      surfacesChanged ||= !!target?.closest("[data-inpage-find-surface]");
+      if (record.type === "attributes" && record.attributeName === FIND_REFERENCES_EMPTY_ATTR) { panelsChanged = true; continue; }
+      surfacesChanged ||= !target?.closest(FIND_REFERENCES_SELECTOR)
+        && !!target?.closest(`${FIND_BLOCK_SELECTOR},[data-inpage-find-surface],[data-find-host]`);
       for (const node of [...record.addedNodes, ...record.removedNodes]) {
         if (!isElementNode(node)) continue;
         const contains = (selector: string) => node.matches(selector) || !!node.querySelector(selector);
         scopesChanged ||= contains("[data-sidebar-surface],[data-pane-id]");
-        surfacesChanged ||= contains("[data-inpage-find-surface]");
+        surfacesChanged ||= !target?.closest(FIND_REFERENCES_SELECTOR) && !node.closest(FIND_REFERENCES_SELECTOR)
+          && contains(`${FIND_BLOCK_SELECTOR},[data-inpage-find-surface],[data-find-host]`);
         panelsChanged ||= contains(FIND_REFERENCES_SELECTOR);
       }
     }
@@ -576,7 +588,9 @@ function observeCurrentFindSurfaces() {
         if (scopesChanged) state.setScopeRevision(revision => revision + 1);
         if (surfacesChanged) state.setSurfaceRevision(revision => revision + 1);
         if (panelsChanged) state.setPanelRevision(revision => revision + 1);
+        state.pendingHosts.refresh(pendingRecords);
       });
+      pendingRecords = [];
       scopesChanged = surfacesChanged = panelsChanged = false;
       const matches = inPageFindMatches();
       if (!matches.length) state.setActiveIndex(-1);
@@ -584,7 +598,8 @@ function observeCurrentFindSurfaces() {
       refreshInPageFindHighlights();
     });
   });
-  surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: [FIND_REFERENCES_EMPTY_ATTR] });
+  surfaceObserver.observe(pane, { childList: true, subtree: true, characterData: true, attributes: true,
+    attributeFilter: [FIND_REFERENCES_EMPTY_ATTR, "data-find-answered", "data-find-source-mounted"] });
   state.setScopeRevision(revision => revision + 1);
   state.setSurfaceRevision((revision) => revision + 1);
   state.setPanelRevision(revision => revision + 1);

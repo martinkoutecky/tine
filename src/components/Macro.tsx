@@ -188,6 +188,9 @@ export function QueryMacro(props: {
   title?: string;
   /** Owner page context for read-only surfaces such as BEGIN_QUERY. */
   currentPage?: string;
+  /** The outline block Find counts this query under when `blockId` is withheld
+   *  (BEGIN_QUERY offers no host editing controls); defaults to `blockId`. */
+  findHost?: string;
   /** For advanced sources, hide rows if the report has ignored clauses. (The
    *  engine now refuses a query with any unlowerable clause, so `ignored` is
    *  empty whenever `supported`; kept as a belt-and-braces display guard.) Pair
@@ -974,6 +977,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   return (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        data-find-host={props.findHost ?? props.blockId} data-find-answered={!!displayed()
+          && (!collapsed() || (groups().length === 0 && !pageRows()?.length && !displayed()?.both?.pages.length))}
         style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>

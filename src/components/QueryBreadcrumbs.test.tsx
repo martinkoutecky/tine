@@ -6,7 +6,8 @@ import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { QueryMacro } from "./Macro";
-import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
+import { BeginQuery } from "./BeginQuery";
+import { inspectBeginQuery } from "../render/beginQuery";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { splitTrailingMap, readEdnOptions } from "../editor/edn";
 

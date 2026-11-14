@@ -167,13 +167,32 @@ export function nextVisible(id: string, scope: OutlineScope | null = null): stri
 }
 
 export function depthOf(id: string): number {
-  let d = 0;
-  let p = doc.byId[id]?.parent ?? null;
-  while (p !== null) {
+  return readDepth(id);
+}
+
+type DepthBatch = { depths: Map<string, number>; path: string[] };
+
+function readDepth(id: string, batch?: DepthBatch): number {
+  let d = -1;
+  for (let at: string | null = id; at !== null; at = doc.byId[at]?.parent ?? null) {
+    const known = batch?.depths.get(at);
+    if (known !== undefined) { d += known + 1; break; }
+    batch?.path.push(at);
     d++;
-    p = doc.byId[p].parent;
+  }
+  if (batch) {
+    let depth = d;
+    for (const at of batch.path) batch.depths.set(at, depth--);
+    batch.path.length = 0;
   }
   return d;
+}
+
+/** Source depths aligned with rows in any order. O(rows + distinct ancestors),
+ * no I/O; the temporary parent answers are discarded when the call returns. */
+export function depthsOf(ids: readonly string[]): number[] {
+  const batch: DepthBatch = { depths: new Map(), path: [] };
+  return ids.map(id => readDepth(id, batch));
 }
 
 /** Check the deepest descendant after reparenting an existing subtree. */
