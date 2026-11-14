@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
 - Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).

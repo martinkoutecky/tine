@@ -44,10 +44,11 @@ export const SURFACES = Object.freeze({
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
 
   // --- Settings ---------------------------------------------------------------
-  "settings.tabs": { env: "desktop", budget: 10, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" },
-  "settings.appearance.open": settingsOpen("appearance", 31),
+  "settings.tabs": { env: "desktop", budget: 11, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" }, // D-20261113 / #926: Themes is its own category.
+  "settings.appearance.open": settingsOpen("appearance", 23),
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
   "settings.appearance.advanced": settingsAdvanced("appearance", 18), // D-20261111-QP2 / GH #926: Show the help button
+  "settings.themes.open": settingsOpen("themes", 8),
   // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
   "settings.editor.open": settingsOpen("editor", 10),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.

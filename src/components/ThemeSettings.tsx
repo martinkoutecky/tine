@@ -30,7 +30,7 @@ import { theme } from "../ui";
 import { communityThemeSetting, galleryThemeSetting, installedThemeSetting } from "./settingsDescriptor";
 import { settingMatches } from "./settingsSearch";
 
-// Settings → Appearance theme section: an independent Style (presentation)
+// Settings → Themes category: an independent Style (presentation)
 // selector and Color scheme gallery (master 670cf75bb), plus theme packages.
 
 type InstalledTheme = ReturnType<typeof installedThemes>[number];

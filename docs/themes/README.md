@@ -51,7 +51,7 @@ Create a directory with `theme.json`:
 ```
 
 Run `npm run theme:check -- /path/to/theme --json`, then install `theme.json`
-from Settings → Appearance → Theme packages. The checker rejects unknown tokens,
+from Settings → Themes → Theme packages. The checker rejects unknown tokens,
 CSS indirection, `url()`, `var()`, selector escapes, non-HTTPS metadata, and missing
 registry licenses.
 
@@ -105,7 +105,7 @@ An older Tine (before theme API 0.3) keeps a 0.3 package, with a load warning, a
 does not apply its typography.
 
 Users choose typography apart from colors and style: **Use typography** on the
-installed row (and the Typography selector in Settings → Appearance → Themes). If
+installed row (and the Typography selector in Settings → Themes). If
 the first family of a stack is not installed, the row says so and the rest of the
 stack is used; installing never fails for it. Choosing the default, uninstalling or
 revoking the package returns to Tine's own fonts. The user's own `custom.css`

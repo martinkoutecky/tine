@@ -39,7 +39,6 @@ vi.mock("@tauri-apps/api/window", () => {
 const counts: Record<string, number> = {};
 const labels: Record<string, string[]> = {};
 // ---- Settings -------------------------------------------------------------
-const SETTINGS_TABS: SettingsTabId[] = ["appearance", "editor", "journals", "files", "backups", "graph", "plugins", "diagnostics", "shortcuts", "about"];
 async function measureSettings() {
   // The home-page picker lists graph pages; an empty graph keeps it structural.
   vi.spyOn(backend(), "quickSwitch").mockResolvedValue([]);
@@ -48,7 +47,8 @@ async function measureSettings() {
     openSettings("appearance");
     const nav = await settled(() => root.querySelectorAll(".settings-nav-item").length);
     counts["settings.tabs"] = nav;
-    for (const tab of SETTINGS_TABS) {
+    const tabs = [...root.querySelectorAll<HTMLElement>(".settings-nav-item")].map(item => item.dataset.settingsTab as SettingsTabId);
+    for (const tab of tabs) {
       openSettings(tab);
       // Anchor: the tab is current once its nav item is active.
       await settled(() => [root.querySelector(".settings-nav-item.active")?.textContent, root.querySelector(".settings-pane-body")?.innerHTML.length]);

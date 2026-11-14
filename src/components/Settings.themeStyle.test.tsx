@@ -6,7 +6,7 @@ import { closeSettings, openSettings } from "../ui";
 import { applyTheme, applyThemeColors, selectedThemeColors, selectedThemeStyle } from "../themeGallery";
 import { installThemePackage, installedThemes, uninstallThemePackage } from "../themes/manager";
 
-// Master 670cf75bb (Themes API 0.2, Settings half): Appearance offers an
+// Master 670cf75bb (Themes API 0.2, Settings half): Themes offers an
 // independent Style selector next to the Color scheme gallery, installed
 // packages offer "Use colors" and "Use style" separately, and uninstalling a
 // package clears only the roles it fills (clearThemeSelection).
@@ -22,11 +22,11 @@ async function installPresentationTheme() {
   });
 }
 
-async function mountAppearance() {
+async function mountThemes() {
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);
-  openSettings("appearance");
+  openSettings("themes");
   await tick();
   return { root, dispose };
 }
@@ -39,11 +39,11 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-describe("Settings → Appearance theme Style and Color scheme (master 670cf75bb)", () => {
+describe("Settings → Themes: Style and Color scheme (master 670cf75bb)", () => {
   it("selects a style without changing the color scheme", async () => {
     const installed = await installPresentationTheme();
     applyThemeColors("gruvbox");
-    const { root, dispose } = await mountAppearance();
+    const { root, dispose } = await mountThemes();
     const select = root.querySelector<HTMLSelectElement>('select[aria-label="Theme style"]');
     expect(select).not.toBeNull();
     expect([...select!.options].map((option) => option.value)).toEqual(["", installed.key]);
@@ -57,7 +57,7 @@ describe("Settings → Appearance theme Style and Color scheme (master 670cf75bb
 
   it("offers Use colors and Use style separately for an installed presentation package", async () => {
     const installed = await installPresentationTheme();
-    const { root, dispose } = await mountAppearance();
+    const { root, dispose } = await mountThemes();
     const buttons = [...root.querySelectorAll<HTMLButtonElement>(".installed-theme-row button")];
     const useStyle = buttons.find((button) => button.textContent === "Use style");
     const useColors = buttons.find((button) => button.textContent === "Use colors");
@@ -72,7 +72,7 @@ describe("Settings → Appearance theme Style and Color scheme (master 670cf75bb
   it("uninstalling a package clears only the roles it fills", async () => {
     const installed = await installPresentationTheme();
     applyThemeColors("gruvbox");
-    const { root, dispose } = await mountAppearance();
+    const { root, dispose } = await mountThemes();
     root.querySelector<HTMLSelectElement>('select[aria-label="Theme style"]')!.value = installed.key;
     root.querySelector<HTMLSelectElement>('select[aria-label="Theme style"]')!.dispatchEvent(new Event("change", { bubbles: true }));
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);

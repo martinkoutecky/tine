@@ -74,6 +74,14 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-13, GH #926 (Martin: "926 yes to all", Q-S3): `settings.tabs`
+  10→11 for the explicitly approved first-level **Themes** category. Its eight
+  existing controls move out of Appearance: `settings.appearance.open` 31→23
+  and `settings.themes.open` = 8, with no net growth in setting controls.
+  A palette-only entry would not provide the approved category or keep the
+  dynamic theme gallery out of Appearance. The census derives its category
+  probes from the rendered navigation IDs; this lane leaves the commit rationale
+  in its receipt and does not commit.
 - 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
   `settings.appearance.open` 30→31 for the explicitly requested **Comments**
   display selector, **In the margin** / **On click**, beside the other display

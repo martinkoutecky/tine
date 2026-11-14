@@ -320,6 +320,8 @@ settings-rescan = 重新扫描
 settings-scan-for-orphans = 扫描未引用文件
 
 settings-ui-appearance = 外观
+settings-back-to-list = 返回设置
+settings-close = 关闭设置
 
 settings-ui-editor = 编辑器
 
