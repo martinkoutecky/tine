@@ -328,6 +328,7 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
             Some((x, y)) => builder.position(x, y),
             None => builder,
         };
+        let build_started = Instant::now();
         match builder.build() {
             Ok(window) => {
                 trace.stage("native.build-returned");
@@ -344,7 +345,14 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
             }
             Err(error) => {
                 trace.stage("native.build-failed");
-                crate::debug::diag_private("workspace-window-build-failed", error.to_string());
+                let error = error.to_string();
+                crate::flight::record_window_create_failed(
+                    "workspace",
+                    &error,
+                    app.webview_windows().len(),
+                    u64::try_from(build_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                );
+                crate::debug::diag_private("workspace-window-build-failed", error);
                 tauri::webview::NewWindowResponse::Deny
             }
         }

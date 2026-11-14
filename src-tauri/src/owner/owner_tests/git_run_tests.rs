@@ -79,6 +79,49 @@ fn reason(detail: &Value) -> &str {
 }
 
 #[test]
+fn gh930_no_author_keeps_run_identity_from_environment() {
+    const CHILD: &str = "TINE_NO_AUTHOR_RUN_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
+            .args([
+                "--exact",
+                "owner::owner_tests::git_run::gh930_no_author_keeps_run_identity_from_environment",
+            ])
+            .env(CHILD, "1")
+            .env("TINE_AUTHOR", "  Environment Author  ")
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&output.stdout);
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{out}\n{err}");
+        assert!(out.contains("1 passed"), "{out}\n{err}");
+        return;
+    }
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    for no_author in [false, true] {
+        let written = verb(
+            &slot,
+            "block.add",
+            json!({"page":"a", "content":"- run block", "run":run, "no_author":no_author}),
+        )
+        .unwrap();
+        assert_eq!(written["git"]["committed"], true, "{written}");
+        let tip = head(&repo);
+        for signature in [tip.author(), tip.committer()] {
+            assert_eq!(signature.name().unwrap(), "Environment Author");
+            assert_eq!(signature.email().unwrap(), "agent@tine.invalid");
+        }
+        assert_eq!(
+            file_at(&repo, &tip, "pages/a.md"),
+            disk(&graph, "pages/a.md")
+        );
+    }
+}
+
+#[test]
 fn gh930_run_authors_trim_and_blank_revert_preserves_files_and_head() {
     let graph = Graph::new();
     let slot = graph.slot();
