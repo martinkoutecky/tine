@@ -144,5 +144,5 @@ export function cm6Typing(ctx: {
   // editor command (desktop WebKit). Native confirming/229 keys never call this.
   const beforeKey = () => { if (ending && !ctx.view()?.compositionStarted) finish(); };
   const dispose = () => { disposed = true; releaseHold?.(); releaseHold = undefined; };
-  return { filter, changed, begin, end, input, active, settling: () => ending, beforeKey, dispose };
+  return { filter, changed, begin, end, finish, input, active, settling: () => ending, beforeKey, dispose };
 }

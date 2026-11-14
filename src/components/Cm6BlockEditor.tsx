@@ -344,7 +344,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
               exitEditOnBlur(v, handoff ?? undefined, intentIsCurrent);
             };
             // compositionend's pending DOM reconciliation owns its last flush.
-            // A blur during preedit still commits the live buffer before exit.
+            // A preedit abandoned by the blur finishes now (normalization included),
+            // before leave() commits and may unmount the editor.
+            if (abandoned) typing.finish();
             if (typing.settling()) queueMicrotask(leave);
             else leave();
             // An IME cancelled by blur may send no compositionend, and CM never clears its own composing flag
