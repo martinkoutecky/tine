@@ -1,5 +1,5 @@
 {
-  "comment": "Whole #+BEGIN_QUERY container golden (I-12). TS: components/BeginQuery.tsx WHOLE_BEGIN_QUERY (authoritative regexp). Rust: tine-graph-features render.rs whole_begin_query_payload. Each case: [block raw, payload or null].",
+  "comment": "Whole #+BEGIN_QUERY container golden (I-12). TS: render/beginQuery.ts WHOLE_BEGIN_QUERY (authoritative regexp). Rust: tine-graph-features render.rs whole_begin_query_payload. Each case: [block raw, payload or null].",
   "cases": [
     [
       "#+BEGIN_QUERY\nx\n#+END_QUERY",

@@ -3,7 +3,7 @@ import { formatForBlock, node, onPageRawChanged } from "./document";
 import { parseBody } from "./render/facets";
 import { isQuarantined, parserReady } from "./render/parse";
 import { isQueryMacroName } from "./editor/queryMacro";
-import { inspectBeginQuery } from "./components/BeginQuery";
+import { inspectBeginQuery } from "./render/beginQuery";
 import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./render/queryMacroRender";
 import type { Block, Format, Inline, ListItem } from "./render/ast";
 
