@@ -10,7 +10,7 @@ fn guide_explains_existing_code_block_deletion_paths() {
     assert!(tips.markdown.contains("choose **Delete block**"));
     assert!(tips
         .markdown
-        .contains("show line numbers and a display-only language label"));
+        .contains("show line numbers and a language label"));
     assert!(tips
         .markdown
         .contains("Settings → Appearance → Wrap code lines"));

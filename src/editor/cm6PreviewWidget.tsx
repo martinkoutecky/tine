@@ -2,11 +2,12 @@ import { runWithOwner, type Owner } from "solid-js";
 import { render } from "solid-js/web";
 import { EditorView, WidgetType } from "@codemirror/view";
 import { PageRef, renderInlines } from "../render/inline";
-import { renderBlocks } from "../render/body";
+import { BodySourceContext, renderBlocks } from "../render/body";
 import { renderedClickOffset } from "../components/blockGestures";
 import { CalGlyph } from "../components/blockParts";
 import { taskCheckboxState } from "../markers";
 import type { PreviewSpan } from "./cm6Preview";
+import { codeSourceCaret } from "./codeFence";
 
 /** The marker as the view draws it (Rendered.tsx): the task checkbox and the marker chip are SIBLINGS joined by a space
  * (the checkbox colour is `.block-task-checkbox:has(+ .marker-x)`, and the chip must not wrap the box), and CANCELED has no box.
@@ -47,7 +48,14 @@ export class PreviewWidget extends WidgetType {
         return <>
           {header?.marker && <TaskMarker label={header.marker} />}
           {header?.priority && <PriorityChip label={header.priority} />}
-          {renderBlocks([span.block], blockId, span.block.kind === "bullet" ? span.block.size : undefined, false, format)}
+          <BodySourceContext.Provider value={{ codeEditAction: () => view.state.readOnly ? undefined : byte => {
+            const caret = codeSourceCaret(view.state.doc.toString(), format, byte);
+            if (caret === null) return;
+            view.dispatch({ selection: { anchor: caret }, scrollIntoView: true });
+            view.focus();
+          } }}>
+            {renderBlocks([span.block], blockId, span.block.kind === "bullet" ? span.block.size : undefined, false, format)}
+          </BodySourceContext.Provider>
           {header?.htags?.map(name => <PageRef name={name} blockId={blockId} tag />)}
         </>;
       }
@@ -55,8 +63,9 @@ export class PreviewWidget extends WidgetType {
       if (span.kind === "task") return <TaskMarker label={span.label!} />;
       return <PriorityChip label={span.label!} />;
     }, el));
+    const languageControl = (event: Event) => (event.target as Element | null)?.closest?.("button.code-language");
     const reveal = (event: MouseEvent | PointerEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || languageControl(event)) return;
       const lo = span.revealFrom ?? span.from;
       const offset = renderedClickOffset(el, this.raw, format, event) ?? lo;
       const head = Math.max(lo, Math.min(span.to, offset));
@@ -68,7 +77,7 @@ export class PreviewWidget extends WidgetType {
     // the source is exposed before the browser attempts a DOM selection.
     el.addEventListener("pointerdown", event => { if (event.pointerType !== "mouse") reveal(event); }, true);
     el.addEventListener("mousedown", reveal, true);
-    el.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); }, true);
+    el.addEventListener("click", event => { if (!languageControl(event)) { event.preventDefault(); event.stopPropagation(); } }, true);
     return el;
   }
   destroy() { this.dispose?.(); this.dispose = undefined; }
