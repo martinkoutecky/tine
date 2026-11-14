@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).
+
 ## [0.9.0-beta.13] - 2026-11-14
 
 ### Fixed
