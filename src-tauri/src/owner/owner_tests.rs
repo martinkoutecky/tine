@@ -1875,6 +1875,22 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
 }
 
 #[test]
+fn gh930_no_author_add_writes_plain_blocks() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    for (name, no_author) in [("plain", true), ("attributed", false)] {
+        verb(
+            &slot,
+            "block.add",
+            json!({"page":name, "content":"- root\n  - child", "no_author":no_author}),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(graph.root.join(format!("pages/{name}.md"))).unwrap();
+        assert_eq!(text.contains("tine.author::"), !no_author, "{text}");
+    }
+}
+
+#[test]
 fn gh930_add_refuses_blank_authors_without_writing() {
     let graph = Graph::new();
     let slot = graph.slot();

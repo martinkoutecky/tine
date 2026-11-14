@@ -5,10 +5,34 @@ import { applySidebarSession, rightSidebar, setFavorites, setRecentPages } from 
 import { setToasts, toasts, toUiText } from "../toasts";
 import { renderEnglish } from "../i18n";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
-import { mainPaneRouter, openJournals, resetTabsToJournals, route } from "../router";
+import { mainPaneRouter, openJournals, openPageInNewTab, resetTabsToJournals, route } from "../router";
 import { appNow, journalTitle } from "../journal";
 import { runGlobalCommand } from "../keybindings";
 import { readFileSync } from "node:fs";
+
+it("GH #926: the named close icon shares the graph picker row and first-level rows share a casing class", () => {
+  setFavorites([{ name: "Tine", kind: "page" }]);
+  setRecentPages([{ name: "Tine", kind: "page" }]);
+  mainPaneRouter.openPage("Project", "page", { inPlace: false });
+  openPageInNewTab("Second project", "page");
+  const close = vi.fn();
+  const host = document.body.appendChild(document.createElement("div"));
+  const dispose = render(() => <Sidebar onClose={close} />, host);
+  try {
+    const button = host.querySelector<HTMLButtonElement>('button[aria-label="Close navigation sidebar"]');
+    expect(button).not.toBeNull();
+    expect(button!.textContent).toBe("");
+    expect(button!.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(button!.parentElement).toBe(host.querySelector(".graph-switch")!.parentElement);
+    button!.click();
+    expect(close).toHaveBeenCalledOnce();
+    const rows = [...host.querySelectorAll(".nav-section-header, .nav-contents > .nav-item")];
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const row of rows) expect(row.classList.contains("nav-first-level")).toBe(true);
+    expect(host.textContent).toContain("Favorites");
+    expect(host.textContent).toContain("Recent");
+  } finally { dispose(); }
+});
 
 it("GH #740: Shift-click the top-left Journals entry keeps the main page and opens today in the right sidebar", () => {
   mainPaneRouter.openPage("Project", "page", { inPlace: true });

@@ -32,6 +32,8 @@ struct Args {
     #[serde(default)]
     author: Option<String>,
     #[serde(default)]
+    no_author: bool,
+    #[serde(default)]
     rev: Option<String>,
 }
 
@@ -80,8 +82,14 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
         Some(turn) => turn,
         None => page_turn(slot, &page)?,
     };
-    let author = super::write::author_name(args.author.as_deref())
-        .map_err(|e| refused("kernel", Some(&page), e))?;
+    let author = if args.no_author {
+        None
+    } else {
+        Some(
+            super::write::author_name(args.author.as_deref())
+                .map_err(|e| refused("kernel", Some(&page), e))?,
+        )
+    };
     write_page_in_turn(
         slot,
         turn,
@@ -135,7 +143,7 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
             fn prepare(
                 blocks: &[BlockDto],
                 org: bool,
-                author: &str,
+                author: Option<&str>,
                 graph: &tine_store::WholeGraph,
                 live_ids: &mut Vec<String>,
                 page: &tine_store::PageId,
@@ -170,10 +178,8 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                                 live_ids.push(id);
                             }
                         }
-                        let raw = if header && index == 0 {
-                            block.raw.clone()
-                        } else {
-                            block_regions::edit(
+                        let raw = match (header && index == 0, author) {
+                            (false, Some(author)) => block_regions::edit(
                                 &block.raw,
                                 org,
                                 Edit::Property {
@@ -181,7 +187,8 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                                     value: Some(author.into()),
                                 },
                             )
-                            .map_err(|e| refused("kernel", Some(page), e))?
+                            .map_err(|e| refused("kernel", Some(page), e))?,
+                            _ => block.raw.clone(),
                         };
                         Ok(OutlineNode {
                             raw,
@@ -198,7 +205,15 @@ pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBo
                     })
                     .collect()
             }
-            let mut blocks = prepare(&blocks, org, &author, &graph, &mut live_ids, page, header)?;
+            let mut blocks = prepare(
+                &blocks,
+                org,
+                author.as_deref(),
+                &graph,
+                &mut live_ids,
+                page,
+                header,
+            )?;
             let mut next = doc.clone();
             if header {
                 next.pre_block = Some(blocks.remove(0).raw);
