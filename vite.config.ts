@@ -105,7 +105,7 @@ return {
     // (ENOSPC) and kills the dev server / vite-node. Guard:
     // src/viteWatchIgnore.guard.test.ts.
     watch: {
-      ignored: ["**/target/**", "**/.toolchain/**", "**/.cargo/**", "**/dist/**"],
+      ignored: ["**/target/**", "**/artifacts/**", "**/.toolchain/**", "**/.cargo/**", "**/dist/**"],
     },
   },
   build: {
