@@ -683,10 +683,13 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null;
       scaffoldLanguagePicker = false;
       if (scaffold) {
+        // Map the source selection into the body: input may already be committed there (GH #879).
+        const at = (pos: number) => Math.max(0, Math.min(scaffold.body.length, pos - scaffold.open.length));
+        const start = at(ref.selectionStart), end = at(ref.selectionEnd), direction = ref.selectionDirection;
         codeView.enter(scaffold.open.length);
         queueMicrotask(() => {
           ref.value = scaffold.body;
-          ref.setSelectionRange(0, 0);
+          ref.setSelectionRange(start, end, direction);
           autosize();
         });
       }
