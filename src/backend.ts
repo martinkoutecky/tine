@@ -1064,7 +1064,7 @@ class TauriBackend implements Backend {
   getAppString(key: string, fallback: string) {
     return this.call<string>("get_app_string", { key, default: fallback });
   }
-  setAppString(key: string, value: string) {
+  setAppString(key: string, value: string | null) {
     return this.call<void>("set_app_string", { key, value });
   }
   setUiLocale(locale: string) {

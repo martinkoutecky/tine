@@ -1,0 +1,13 @@
+toolbar-title = 工具栏
+toolbar-description = 拖动按钮可移动或重新排序，也可使用箭头和移动按钮。此选择仅保存在本设备上。空间不足时，右侧按钮会优先移入 … 菜单。
+toolbar-on-bar = 在工具栏上
+toolbar-in-menu = 在 … 菜单中
+toolbar-move-up = 将{ $action }上移
+toolbar-move-down = 将{ $action }下移
+toolbar-move-to-menu-label = 将{ $action }移至 … 菜单
+toolbar-move-to-bar-label = 将{ $action }移至工具栏
+toolbar-move-to-menu = 移至菜单
+toolbar-move-to-bar = 移至工具栏
+toolbar-reset = 重置工具栏
+toolbar-customize = 自定义工具栏…
+toolbar-save-failed = 无法保存工具栏选择
