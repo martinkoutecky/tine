@@ -4291,22 +4291,22 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
   display: block;
 }
 
-/* Code view/editor share card metrics and the calculator's numbered gutter. */
+.code-block, .code-editor-region { --code-content-inset: max(48px, calc(24px + var(--code-line-digits, 1) * 1ch)); }
 .editor-wrap:has(> .code-editor-region > .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
 .block-editor.code-edit {
   background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
-  padding-block: 30px 10px; padding-inline: 48px 12px; margin: 4px 0;
+  padding-block: 30px 10px; padding-inline: var(--code-content-inset) 12px; margin: 4px 0;
   --tine-editable-font: var(--tine-mono-font, "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
     Consolas, "Courier New", var(--tine-editable-emoji-font), monospace);
   font-size: 0.86em; line-height: 1.5; white-space: pre;
   overflow-x: auto; overflow-y: hidden; min-height: 0;
 }
 .code-language { position: absolute; top: 9px; inset-inline-end: 48px; color: var(--text-muted); font: 11px/16px var(--tine-mono-font, var(--ls-font-mono)); pointer-events: none; }
-.code-gutter { position: absolute; top: 30px; inset-inline-start: 48px; inset-inline-end: 12px; pointer-events: none; font: inherit; white-space: pre; }
+.code-gutter { position: absolute; top: 30px; inset-inline-start: var(--code-content-inset); inset-inline-end: 12px; pointer-events: none; font: inherit; white-space: pre; }
 .gutter-row { position: relative; }
-.code-gutter .calc-lineno { position: absolute; inset-inline-end: calc(100% + 14px); }
+.code-gutter .calc-lineno { position: absolute; inset-inline-end: calc(100% + 14px); white-space: pre; overflow-wrap: normal; }
 .gutter-mirror { visibility: hidden; }
-.code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); inset-inline-start: 49px; inset-inline-end: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
+.code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); inset-inline-start: calc(var(--code-content-inset) + 1px); inset-inline-end: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
 .code-editor-region > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
 .code-editor-region { display: contents; }
 .code-editor-region.mixed-code-region { display: block; position: relative; }
@@ -5586,7 +5586,7 @@ body.file-drop-active::after {
   background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding-block: 30px 10px; padding-inline: 48px 12px;
+  padding-block: 30px 10px; padding-inline: var(--code-content-inset) 12px;
   margin: 4px 0;
   overflow-x: auto;
   font-family: var(--tine-mono-font, var(--ls-font-mono));

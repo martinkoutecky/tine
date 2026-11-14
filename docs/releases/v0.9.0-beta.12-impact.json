@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.12",
+  "baseTag": "v0.9.0-beta.11",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "Diagnostics: when a block's editor does not have the caret one frame after Tine asked it to edit (for example after Enter), the diagnostic report now records a content-free `editor.focus-missed` event (whether the window had focus, whether an edit guard held the request, whether the editor was mounted, and the focused element's kind; no note text, titles or paths), at most once every five minutes, so a report can tell the possible causes apart (GH #939).",
+      "userVisible": true,
+      "regressions": [
+        "REG-939-EDITOR-FOCUS-MISSED-DIAGNOSTIC"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-939-EDITOR-FOCUS-MISSED-DIAGNOSTIC. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.editorFocusMissed.test.tsx",
+          "src-tauri/src/flight/editor_focus.rs::tests::missed_accepts_only_closed_tokens_and_booleans",
+          "src-tauri/src/flight/editor_focus.rs::tests::missed_reaches_the_existing_export"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Copying a collapsed block, or a block shown as a sheet (table, board or grid), with Ctrl/Cmd+C on a block selection or Copy blocks in the block menu puts the children it hides on the clipboard, nested folds included; before, with the default \"Copy a parent block's sub-blocks\" off, the copied text silently left them out. An expanded parent selected alone still copies alone; with the setting on, copies remain whole subtrees as in Logseq (GH #943).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH943-COLLAPSED-COPY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH943-COLLAPSED-COPY. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/collapsedCopy.test.tsx",
+          "scripts/e2e-structured-paste.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Org pages: Linked References now mark a link inside emphasis (`*[[page]]*`) or inside a `#[[…]]` tag where it stands, also inside quote and other `#+BEGIN_…` blocks, instead of missing it or marking the start of the block (internal: REG-LSDOC-0511-ORG-LINK-SPANS).",
+      "userVisible": true,
+      "regressions": [
+        "REG-LSDOC-0511-ORG-LINK-SPANS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-LSDOC-0511-ORG-LINK-SPANS. Fail-before: Proven on release/0.9 ecfee1e5d with lsdoc v0.5.10. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-graph-features/tests/org_link_spans_in_tags.rs::org_link_spans_in_tags::rename_respells_org_links_in_tags_and_emphasis_lf",
+          "crates/tine-graph-features/tests/org_link_spans_in_tags.rs::org_link_spans_in_tags::rename_respells_org_links_in_tags_and_emphasis_crlf",
+          "crates/tine-graph-features/tests/org_link_spans_in_tags.rs::org_link_spans_in_tags::merge_respells_org_links_in_tags_and_emphasis_lf",
+          "crates/tine-graph-features/tests/org_link_spans_in_tags.rs::org_link_spans_in_tags::merge_respells_org_links_in_tags_and_emphasis_crlf",
+          "crates/tine-graph-features/tests/org_link_spans_in_tags.rs::org_link_spans_in_tags::linked_reference_marks_org_links_in_tags_and_emphasis_lf",
+          "crates/tine-graph-features/tests/org_link_spans_in_tags.rs::org_link_spans_in_tags::linked_reference_marks_org_links_in_tags_and_emphasis_crlf"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).",
+      "userVisible": true,
+      "regressions": [
+        "REG-BARE-TASK-HIDDEN-ROWS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-BARE-TASK-HIDDEN-ROWS. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/tests/bare_task_hidden_rows.rs",
+          "crates/tine-outline/src/lsdoc_block_parse.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading, and shows the block you were reading even when the long page lays out differently on return, for example after a window resize (internal: UI-ZOOM-BACK-SCROLL).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ZOOM-BACK-SCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-ZOOM-BACK-SCROLL. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-zoom-back.mjs",
+          "src/router.restoreScroll.test.ts",
+          "src/session.restoreDecision.test.ts",
+          "scripts/e2e-empty-query-workspace.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}
