@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 - `tine export query` accepts inline `--query` text or the first query on `--page`, with the same export and `--force` recovery as UUID selection (#588).
+- `tine export query --page` skips large prose and code blocks before the query while retaining the query size limit (#588).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
 - Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).

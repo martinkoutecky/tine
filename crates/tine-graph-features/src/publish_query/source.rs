@@ -152,6 +152,132 @@ fn block_request(
 mod tests {
     use super::*;
 
+    fn page_source_large_prefix(org: bool, code: bool, newline: &str) {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        let prose = "x".repeat(65_537);
+        let prefix = match (org, code) {
+            (true, true) => format!(
+                "#+BEGIN_SRC text{newline}{prose} {{{{query (task DOING)}}}}{newline}#+END_SRC"
+            ),
+            (false, true) => {
+                format!("```text{newline}{prose} {{{{query (task DOING)}}}}{newline}```")
+            }
+            (_, false) => prose,
+        };
+        let raw = if org {
+            format!("* {prefix}{newline}* {{{{query (task TODO)}}}}{newline}")
+        } else {
+            format!(
+                "- {}{newline}- {{{{query (task TODO)}}}}{newline}",
+                prefix.replace(newline, &format!("{newline}  "))
+            )
+        };
+        let extension = if org { "org" } else { "md" };
+        std::fs::write(root.path().join(format!("pages/Large.{extension}")), raw).unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        let graph = store.whole_graph().unwrap();
+        let Resolved::Existing { id, .. } = graph.resolve("Large", false) else {
+            panic!("fixture page");
+        };
+        assert_eq!(
+            query_request_on_page(&graph, &id, None, false)
+                .unwrap()
+                .argument,
+            "(task TODO)"
+        );
+        store.close();
+    }
+
+    macro_rules! large_prefix_case {
+        ($name:ident, $org:expr, $code:expr, $newline:expr) => {
+            #[test]
+            fn $name() {
+                page_source_large_prefix($org, $code, $newline);
+            }
+        };
+    }
+
+    large_prefix_case!(
+        page_source_large_prefix_markdown_prose_lf,
+        false,
+        false,
+        "\n"
+    );
+    large_prefix_case!(
+        page_source_large_prefix_markdown_prose_crlf,
+        false,
+        false,
+        "\r\n"
+    );
+    large_prefix_case!(page_source_large_prefix_markdown_code_lf, false, true, "\n");
+    large_prefix_case!(
+        page_source_large_prefix_markdown_code_crlf,
+        false,
+        true,
+        "\r\n"
+    );
+    large_prefix_case!(page_source_large_prefix_org_prose_lf, true, false, "\n");
+    large_prefix_case!(page_source_large_prefix_org_prose_crlf, true, false, "\r\n");
+    large_prefix_case!(page_source_large_prefix_org_code_lf, true, true, "\n");
+    large_prefix_case!(page_source_large_prefix_org_code_crlf, true, true, "\r\n");
+
+    #[test]
+    fn page_source_large_query_still_refuses() {
+        for org in [false, true] {
+            for first in [false, true] {
+                for raw in [
+                    format!("{{{{query (task {})}}}}", "x".repeat(65_537)),
+                    format!("{{{{tine-query @block {}}}}}", " ".repeat(65_537)),
+                    format!(
+                        "#+BEGIN_QUERY\n{{:query [{}]}}\n#+END_QUERY",
+                        " ".repeat(65_537)
+                    ),
+                ] {
+                    assert_eq!(
+                        render::query_for_export(&raw, org, first).unwrap_err(),
+                        "query block exceeds the query source limit"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn page_source_large_query_refuses_before_later_query_and_inline_plan_is_bounded() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        let argument = format!("(task {})", "x".repeat(65_537));
+        let uuid = "a6f5c174-8f35-4000-8000-000000000588";
+        std::fs::write(
+            root.path().join("pages/Large.md"),
+            format!("- {{{{query {argument}}}}}\n  id:: {uuid}\n- {{{{query (task TODO)}}}}\n"),
+        )
+        .unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.stop_watcher_for_tests();
+        let graph = store.whole_graph().unwrap();
+        let Resolved::Existing { id, .. } = graph.resolve("Large", false) else {
+            panic!("fixture page");
+        };
+        for error in [
+            query_request_on_page(&graph, &id, None, false).unwrap_err(),
+            query_request_by_uuid(&store, uuid, None, false).unwrap_err(),
+        ] {
+            assert_eq!(
+                error.to_string(),
+                "query block exceeds the query source limit"
+            );
+        }
+        let request = query_request_inline(argument, "Large", false);
+        assert_eq!(
+            plan_query(&store, &request).unwrap_err().to_string(),
+            "query exceeds the export parser limit"
+        );
+        store.close();
+    }
+
     #[test]
     fn page_source_work_stops_at_the_first_query() {
         for tail_blocks in [8, 2048] {

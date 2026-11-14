@@ -885,7 +885,7 @@ fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
 fn body_blocks_with_queries(
     raw: &str,
     org: bool,
-) -> (Vec<Block>, Vec<tine_core::query::macro_text::MacroExtent>) {
+) -> (Vec<Block>, render_query_source::QuerySources) {
     let mut parsed = tine_core::render::parse_block(raw, org);
     if !org {
         // Metadata rows a final quote swallowed (GH #721): the editor hides them, so
