@@ -79,3 +79,19 @@ it("patches mount deltas and serves repeated counts without rewalking or parsing
     } finally { dispose(); }
   });
 });
+
+// Review HOLD on d7244ed23: journal days are separate scopes sharing one pane element; discovery walked it once per day.
+it("walks a pane shared by many journal-day scopes once when the inventory builds", () => {
+  const days = Array.from({ length: 32 }, (_, i) => `day-${i}`);
+  setDoc({ byId: Object.fromEntries(days.map(id => [id, { id, raw: "{{embed [[Source]]}}", children: [], parent: null, page: id, collapsed: false }])) });
+  const pane = document.createElement("div");
+  document.body.append(pane);
+  const walk = vi.spyOn(pane, "querySelectorAll");
+  createRoot(dispose => {
+    try {
+      const inventory = createPendingFindHosts(() => days.map(id => ({ roots: [id], format: "md" as const, element: pane })));
+      expect(inventory.count()).toBe(32);
+      expect(walk).toHaveBeenCalledTimes(1);
+    } finally { dispose(); }
+  });
+});

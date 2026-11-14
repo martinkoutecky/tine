@@ -107,7 +107,8 @@ export function createPendingFindHosts(scopes: Accessor<Scope[]>): { count: Acce
       };
       visit(scope.roots);
     }
-    for (const scope of scopeList) for (const host of scope.element?.querySelectorAll(HOST) ?? []) update(host);
+    // Journal days share one pane element: walk each distinct element once (O(DOM), not O(days × DOM)).
+    for (const element of new Set(scopeList.map(scope => scope.element))) for (const host of element?.querySelectorAll(HOST) ?? []) update(host);
     onCleanup(onPageRawChanged(id => {
       const copies = members.get(id);
       if (!copies) return;
