@@ -529,8 +529,7 @@ pub fn merge_hls_page_for_format(
                     _ => continue,
                 };
                 let matches = if index == 1 {
-                    property.value == asset_path
-                        || crate::asset_refs::percent_decode(&property.value) == asset_path
+                    crate::asset_path::pdf_asset_file(&property.value) == pdf_filename
                 } else {
                     use lsdoc::ast::{Inline, Url};
                     tine_outline::lsdoc_block_parse::parse_inline_bounded(
@@ -540,7 +539,7 @@ pub fn merge_hls_page_for_format(
                     .is_some_and(|nodes| {
                         matches!(nodes.as_slice(),
                         [Inline::Link { url: Url::Search { v } | Url::File { v }, .. }]
-                            if v == &asset_path || crate::asset_refs::percent_decode(v) == asset_path)
+                            if crate::asset_path::pdf_asset_file(v) == pdf_filename)
                     })
                 };
                 if matches {
@@ -1027,6 +1026,38 @@ mod tests {
                 Some(&existing), "paper.pdf", "Different label", &[sample()], &HashSet::new(), format,
             );
             assert_eq!(merged.pre_block.as_deref(), Some(pre));
+        }
+    }
+
+    #[test]
+    fn merge_hls_page_preserves_every_spelling_of_the_same_asset() {
+        for format in [Format::Md, Format::Org] {
+            for path in [
+                "../assets/paper.pdf", "assets/paper.pdf", "./assets/paper.pdf",
+                "paper.pdf", "../assets/./paper.pdf", "..\\assets\\paper.pdf",
+                "file:../assets/paper.pdf", "file%3A..%2Fassets%2Fpaper.pdf",
+            ] {
+                let pre = match format {
+                    Format::Md => format!("file:: [Old]({path})\r\nfile-path:: {path}\r\n"),
+                    Format::Org => format!("#+FILE: [[{path}][Old]]\r\n#+FILE-PATH: {path}\r\n"),
+                };
+                let existing = Document { pre_block: Some(pre.clone()), roots: Vec::new() };
+                let merged = merge_hls_page_for_format(
+                    Some(&existing), "paper.pdf", "NEW", &[sample()], &HashSet::new(), format,
+                );
+                assert_eq!(merged.pre_block.as_deref(), Some(pre.as_str()), "{format:?}: {path}");
+            }
+            let pre = match format {
+                Format::Md => "file:: [Old](assets/other.pdf)\nfile-path:: assets/other.pdf\n",
+                Format::Org => "#+FILE: [[assets/other.pdf][Old]]\n#+FILE-PATH: assets/other.pdf\n",
+            };
+            let existing = Document { pre_block: Some(pre.into()), roots: Vec::new() };
+            let merged = merge_hls_page_for_format(
+                Some(&existing), "paper.pdf", "NEW", &[sample()], &HashSet::new(), format,
+            );
+            let pre = merged.pre_block.unwrap();
+            assert!(pre.contains("NEW"), "{format:?}: {pre}");
+            assert!(!pre.contains("other.pdf"), "{format:?}: {pre}");
         }
     }
 

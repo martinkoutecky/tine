@@ -925,6 +925,20 @@ pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
 mod ordinal;
 #[path = "../../tine-core/src/pdf_key.rs"]
 mod pdf_key;
+#[path = "../../tine-core/src/asset_path.rs"]
+mod asset_path;
+
+/// Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
+#[wasm_bindgen]
+pub fn asset_rel_path(url: &str) -> Option<String> {
+    asset_path::asset_rel_path(url)
+}
+
+/// PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
+#[wasm_bindgen]
+pub fn pdf_asset_file(path: &str) -> String {
+    asset_path::pdf_asset_file(path)
+}
 
 /// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
 #[wasm_bindgen]

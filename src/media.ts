@@ -7,6 +7,7 @@ import { assetNameFormat } from "./assetSettings";
 import type { Format } from "./types";
 
 import { appNow } from "./journal";
+import { asset_rel_path } from "./render/wasm/lsdoc_wasm.js";
 // Image extensions Tine renders as <img> (unchanged from the prior inline check).
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 // OG's media format sets (deps/.../config.cljs): reused so a clone graph stays
@@ -217,7 +218,5 @@ export function recordingExt(mime: string): string {
  * of the directory name in O(URL bytes). Null when no asset directory occurs;
  * the backend validates the returned path before reading. */
 export function assetRelPath(url: string): string | null {
-  const normalized = url.replace(/\\/g, "/");
-  const i = normalized.toLowerCase().indexOf("assets/");
-  return i === -1 ? null : normalized.slice(i + "assets/".length);
+  return asset_rel_path(url) ?? null;
 }

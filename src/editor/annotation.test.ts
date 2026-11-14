@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { setDoc } from "../document/model";
-import { annotationInfoForBlock, pdfFileForPage, pdfFileFromPreBlock, isAnnotationBlock } from "./annotation";
+import { annotationInfoForBlock, pdfAssetFile, pdfFileForPage, pdfFileFromPreBlock, isAnnotationBlock } from "./annotation";
 
 // pdfFileForPage reduces an hls__ page's `file-path::` to a basename. A graph
 // edited on Windows can carry backslash paths, so the split must handle BOTH
@@ -9,6 +9,15 @@ describe("pdfFileForPage", () => {
   afterEach(() => setDoc("pages", []));
   const seed = (preBlock: string) =>
     setDoc("pages", [{ name: "hls__book", preBlock, roots: [], format: preBlock.startsWith("#+") ? "org" : "md" } as any]);
+
+  it.each([
+    "assets/paper.pdf", "./assets/paper.pdf", "paper.pdf", "../assets/./paper.pdf",
+    "..\\assets\\paper.pdf", "file:../assets/paper.pdf", "file%3A..%2Fassets%2Fpaper.pdf",
+  ])("opens the same PDF for %s from a link and either highlights-page format", (path) => {
+    expect(pdfAssetFile(path)).toBe("paper.pdf");
+    expect(pdfFileFromPreBlock(`file-path:: ${path}`)).toBe("paper.pdf");
+    expect(pdfFileFromPreBlock(`#+FILE-PATH: ${path}`, "org")).toBe("paper.pdf");
+  });
 
   it("basenames a forward-slash relative path", () => {
     seed("file-path:: ../assets/book_123.pdf");

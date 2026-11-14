@@ -15,7 +15,8 @@ function regexes(source: string): string[] {
 describe("OG-DUPD1 parser ownership", () => {
   it("I-12: annotation metadata comes from facetsOf and pageHeaderProperties; imitate editor/annotation.ts", () => {
     const source = read("src/editor/annotation.ts");
-    expect(regexes(source), "I-12: only asset basename separators may be regex-scanned; metadata belongs to the parser").toEqual(["/[\\\\/]/"]);
+    expect(regexes(source), "I-12: metadata belongs to the parser and PDF paths belong to the shared Rust resolver").toEqual([]);
+    expect(callsImported("src/editor/annotation.ts", "pdf_asset_file", "src/render/wasm/lsdoc_wasm", "pdfAssetFile"), "I-12: PDF paths use the same resolver as the highlights writer").toBe(true);
     expect(callsImported("src/editor/annotation.ts", "facetsOf", "src/render/facets"), "I-12: block annotation metadata is read through facetsOf").toBe(true);
     expect(callsImported("src/components/Block.tsx", "annotationInfo", "src/editor/annotation"), "I-12: Block reads annotation metadata through annotationInfo").toBe(true);
     expect(callsImported("src/editor/annotation.ts", "pageHeaderProperties", "src/document"), "I-12: page annotations read pageHeaderProperties").toBe(true);
