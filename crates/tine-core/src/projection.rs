@@ -290,6 +290,7 @@ pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
         breadcrumb: Vec::new(),
         page_property: false,
         page_preamble: false,
+        comment: false,
         // All header facets off the one lsdoc projection (marker/priority/heading/
         // properties/scheduled/deadline) — priority is header-position only, matching
         // the chip, so a loaded block never shows a priority the edit path wouldn't.

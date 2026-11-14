@@ -16,6 +16,8 @@ export interface BlockDto {
   /** Synthetic read-only reference row: the source page's prose before its
    *  first block (CM step 2 batch 8). No outline id; it opens its page. */
   page_preamble?: boolean;
+  /** Source thread membership carried by native detached export hydration. */
+  comment?: boolean;
   // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
   // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
   // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).
@@ -62,6 +64,7 @@ export interface QueryExportBatch {
  * to `parseQuery`. Publication writes a graph query leaf, preserves replaced
  * output in recovery and refuses a changed source fingerprint. */
 export interface QueryPublicationRequest {
+  includeComments?: boolean;
   argument: string;
   dialect: import("./editor/queryIr").QueryTextDialect;
   properties: [string, string][];
@@ -76,6 +79,7 @@ export interface QueryPublicationRequest {
 }
 
 export interface QueryPublicationPlan {
+  includeComments?: boolean;
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
@@ -753,6 +757,7 @@ export interface PdfState {
 /** Options for the print-to-PDF export (chosen in the pre-export dialog). Field
  *  names are snake_case to match the Rust `PrintOpts` serde deserialization. */
 export interface PrintOpts {
+  include_comments?: boolean;
   /** Expand `collapsed:: true` blocks (true = print the whole page). */
   expand_collapsed: boolean;
   /** Base body font size, px. */

@@ -351,7 +351,8 @@ fn publishes_only_public_pages() {
     let out = root.with_extension("site");
     std::fs::create_dir_all(&out).unwrap();
     let receipt =
-        tine_graph_features::publish_query::publish_static(&store, &out, "site", false).unwrap();
+        tine_graph_features::publish_query::publish_static(&store, &out, "site", false, true)
+            .unwrap();
     let (dir, n) = (receipt.path, receipt.pages);
     assert_eq!(n, 1, "only the public page is published");
     let p = std::fs::read_to_string(std::path::Path::new(&dir).join("shared.html"))

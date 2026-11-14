@@ -116,6 +116,20 @@ function tableOf(x: SheetExport | null) {
   return x;
 }
 
+it("keeps comment threads outside body sheet rows without shifting source indices", () => {
+  const fx: Fixture = { owner: "Table\ntine.view:: table", rows: [
+    { raw: "COMMENTMARKER\ntine.quote:: Table", kids: ["REPLYMARKER"] },
+    { raw: "Body row" },
+  ] };
+  const exported = tableOf(computeSheetExport(inputOf(fx), { now: NOW, workflow: "todo" }));
+  expect(exported.rows.map((row) => [row.ix, row.title])).toEqual([[1, "Body row"]]);
+  const grid = computeSheetExport(inputOf({ ...fx, owner: "Grid\ntine.view:: grid", rows: [
+    fx.rows[0], { raw: "Body row", kids: ["Cell", "Cell comment\ntine.quote:: Body row"] },
+  ] }), { now: NOW, workflow: "todo" });
+  expect(grid?.view).toBe("grid");
+  expect(grid && "cols" in grid ? grid.cols : null).toBe(1);
+});
+
 const TABLE: Fixture = {
   owner: "Table\ntine.view:: table\ntine.fields:: price=number;qty=number\ntine.formula.total:: price * qty\ntine.col-aggregates:: prop:price=sum;formula:total=sum",
   rows: [

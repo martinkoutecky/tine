@@ -71,7 +71,7 @@ describe("async ownership guard", () => {
     // text after its input drained; the landing proves its graph, the draft's
     // instance and the owner's client state before replacing anything.
     check("src/document/host/wiring.ts", "async function landAliasDraft(", "\n}\n", [
-      /readOwned\(bindingOwner\(\), backend\(\)\.getPageByPath\(ownerPath\)\)/,
+      /admitRead\(bindingOwner\(\(\) => host\(\) === c\), \(\) => backend\(\)\.getPageByPath\(ownerPath\)/,
       /await c\.drain\(\[owner\]\)/,
       /host\(\) !== c \|\| pageInstanceGeneration\(name\) !== generation/,
       /!c\.isOpen\(owner\) \|\| c\.busy\(owner\) \|\| c\.conflicted\(owner\)\) return;\n[^]*installPageContent\(owner, text\)/,

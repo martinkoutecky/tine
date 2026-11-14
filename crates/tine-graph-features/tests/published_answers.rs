@@ -162,7 +162,7 @@ fn static_export(
     let store = graph(&root.join("graph"), files);
     let output = root.join("output");
     fs::create_dir_all(&output).unwrap();
-    publish_live(&store, &output, "Site", all_pages, &bundle()).unwrap();
+    publish_live(&store, &output, "Site", all_pages, true, &bundle()).unwrap();
     store.close();
     let site = output.join("site");
     (
@@ -176,7 +176,7 @@ fn static_site(root: &Path, files: &[(&str, &str)]) -> BTreeMap<String, String> 
     let store = graph(&root.join("graph"), files);
     let output = root.join("output");
     fs::create_dir_all(&output).unwrap();
-    let receipt = publish_static(&store, &output, "Site", false).unwrap();
+    let receipt = publish_static(&store, &output, "Site", false, true).unwrap();
     store.close();
     site_files(Path::new(&receipt.path))
 }
@@ -337,6 +337,7 @@ fn closure_request(name: &str, host: Option<&str>) -> QueryExportRequest {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: true,
+        include_comments: None,
     }
 }
 
@@ -534,6 +535,7 @@ fn clash_request(name: &str) -> QueryExportRequest {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     }
 }
 

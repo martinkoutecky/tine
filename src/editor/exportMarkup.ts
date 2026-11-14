@@ -3,8 +3,13 @@ import { isRenderHiddenProp } from "../render/block";
 import type { RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
 import type { ExportNode, MaxDepth } from "./exportText";
+import { isCommentPresentationKey } from "../comments";
+import { projectExportNodes } from "./exportProjection";
+import { HIDE_ALL, joinProps, splitProps } from "./properties";
 
 export interface MarkupExportOptions {
+  includeComments?: boolean;
+  preserveCommentMetadata?: boolean;
   stripLinks: boolean;
   removeEmphasis: boolean;
   removeTags: boolean;
@@ -86,7 +91,7 @@ function cleanInlineResolved(text: string, format: Format, options: MarkupExport
   };
   visit(parseBlock(text, format === "org"));
   for (const property of blockRegions(text, format).properties) {
-    if (isRenderHiddenProp(property.key)) {
+    if (isRenderHiddenProp(property.key) && !(options.preserveCommentMetadata && isCommentPresentationKey(property.key, true))) {
       patches.push({start:property.line[0], end:property.line[1], text:""});
       continue;
     }
@@ -127,7 +132,7 @@ export function expandExportNodes(nodes: ExportNode[], options: MarkupExportOpti
   const refBudget = {remaining:2000};
   const walk = (forest: ExportNode[], depth: number, expanded = false): ExportNode[] => forest.flatMap(node => {
     if (expanded && remaining-- <= 0) { truncated = true; return []; }
-    const policy = {...options, stripLinks:false, removeTags:false, removeEmphasis:false};
+    const policy = {...options, preserveCommentMetadata: !!node.comment, stripLinks:false, removeTags:false, removeEmphasis:false};
     // Resolve refs first; embeds in the resulting inlines then splice in order.
     const resolved = cleanInlineResolved(node.raw, node.format ?? "md", {
       ...policy, resolveEmbed:undefined,
@@ -139,17 +144,36 @@ export function expandExportNodes(nodes: ExportNode[], options: MarkupExportOpti
     }, false, new Set(), embedded, refBudget);
     const children = walk(node.children, depth, expanded);
     if (!embedded.length) return [{...node, raw:tail, children}];
+    if (node.comment) {
+      // The comment owns the expansion. Keep its source properties on this
+      // root, with the materialized body/replies below it, so reimporting the
+      // outline cannot turn expanded content into ordinary body siblings.
+      const format = node.format ?? "md";
+      const { hidden } = splitProps(node.raw, HIDE_ALL, format);
+      const body = (raw: string) => splitProps(raw, HIDE_ALL, format).visible.trim();
+      const nested: ExportNode[] = [];
+      const continuation = (raw: string) => {
+        const text = body(raw);
+        if (text) nested.push({raw:text, format, children:[], hasParent:true, comment:node.comment});
+      };
+      embedded.forEach((segment, ix) => {
+        if (ix) continuation(segment.raw);
+        nested.push(...walk(projectExportNodes(segment.nodes, options.includeComments, true), depth + 1, true));
+      });
+      continuation(tail);
+      return [{...node, raw:joinProps(body(embedded[0].raw), hidden, format), children:[...nested, ...children]}];
+    }
     const result: ExportNode[] = [];
     for (const segment of embedded) {
       if (segment.raw.trim()) result.push({...node, raw:segment.raw.trimEnd(), children:[]});
-      result.push(...walk(segment.nodes, depth + 1, true));
+      result.push(...walk(projectExportNodes(segment.nodes, options.includeComments), depth + 1, true));
     }
     if (tail.trim()) result.push({...node, raw:tail.trimStart(), children:[]});
     if (result.length) result[result.length - 1].children.push(...children);
     else result.push(...children);
     return result;
   });
-  const result = walk(nodes, 0);
+  const result = walk(projectExportNodes(nodes, options.includeComments), 0);
   if (truncated) result.push({raw:"[embed expansion truncated]", children:[]});
   return result;
 }

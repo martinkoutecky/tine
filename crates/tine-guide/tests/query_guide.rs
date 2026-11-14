@@ -26,6 +26,21 @@ fn tql(source: &str) -> Query {
 }
 
 #[test]
+fn comment_output_choice_is_in_the_onboarding_guide() {
+    let guide = include_str!("../src/templates/share-pages.md");
+    for expected in [
+        "Include comments",
+        "on by default",
+        "tine.comments:: false",
+        "--no-comments",
+        "whole threads",
+        "Markdown/Org",
+    ] {
+        assert!(guide.contains(expected), "Guide must explain {expected}");
+    }
+}
+
+#[test]
 fn gh852_recognised_result_sorts_are_in_the_onboarding_guide() {
     let model = include_str!("../src/templates/query-model.md");
     assert!(model.contains(FIRST));

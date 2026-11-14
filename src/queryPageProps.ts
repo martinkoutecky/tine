@@ -1,7 +1,7 @@
 import { msg } from "./i18n";
 import { backend } from "./backend";
-import { ensurePageLoaded, pageByName, reportPageLoadRefusal } from "./document";
-import { graphOwner, readOwned } from "./owned";
+import { admitRead, ensurePageLoaded, pageByName, reportPageLoadRefusal } from "./document";
+import { graphOwner } from "./owned";
 import { openPageProps } from "./ui";
 import { pushToast } from "./toasts";
 import type { PageKind } from "./types";
@@ -15,13 +15,13 @@ import type { PageKind } from "./types";
 export async function openPagePropertiesFromRow(row: { name: string; kind: PageKind }, x: number, y: number): Promise<void> {
   const owner = graphOwner();
   if (!pageByName(row.name)) {
-    const result = await readOwned(owner, backend().getPage(row.name, row.kind));
+    const result = await admitRead(owner, () => backend().getPage(row.name, row.kind), dto => [row.name, ...(dto ? [dto.name] : [])], dto => dto ? ensurePageLoaded(dto) : "missing");
     if (result.kind === "stale") return;
-    if (!result.value) {
+    if (result.value === "missing") {
       pushToast(msg("query-page-props-is-no-longer-there-so-its-properties-cannot", { name: String(row.name) }), "error");
       return;
     }
-    const refusal = ensurePageLoaded(result.value);
+    const refusal = result.value;
     if (refusal) {
       reportPageLoadRefusal(refusal, "Its properties were not opened.");
       return;

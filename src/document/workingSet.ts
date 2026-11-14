@@ -1,5 +1,5 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
-import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
+import { activatePageInstance, pageInstanceGenerations, retirePageInstance } from "./instance";
 import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, pageFrozen, rekeyPage, releaseHolds, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
 import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, setPageKind, writeWholePages, FeedPage, pageByName, pageReadOnly } from "./model";
 import { batch } from "solid-js";
@@ -8,7 +8,7 @@ import { purgePageNodes, toFeedPage, reconcileLoadedPage, emptyPage, foldMarkedP
 import { invalidateMatrixDimensionsForRows, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
-import { readOwned, type Owner, bindingOwner } from "../owned";
+import { type Owner } from "../owned";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpPageInventoryRev } from "../graphSession";
@@ -19,7 +19,7 @@ import { existingBlockId } from "../blockIdentity";
 import { clearSeededFacets } from "../render/facets";
 import { clearParseCache } from "../render/parse";
 import { notifyModeReset } from "../modeHooks";
-import { deferExternalReload, replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
+import { deferExternalReload, replayDeferredExternalReloads } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow, parseJournalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
@@ -27,9 +27,9 @@ import { pushToastUnique } from "../toasts";
 import { renderEnglish } from "../i18n";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
-import { reportUiFailure } from "../uiFailure";
 import { msg, type UiText } from "../i18n";
 import { topSelected } from "./edits/selection";
+import { admitRead, invalidatePageRead } from "./readAdmission";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -51,6 +51,8 @@ export function rekeyPageIdentityByPath(id: string, newName: string, rev: string
   const to: PageTarget = { name: newName, pageKind: old.kind, path: id };
   if (!publishIdentityNavigation) return false;
   publishIdentityNavigation(from, to);
+  invalidatePageRead(oldName);
+  invalidatePageRead(newName);
   rekeyPage(oldName, newName, rev);
   setDoc(produce((state) => {
     const page = state.pages.find((candidate) => candidate.id === id && candidate.name === oldName);
@@ -78,6 +80,7 @@ function matrixRowsForPage(name: string): string[] {
 }
 
 function upsertPage(dto: PageDto & { id?: string }) {
+  invalidatePageRead(dto.name);
   // A real page with this name exists again → lift any delete tombstone so edits
   // to the freshly-(re)created page save normally.
   untombstone(dto.name);
@@ -323,9 +326,9 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusa
  * never lands in a file other than the one the name resolves to. "stale" when
  * `owner` retired; a failed read rejects. */
 export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageLoadRefusal | "stale" | null> {
-  const result = await readOwned(owner, backend().getPage(name, kind));
+  const result = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => ensurePageLoaded(dto ?? absent));
   if (result.kind === "stale") return "stale";
-  return ensurePageLoaded(result.value ?? absent);
+  return result.value;
 }
 
 /** Admit a routed DTO when safe, retaining the live copy if replacement is unsafe.
@@ -536,31 +539,6 @@ export function reloadPageIfStillSafe(name: string, dto: PageDto & { id?: string
   return true;
 }
 
-/** After a PDF highlight write changed an `hls__` page on disk, refresh its
- *  loaded copy (main view or sidebar) so its content AND save baseline (baseRev)
- *  track disk — otherwise a later editor save would conflict against the highlight
- *  write. The full replacement gate decides, before and after the read (master
- *  7bd793bd0: an IME composition on the notes page was destroyed while the store
- *  was clean). A page held by an editor or draft is refreshed once the hold ends;
- *  one with unsaved edits or a conflict is left to its own save, which the caller
- *  flushed FIRST, so a later edit surfaces as a conflict, never a clobber.
- *  Returns whether the refresh applied now. One page read. */
-export async function reloadHlsIfLoaded(name: string): Promise<boolean> {
-  if (!pageByName(name)) return false;
-  const retryWhenFree = () => {
-    if (reloadDisposition(name) === "skip") whenPageReplaceable(name, "hls-refresh", () => {
-      // Nobody awaits a deferred retry, so its failure must be shown here (I-9).
-      void reloadHlsIfLoaded(name).catch((error) => reportUiFailure("page-refresh", error));
-    });
-    return false;
-  };
-  if (reloadDisposition(name) !== "reload") return retryWhenFree();
-  const generation = pageInstanceGeneration(name);
-  const owner = bindingOwner(() => pageInstanceGeneration(name) === generation);
-  const result = await readOwned(owner, backend().getPage(name, "page"));
-  if (result.kind !== "current" || !result.value) return false;
-  return reloadPageIfStillSafe(name, result.value) || retryWhenFree();
-}
 export function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
@@ -647,7 +625,7 @@ export type ReloadDisposition = "reload" | "conflict" | "skip";
  *  - `"reload"` — safe to replace the loaded copy with the disk version.
  *  Every replacement of a loaded instance except the user's explicit "use disk"
  *  asks this: the watcher, navigation/feed loads (`upsertUnlessDirty`),
- *  `ensurePageLoaded`, and `reloadHlsIfLoaded`. */
+ *  and `ensurePageLoaded`. */
 export function reloadDisposition(name: string, incomingFile?: string | null): ReloadDisposition {
   // Input the host has not answered (unsent, or sent and not yet answered) or
   // a conflict: a reload would clobber it (audit H1). A page the host holds

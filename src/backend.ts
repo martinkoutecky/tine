@@ -447,8 +447,8 @@ class TauriBackend implements Backend {
   publishQuery(request: QueryPublicationRequest, fingerprint: string, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_query", { request, fingerprint, sheets });
   }
-  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
-    return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
+  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[], includeComments = true) {
+    return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets, includeComments });
   }
   quickSharePrepare(request: QueryPublicationRequest, shareId?: string) {
     return this.call<QuickSharePrepared>("quick_share_prepare", { request, shareId });
