@@ -39,8 +39,10 @@ for (let offset = -2; offset <= 5; offset++) {
   if (offset >= 0) tasks.push(`- TODO deadline ${offset}\n  DEADLINE: ${org(date(offset))}`);
 }
 fs.writeFileSync(path.join(graph, 'pages/Tasks.md'), tasks.join('\n') + '\n');
-const env = { ...process.env, TINE_GRAPH: graph, HOME: path.join(run, 'home'),
-  USERPROFILE: path.join(run, 'home'),
+// Windows resolves app data through the known-folder API; overriding USERPROFILE/HOME makes it fail ("unknown path"),
+// so only APPDATA/LOCALAPPDATA are redirected there, as in e2e-windows-smoke.mjs and e2e-gh745-windows-probe.mjs.
+const homeEnv = process.platform === 'win32' ? {} : { HOME: path.join(run, 'home'), USERPROFILE: path.join(run, 'home') };
+const env = { ...process.env, TINE_GRAPH: graph, ...homeEnv,
   XDG_DATA_HOME: path.join(run, 'data'), XDG_CONFIG_HOME: path.join(run, 'config'),
   XDG_CACHE_HOME: path.join(run, 'cache'), XDG_STATE_HOME: path.join(run, 'state'),
   APPDATA: path.join(run, 'appdata'), LOCALAPPDATA: path.join(run, 'localappdata'), TMPDIR: path.join(run, 'app-tmp'),
