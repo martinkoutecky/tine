@@ -141,7 +141,7 @@ fn block_request(
     request.properties = block
         .properties()
         .into_iter()
-        .filter(|(key, _)| query_parse_property(key) || legacy_table_property(key))
+        .filter(|(key, _)| query_parse_property(key) || display_only_property(key))
         .collect();
     request.current_page = Some(page.name.clone());
     request.host_block_id = Some(block.uuid.to_string());

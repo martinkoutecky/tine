@@ -177,3 +177,5 @@ command-comment-next = Next comment
 command-comment-previous = Previous comment
 command-comment-review = Review open comments on this page
 command-comment-review-graph = Review open comments in the graph
+command-sidebar-open-today = Open today's journal in right sidebar
+command-sidebar-open-current-page = Open current page in right sidebar

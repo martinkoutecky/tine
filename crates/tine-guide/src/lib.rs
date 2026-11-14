@@ -224,6 +224,16 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn sidebar_commands_are_documented() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        let context = include_str!("templates/keep-context-visible.md");
+        assert!(journals.contains("**Open today's journal in right sidebar**"));
+        assert!(context.contains("**Open current page in right sidebar**"));
+        assert!(context.contains("**Open today's journal in right sidebar**"));
+        assert!(context.contains("neither has a key until you assign one"));
+    }
+
+    #[test]
     fn reference_change_notices_offer_undo() {
         let reference = include_str!("templates/pages-links-references-search.md");
         assert!(
@@ -1842,6 +1852,8 @@ mod query_guide_tests {
             "nothing the builder wrote is labelled *advanced*",
             "follow every change you make, before you save",
             "Matches that share a parent show that parent's breadcrumb once",
+            "**⋯ → View → Show breadcrumbs**",
+            "`tine.breadcrumbs:: false`",
             "Search and List page results show the page title",
             "**Pages and blocks**",
             "`tine.result-kinds:: pages-and-blocks`",

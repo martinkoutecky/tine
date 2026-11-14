@@ -244,6 +244,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const hostProperties = createMemo<[string, string][]>(
     () => hostAllProperties().filter(([key]) => {
       const lower = key.toLowerCase();
+      if (lower === "tine.breadcrumbs") return false; // Presentation-only: toggling needs no engine read.
       return lower.startsWith("tine.") || lower === "query-table";
     }),
     [], { equals: sameJson });
@@ -262,10 +263,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const optionValues = createMemo(() => readEdnOptions(opts()));
   const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
-  // OG query.cljs/custom-query-inner defaults the ancestor trail on. The
-  // shared render option can later serve the separately decided simple view.
+  // Advanced queries keep OG's independent page headings; the approved simple
+  // query switch hides both kinds of context (GH #881).
   const listOptions = createMemo(() => isAdvanced()
-    ? { ...queryListOptions(form()), ...queryListOptions(opts()) } : {});
+    ? { ...queryListOptions(form()), ...queryListOptions(opts()) }
+    : { breadcrumb: hostProperty("tine.breadcrumbs") !== "false" });
+  const setBreadcrumbs = (shown: boolean) => {
+    const blockId = props.blockId;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node || !blockWritable(blockId) || isPublishedExport()) return;
+    withUndoUnit("query:breadcrumbs", [node.page], () => setBlockProperty(blockId, "tine.breadcrumbs", shown ? null : "false"));
+  };
   const bothKinds = (): boolean =>
     hostProperties().some(([key, value]) => key.toLowerCase() === RESULT_KINDS_PROPERTY && value.trim().toLowerCase() === PAGES_AND_BLOCKS);
   const setBothKinds = (on: boolean) => {
@@ -314,7 +322,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     // These renderer-only properties must also travel to the generated home.
     // They do not belong to parseQuery's key (query-table itself does).
     const legacyDisplay = hostAllProperties()
-      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc");
+      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc"
+        || key.toLowerCase() === "tine.breadcrumbs");
     return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
       properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
   };
@@ -864,7 +873,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // use the same presentation options (GH #881).
   const listResults = () => (
     <Show when={globalSort() || listOptions().groupByPage === false} fallback={
-      <QueryGroups groups={groupedQueryByKey} showBreadcrumb={listOptions().breadcrumb} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
+      <QueryGroups groups={groupedQueryByKey} showBreadcrumb={listOptions().breadcrumb} showPage={isAdvanced() || listOptions().breadcrumb !== false} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
     }>
       {/* OG ungrouped lists have no page heading. Tine keeps its existing
           sorted page crumbs when breadcrumbs are enabled (GH #881). */}
@@ -1109,6 +1118,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 session={builderSession}
                 onChange={applyEdit}
                 display={{ view: displayView, apply: applyDisplay,
+                  // A legacy table (query-table, trailing `table`) renders as a table, so the switch would do nothing.
+                  get breadcrumbs() { return legacyTable() ? undefined : { shown: () => listOptions().breadcrumb !== false, set: setBreadcrumbs }; },
                   defaultColumns: effectiveDefaultColumns,
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
