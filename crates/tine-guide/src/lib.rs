@@ -1351,6 +1351,8 @@ mod rename_guide_tests {
             "**Updates are manual**",
             "graph folders **inside your home folder only**",
             "the Flatpak bundle carries its own",
+            "**Quick share in the Flatpak bundle.**",
+            "If that check fails, the bundle keeps quick share off",
         ] {
             assert!(
                 platforms.contains(outcome),

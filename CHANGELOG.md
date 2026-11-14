@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
+- Bullet threading keeps parent stubs and child connectors aligned at fractional display scaling, with clean branch junctions in All nested outlines (GH #129).
 - `tine export query` accepts inline `--query` text or the first query on `--page`, with the same export and `--force` recovery as UUID selection (#588).
 - `tine export query --page` skips large prose and code blocks before the query while retaining the query size limit (#588).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
