@@ -9,12 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 - Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
-<<<<<<< HEAD
 - Code block language labels open the fence source for editing by mouse, touch or keyboard, in either editor. Code without a language shows a plain-text label (GH #879).
-=======
 - Choose and reorder toolbar buttons in Settings → Appearance → Toolbar. Other buttons stay in the … menu, and Reset restores the default. The choice is saved on this device (#926).
 
->>>>>>> origin/develop
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
 - Code line numbers stay readable with wrapping enabled, and the gutter grows to fit larger numbers in reading and both editors (GH #946).
