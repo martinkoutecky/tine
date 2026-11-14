@@ -311,10 +311,16 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
             .open(&tmp)
             .map_err(at("create temporary file"))?;
         file.write_all(bytes).map_err(at("write temporary file"))?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::wrote(bytes.len());
         file.sync_all().map_err(at("fsync temporary file"))?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         drop(file);
         super::no_replace::move_file_noreplace(&tmp, path)?;
         super::directory_durability::sync_directory_entry(dir)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         Ok(())
     })();
     if res.is_err() {

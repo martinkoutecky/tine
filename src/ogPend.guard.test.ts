@@ -32,9 +32,10 @@ it(rule + " for permalink identity", () => {
 });
 
 it("I-4/I-12: export uses the parser-owned visible body; exemplar: render/parse.ts::editBlock", () => {
-  for (const path of ["src/editor/exportMarkup.ts", "src/editor/exportText.ts"]) {
+  for (const path of ["src/editor/exportMarkup.ts", "src/editor/exportProjection.ts"]) {
     const code = source(path);
     expect(code).toContain("editBlock");
     expect(code).not.toMatch(/isPropertyLine|orgBlockDrawerRange/);
   }
+  expect(source("src/editor/exportText.ts")).toContain("exportSourceRaw(n, opts.removeProperties)");
 });

@@ -8,16 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - Code block language labels open the fence source for editing by mouse, touch or keyboard, in either editor. Code without a language shows a plain-text label (GH #879).
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
 - Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
 - Code line numbers stay readable with wrapping enabled, and the gutter grows to fit larger numbers in reading and both editors (GH #946).
 - In-block numbered lists show their stored numbers after editing (GH #947).
+- Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
+
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
 - Remove author works on a block selection, including folded descendants, from Commands, a bound shortcut or the context menu. It skips read-only blocks and removes all selected attributions in one undo step (#918).
 - Leaving a page clears its block selection, preventing Delete and other selection keys from changing blocks on the hidden page (Ifods).
 - Block selections now include each selected block's whole subtree, folded children included. Shift+Up/Down extend by sibling subtrees, and Shift+click, dragging, select-all and bulk actions use the same selection. Copying a parent always includes its children; the parent-copy setting has been retired (#941).
 - Search labels matching margin comments and replies as comments, with their host breadcrumbs (COMMENT-OUT-V2).
+- Exports, print and publication include labelled margin comments by default; **Include comments** and CLI `--no-comments` can omit entire threads. Repeating exports remember the choice (H9TvA).
+- Embedded comments and replies, including query macro results, retain export labels and obey **Include comments**; excluding comments keeps ordinary page-property and preamble query rows (H9TvA).
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
 - An unreadable `config.edn` is explained on page banners and in Settings errors. A live arrival raises one notice and makes open pages read-only; repairing it clears the graph restriction without reopening (Hl2_0).
 - A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).
@@ -85,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - On iOS, Settings → Graph and the graph lists show a graph as the folder inside Tine's Documents folder (for example `Documents/Graphs/Work notes`) instead of the long app-sandbox path; Copy path still copies the full path (#926).
 - Moving a block with Alt+Shift+Up/Down in the CodeMirror editor keeps its selected text selected; depending on timing it could collapse to the start of the block (internal: UI-CM6-MOVE-KEEPS-BROWSER-RANGE-1112).
 - Org pages: renaming or merging a page now also updates links to it inside emphasis (`*[[page]]*`, `/see [[page][label]]/`), also inside quote and other `#+BEGIN_…` blocks; before, those links kept the old name. Linked References mark such links where they stand (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
+- `tine page current` prints a block link only when the block has an `id::` of its own. Before, a block without one got a temporary link that stopped working the next time the graph loaded; now it has no block link, and the command still never writes to your notes ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading, and shows the block you were reading even when the long page lays out differently on return, for example after a window resize (internal: UI-ZOOM-BACK-SCROLL).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 - An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).

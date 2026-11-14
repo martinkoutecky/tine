@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-comment-output.mjs": {
+      "setup":"Synthetic routed page, scratch HOME/XDG and account-home shim; no network.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Copy/export includes marked comments by default; switching comments off removes whole threads and keeps body text. An embedded detached reply retains its source comment carrier in Markdown and is omitted with comments off. Folder publication remembers the choice in the definition and snapshot.","blocking":false,"authority":"H9TvA; D-20261113-CO/CO2"}],
+      "acceptableVariations":["Annotation styling and geometry may vary."],
+      "nonRequirements":["No real gist upload, OS PDF dialog, release burn-in or other platform certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-search-comment-cue.mjs": {
       "setup":"Synthetic graph, scratch HOME/XDG and account-home shim; native Linux palette on a routed page.",
       "contracts":[{"class":"stateful-ux","userOutcome":"Palette labels comment roots and replies as comments beside an ordinary block hit, retains host breadcrumbs and opens the reply visibly without changing graph bytes.","blocking":false,"authority":"COMMENT-OUT-V2; D-20261113-CO2"}],
@@ -43,9 +50,9 @@
       "stability":"burn-in"
     },
     "scripts/e2e-cli-page-current.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A script obtains the focused page name and URL, the editing block URL, and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; discussion 925"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"With two graphs open, a script obtains each focused page name and a URL naming its own graph, creating the guarded graph identity once and reusing it; it obtains the editing block URL when it has an authored id:: (none for a plain block), and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; D-20261113-PG; discussion 925"}],
       "acceptableVariations": ["URL encoding follows the shared link producer; CLI prose may vary while JSON fields and exit codes follow the contract."],
-      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, graph-qualified page bookmarks, and other platform runtime certification."],
+      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, and other platform runtime certification."],
       "stability":"burn-in"
     },
     "scripts/e2e-shift-click-selection.mjs": {

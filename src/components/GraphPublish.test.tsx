@@ -12,7 +12,7 @@ vi.mock("../sheet/exportSheets", () => ({ exportSheets: async () => [] }));
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function exportFromGraphTab(pages: number, everyPage = false) {
+async function exportFromGraphTab(pages: number, everyPage = false, includeComments = true) {
   const { GraphPublish } = await import("./GraphPublish");
   vi.spyOn(backend(), "pickFolder").mockResolvedValue("/mock/out");
   vi.spyOn(backend(), "publishLive").mockResolvedValue({ path: "/mock/out/Tine graph", pages } as never);
@@ -20,6 +20,7 @@ async function exportFromGraphTab(pages: number, everyPage = false) {
   document.body.appendChild(root);
   const dispose = render(() => <GraphPublish />, root);
   if (everyPage) (root.querySelector('input[type="checkbox"]') as HTMLInputElement).click();
+  if (!includeComments) [...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!.querySelector("input")!.click();
   const button = [...root.querySelectorAll("button")].find((b) => b.textContent?.includes("Export HTML"));
   expect(button, "the Graph tab must offer the export button").toBeTruthy();
   button!.click();
@@ -30,6 +31,12 @@ async function exportFromGraphTab(pages: number, everyPage = false) {
 afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
 
 describe("og Graph publish (ported GH #560)", () => {
+  it("offers comments on by default and sends an explicit exclusion to the shared publisher", async () => {
+    const { root, dispose } = await exportFromGraphTab(1, false, false);
+    expect(backend().publishLive).toHaveBeenCalledWith("/mock/out", "Tine graph", false, [], false);
+    expect([...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!.querySelector("input")!.checked).toBe(false);
+    dispose();
+  });
   it("says why an export produced nothing", async () => {
     const { root, dispose } = await exportFromGraphTab(0);
     const status = root.querySelector('[role="status"]')?.textContent ?? "";
@@ -49,7 +56,7 @@ describe("og Graph publish (ported GH #560)", () => {
     const status = root.querySelector('[role="status"]')?.textContent ?? "";
     expect(status).toContain("Exported 0 pages");
     expect(status).not.toContain("public:: true");
-    expect(backend().publishLive).toHaveBeenCalledWith("/mock/out", "Tine graph", true, []);
+    expect(backend().publishLive).toHaveBeenCalledWith("/mock/out", "Tine graph", true, [], true);
     dispose();
   });
 });
