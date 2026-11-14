@@ -34,7 +34,7 @@ const text = (value: string | Msg) => typeof value === "string" ? value : render
 const labelsFor = (query: string) => rankedSettingMatches(settingEntries(), query).map(entry => text(entry.label));
 
 it("finds each Git explanation after they are split into sections (#952)", async () => {
-  for (const query of ["pending", "upstream", ".gitignore"]) {
+  for (const query of ["waited", "upstream", ".gitignore"]) {
     expect(labelsFor(query)).toContain("Commit changes to git");
   }
   await setActiveLocale("zh-CN");
