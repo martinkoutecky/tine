@@ -161,6 +161,8 @@ const suites = {
     ["windows-portable", "scripts/e2e-windows-portable.mjs", {}],
     // GH #809: new-window stage diagnostics on WebView2; dispatch by name.
     ["beta-win-809", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809" }],
+    // GH #809: a popup on a profile whose clean quit saved window state; dispatch by name.
+    ["popup-relaunch-809", "scripts/e2e-popup-relaunch-809.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
   ],
