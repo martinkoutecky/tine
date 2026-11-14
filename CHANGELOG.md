@@ -48,6 +48,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Open current page in right sidebar** and **Open today's journal in right sidebar** are command-palette commands with no default key; bind them in Settings → Keyboard shortcuts. The first does what the page menu's **Open in sidebar** does (it is offered while a page is shown); the second is Logseq's "open today in the sidebar" and works from any page, even before today's journal has a file (GH #928; UI-GH928-SIDEBAR-COMMANDS).
 - **Settings → Appearance → Advanced → Show the help button** hides the "?" button in the corner on this device. Help stays reachable: **Toggle help** in the command palette, **Shift+?**, and a new **Help** list in Settings → Help & diagnostics (#926).
 - Settings is never more than two taps away on a phone: the left drawer ends with a fixed **Settings** row; a Settings button moved off the toolbar is in the "…" menu (#926).
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
