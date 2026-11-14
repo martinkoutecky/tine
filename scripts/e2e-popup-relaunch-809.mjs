@@ -43,8 +43,15 @@ const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
   XDG_CACHE_HOME: path.join(run, "cache"), XDG_STATE_HOME: path.join(run, "state"),
   APPDATA: path.join(run, "appdata"), LOCALAPPDATA: path.join(run, "localappdata"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
-// tauri-plugin-window-state keeps its file in the app config directory.
-const stateFile = path.join(run, process.platform === "win32" ? "appdata" : "config", APP_ID, ".window-state.json");
+// tauri-plugin-window-state keeps its file in the app config directory. On Windows that directory comes from the
+// Known Folder API (dirs-sys known_folder_roaming_app_data), which ignores the APPDATA override above, so the file is
+// in the real profile. That is only acceptable on a throwaway hosted runner, never on someone's own machine.
+if (process.platform === "win32" && process.env.GITHUB_ACTIONS !== "true") {
+  throw new Error("On Windows this journey writes the real profile's window state: run it on a hosted runner only");
+}
+const stateFile = process.platform === "win32"
+  ? path.join(process.env.APPDATA, APP_ID, ".window-state.json")
+  : path.join(run, "config", APP_ID, ".window-state.json");
 const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   journey: "scripts/e2e-popup-relaunch-809.mjs", platform: process.platform, app, stage: "launch-1", steps: [], status: "running",
   expected: "A clean quit saves no workspace-popup geometry; on relaunch with a saved popup geometry, Open in new window renders the page and main stays responsive" };
@@ -187,7 +194,7 @@ async function quitCleanly(name) {
   }
   await sleep(1500); // let the process finish exiting before the next launch
   stopSession();
-  step(`${name}-quit-cleanly`, { stateFile: path.relative(run, stateFile) });
+  step(`${name}-quit-cleanly`, { stateFile });
 }
 
 const watchdog = setTimeout(() => {
