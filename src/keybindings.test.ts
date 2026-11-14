@@ -2,6 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The reload-chord tests flip this; every other test sees the real isTauri().
 const desktopApp = vi.hoisted(() => ({ on: null as boolean | null }));
+const mousePlatform = vi.hoisted(() => ({ mac: false, mobile: false }));
+const nativeHistory = vi.hoisted(() => ({ listener: undefined as undefined | ((event: { payload: { direction: string; target: string } }) => void), unlisten: vi.fn() }));
+vi.mock("./nativeChrome", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./nativeChrome")>(),
+  get isMac() { return mousePlatform.mac; },
+  get isMobilePlatform() { return mousePlatform.mobile; },
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, listener) => {
+  if (name === "history-navigate") nativeHistory.listener = listener;
+  return nativeHistory.unlisten;
+}) }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({ listen: async () => () => {} }) }));
 vi.mock("./backend", async (importOriginal) => {
   const real = await importOriginal<typeof import("./backend")>();
   return { ...real, isTauri: () => desktopApp.on ?? real.isTauri() };
@@ -121,8 +134,8 @@ function installFakeWindow() {
   };
 
   return {
-    dispatchMouse(type: string, button: number, buttons = 0) {
-      const event = { type, button, buttons, clientX: 20, clientY: 20, preventDefault() {} } as MouseEvent;
+    dispatchMouse(type: string, button: number, buttons = 0, clientX = 20) {
+      const event = { type, button, buttons, clientX, clientY: 20, preventDefault() {} } as MouseEvent;
       listeners.filter(l => l.type === type && l.capture).forEach(l => l.listener(event));
     },
     dispatchCaptureKeydown(event: KeyboardEvent) {
@@ -293,6 +306,134 @@ afterEach(() => {
 });
 
 describe("mouse side-button navigation (#156)", () => {
+  it.each(["windows", "linux"])("%s workspace popups keep their DOM history owner (GH #948)", async () => {
+    installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    const popup = new EventTarget();
+    Object.assign(popup, { document: new EventTarget(), getSelection: () => null });
+    const unregister = registerWindow("workspace-history", popup as unknown as Window);
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Popup history ${i}`, "page");
+      for (const direction of ["back", "forward"] as const) {
+        for (let i = 0; i < 3; i++) {
+          const button = direction === "back" ? 3 : 4;
+          for (const type of ["mousedown", "mouseup", "auxclick"]) {
+            const event = new Event(type, { cancelable: true });
+            Object.assign(event, { button, buttons: type === "mousedown" ? (button === 3 ? 8 : 16) : 0, clientX: 20, clientY: 20 });
+            popup.dispatchEvent(event);
+          }
+          expect(router.route()).toMatchObject({ kind: "page", name: `Popup history ${direction === "back" ? 2 - i : i + 1}` });
+        }
+      }
+    } finally {
+      unregister();
+      dispose();
+    }
+  });
+
+  it.each([
+    ...["windows", "linux"].flatMap(platform => ["partial", "paired", "native-first", "native-only"].map(delivery => ({ platform, delivery }))),
+    ...["macos", "ios", "android"].map(platform => ({ platform, delivery: "paired" })),
+  ])("$platform $delivery accepts every rapid history press once, matching keyboard steps (GH #948)", async ({ platform, delivery }) => {
+    mousePlatform.mac = platform === "macos";
+    mousePlatform.mobile = platform === "ios" || platform === "android";
+    const native = platform === "windows" || platform === "linux";
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 6; i++) router.openPage(`History ${i}`, "page");
+      const step = (direction: "back" | "forward", keyboard: boolean) => {
+        if (keyboard) {
+          fake.dispatchCaptureKeydown(trackedKeyEvent({ key: direction === "back" ? "ArrowLeft" : "ArrowRight", altKey: true }).event);
+        } else {
+          const button = direction === "back" ? 3 : 4;
+          const nativeRelease = () => {
+            nativeHistory.listener?.({ payload: { direction, target: "other-window" } });
+            nativeHistory.listener?.({ payload: { direction, target: "main" } });
+          };
+          if (native && delivery === "native-first") nativeRelease();
+          if (delivery !== "native-only") {
+            if (delivery !== "partial") fake.dispatchMouse("mousedown", button, button === 3 ? 8 : 16);
+            fake.dispatchMouse("mouseup", button);
+            fake.dispatchAuxClick(button);
+          }
+          if (native && delivery !== "native-first") nativeRelease();
+        }
+        return router.route();
+      };
+      for (const direction of ["back", "forward"] as const) {
+        const mouse = Array.from({ length: 6 }, (_, i) => {
+          const route = step(direction, false);
+          expect(route).toMatchObject({ kind: "page", name: `History ${direction === "back" ? 5 - i : i + 1}` });
+          return route;
+        });
+        for (let i = 0; i < 6; i++) step(direction === "back" ? "forward" : "back", true);
+        expect(Array.from({ length: 6 }, () => step(direction, true))).toEqual(mouse);
+      }
+    } finally {
+      dispose();
+      mousePlatform.mac = false;
+      mousePlatform.mobile = false;
+    }
+  });
+
+  it.each(["windows", "linux"])("%s native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Gesture ${i}`, "page");
+      const back = () => { nativeHistory.listener?.({ payload: { direction: "back", target: "main" } }); return router.route(); };
+      const at = (i: number) => ({ kind: "page", name: `Gesture ${i}` });
+      fake.dispatchMouse("mousedown", 0, 1);
+      expect(back()).toMatchObject(at(3));
+      fake.dispatchMouse("mouseup", 0);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragstart", 0, 1);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragend", 0);
+      expect(back()).toMatchObject(at(1));
+      // A primary release the webview never delivered must not block later presses.
+      fake.dispatchMouse("mousedown", 0, 1);
+      fake.dispatchMouse("mousemove", 0, 0);
+      expect(back()).toMatchObject(at(0));
+      router.goForward(); router.goForward();
+      // A side-button press that moved is a drag, whichever of DOM release and native release arrives first.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      // The cancelled gestures leave nothing behind: the next presses step, in either order.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mouseup", 3);
+      expect(back()).toMatchObject(at(1));
+      fake.dispatchMouse("mousedown", 3, 8);
+      expect(back()).toMatchObject(at(0));
+      fake.dispatchMouse("mouseup", 3);
+      router.goForward(); router.goForward();
+      // A cancelled press whose DOM release never arrives vetoes only its own native release.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      expect(back()).toMatchObject(at(1));
+      expect(back()).toMatchObject(at(0));
+    } finally {
+      dispose();
+    }
+  });
+
   it("routes the macOS Wry down/up events into page history (GH #780)", () => {
     const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
     const fake = installFakeWindow();

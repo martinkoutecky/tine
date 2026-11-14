@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 // `.state` and `.refetch` stay available, because none of them throws.
 //
 // Exemplar to imitate: src/render/inline.tsx (preview, grp).
-const FACTORIES = new Set(["createResource"]);
+let FACTORIES = new Set(["createResource"]);
 const READERS = new Set(["readOr", "readLatestOr"]);
 /** Properties that do not throw. `latest` is NOT one of them (dist/solid.js:394). */
 const SAFE_PROPERTIES = new Set(["error", "loading", "state", "refetch", "mutate"]);
@@ -67,6 +67,57 @@ function encloses(scope: ts.Node, node: ts.Node): boolean {
   return false;
 }
 
+/** Follow factories that return a resource tuple, directly or through a local
+ * variable. Derive wrappers from their implementation rather than maintaining
+ * another inventory. A wrapper returning guarded accessors is not a factory. */
+function resourceFactories(trees: Iterable<ts.SourceFile>): Set<string> {
+  const factories = new Set(["createResource"]);
+  const dependents = new Map<string, { name: string; remaining: number }[]>();
+  const visit = (node: ts.Node) => {
+    const fn = ts.isFunctionDeclaration(node) ? node
+      : ts.isVariableDeclaration(node) && node.initializer
+        && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)) ? node.initializer : undefined;
+    const name = ts.isFunctionDeclaration(node) ? node.name : ts.isVariableDeclaration(node) ? node.name : undefined;
+    if (fn?.body && name && ts.isIdentifier(name)) {
+      const locals = new Map<string, ts.Expression>();
+      const returns: ts.Expression[] = [];
+      const collect = (child: ts.Node) => {
+        if (ts.isFunctionLike(child)) return;
+        if (ts.isVariableDeclaration(child) && ts.isIdentifier(child.name) && child.initializer) locals.set(child.name.text, child.initializer);
+        if (ts.isReturnStatement(child) && child.expression) returns.push(child.expression);
+        ts.forEachChild(child, collect);
+      };
+      if (ts.isBlock(fn.body)) ts.forEachChild(fn.body, collect);
+      else returns.push(fn.body);
+      const target = (expr: ts.Expression): string | undefined => {
+        if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) return expr.expression.text;
+        if (ts.isIdentifier(expr) && locals.has(expr.text)) return target(locals.get(expr.text)!);
+      };
+      const targets = returns.map(target);
+      if (targets.length && targets.every((value): value is string => value !== undefined)) {
+        const candidate = { name: name.text, remaining: targets.length };
+        for (const target of targets) {
+          const waiting = dependents.get(target) ?? [];
+          waiting.push(candidate);
+          dependents.set(target, waiting);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const tree of trees) visit(tree);
+  const queue = ["createResource"];
+  for (let next = 0; next < queue.length; next++) {
+    for (const candidate of dependents.get(queue[next]) ?? []) {
+      if (--candidate.remaining === 0 && !factories.has(candidate.name)) {
+        factories.add(candidate.name);
+        queue.push(candidate.name);
+      }
+    }
+  }
+  return factories;
+}
+
 interface Binding { name: string; scope: ts.Node }
 
 /** Names bound to a resource by one of the factories, with the scope each is
@@ -82,7 +133,7 @@ export function resourceBindings(file: string, source: string, parsed?: ts.Sourc
     if (ts.isCallExpression(node)
         && FACTORIES.has(node.expression.getText(sourceFile).replace(/<.*$/s, ""))) {
       let declaration: ts.Node | undefined = node.parent;
-      while (declaration && !ts.isVariableDeclaration(declaration)) declaration = declaration.parent;
+      while (declaration && !ts.isVariableDeclaration(declaration) && !ts.isFunctionLike(declaration)) declaration = declaration.parent;
       if (declaration && ts.isVariableDeclaration(declaration)) {
         const bound = declaration.name;
         const scope = scopeOf(declaration);
@@ -101,9 +152,7 @@ export function resourceBindings(file: string, source: string, parsed?: ts.Sourc
 }
 
 /** Places where a resource binding is read in a way that can throw. */
-export function throwingReads(file: string, source: string): string[] {
-  const sourceFile = parse(file, source);
-  const bindings = resourceBindings(file, source, sourceFile);
+export function throwingReads(file: string, source: string, sourceFile = parse(file, source), bindings = resourceBindings(file, source, sourceFile)): string[] {
   if (bindings.length === 0) return [];
   const offending: string[] = [];
   const at = (node: ts.Node) => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
@@ -135,19 +184,26 @@ const RULE = "A Solid resource binding must not be called: reading a rejected re
 
 describe("resource reads never throw into render (GH #490/#332)", () => {
   const files = sources(SRC);
+  function* trees() { for (const file of files) yield parse(file, readFileSync(file, "utf8")); }
+  FACTORIES = resourceFactories(trees());
+  const scans = files.map(file => {
+    const source = readFileSync(file, "utf8");
+    const tree = parse(file, source);
+    const bindings = resourceBindings(file, source, tree);
+    return { file, count: bindings.length, offending: throwingReads(file, source, tree, bindings) };
+  });
 
   it("finds the resources it is supposed to police", () => {
-    const counted = files.reduce((total, file) => total + resourceBindings(file, readFileSync(file, "utf8")).length, 0);
+    const counted = scans.reduce((total, scan) => total + scan.count, 0);
     expect(counted).toBeGreaterThan(25);
   });
 
   it("calls no resource binding anywhere in src/ outside the shrinking pending list", () => {
     const offenders: string[] = [];
-    for (const file of files) {
+    for (const { file, offending } of scans) {
       const relative = path.relative(SRC, file);
       if (relative in PENDING_OWNED_FILES) continue;
-      const found = throwingReads(file, readFileSync(file, "utf8"));
-      if (found.length) offenders.push(`${relative}: ${found.join(", ")}`);
+      if (offending.length) offenders.push(`${relative}: ${offending.join(", ")}`);
     }
     expect(offenders, RULE).toEqual([]);
   });
@@ -162,6 +218,26 @@ describe("resource reads never throw into render (GH #490/#332)", () => {
   it("is not vacuous: a called binding is reported", () => {
     const source = "const [data] = createResource(load);\nconst x = data();\n";
     expect(throwingReads("x.tsx", source)).toEqual(["data()@2"]);
+  });
+
+  it.each(["createGraphResource", "createTagTableAvailabilityResource", "createTagTableResource"])("polices throwing reads through %s", factory => {
+    const source = `const [data] = ${factory}(key, load);\nconst x = data();\nconst y = data.latest;\n`;
+    expect(throwingReads("x.tsx", source)).toEqual(["data()@2", "data.latest@3"]);
+  });
+
+  it("discovers forwarding wrappers transitively without treating guarded accessors as resources", () => {
+    const tree = parse("wrappers.ts", `
+      function indirect() { const tuple = direct(); return tuple; }
+      const direct = () => createResource(load);
+      function guarded() { const [data, actions] = indirect(); return [() => readOr(data), actions]; }
+    `);
+    expect([...resourceFactories([tree])].sort()).toEqual(["createResource", "direct", "indirect"]);
+    expect(throwingReads("x.tsx", "const [data] = createMembershipResource(key, load);\nconst x = data();\nconst y = data.latest;")).toEqual([]);
+  });
+
+  it("does not classify an arrow factory itself as a throwing resource", () => {
+    const source = "const factory = () => createGraphResource(key, load);\nconst tuple = factory();\n";
+    expect(throwingReads("x.tsx", source)).toEqual([]);
   });
 
   it("reports .latest, which throws exactly as the call does", () => {

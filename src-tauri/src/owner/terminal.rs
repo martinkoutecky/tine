@@ -101,8 +101,8 @@ pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
             .map_err(Failure::Reach)
             .and_then(|mut conn| conn.call(verb, args.clone()));
         let retry = match &result {
-            // A read is safe to ask again: busy is never admitted, and a
-            // lost read changed nothing.
+            // Reads can be asked again. page.current may already have created
+            // its stable graph identity; the guarded create reuses that winner.
             Err(Failure::Owner(body)) => body.code == "busy",
             Err(Failure::Lost(_)) => true,
             _ => false,
