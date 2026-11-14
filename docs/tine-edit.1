@@ -4,7 +4,7 @@
 .SH NAME
 tine\-edit \- Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one. Supplying a LOGBOOK drawer requires \-\-rev from the read; otherwise reread and pass \-\-rev (refused:revision\-required)
 .SH SYNOPSIS
-\fBtine edit\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fITEXT\fR> 
+\fBtine edit\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-\-no\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fITEXT\fR> 
 .SH DESCRIPTION
 Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one. Supplying a LOGBOOK drawer requires \-\-rev from the read; otherwise reread and pass \-\-rev (refused:revision\-required)
 .SH OPTIONS
@@ -29,6 +29,9 @@ May also be specified with the \fBTINE_RUN\fR environment variable.
 .TP
 \fB\-\-author\fR \fI<AUTHOR>\fR
 Author on created blocks and on the run\*(Aqs commits (default: TINE_AUTHOR, else agent; blank environment values count as unset). With `edit`, the flag (not the variable) also sets the block\*(Aqs tine.author::
+.TP
+\fB\-\-no\-author\fR
+Skip automatic block attribution for personal scripts. Existing properties and git run commit names stay unchanged
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

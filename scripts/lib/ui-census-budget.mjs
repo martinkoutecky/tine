@@ -88,8 +88,8 @@ export const SURFACES = Object.freeze({
   // --- Chrome at rest (DOM present; CSS-only hiding is not visible to jsdom) --
   "topbar.atRest": { env: "desktop", budget: 13, what: "controls in the desktop topbar: toolbar buttons (not the ··· trigger) plus the frameless window controls", source: "App header.topbar controls outside .topbar-overflow, plus WindowControls buttons" },
   "topbar.windowControls": { env: "desktop", budget: 3, what: "frameless window controls", source: "WindowControls buttons" },
-  "sidebar.left.fixed": { env: "desktop", budget: 5, what: "controls in the left sidebar of an empty graph", source: "App .left-sidebar: workspace and graph switchers, Journals, All pages, New page" },
-  "sidebar.left.full": { env: "desktop", budget: 8, what: "controls in the left sidebar with Favorites, Recent and Namespaces present", source: "the same selector with a favorite, a recent page and a namespaced page" },
+  "sidebar.left.fixed": { env: "desktop", budget: 6, what: "controls in the left sidebar of an empty graph", source: "App .left-sidebar: workspace and graph switchers, Close navigation sidebar, Journals, All pages, New page" },
+  "sidebar.left.full": { env: "desktop", budget: 9, what: "controls in the left sidebar with Favorites, Recent and Namespaces present", source: "the same selector with a favorite, a recent page and a namespaced page" },
   "sidebar.right.header": { env: "desktop", budget: 2, what: "controls in the right sidebar header", source: "RightSidebar .right-sidebar-header buttons" },
   "sidebar.right.item": { env: "desktop", budget: 4, what: "controls in one right sidebar item head", source: "RightSidebar .rs-item-head: toggle, title, ⋯, close" },
 

@@ -8,6 +8,7 @@ import {
   inPageFindOpen,
   inPageFindQuery,
   inPageFindReferencePanels,
+  inPageFindPendingHosts,
   inPageFindRetiredDays,
   inPageFindPaneScopeId,
   refreshInPageFindHighlights,
@@ -198,7 +199,13 @@ export function InPageFind(): JSX.Element {
         </div>}</Show>
         {/* GH #935: reference panels load groups as you scroll, so Find leaves them out
             of its count and says so; their own search covers every group. */}
-        <For each={inPageFindReferencePanels()}>{panel => <div class="inpage-find-retired" role="status">
+        <Show when={inPageFindPendingHosts() > 0 || inPageFindReferencePanels().length > 0}>
+        <div class="inpage-find-retired" role="status">
+        <Show when={inPageFindPendingHosts() > 0}>
+          {t("in-page-find-pending-hosts", { count: inPageFindPendingHosts() })}
+        </Show>
+        <For each={inPageFindReferencePanels()}>{(panel, index) => <>
+          <Show when={inPageFindPendingHosts() > 0 || index() > 0}>{" · "}</Show>
           {t(`in-page-find-references-${panel.kind}`)}
           <Show when={panel.kind !== "block"}>{" — "}
             <button type="button" class="inpage-replace-btn" onClick={() => {
@@ -208,7 +215,9 @@ export function InPageFind(): JSX.Element {
               requestReferenceSearch({ section: panel.kind as "linked" | "unlinked", pages: panel.pages, query });
             }}>{t(`in-page-find-search-references-${panel.kind as "linked" | "unlinked"}`)}</button>
           </Show>
-        </div>}</For>
+        </>}</For>
+        </div>
+        </Show>
         <Show when={inPageReplaceOpen()}>
           <div class="inpage-find-row inpage-replace-row">
             <input

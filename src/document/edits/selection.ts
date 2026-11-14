@@ -3,13 +3,13 @@ import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
 import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount } from "../../toasts";
-import { OutlineScope, depthOf, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder } from "../tree";
+import { OutlineScope, depthsOf, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder } from "../tree";
 import { commentsFirst } from "../commentOrder";
 import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
 import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
 import { batch, createSignal, createRoot, createMemo, createComputed, getOwner, onCleanup, runWithOwner, untrack, type Accessor } from "solid-js";
 import { ChangeKeyRegistry } from "../../changeKeyRegistry";
-import { threadRootOf } from "../commentThreads";
+import { threadRootOf, threadRootsOf } from "../commentThreads";
 import { previousBodySibling } from "../bodyStructure";
 import { activeSurface, endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
@@ -71,7 +71,11 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
   if (!id) return [];
   const page = doc.byId[id]?.page;
   const order = scope ? scopedVisibleOrder(scope) : visibleData().index.has(id) ? visibleOrder() : page ? pageVisibleOrder(page) : [];
-  return untrack(() => threadRootOf(id) === null ? order.filter(at => threadRootOf(at) === null) : order);
+  return untrack(() => {
+    if (threadRootOf(id) !== null) return order;
+    const threads = threadRootsOf(order);
+    return order.filter(at => threads.get(at) === null);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +98,7 @@ const selectionTopology = createRoot(() => createMemo(() => {
   const previous: number[] = [];
   const stack: number[] = [];
   const stacked = new Map<string, number>();
-  const depths = order.map(id => depthOf(id));
+  const depths = depthsOf(order);
   for (let at = 0; at < order.length; at++) {
     let ancestor: number | undefined;
     for (let parent = doc.byId[order[at]]?.parent; parent; parent = doc.byId[parent]?.parent) {
