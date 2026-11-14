@@ -152,6 +152,8 @@ async function popupRendered(before) {
         const opens = await diagnostics().then(d => d.sessions.current.filter(e => e.event === "workspace.open"))
           .catch(e => String(e));
         step("popup-blank-evidence", { popup, before: [...before], seen, handles, opens });
+        // The runner replaces result.json with its own summary; keep the evidence in stdout too.
+        console.log(`EVIDENCE ${JSON.stringify({ popup, before: [...before], seen, handles, opens })}`);
         throw error;
       }
       step("popup-driver-lost-handle", { attempt });
