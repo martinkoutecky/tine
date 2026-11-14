@@ -89,6 +89,12 @@ A query whose every selected page is left out is refused.
 
 ## The query text
 
+CLI query publication accepts a block UUID, inline `--query` text, or the first
+query on `--page`; source selection and naming follow `cli-output.md`. Each
+source produces the same `QueryExportRequest` consumed by dialog publication.
+Inline text uses the `{{query …}}` dialect and has no host context; page
+selection preserves the chosen block's context and export properties.
+
 A query export's published home lists the exported pages and carries nothing of
 the query (no macro, no parsed query, no answer record) unless the request sets
 `includeQueryText` ("Include the query text", off by default). The choice is not

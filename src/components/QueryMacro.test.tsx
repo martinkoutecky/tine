@@ -191,6 +191,64 @@ function loadDamagedQueryDoc(raw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it.each(["agenda", "config", "sections page"])("GH #944: folding the %s during publication keeps its answered header", async surface => {
+    loadQueryDoc("{{query (task TODO)}}");
+    let publishing = false;
+    installResultsPendingGate(() => publishing, "own-work");
+    const { root, dispose } = mount(() => <QueryMacro body="query (task TODO)" title="Scheduled & Deadline"
+      hideWhenEmpty builtIn={surface === "agenda"} configQuery={surface === "config"} />);
+    try {
+      await settleQuery();
+      const section = root.querySelector(".query-block");
+      expect(section).not.toBeNull();
+      publishing = true;
+      root.querySelector<HTMLElement>(".query-collapse")!.click();
+      await settleQuery();
+      expect(root.querySelector(".query-block")).toBe(section);
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(backend().queryRun).toHaveBeenCalledTimes(1);
+      publishing = false;
+      vi.mocked(backend().queryRun).mockResolvedValue(blockRunResult([]));
+      root.querySelector<HTMLElement>(".query-collapse")!.click();
+      await settleQuery();
+      expect(root.querySelector(".query-block")).toBe(section);
+      expect(backend().queryRun).toHaveBeenCalledTimes(1);
+      bumpDataRev(); await settleQuery();
+      expect(root.querySelector(".query-block")).toBeNull();
+      expect(backend().queryRun).toHaveBeenCalledTimes(2);
+    } finally { publishing = false; dispose(); }
+  });
+
+  it.each(["agenda", "config", "sections page", "authored"])("GH #944: the %s retains rows when publication overtakes its read", async surface => {
+    loadQueryDoc("{{query (task TODO)}}");
+    let publishing = false;
+    installResultsPendingGate(() => publishing, "own-work");
+    let land: ((value: QueryResult) => void) | undefined;
+    const { root, dispose } = mount(() => <QueryMacro body="query (task TODO)" title="Scheduled & Deadline"
+      hideWhenEmpty={surface !== "authored"} builtIn={surface === "agenda"} configQuery={surface === "config"} />);
+    try {
+      await settleQuery();
+      expect(root.textContent).toContain("From query");
+      const row = root.querySelector('[data-block-id="todo"]');
+      expect(row).not.toBeNull();
+      vi.mocked(backend().queryRun).mockImplementation(() => new Promise(resolve => { land = resolve; }));
+      bumpDataRev(); await settleQuery();
+      expect(land).toBeDefined();
+      publishing = true;
+      land!(blockRunResult([])); await settleQuery();
+      expect(root.textContent).toContain("From query");
+      expect(root.querySelector('[data-block-id="todo"]')).toBe(row);
+      expect(backend().queryRun).toHaveBeenCalledTimes(2);
+      publishing = false;
+      bumpDataRev(); await settleQuery();
+      expect(root.textContent).toContain("From query");
+      land!(blockRunResult([])); await settleQuery();
+      expect(root.textContent).not.toContain("From query");
+      expect(backend().queryRun).toHaveBeenCalledTimes(3);
+      if (surface !== "authored") expect(root.querySelector(".query-block")).toBeNull();
+    } finally { publishing = false; land?.(blockRunResult([])); dispose(); }
+  });
+
   it.each(["agenda", "config", "sections page"])("keeps the %s absent while a replacement graph's answer is pending then empty", async (surface) => {
     loadQueryDoc("{{query (task TODO)}}");
     const { root, dispose } = mount(() => <QueryMacro body="query (task TODO)" title="Scheduled & Deadline"

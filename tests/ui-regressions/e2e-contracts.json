@@ -2,6 +2,21 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-gh944-journal-agenda.mjs": {
+      "setup":"Synthetic realistic graph with 1500 pages and 500 journals, dated tasks, scratch HOME/XDG and account-home shim; frozen custom-protocol binaries with embedded origin asserted, Linux native at 1920x1080.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Scheduled & Deadline stays present while typing characters and creating blocks in today's journal, expanded and collapsed, in the feed and on a routed journal page.","blocking":false,"authority":"GH #944 comment 5"}],
+      "acceptableVariations":["Position changes caused by inserted lines, row text, geometry and refresh timing may vary."],
+      "nonRequirements":["No Windows runtime certification, release burn-in or unrelated folding scroll-clamp assertion."],
+      "stability":"quarantined",
+      "quarantineReason":"WebKitWebDriver screenshot GET times out on the individually routed journal after folding. Presence/input assertions remain intact; capture errors are rethrown after collecting all four semantic phases. See RECEIPT-fix-944-agenda.md."
+    },
+    "scripts/e2e-cli-query-export.mjs": {
+      "setup":"Synthetic graph and scratch HOME/XDG with account-home shim; native Linux app owns the graph.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"UUID, inline and page query sources publish the selected page, refuse existing output and preserve previous output on force without changing source bytes.","blocking":false,"authority":"D-20261114-588; GH #588"}],
+      "acceptableVariations":["CLI prose and publication markup may vary while page membership, exit codes and recovery remain correct."],
+      "nonRequirements":["No network, release burn-in or other-platform certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-comment-output.mjs": {
       "setup":"Synthetic routed page, scratch HOME/XDG and account-home shim; no network.",
       "contracts":[{"class":"stateful-ux","userOutcome":"Copy/export includes marked comments by default; switching comments off removes whole threads and keeps body text. An embedded detached reply retains its source comment carrier in Markdown and is omitted with comments off. Folder publication remembers the choice in the definition and snapshot.","blocking":false,"authority":"H9TvA; D-20261113-CO/CO2"}],
