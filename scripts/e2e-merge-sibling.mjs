@@ -15,7 +15,7 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const DRIVER = process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOME ?? "", "bin/tauri-driver");
-const ARTIFACT = path.join(ROOT, "artifacts/og-merge-sibling-764-818/native");
+const ARTIFACT = process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/og-merge-sibling-764-818/native");
 fs.mkdirSync(ARTIFACT, { recursive: true });
 const TMP = fs.mkdtempSync(path.join(ARTIFACT, "journey-"));
 const GRAPH = path.join(TMP, "graph");
@@ -70,12 +70,12 @@ try {
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
   await browser.execute(() => { for (const close of document.querySelectorAll(".toast-sticky .toast-close")) close.click(); });
 
-  // 1. Merge: alpha, its child, beta and gamma are selected (Esc selects the block
-  //    being edited; Shift+Down extends in visible order).
+  // 1. Merge: Escape selects alpha's complete subtree; two Shift+Down presses
+  //    add the beta and gamma sibling subtrees (GH #941).
   await openPageByName(browser, "Merge Demo");
   await clickBlock("alpha");
   await browser.keys("Escape");
-  for (let i = 0; i < 3; i += 1) await browser.keys(["Shift", "ArrowDown"]);
+  for (let i = 0; i < 2; i += 1) await browser.keys(["Shift", "ArrowDown"]);
   await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".main-content .block-main.selected").length === 4), { timeout: 5000, timeoutMsg: "Shift+Down did not select four blocks" });
   await runPaletteCommand("Merge selected blocks");
   await waitForFileText(file("Merge Demo"), (body) => body === "- alpha\n  alpha child\n  beta\n  gamma\n- delta\n");

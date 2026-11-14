@@ -152,7 +152,7 @@ async function chooseInlineQueryView(browser, view) {
   });
 }
 
-async function assertInPageFind(browser, query, activeSelector, slowTyping = false) {
+async function assertInPageFind(browser, query, { activeSelector, slowTyping = false, referenceSection } = {}) {
   // WebKitWebDriver itself reserves native Ctrl+F on some builds; dispatch the
   // identical cancelable DOM chord so this still exercises Tine's real global
   // keybinding and find UI without handing the session to the driver's browser UI.
@@ -176,6 +176,27 @@ async function assertInPageFind(browser, query, activeSelector, slowTyping = fal
     }
   } else {
     await input.setValue(query);
+  }
+  if (referenceSection) {
+    // GH #935: page Find names references but leaves their matches to each
+    // section's search, including groups that have not mounted yet.
+    const label = `search ${referenceSection} references`;
+    const handoff = await browser.$(`button=${label}`);
+    await handoff.waitForExist({ timeout: 5_000 });
+    await handoff.click();
+    await input.waitForExist({ reverse: true, timeout: 5_000 });
+    const section = `.${referenceSection}-references`;
+    const search = await browser.$(`${section} .reference-filter-search`);
+    await search.waitForExist({ timeout: 5_000 });
+    await browser.waitUntil(async () => (await search.getValue()) === query
+      && /^[1-9]\d* of /.test(await browser.$(`${section} .reference-filter-summary`).getText())
+      && (await browser.$(`${section} .reference-blocks`).getText()).includes(query), {
+      timeout: 10_000, timeoutMsg: `${referenceSection} reference search did not find ${query}`,
+    });
+    await browser.$(`${section} .reference-filter-clear`).click();
+    await search.click();
+    await browser.keys("Escape");
+    return;
   }
   try {
     await browser.waitUntil(async () => {
@@ -239,7 +260,7 @@ await withApp(0, async (browser) => {
   await browser.waitUntil(async () => (await browser.$(".reference-blocks").getText()).includes("Open"), {
     timeout: 10_000, timeoutMsg: "linked-reference content did not finish rendering",
   });
-  await assertInPageFind(browser, "Open", ".reference-blocks.inpage-find-active-block", true);
+  await assertInPageFind(browser, "Open", { slowTyping: true, referenceSection: "linked" });
   await browser.$(".unlinked-references .references-header").click();
   const unlinkedBlocks = await browser.$(".unlinked-references .reference-blocks");
   await unlinkedBlocks.waitForExist({ timeout: 10_000 });
@@ -252,7 +273,7 @@ await withApp(0, async (browser) => {
       .some((group) => group.textContent?.includes("names Query parity near the start"))), {
     timeout: 10_000, timeoutMsg: "unlinked-reference content did not finish rendering",
   });
-  await assertInPageFind(browser, "names Query parity near the start", ".unlinked-references .reference-blocks.inpage-find-active-block");
+  await assertInPageFind(browser, "names Query parity near the start", { referenceSection: "unlinked" });
   await chooseInlineQueryView(browser, "search");
   await browser.waitUntil(async () => (await browser.$$(".query-search-results .query-search-hit")).length === 9, {
     timeout: 10_000, timeoutMsg: "Search presentation dropped ordinary DSL query results",
@@ -393,7 +414,7 @@ await withApp(0, async (browser) => {
     || row.left < row.workspaceLeft - 1 || row.right > row.workspaceRight + 1)) {
     throw new Error(`persistent search rows overflow the narrow pane: ${JSON.stringify(wrapProof)}`);
   }
-  await assertInPageFind(browser, "alpha", ".query-result-row.inpage-find-active-block");
+  await assertInPageFind(browser, "alpha", { activeSelector: ".query-result-row.inpage-find-active-block" });
 
   // The reporter's v0.5.9 follow-up was not a two-block row case: it was the
   // persistent workspace with roughly 140 PAGE hits, including an intrinsically
@@ -753,6 +774,14 @@ await withApp(2, async (browser) => {
     await action.waitForDisplayed({ timeout: 5_000 });
     await action.click();
   }
+  async function revealUnlinkedSource() {
+    await browser.$(".unlinked-references").$("button=Unlinked source").scrollIntoView({ block: "center" });
+    await browser.waitUntil(() => browser.execute(() => {
+      const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
+        .find(group => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
+      return !!source?.querySelector(".reference-excerpt-text");
+    }), { timeout: 5_000, timeoutMsg: "the visible unlinked source did not hydrate its excerpt" });
+  }
   await bulkReferenceAction(".linked-references", "Collapse all");
   await browser.waitUntil(async () => (await browser.$$(".linked-references .reference-blocks")).length === 0, {
     timeout: 5_000, timeoutMsg: "Collapse all did not unmount linked reference bodies",
@@ -768,6 +797,9 @@ await withApp(2, async (browser) => {
   await unlinkedHeader.scrollIntoView();
   await unlinkedHeader.click();
   await browser.$(".unlinked-references .reference-bulk-controls").waitForExist({ timeout: 10_000 });
+  // Section controls mount before lazy group bodies. Reveal the source before
+  // judging its evidence, just as after the bulk expansion below.
+  await revealUnlinkedSource();
   const unlinkedProof = await browser.execute((expectedRaw) => {
     const groups = [...document.querySelectorAll(".unlinked-references .reference-group")];
     const source = groups.find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
@@ -809,7 +841,7 @@ await withApp(2, async (browser) => {
 
   // Expand all mounts group wrappers; offscreen reference bodies hydrate only
   // when shown. Reach the source before using its occurrence control.
-  await browser.$(".unlinked-references").$("button=Unlinked source").scrollIntoView({ block: "center" });
+  await revealUnlinkedSource();
   await browser.waitUntil(() => browser.execute(() => {
     const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
