@@ -488,6 +488,10 @@ pub struct BlockDto {
     /// `page_property`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_preamble: bool,
+    /// Source thread membership for a detached preview/query export root.
+    /// Descendants inherit it during export; ordinary page DTOs omit it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub comment: bool,
     // --- M1: block-header facets, computed ONCE off the lsdoc projection (the one
     // grammar source) and shipped so the frontend never re-derives them with its
     // own scanner. Derived (not authoritative — `raw` round-trips); the frontend

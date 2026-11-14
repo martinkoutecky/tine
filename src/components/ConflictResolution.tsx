@@ -28,7 +28,7 @@ import { pushToast } from "../toasts";
 import { conflictQueue, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, settleArtifactConflict } from "../ui";
 import { openFile } from "../router";
 import { ConflictFileRow } from "./JournalConflictFileRow";
-import { applyGraphChange, applyLiveResolution, conflictReason, flushPage, isConflicted, isDirty, isSaving, liveConflictDraft, node } from "../document";
+import { applyLiveResolution, conflictReason, flushPage, isConflicted, isDirty, isSaving, liveConflictDraft, node } from "../document";
 import { editingId } from "../editorController";
 import { readOr } from "../resourceRead";
 import {
@@ -309,7 +309,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     // Plain snapshots only: resolving retires the queue object, which disposes
     // the <Show> that owns `props.conflict`.
     const c = conflict();
-    const { source, id, page_name: pageName, page_path: pagePath, kind } = c;
+    const { source, id, page_name: pageName, page_path: pagePath } = c;
     const copy = c.sides.find((s) => s.role === "theirs")?.path ?? null;
     const live = c.live;
     const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
@@ -374,10 +374,6 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       void refreshSyncConflicts();
       // A day with three files still has one to reconcile after this fold.
       if (source === "duplicate-journal") void refreshJournalConflicts();
-      // Own-origin writes raise no watcher event, so the open page reloads here
-      // through the ordinary external-change rule: a clean page takes the merged
-      // file; one edited meanwhile keeps the edit and is marked conflicted.
-      await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
       if (!owner()) return;
       pushToast(msg("conflict-resolution-applied", { source, page: pageName }), "success");
     } catch (e) {

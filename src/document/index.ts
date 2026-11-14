@@ -96,7 +96,11 @@
  * `applyGraphChangesBulk` applies a checkout-sized batch with one revision
  * bump, at most one feed restart and one summary toast. With "always ask"
  * (conflictPolicy.ts) the one silent case, a loaded clean page, is held for its
- * bar instead; `replayDeferredExternalReloads` is the focus-return sweep. */
+ * bar instead; `replayDeferredExternalReloads` is the focus-return sweep.
+ * Own publication summaries refresh loaded unheld physical owners through
+ * the same safe-reload gate, bypassing the outside-change policy. Working-set
+ * read admission uses local generations, with one bounded reread; see
+ * `docs/storage-contract.md`. */
 export { blockIsGridView, blockIsOpaqueSheetView, collapseEpochOf, node, onBlockRawChanged, onPageRawChanged, someBlockInTrees, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName, pageReadOnly } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { trackAssetWrite } from "./assetWrites";
@@ -104,9 +108,10 @@ export { applyLiveResolution, bindHost, conflictReason, conflicts, consumedAnswe
 export { pendingDataRevision } from "./host/wiring";
 export type { DiskToken, DraftStatus, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./host/protocol";
 export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
+export { admitRead } from "./readAdmission";
 export { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 export { evictIfNeeded } from "./workingSet";
-export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageNearViewport, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
+export { admitPageFile, appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pageLoadRefusalMessage, pinPageNearViewport, pinPageWhileDrafting, registerPaneRouteProvider, reportPageLoadRefusal, resetStore, restoreTodayJournalInFeed, type PageLoadRefusal } from "./workingSet";
 export { followPageIdentity, installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
 export { emptyPage, captureEmptyPage, favoritesArrangementPage, favoritesArrangementBlocks, journalSectionsPage, exportsPage, queryBlockRaw, resolveGuideBlockRef, resolveGuidePageDto, withToday, toLoadablePage, carryTodayPage, captureScratchPage, journalTemplatePage, demoJournalPage, switcherPage, queryWorkspacePage } from "./convert";
@@ -125,7 +130,7 @@ export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste
 export { appendToTodayJournal, appendToJournalDay, appendQueryBlock, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, expandAncestors, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageAliasNames, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedBlocks, setCollapsedDeep, setCollapsedTrees, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
-export { blockExternalId, blockPositionRef, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, resolveBlockRef, settleBlockRef } from "./edits/identity";
+export { authoredBlockId, blockExternalId, blockPositionRef, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, resolveBlockRef, settleBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, mergeSelection, moveSelection, outdentSelection, ownSelectionSurface, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, selectionScope, setSelectionHeading, singleSelectedId, topSelected } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";

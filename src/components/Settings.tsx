@@ -21,7 +21,6 @@ import { changedAny } from "../changeKeys";
 import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
-import { applyGraphChange } from "../document";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
@@ -1220,14 +1219,11 @@ function BackupsTab(): JSX.Element {
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  const reconcile = async (op: () => Promise<void>, ok: Msg, kept?: { path: string; name: string }) => {
+  const reconcile = async (op: () => Promise<void>, ok: Msg) => {
     const owner = bindingOwner();
     try {
       const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
-      // Own-origin writes raise no watcher event, so a view of the kept day reloads here through the ordinary
-      // external-change rule (as ConflictResolution's apply does): a clean view takes the merged file.
-      if (kept) await applyGraphChange({ path: kept.path, name: kept.name, kind: "journal", created: false, removed: false }, true);
       pushToast(ok, "success");
       await refreshJournalConflicts();
     } catch (e) {
@@ -1271,7 +1267,6 @@ function JournalConflictsPanel(): JSX.Element {
                     onMerge={!f.canonical && canonical ? () => void reconcile(
                       () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
                       msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name }),
-                      { path: canonical.path, name: c.title },
                     ) : undefined}
                     onRename={(n) => void reconcile(
                       () => backend().renameFileToPage(f.path, n, "rename-page"),

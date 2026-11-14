@@ -144,7 +144,6 @@ async function loadHarness(
     resetStore, flushAll, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
-    reloadHlsIfLoaded: vi.fn(),
     createPage,
     journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({
       name: title, kind: "journal", title, pre_block: page?.pre_block ?? null, blocks, format: page?.format,

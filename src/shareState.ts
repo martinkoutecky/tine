@@ -16,7 +16,7 @@ export function openShareDialog(target: ShareTarget): void { setShareTarget(targ
 export function closeShareDialog(): void { setShareTarget(null); }
 
 /** What a query export does once it has written its folder (the share dialog saves its definition then). */
-export type QueryExportAfter = (done: { folder: string }) => void | Promise<void>;
+export type QueryExportAfter = (done: { folder: string; includeComments?: boolean; commentsChanged?: boolean }) => void | Promise<void>;
 // Keyed by the request object the export dialog is open on: a dismissed or replaced request takes its hook with it.
 const exportAfter = new WeakMap<QueryPublicationRequest, QueryExportAfter>();
 export function queryExportAfter(request: QueryPublicationRequest): QueryExportAfter | undefined { return exportAfter.get(request); }

@@ -1,5 +1,6 @@
 //! One integration executable; module names retain each source suite in test filters.
 
+mod comment_surfaces;
 #[path = "../../test-support/temp_dir.rs"]
 mod test_support;
 
@@ -44,6 +45,7 @@ fn published_site(store: &tine_store::Store) -> std::io::Result<(String, usize)>
         &parent,
         "site",
         store.config().all_pages_public,
+        true,
     )?;
     Ok((receipt.path, receipt.pages))
 }

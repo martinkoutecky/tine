@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { graphOwner } from "../owned";
 import { ownSelectionSurface } from "../document";
 import { rootIsRtl } from "../render/textDirection";
 import { BlockList } from "./BlockList";
@@ -24,7 +25,7 @@ import { EmojiText } from "../render/emoji";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
-import { emptyPage, ensurePageLoaded, pageByName, pageAliasNames, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
+import { admitRead, emptyPage, ensurePageLoaded, pageByName, pageAliasNames, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { AliasGroupHeader } from "./AliasGroup";
@@ -262,9 +263,7 @@ function useEnsurePage(
       let active = true;
       let stopWaiting: (() => void) | undefined;
       onCleanup(() => { active = false; stopWaiting?.(); });
-      const request = p ? backend().getPageByPath(p) : backend().getPage(n, k);
-      void request
-        .then((dto) => {
+      void admitRead(graphOwner(() => active && epoch === graphEpoch()), () => p ? backend().getPageByPath(p) : backend().getPage(n, k), dto => [n, ...(dto ? [dto.name] : [])], (dto) => {
           // Drop a load that resolved after a graph switch — otherwise it would
           // insert an old-graph page into the new graph's working set.
           if (!active || epoch !== graphEpoch()) return;

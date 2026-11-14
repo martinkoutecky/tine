@@ -16,6 +16,7 @@ import { pushToast } from "../toasts";
 export function GraphPublish(): JSX.Element {
   const [name, setName] = createSignal("Tine graph");
   const [allPages, setAllPages] = createSignal(false);
+  const [includeComments, setIncludeComments] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
   const [message, setMessage] = createSignal("");
   const [exportPath, setExportPath] = createSignal("");
@@ -34,9 +35,9 @@ export function GraphPublish(): JSX.Element {
       const everyPage = allPages();
       setMessage("Exporting…");
       const exportName = name().trim() || "Tine graph";
-      const sheets = await readOwned(owner, exportSheets(undefined, { kind: "live", allPages: everyPage }));
+      const sheets = await readOwned(owner, exportSheets(undefined, { kind: "live", allPages: everyPage, includeComments: includeComments() }));
       if (sheets.kind === "stale" || !owner()) return;
-      const result = await writeOwned(owner, backend().publishLive(destination, exportName, everyPage, sheets.value));
+      const result = await writeOwned(owner, backend().publishLive(destination, exportName, everyPage, sheets.value, includeComments()));
       // A zero reads as a broken button unless it names the rule (GH #560, master 350efef1f).
       if (result.kind === "current" && owner()) setMessage(result.value.pages === 0 && !everyPage
         ? `Exported 0 pages to ${result.value.path} — only pages with “public:: true” are exported.`
@@ -61,6 +62,8 @@ export function GraphPublish(): JSX.Element {
       <label class="settings-hint">{t("graph-publish-export-name")}<input value={name()} onInput={(event) => setName(event.currentTarget.value)} /></label>
       <label class="settings-hint"><input type="checkbox" checked={allPages()}
         onChange={(event) => setAllPages(event.currentTarget.checked)} />{t("graph-publish-include-every-page-not-marked-public-false")}</label>
+      <label class="settings-hint"><input type="checkbox" checked={includeComments()} disabled={busy()}
+        onChange={event => setIncludeComments(event.currentTarget.checked)} />{t("export-include-comments")}</label>
       <div><button class="settings-btn" disabled={busy()} onClick={() => void publish()}>{t("graph-publish-export-html-and-read-only-app")}</button></div>
       <div class="settings-hint">{settingDescription(settings["graph-publish-publish"])}</div>
       <Show when={message()}><div class="settings-hint" role="status">{message()}</div></Show>

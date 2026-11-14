@@ -10,6 +10,7 @@ use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct PrintOpts {
+    pub include_comments: bool,
     pub expand_collapsed: bool,
     pub font_px: u32,
     pub margin_mm: u32,
@@ -18,6 +19,7 @@ pub struct PrintOpts {
 impl Default for PrintOpts {
     fn default() -> Self {
         Self {
+            include_comments: true,
             expand_collapsed: true,
             font_px: 16,
             margin_mm: 16,
@@ -41,14 +43,13 @@ pub fn page_print_html_with_sheets(
     sheets: Vec<SheetExport>,
 ) -> io::Result<Option<String>> {
     let sheets = SheetIndex::new(sheets);
-    let Some((whole, corpus)) = fresh_named_pages(store, &[name.to_owned()])? else {
+    let Some((whole, mut corpus)) = fresh_named_pages(store, &[name.to_owned()])? else {
         return Ok(None);
     };
-    render::page_print_html(
-        &RenderGraph::for_pages(&corpus, &whole, store, Some(&sheets)),
-        name,
-        opts,
-    )
+    crate::output_comments::project(&mut corpus.pages, opts.include_comments);
+    let mut graph = RenderGraph::for_pages(&corpus, &whole, store, Some(&sheets));
+    graph.include_comments = opts.include_comments;
+    render::page_print_html(&graph, name, opts)
 }
 
 /// The named pages, read fresh, with the view that holds them; `None` when no
