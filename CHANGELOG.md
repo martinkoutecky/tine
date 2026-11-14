@@ -91,6 +91,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+- Saving or externally changing one open page no longer makes keyboard navigation revisit every unchanged journal page in the feed; on a 129-page feed the update drops from ~117 ms to ~55 ms (IllLE).
 
 - A page whose properties cannot be parsed is refused consistently while opening, including during startup, and an edit cannot overwrite its unreadable bytes (internal: REG-READABLE-OWNER-COLD; HbcTw).
 - The sidebar keeps workspace creation and menu controls within reach instead of clipping them into the editor (IcYyc).
