@@ -42,7 +42,7 @@ import { documentHasFocus, isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
 import { codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeSourceCaret } from "../editor/codeFence";
-import { CodeLanguage } from "../render/CodeLanguage";
+import { CodeLanguage, blurToOwnCodeLanguage } from "../render/CodeLanguage";
 import { codeFences } from "../editor/fences";
 import { calcSource, evalCalc, serializeCalcExitCommit } from "../editor/calc";
 import { codeWrapping } from "../codeDisplay";
@@ -337,7 +337,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
                 windowFocus.remember();
                 return;
               }
-              if (v.hasFocus) { commit(v.state.doc.toString()); return; }
+              if (v.hasFocus || blurToOwnCodeLanguage(event.relatedTarget, v.contentDOM)) { commit(v.state.doc.toString()); return; }
               const target = event.relatedTarget as HTMLElement | null;
               const handoff = target?.matches('[data-cm6-editor]')
                 && target.getAttribute("data-cm6-editor") === props.id ? target : null;

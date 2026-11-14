@@ -7,7 +7,7 @@ import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
-import { CodeLanguage } from "../render/CodeLanguage";
+import { CodeLanguage, blurToOwnCodeLanguage } from "../render/CodeLanguage";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { codeGutterStyle, LineGutter } from "../render/LineGutter";
@@ -2003,6 +2003,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       return;
     }
     const target = e.relatedTarget;
+    if (blurToOwnCodeLanguage(target, ref)) { commit(ref.value); return; }
     const sameBlockEditor = isElementTag(target, "textarea")
       && target.classList.contains("block-editor")
       && target.closest("[data-block-id]")?.getAttribute("data-block-id") === props.id;

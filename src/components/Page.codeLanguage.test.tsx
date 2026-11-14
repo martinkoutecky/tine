@@ -70,8 +70,11 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
         const label = root.querySelector<HTMLButtonElement>("button.code-language");
         expect(label, "a focusable language control is available even without a language").not.toBeNull();
         expect(label!.getAttribute("aria-label")).toBe("Edit code language");
+        // Review HOLD on bc643657b: with the window focused, the editor's blur removed the label before activation.
+        vi.spyOn(document, "hasFocus").mockReturnValue(true);
         label!.focus();
         expect(document.activeElement).toBe(label);
+        expect(label!.isConnected, "focusing the label keeps the editing session that renders it").toBe(true);
         if (activation !== "click") {
           const event = new KeyboardEvent("keydown", { key: activation, bubbles: true, cancelable: true });
           label!.dispatchEvent(event);
