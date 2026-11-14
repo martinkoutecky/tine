@@ -10,6 +10,7 @@ export function deriveFlatpak(options: {
   identity: string;
   date: string;
   version: string;
+  viewerReady?: string;
 }): DerivedFlatpak;
 export function resolveReleaseDate(options?: {
   explicit?: string;
