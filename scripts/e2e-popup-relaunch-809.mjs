@@ -182,7 +182,11 @@ function readState() {
 async function quitCleanly(name) {
   const previous = fs.existsSync(stateFile) ? fs.statSync(stateFile).mtimeMs : 0;
   // The tray/keyboard Quit path: close requests, frontend flush, orderly exit.
-  await browser.execute(() => { void window.__TAURI_INTERNALS__.invoke("request_app_quit"); }).catch(() => {});
+  // 0.9 has no request_app_quit command; there the tray's Quit is a close request to main (tray::quit).
+  await browser.execute(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    void invoke("request_app_quit").catch(() => invoke("plugin:window|close", { label: "main" }));
+  }).catch(() => {});
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (fs.existsSync(stateFile) && fs.statSync(stateFile).mtimeMs > previous) break;
