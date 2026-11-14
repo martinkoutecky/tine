@@ -82,6 +82,19 @@ async function launch(name) {
     capabilities: tauriCapabilities(app, `gh809-${name}`, process.platform, target.debuggerAddress),
   });
   await ensureMainWindow(browser);
+  // A restored popup is also a non-auxiliary app window, and on Windows the driver may attach to it first
+  // (run 43603538420: the session sat on ws-main-1). Main is the window whose Tauri label is "main".
+  await browser.waitUntil(async () => {
+    for (const handle of await browser.getWindowHandles()) {
+      try {
+        await browser.switchToWindow(handle);
+        if (await browser.execute(() => window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label) === "main") return true;
+      } catch (error) {
+        if (!/web view not found|no such window/i.test(String(error?.message ?? error))) throw error;
+      }
+    }
+    return false;
+  }, { timeout: 30_000, timeoutMsg: "No window labelled main" });
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
   mainHandle = await browser.getWindowHandle();
