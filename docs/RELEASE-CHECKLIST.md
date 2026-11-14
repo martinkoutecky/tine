@@ -65,6 +65,13 @@ may tag, publish, comment, and close issues.
     exact commit's platform builds, Linux E2E, Android, real offline Flatpak job,
     and candidate assembly pass. The tag-triggered workflow enforces the same
     CI evidence before it rebuilds/publishes release artifacts.
+    For quick share, require the log line `Quick share viewer-first gate passed`
+    from release preflight and from each separately dispatched iOS TestFlight
+    or Microsoft Store build. Those workflows pass the check's output into
+    their native builds; a green job alone is insufficient because viewer
+    failure permits packaging with sharing disabled. Flatpak remains disabled
+    pending a decision on carrying the attestation into its offline manifest;
+    do not count its build success as quick share evidence.
 11. After publication, inventory the real assets and prepare issue-specific
    reporter follow-ups. Comment/closure authority remains in the canonical
    agent agreement.

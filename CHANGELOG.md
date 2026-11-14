@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).
+- iOS TestFlight and Microsoft Store builds now enable quick share when their deployed-viewer check passes (internal: REG-QS-ATTEST-STORES-09).
 
 ## [0.9.0-beta.13] - 2026-11-14
 
