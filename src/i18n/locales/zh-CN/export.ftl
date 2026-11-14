@@ -100,3 +100,8 @@ reference-evidence-occurrence-label = 跳转到第 { $index } / { $total } 处�
 # Helper-return and component-prop interface text (GH #107).
 export-prose-plain-text-output-has-no-markup-markers-to-remove = 纯文本输出中没有需要移除的标记
 export-prose-only-applies-to-plain-text-output = 仅适用于纯文本输出
+export-include-comments = 包含评论
+export-comment = 评论
+export-definition-cannot-edit = 无法编辑导出定义。
+export-definition-changed = 导出定义已更改。请重新检查。
+export-definition-save-failed = 无法保存 { $page }。

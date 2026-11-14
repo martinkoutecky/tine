@@ -14,6 +14,7 @@ PendingEdit  # why: a text edit staged by an editor and written only once the ke
 PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
+admitRead  # why: all asynchronous working-set admissions compare captured local generations and retry at most once; batch-load-freshness-1113
 appendFeed
 appendQueryBlock  # why: the share dialog appends a definition block to the exports page through the single capture writer; batch-share-dialog-ui
 appendToJournalDay  # why: the share inbox appends into the exact day it recorded and records its recovery state inside the admitted read (ADR 0073); batchNativeIntegrations
@@ -165,7 +166,6 @@ redo
 refuseConflictedMove  # why: carry conflict preflight before mutation; batch03
 registerPaneRouteProvider
 rekeyPageIdentityByPath  # why: watcher and own save adopt a changed effective title by physical path; batch11e
-reloadHlsIfLoaded
 removeOwnNumberedList
 renamePageOnDisk
 replaceChildOrders

@@ -189,6 +189,12 @@ fresh writer run: an app-side DTO change that would alter generation 1 fails
 
 ## What a share holds (closure)
 
+Comments go out by default, rendered in the reader's margin. **Include comments**
+off removes entire threads before the private build graph, so the document and
+its derived answers contain only the remaining body. The definition remembers an
+exclusion as `tine.comments:: false`; absence means include, including on Re-share
+and Update all. This changes no generation-1 envelope or snapshot schema.
+
 The writer selects the query's owner pages, removes the export rules' pages
 (`public:: false`, the exports page: `export-definitions.md`), and projects the
 snapshot from a **private build graph** made of only those documents and the

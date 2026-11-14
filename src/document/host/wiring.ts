@@ -33,6 +33,7 @@ import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
 import { doc, pageByName, pageReadOnly, setPageId } from "../model";
 import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
@@ -149,7 +150,8 @@ const documentPort: DocumentPort = {
     return true;
   },
   tombstoned: (name) => deletedPages.has(name),
-  took: (name, rev) => { baseRev.set(name, rev); },
+  took: (name, rev) => { invalidatePageRead(name); baseRev.set(name, rev); },
+  released: invalidatePageRead,
 };
 
 /** The document port for one binding's client: a client the binding has
@@ -162,6 +164,7 @@ function portFor(current: () => boolean): DocumentPort {
     install: (name, content) => { if (current()) documentPort.install(name, content); },
     holdsPush: (name) => current() && documentPort.holdsPush(name),
     took: (name, rev) => { if (current()) documentPort.took(name, rev); },
+    released: name => { if (current()) documentPort.released(name); },
   };
 }
 
@@ -1010,7 +1013,12 @@ function queueAliasLanding(name: string, owners: string[]): void {
 async function landAliasDraft(c: HostClient, name: string, ownerPath: string): Promise<void> {
   const generation = pageInstanceGeneration(name);
   let owned;
-  try { owned = await readOwned(bindingOwner(), backend().getPageByPath(ownerPath)); }
+  try { owned = await admitRead(bindingOwner(() => host() === c), () => backend().getPageByPath(ownerPath), dto => [name, ...(dto ? [dto.name] : [])], dto => {
+    if (!dto || dto.read_only || dto.guide) return null;
+    const refused = ensurePageLoaded(dto);
+    if (refused) { reportPageLoadRefusal(refused); return null; }
+    return dto;
+  }); }
   catch {
     // The draft stays in the editor, unsaved and listed; say why it did not move.
     pushToast(msg("document-wiring-couldn-t-read-the-page-is-an-alias-of-its", { value1: ownerPath, value2: name }), "error");
@@ -1018,8 +1026,6 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
   }
   const read = owned.kind === "current" ? owned.value : null;
   if (!read || read.read_only || read.guide || host() !== c) return;
-  const refused = ensurePageLoaded(read);
-  if (refused) { reportPageLoadRefusal(refused); return; }
   const owner = read.name;
   const release = c.acquire(owner, { pin: true });
   try {

@@ -4,14 +4,26 @@ import { setLeftSidebarOpen, sidebarOpen } from "./ui";
 
 declare global {
   interface WindowEventMap {
-    "tine-new-workspace": Event;
+    "tine-open-workspace-menu": CustomEvent<{ create: boolean }>;
   }
 }
 
-/** Route the command to the mounted switcher in the invoking window. In drawer
- * mode the left drawer's switcher takes it (the bar's compact switcher is hidden
- * on phones, #926), so the drawer opens first. */
-export function openWorkspaceCreation(): void {
+/** Route creation to exactly one visible switcher in the invoking window.
+ * Drawer mode opens the sidebar first. If toolbar customization hid the
+ * compact control, an unclaimed request reveals the sidebar and retries once.
+ * O(1) window events, no storage or graph work. */
+function requestWorkspaceMenu(create: boolean): void {
   if (mobileDrawerMode() && !sidebarOpen()) setLeftSidebarOpen(true);
-  activeWindow().dispatchEvent(new Event("tine-new-workspace"));
+  const dispatch = () => {
+    const event = new CustomEvent("tine-open-workspace-menu", { cancelable: true, detail: { create } });
+    activeWindow().dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  if (!dispatch() && !sidebarOpen()) { setLeftSidebarOpen(true); dispatch(); }
 }
+
+/** Open the existing workspace picker, revealing its sidebar when needed. */
+export function openWorkspaceMenu(): void { requestWorkspaceMenu(false); }
+
+/** Open that picker with its existing New workspace form. */
+export function openWorkspaceCreation(): void { requestWorkspaceMenu(true); }

@@ -21,7 +21,6 @@ import { changedAny } from "../changeKeys";
 import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
-import { applyGraphChange } from "../document";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
@@ -84,6 +83,7 @@ import { mediaEditorSetting, type SettingDescriptor } from "./settingsDescriptor
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
+import { ToolbarSettings } from "./ToolbarSettings";
 import { CustomCssSettings } from "./CustomCssSettings";
 import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { backend, isTauri, type BackupInfo } from "../backend";
@@ -210,8 +210,11 @@ export function Settings(): JSX.Element {
     const requested = settingsTabRequest();
     if (!requested) return;
     if (requested === "plugins" && settingsPlatform.loading) return;
-    setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
-    setPaneOpen(true);
+    if (requested === "toolbar") openSearchResult(settings["toolbar-title"]);
+    else {
+      setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
+      setPaneOpen(true);
+    }
     setRevealedQuery("");
     clearSettingsTabRequest();
   });
@@ -531,6 +534,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
   return (
     <>
       <LanguageSetting />
+      <ToolbarSettings />
 
       <div class="settings-row" {...settingAttributes(settings["settings-ui-mode"])}>
         <span class="settings-label">{settingLabel(settings["settings-ui-mode"])}</span>
@@ -1242,14 +1246,11 @@ function BackupsTab(): JSX.Element {
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  const reconcile = async (op: () => Promise<void>, ok: Msg, kept?: { path: string; name: string }) => {
+  const reconcile = async (op: () => Promise<void>, ok: Msg) => {
     const owner = bindingOwner();
     try {
       const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
-      // Own-origin writes raise no watcher event, so a view of the kept day reloads here through the ordinary
-      // external-change rule (as ConflictResolution's apply does): a clean view takes the merged file.
-      if (kept) await applyGraphChange({ path: kept.path, name: kept.name, kind: "journal", created: false, removed: false }, true);
       pushToast(ok, "success");
       await refreshJournalConflicts();
     } catch (e) {
@@ -1293,7 +1294,6 @@ function JournalConflictsPanel(): JSX.Element {
                     onMerge={!f.canonical && canonical ? () => void reconcile(
                       () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
                       msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name }),
-                      { path: canonical.path, name: c.title },
                     ) : undefined}
                     onRename={(n) => void reconcile(
                       () => backend().renameFileToPage(f.path, n, "rename-page"),

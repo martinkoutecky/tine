@@ -6,6 +6,13 @@ import { exportSheets } from "./exportSheets";
 afterEach(() => vi.restoreAllMocks());
 
 describe("exportSheets", () => {
+  it("carries the same comments choice into print and live sheet preparation", async () => {
+    const read = vi.spyOn(backend(), "sheetExportInputs").mockResolvedValue([]);
+    await exportSheets(["Page"], { kind: "print", includeComments: false });
+    expect(read).toHaveBeenLastCalledWith(["Page"], { kind: "print", includeComments: false });
+    await exportSheets(undefined, { kind: "live", allPages: false, includeComments: false });
+    expect(read).toHaveBeenLastCalledWith(undefined, { kind: "live", allPages: false, includeComments: false });
+  });
   it("hands the publication scope to the input read, so a private row never reaches the evaluator", async () => {
     const read = vi.spyOn(backend(), "sheetExportInputs").mockResolvedValue([]);
     await exportSheets(undefined, { kind: "live", allPages: false });

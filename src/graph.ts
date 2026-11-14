@@ -10,7 +10,7 @@ import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpo
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
-import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded, tryFreezeGraphRewrite } from "./document";
+import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
@@ -475,7 +475,7 @@ export function refreshAfterRename(follow: PageFollower, reopened?: PageTarget):
 }
 
 installRenameRefreshHandler(refreshAfterRename);
-installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded });
+installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks });
 
 export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled" | { refused: RenameRefusal };
 

@@ -20,6 +20,7 @@ use tine_core::query::{
 use tine_core::refs;
 pub(crate) mod eval;
 pub(crate) mod exec;
+mod export_hydration;
 pub(crate) mod index;
 pub(crate) mod link_graph;
 pub(crate) mod memo;
@@ -2387,11 +2388,9 @@ pub(crate) fn export_query_subtrees(
             }
         }
 
-        // Borrow at most `max_roots` matching blocks. Walking with an explicit
-        // stack avoids both recursive call growth and variadic child spreading on
-        // a page with hundreds of thousands of direct children.
+        // Borrow at most `max_roots` blocks in one depth-bounded ancestry walk.
         let total_wanted = wanted_by_page.values().map(HashSet::len).sum::<usize>();
-        let mut found: HashMap<(PageKind, String, String), &DocBlock> = HashMap::new();
+        let mut found: HashMap<(PageKind, String, String), (&DocBlock, bool)> = HashMap::new();
         // The page's header property block is a row of a block query (exec.rs
         // `Hit::PageProperty`) but lives in `Document::pre_block`, not in
         // `roots`: it is rebuilt here exactly as the query rebuilds it.
@@ -2415,8 +2414,7 @@ pub(crate) fn export_query_subtrees(
                     header,
                 );
             }
-            let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
-            while let Some(block) = stack.pop() {
+            for (block, comment) in export_hydration::blocks_with_comment_context(&doc.roots) {
                 let property_id = block.property("id");
                 let matched = if wanted.contains(block.uuid.as_str()) {
                     Some(block.uuid.as_str())
@@ -2424,13 +2422,13 @@ pub(crate) fn export_query_subtrees(
                     property_id.as_deref().filter(|id| wanted.contains(*id))
                 };
                 if let Some(id) = matched {
-                    found.insert((entry.kind, entry.name.clone(), id.to_string()), block);
+                    found.insert(
+                        (entry.kind, entry.name.clone(), id.to_string()),
+                        (block, comment),
+                    );
                     if found.len() + headers.len() == total_wanted {
                         break;
                     }
-                }
-                for child in block.children.iter().rev() {
-                    stack.push(child);
                 }
             }
         }
@@ -2445,7 +2443,10 @@ pub(crate) fn export_query_subtrees(
                 let mut omitted_nodes = 0usize;
                 for root in query.roots {
                     let wanted = (root.kind, root.page.clone(), root.id.clone());
-                    let Some(block) = found.get(&wanted).copied().or_else(|| headers.get(&wanted))
+                    let Some((block, comment)) = found
+                        .get(&wanted)
+                        .copied()
+                        .or_else(|| headers.get(&wanted).map(|block| (block, false)))
                     else {
                         // The graph changed between query evaluation and the
                         // borrowed hydration snapshot. Count the missing result as
@@ -2464,6 +2465,7 @@ pub(crate) fn export_query_subtrees(
                         continue;
                     };
                     dto.page_property = headers.contains_key(&wanted);
+                    dto.comment = comment;
                     shown += 1;
                     if let Some(group) = groups
                         .iter_mut()
@@ -2513,18 +2515,16 @@ pub(crate) fn preview_block_with_budget(
     // The exact block index names the answering page (see `resolve_blocks`).
     let (_, (entry, doc)) = graph.block_owner_page(uuid, true)?;
     touch_page();
-    let mut found: Option<&DocBlock> = None;
-    walk(&doc.roots, &mut |block| {
-        if found.is_none() && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
-        {
-            found = Some(block);
-        }
-    });
-    let block = found?;
+    let (block, comment) = export_hydration::blocks_with_comment_context(&doc.roots)
+        .find(|(block, _)| block.uuid == uuid || block.property("id").as_deref() == Some(uuid))?;
     let total = subtree_node_count(block);
     let mut remaining_nodes = max_nodes;
     let mut remaining_bytes = max_bytes;
     let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+        .map(|mut dto| {
+            dto.comment = comment;
+            dto
+        })
         .into_iter()
         .collect::<Vec<_>>();
     let emitted = max_nodes - remaining_nodes;

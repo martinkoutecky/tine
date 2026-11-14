@@ -30,7 +30,7 @@ it("exports the opening selection snapshot in each source page's format", () => 
     root.querySelector<HTMLButtonElement>(".export-btn-primary")!.click();
     const request = exportModal();
     expect(request && "nodes" in request ? request.nodes : null).toEqual([
-      { raw: "Org Source", format: "org", children: [{ raw: "TODO a", format: "org", children: [] }] },
+      { raw: "Org Source", format: "org", children: [{ id: "a", hasParent: false, raw: "TODO a", format: "org", children: [] }] },
     ]);
   } finally { dispose(); }
 });

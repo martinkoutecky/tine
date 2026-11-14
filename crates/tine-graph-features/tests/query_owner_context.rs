@@ -63,9 +63,9 @@ fn check(query: &str, sheet: bool) {
                 .unwrap()
             })
             .collect();
-        publish_live_with_sheets(&store, &out, "Context", false, &bundle, exports).unwrap();
+        publish_live_with_sheets(&store, &out, "Context", false, true, &bundle, exports).unwrap();
     } else {
-        publish_live(&store, &out, "Context", false, &bundle).unwrap();
+        publish_live(&store, &out, "Context", false, true, &bundle).unwrap();
     }
     let snap: Value =
         serde_json::from_slice(&fs::read(out.join("context/app/snapshot.json")).unwrap()).unwrap();
@@ -183,7 +183,7 @@ fn published_query_keys_preserve_authored_table_and_tine_views() {
     fs::write(root.join("pages/Private.md"), "- TODO secret\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let bundle = vec![("index.html".into(), b"<html><head></head></html>".to_vec())];
-    publish_live(&store, &out, "Views", false, &bundle).unwrap();
+    publish_live(&store, &out, "Views", false, true, &bundle).unwrap();
     let snapshot: Value =
         serde_json::from_slice(&fs::read(out.join("views/app/snapshot.json")).unwrap()).unwrap();
     let records = snapshot["queries"].as_array().unwrap();

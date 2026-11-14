@@ -1,6 +1,6 @@
 import { backend } from "../backend";
-import { graphOwner, readOwned } from "../owned";
-import { ensurePageLoaded, pageByName } from "../document";
+import { graphOwner } from "../owned";
+import { admitRead, ensurePageLoaded, pageByName } from "../document";
 import type { RefGroup } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { reportUiFailure } from "../uiFailure";
@@ -312,24 +312,16 @@ export async function hydrateVisibleQueryPages(
     hydrationClaims.set(claimKey, identity);
 
     const job = limited(scope, async () => {
-      // A stale queued task must die before IPC, not merely discard afterward.
-      if (!sameGraph(root, epoch)) return;
-      const occupied = pageByName(group.page);
-      if (occupied) return;
-      const result = await readOwned(graphOwner(() => sameGraph(root, epoch)), group.path
+      // Only an empty slot still wants hydration, before IPC and at admission.
+      await admitRead(graphOwner(() => sameGraph(root, epoch) && !pageByName(group.page)), () => group.path
         ? backend().getPageByPath(group.path)
-        : backend().getPage(group.page, group.kind));
-      if (result.kind === "stale") return;
-      const dto = result.value;
-      // Recheck occupancy after the await: another surface may have loaded a
-      // same-name twin meanwhile. Never replace or alias that identity.
-      const after = pageByName(group.page);
-      if (after) return;
-      if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.id !== group.path)) return;
-      // Consume the refusal rather than assume installation: a declined load
-      // leaves the row DTO-only; a later interaction re-drives it (master
-      // 7bd793bd0). Nothing below may treat the page as loaded.
-      if (ensurePageLoaded(dto)) return;
+        : backend().getPage(group.page, group.kind), dto => [group.page, ...(dto ? [dto.name] : [])], dto => {
+        if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.id !== group.path)) return;
+        // Consume the refusal rather than assume installation: a declined load
+        // leaves the row DTO-only; a later interaction re-drives it (master
+        // 7bd793bd0). Nothing below may treat the page as loaded.
+        if (ensurePageLoaded(dto)) return;
+      });
     }).finally(() => {
       pageHydrations.delete(key);
       releaseClaim(claimKey, identity);

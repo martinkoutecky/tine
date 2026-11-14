@@ -34,6 +34,11 @@ Logseq revert (#941).
 
 ## Failure modes
 
+H9TvA (D-20261113-CO/CO2) adds the approved **Include comments** checkbox to
+the existing Graph publication controls. `settings.graph.open` is 8 (was 7),
+accounting for that one export content choice. Other surface and performance
+budgets stay unchanged.
+
 MC9 (D-20261109-MC9; GH #891 c13) explicitly adds **Next comment** and
 **Previous comment** to both the palette and Keyboard shortcuts. The approved
 review capability sets `commands.registry` to 153 (from 151) and
@@ -80,8 +85,16 @@ journey (`scripts/e2e-*.mjs`), not here.
   and `settings.themes.open` = 8, with no net growth in setting controls.
   A palette-only entry would not provide the approved category or keep the
   dynamic theme gallery out of Appearance. The census derives its category
-  probes from the rendered navigation IDs; this lane leaves the commit rationale
-  in its receipt and does not commit.
+  probes from the rendered navigation IDs. With the toolbar section below
+  (+22 controls, 31→53 before the move), Appearance is 23 + 22 = 45.
+- 2026-11-13, GH #926 (D-20261113-UI, approved toolbar design section 3):
+  `settings.appearance.open` 31→53 for the seven actions' up/down and section-move
+  buttons (21), plus Reset (1). These are the approved accessible alternatives
+  to dragging in the two ordered lists. `menu.topbarOverflow` 8→10 for Workspaces
+  and Customize toolbar; its probe chooses all optional actions for the menu
+  and counts every menuitem, including the fixed Customize row. The default
+  toolbar count and all timing/memory budgets are unchanged. This records the
+  approved capability's controls, rather than raising a performance budget.
 - 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
   `settings.appearance.open` 30→31 for the explicitly requested **Comments**
   display selector, **In the margin** / **On click**, beside the other display

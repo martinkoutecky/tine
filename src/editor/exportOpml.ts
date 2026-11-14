@@ -1,4 +1,5 @@
 import type { ExportNode } from "./exportText";
+import { exportCommentLabel } from "./exportProjection";
 import {
   escapeXmlAttribute,
   escapeXmlText,
@@ -9,7 +10,7 @@ import {
 } from "./exportMarkup";
 
 function outline(node: ExportNode, options: MarkupExportOptions, level: number, indent: string): string[] {
-  const text = escapeXmlAttribute(nodeText(node, options));
+  const text = escapeXmlAttribute((node.comment ? `[${exportCommentLabel(node)}] ` : "") + nodeText(node, options));
   const children = includesChildren(level, options.maxDepth) ? node.children : [];
   if (!children.length) return [`${indent}<outline text="${text}"/>`];
   return [

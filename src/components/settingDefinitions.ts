@@ -3,6 +3,7 @@
 import type { SettingDescriptor } from "./settingsDescriptor";
 
 export const settings = {
+  "toolbar-title": {"id":"toolbar-title","tab":"appearance","label":{"kind":"msg","id":"toolbar-title"},"description":{"kind":"msg","id":"toolbar-description"},"aliases":["buttons","customize","overflow"]},
   "settings-comments-display": {"id":"settings-comments-display","tab":"appearance","label":{"kind":"msg","id":"settings-comments-display"},"description":{"kind":"msg","id":"settings-comments-display-hint"}},
   "settings-author-marks": {"id":"settings-author-marks","tab":"appearance","label":{"kind":"msg","id":"settings-author-marks"},"description":{"kind":"msg","id":"settings-author-marks-hint"}},
   "settings-show-workspaces": {"id":"settings-show-workspaces","tab":"appearance","label":{"kind":"msg","id":"settings-show-workspaces"},"description":{"kind":"msg","id":"settings-show-workspaces-hint"},"aliases":["features","workspaces","hide","switcher"],"level":"advanced"},
