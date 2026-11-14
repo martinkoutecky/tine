@@ -102,13 +102,15 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
   };
 }
 
-/** After the fence-scaffold language picker closes, show only the new code
- * body with the caret at its start (GH #879). */
+/** After the fence-scaffold language picker closes, show only its body and
+ * map the source selection into it, including input already committed there. */
 export function reenterCodeBody(view: { enter: (start: number) => void }, scaffold: { open: string; body: string }, ref: HTMLTextAreaElement, autosize: () => void): void {
+  const offset = (pos: number) => Math.max(0, Math.min(scaffold.body.length, pos - scaffold.open.length));
+  const start = offset(ref.selectionStart), end = offset(ref.selectionEnd), direction = ref.selectionDirection;
   view.enter(scaffold.open.length);
   queueMicrotask(() => {
     ref.value = scaffold.body;
-    ref.setSelectionRange(0, 0);
+    ref.setSelectionRange(start, end, direction);
     autosize();
   });
 }
