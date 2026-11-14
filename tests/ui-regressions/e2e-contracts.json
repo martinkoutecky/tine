@@ -1424,7 +1424,7 @@
       "stability": "stable"
     },
     "scripts/e2e-query-workspace.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state. Find retains slowly typed text, hands linked and unlinked reference searches to their named section (GH #935), and highlights matches in a query workspace's own rows.", "blocking": true }],
       "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct; a highlighted unlinked mention may itself open and select the exact source occurrence without a redundant numbered jump row.", "One state-dependent bulk toggle may replace separate Collapse all and Expand all buttons for linked and unlinked reference groups."],
       "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
       "stability": "stable"
