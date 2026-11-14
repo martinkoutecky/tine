@@ -1280,7 +1280,7 @@ impl<'a> Ctx<'a> {
 fn tine_block_ids(view: &WholeGraph) -> BTreeMap<String, BlockId> {
     fn walk(blocks: &[DocBlock], path: &str, i: &mut usize, out: &mut BTreeMap<String, BlockId>) {
         for b in blocks {
-            out.insert(b.uuid.clone(), (path.to_owned(), *i));
+            out.insert(b.uuid.to_string(), (path.to_owned(), *i));
             *i += 1;
             walk(&b.children, path, i, out);
         }

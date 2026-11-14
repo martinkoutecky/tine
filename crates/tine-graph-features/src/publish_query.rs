@@ -108,7 +108,7 @@ pub fn query_request_by_uuid(
             .map(str::to_owned)
             .or(title)
             .unwrap_or_else(|| format!("Query {uuid}")),
-        host_block_id: Some(block.uuid.clone()),
+        host_block_id: Some(block.uuid.to_string()),
         folder: None,
         replace,
         asset_budget_bytes: None,

@@ -687,8 +687,8 @@ fn diff3_offers_no_merged_body_whose_reparse_would_split() {
     assert_eq!(theirs.roots.len(), 1);
     assert_eq!(
         crate::text_merge::merge_disjoint(
-            &base.roots[0].raw,
-            &mine.roots[0].raw,
+            &base.roots[0].raw(),
+            &mine.roots[0].raw(),
             &theirs.roots[0].raw
         )
         .as_deref(),
@@ -885,8 +885,8 @@ fn an_artifact_that_would_split_into_two_blocks_is_not_offered() {
     let (base, mine, theirs) = overlapping();
     let mut forged = parse(&format!("- the quick brown fox leapt\n{ID}"));
     // A body that re-parses as a bullet of its own.
-    forged.roots[0].raw = "leapt\n- and a second bullet".to_string();
-    assert!(!merged_body_is_valid(&forged.roots[0].raw, false));
+    forged.roots[0].raw = "leapt\n- and a second bullet".into();
+    assert!(!merged_body_is_valid(&forged.roots[0].raw(), false));
     let d = diff3_docs_with_artifact(&base, &mine, &theirs, Some(&forged));
     assert!(d.rows[0].merged.is_none());
 }
@@ -945,8 +945,8 @@ fn applying_a_confirmed_artifact_writes_the_suggested_body() {
     .unwrap();
     assert_eq!(merged.len(), 1);
     // Byte-for-byte the body the user was shown, id:: and all.
-    assert_eq!(merged[0].raw, offered);
-    assert_eq!(merged[0].raw, artifact.roots[0].raw);
+    assert_eq!(merged[0].raw(), offered);
+    assert_eq!(merged[0].raw(), artifact.roots[0].raw());
 }
 
 /// Determinism the other way round: with a computed body available the
