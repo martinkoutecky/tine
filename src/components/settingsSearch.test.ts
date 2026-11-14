@@ -33,6 +33,16 @@ it("matches translated and original English vocabulary after a language change",
 const text = (value: string | Msg) => typeof value === "string" ? value : render(value);
 const labelsFor = (query: string) => rankedSettingMatches(settingEntries(), query).map(entry => text(entry.label));
 
+it("finds each Git explanation after they are split into sections (#952)", async () => {
+  for (const query of ["pending", "upstream", ".gitignore"]) {
+    expect(labelsFor(query)).toContain("Commit changes to git");
+  }
+  await setActiveLocale("zh-CN");
+  for (const query of ["等待", "同步", "忽略"]) {
+    expect(labelsFor(query)).toContain("将更改提交到 git");
+  }
+});
+
 it("explains matches outside the visible label, including keyword and alias hits (GH #706)", async () => {
   await setActiveLocale("zh-CN");
   const embed = settingEntries().find(entry => text(entry.label) === "块嵌入面包屑")!;

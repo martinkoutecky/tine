@@ -18,6 +18,22 @@ function mount() {
   return { root, dispose };
 }
 
+it("separates three general rules from this device's git status", async () => {
+  vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({
+    last: { commit: "0123456789", committed_at: 1700000000, refused: null, stale_lock: null,
+      gitignore_added: "/graph/.gitignore", gitignore_lines: ["logseq/.tine-*"] },
+    sync_unusable: ["no-upstream", "configure one tracked upstream before syncing"],
+  }));
+  const { root, dispose } = mount();
+  await vi.waitFor(() => expect(root.textContent).toContain("Branch: main"));
+  expect(Array.from(root.querySelectorAll("h1,h2,h3,h4,h5,h6,[role=heading]"), el => el.textContent)).toEqual(["When Tine commits", "Sync", "Ignored files"]);
+  expect(root.textContent).toContain("even while you keep editing");
+  for (const text of ["Branch: main", "Last commit 01234567", "Tine can't sync here", "Tine added logseq/.tine-*"]) {
+    expect(Array.from(root.querySelectorAll("[role=status]"), el => el.textContent).some(line => line?.includes(text))).toBe(true);
+  }
+  dispose();
+});
+
 it("makes the bound graph a repository and exposes its controls with automatic commits off", async () => {
   vi.spyOn(backend(), "gitAutocommitStatus").mockResolvedValue(repo({ repository: false, branch: null }));
   let finish!: (s: GitAutocommitStatus) => void;
@@ -168,8 +184,8 @@ it("names the ignore file and rule, explains removal, and discloses a failed set
   }));
   let view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added .syncthing.* to /graph/.gitignore"));
-  expect(view.root.textContent).toContain("You can remove the line; Tine won't add it again");
-  expect(view.root.textContent).toContain("Conflict copies are still committed");
+  expect(view.root.textContent).toContain("You can remove either line and Tine won't add it again");
+  expect(view.root.textContent).toContain("conflict copies are committed unless your own rules ignore them");
   view.dispose(); document.body.innerHTML = "";
 
   status.mockResolvedValue(repo({
@@ -193,8 +209,8 @@ it("names the Tine line, alone or with the Syncthing line, in the same status li
   }));
   let view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added logseq/.tine-* to /graph/.gitignore"));
-  expect(view.root.textContent).toContain("Copies already in git are removed from it, not from disk, in a separate Tine commit");
-  expect(view.root.textContent).not.toContain(".syncthing.*");
+  expect(view.root.textContent).toContain("removes already tracked device copies from git, not disk, in a separate commit");
+  expect(Array.from(view.root.querySelectorAll("[role=status]"), el => el.textContent).join("")).not.toContain(".syncthing.*");
   view.dispose(); document.body.innerHTML = "";
 
   status.mockResolvedValue(repo({
@@ -205,7 +221,7 @@ it("names the Tine line, alone or with the Syncthing line, in the same status li
   }));
   view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added .syncthing.* and logseq/.tine-* to /graph/.gitignore"));
-  expect(view.root.querySelectorAll("[role=status]").length).toBe(1);
+  expect(Array.from(view.root.querySelectorAll("[role=status]"), el => el.textContent).filter(line => line?.includes("Tine added"))).toHaveLength(1);
   view.dispose(); document.body.innerHTML = "";
 
   status.mockResolvedValue(repo({

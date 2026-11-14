@@ -186,6 +186,10 @@ write is reported uncommitted (L7s5-02). Concurrent commits on the same branch r
 
 ### 3. When
 Per G9: when no page has saved for 60 s and the interval (default 10 min) has passed since the last autocommit;
+also when changes have been pending for max(60 minutes, the configured interval), even during continuous saves
+(#951). The first observed change after a successful commit starts that deadline; later saves and refused
+attempts do not restart it. Only a successful commit resets it. Existing safety refusals still win and are
+reported as failed attempts. Eligibility is checked on the existing 15-second worker tick.
 at once when the last window closes or the app goes to the background (on Android and iOS without an interval limit,
 slice 3, D-20261101-GB), before every pull, and around a
 structural operation (rename, merge, delete or move of a page, restore from backup): commit pending changes
@@ -336,7 +340,12 @@ Measured in the spike (`specs/campaigns/2026-10-git-sync/spike/measure/*.txt`, c
   25 KB at 1 000. Files: one loose object per new object (blobs + 2 trees + commit), plus ref and reflog, and the
   index rewritten whole (880 KB at 10 000 pages). Index install: one fsync of the index copy and one of `.git`
   (Windows: none, identity checks only) per commit (s3.7 P1b; counted from the code, `IndexLock::install`).
-- **Rate:** timed autocommits remain at most once per interval of editing (default 10 min, ≤ 6 per editing hour).
+- **Rate:** idle commits remain at most once per interval of editing (default 10 min, ≤ 6 per editing hour).
+  The continuous-edit deadline adds at most one commit per max(60 minutes, interval) compared with the old
+  continuous-edit path (zero timed commits). Both triggers share the minimum-interval gate, so the default
+  total remains ≤ 6 timed commits per editing hour, with ≤ 1 from the deadline; these bounds are not additive.
+  Continuous saves every 30 seconds produce one deadline commit per hour, and a longer configured interval
+  remains the minimum gap.
   Background on Android/iOS commits pending edits immediately without a rate cap (D-20261101-GB); quit,
   pre-pull and structural-operation commits also run outside the timed cadence. An unchanged app switch creates
   no commit, and nothing rewrites or coalesces history or force-pushes. The incremental repack at 50 commits

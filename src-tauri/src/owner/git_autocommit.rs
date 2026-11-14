@@ -12,8 +12,9 @@
 //! pathspec pattern (a folder named `Notes [work]` is a glob).
 //!
 //! When (G9): when nothing was published for [`IDLE`] and the interval
-//! (a setting, default 10 min) has passed since the last autocommit; at once
-//! when the binding ends, the app exits or mobile goes to the background;
+//! (a setting, default 10 min) has passed since the last autocommit;
+//! also after max(60 min, interval) with changes pending, even during edits;
+//! at once when the binding ends, the app exits or mobile goes to the background;
 //! and around a structural
 //! operation ([`around`]). One worker thread per graph root does the timed
 //! commits; libgit2 never runs on an async worker. Autocommits take the CLI
@@ -48,8 +49,10 @@ use super::git_sync::Credentials;
 use super::git_sync_cycle::SyncStatus;
 use crate::state::GraphSlot;
 
-/// No publication for this long before a timed autocommit (G9).
-pub(crate) const IDLE: Duration = Duration::from_secs(60);
+#[path = "git_commit_cadence.rs"]
+mod cadence;
+use cadence::CommitCadence;
+pub(crate) use cadence::IDLE;
 /// The default interval between timed autocommits (G9; a setting).
 pub(crate) const DEFAULT_INTERVAL_MINUTES: u32 = 10;
 const MIN_INTERVAL_MINUTES: u32 = 1;
@@ -1123,7 +1126,7 @@ fn ended(slot: Option<&Arc<GraphSlot>>) -> bool {
 fn autocommit_worker(worker: Arc<registry::Worker>) {
     let root = worker.root.clone();
     let mut last_rev = None;
-    let mut changed_at: Option<Instant> = None;
+    let mut cadence = CommitCadence::default();
     let mut last_commit: Option<Instant> = None;
     let mut busy_since: Option<(Instant, u32)> = None;
     let mut checked_loose = false;
@@ -1172,26 +1175,25 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
         drop(slot);
         if rev.is_some() && rev != last_rev {
             if last_rev.is_some() {
-                changed_at = Some(Instant::now());
+                cadence.changed(Instant::now());
             }
             last_rev = rev;
         }
         let commit = settings.policy.commits() && !EXITING.load(Ordering::Acquire);
         // "Sync now" commits pending changes first, whatever the cadence.
         let sync_now = sync_now && settings.policy.syncs();
-        let due = changed_at.is_some_and(|at| at.elapsed() >= IDLE)
-            && last_commit.is_none_or(|at| at.elapsed() >= settings.interval);
+        let due = cadence.due(Instant::now(), last_commit, settings.interval);
         // At bind: changes made while Tine was closed are committed after
         // the first idle period too.
         let first = last_commit.is_none()
-            && changed_at.is_none()
+            && !cadence.has_changes()
             && rev.is_some()
             && started.elapsed() >= IDLE;
         // Backgrounded: commit what is pending (nothing committed yet this
         // binding counts as pending), without waiting for the interval
         // (D-20261101-GB). After a successful commit, an unchanged app switch
         // skips the commit attempt; commit_now also creates no empty commit.
-        let background_commit = background && (last_commit.is_none() || changed_at.is_some());
+        let background_commit = background && (last_commit.is_none() || cadence.has_changes());
         let mut committed = false;
         if commit && (flush || ending || due || first || sync_now || background_commit || retry) {
             let outcome = commit_now(&root, MESSAGE);
@@ -1207,7 +1209,7 @@ fn autocommit_worker(worker: Arc<registry::Worker>) {
                     busy_since = None;
                     state.last.refused = None;
                     state.last.stale_lock = None;
-                    changed_at = None;
+                    cadence.succeeded(matches!(done, Outcome::Committed(_)));
                     if let Outcome::Committed(oid) = done {
                         committed = true;
                         last_commit = Some(Instant::now());

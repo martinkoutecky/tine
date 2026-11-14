@@ -1020,9 +1020,13 @@ export interface MessageArgs {
   "git-init-pending": {};
   "git-init-remote": {};
   "git-settings-branch": { "branch": string | number };
+  "git-settings-commits-heading": {};
   "git-settings-hint": {};
   "git-settings-ignore-added": { "path": string | number; "which": string | number };
   "git-settings-ignore-failed": { "which": string | number };
+  "git-settings-ignore-heading": {};
+  "git-settings-ignore-hint": {};
+  "git-settings-ignore-status": { "path": string | number; "which": string | number };
   "git-settings-interval": {};
   "git-settings-interval-aria": {};
   "git-settings-label": {};
@@ -1040,6 +1044,7 @@ export interface MessageArgs {
   "git-settings-remote": { "name": string | number; "url": string | number };
   "git-settings-repack-deferred": {};
   "git-settings-save-failed": { "error": string | number };
+  "git-settings-search-hint": {};
   "git-settings-sign-in": {};
   "git-settings-sign-in-cancel": {};
   "git-settings-sign-in-failed": { "error": string | number };
@@ -1049,6 +1054,8 @@ export interface MessageArgs {
   "git-settings-sign-out-failed": { "error": string | number };
   "git-settings-signed-in": { "origin": string | number; "username": string | number };
   "git-settings-stale-lock": { "path": string | number };
+  "git-settings-sync-heading": {};
+  "git-settings-sync-hint": {};
   "git-settings-sync-now": {};
   "git-settings-sync-now-failed": { "error": string | number };
   "git-settings-sync-unusable": { "message": string | number };
