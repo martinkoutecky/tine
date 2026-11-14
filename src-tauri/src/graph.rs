@@ -844,6 +844,7 @@ pub(crate) fn open_graph_window_blocking(
         #[cfg(target_os = "linux")]
         let builder = crate::youtube_identity::configure(builder, app);
         let builder = crate::workspace_windows::attach(builder, app, &label);
+        let build_started = std::time::Instant::now();
         let built = builder.build();
         match built {
             Ok(window) => {
@@ -855,6 +856,13 @@ pub(crate) fn open_graph_window_blocking(
                 let _ = window.set_focus();
             }
             Err(error) => {
+                let error = error.to_string();
+                crate::flight::record_window_create_failed(
+                    "graph",
+                    &error,
+                    app.webview_windows().len(),
+                    u64::try_from(build_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                );
                 let _ = crate::state::release_window_graph(&state.graphs, &label);
                 crate::spotlight::released(app, &label, None);
                 return Err(format!("couldn't create graph window: {error}"));
@@ -1401,6 +1409,27 @@ mod tests {
     /// app-data dir on all five shipped targets. The `dirs` crate the first
     /// revision used has no Android arm (it resolves `$HOME/.local/share`,
     /// outside the app sandbox), so Android and iOS kept no checkpoint.
+    /// GH #713 (ADR 0058, `window.create_failed`): a graph window gets a WebView2
+    /// environment of its own, a workspace popup shares its opener's. The
+    /// diagnostics `window` token reports that difference, so pin it.
+    #[test]
+    fn graph_windows_build_their_own_webview_environment_and_popups_share_one() {
+        let source = include_str!("graph.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        let start = production
+            .find("pub(crate) fn open_graph_window_blocking")
+            .unwrap();
+        let body = &production[start..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(body.contains("record_window_create_failed(\n                    \"graph\""));
+        for shared in ["window_features", "with_environment", ".environment("] {
+            assert!(!body.contains(shared), "graph window names {shared}");
+        }
+        let popups = include_str!("workspace_windows.rs");
+        assert!(popups.contains(".window_features(features)"));
+        assert!(popups.contains("record_window_create_failed(\n                    \"workspace\""));
+    }
+
     #[test]
     fn launch_checkpoints_live_in_tauri_app_data_on_every_platform() {
         let app_data = Path::new("/app-data");

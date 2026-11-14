@@ -2439,6 +2439,8 @@ mod og_20d_guide_tests {
             vec!["handle", "printed name", "title::", "file you read"],
             vec!["1 mib", "tine edit", "frame-too-large", "before changing"],
             vec!["tine.author::", "agent", "--author", "tine_author"],
+            vec!["by default", "every block", "tine.author::"],
+            vec!["tine edit", "tine_author", "commits", "--author"],
             vec![
                 "--no-author",
                 "personal script",
