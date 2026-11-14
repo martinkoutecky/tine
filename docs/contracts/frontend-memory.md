@@ -4,11 +4,9 @@ Backend facets belong to loaded document nodes. Removing or replacing an owner
 releases its seed; identical text shared by loaded nodes retains one entry until
 the final owner leaves. A loaded page of any size keeps every shipped facet.
 
-Admitting a fresh read of an already loaded file compares its revision with the
-installed baseline. A changed revision replaces clean content through the shared
-reload gate, including after a duplicate-journal merge. Unsent input, host custody
-and component drafts keep their existing protections; held reads replay when safe.
-An unchanged revision keeps the loaded nodes without comparing the page body.
+Read applicability and own-publication delivery follow
+[`storage-contract.md`](../storage-contract.md). An applicable unchanged-revision
+read keeps the loaded nodes without comparing the page body.
 
 Historical parse results have an 8 MiB aggregate charge, an 8,000 entry cap, and
 a 1 MiB single-entry admission limit. Charge includes UTF-16 source plus a
@@ -75,4 +73,7 @@ is retained for this geometry.
 Find/Replace searches loaded days only. When Journals is visible, Find shows
 “N older days not searched — search all journals” for retired days. Its action
 opens the existing graph-wide search tab with the current query (D-20261022-JN).
-Find never reads retired bodies from disk.
+Find never reads retired bodies from disk. Find also leaves reference panels
+out of its count, which would otherwise grow as their groups mount on scroll; it
+names them, and its action opens the panel's own search with the query (GH #935;
+[reference rendering contract](reference-rendering.md)).

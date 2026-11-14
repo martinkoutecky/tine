@@ -610,16 +610,16 @@ export function selectCellAfterEdit(sel: SheetCellCtx): void {
 // The direction vocabulary IS the shared nav protocol's (ADR 0034).
 type CellDirection = NavDirection;
 
-function flowOutVertical(sel: { gridId: string }, dir: "up" | "down"): boolean {
+function flowOutVertical(sel: { gridId: string; surfaceId?: string }, dir: "up" | "down"): boolean {
   clearCellSelectionOnly();
   const target = dir === "up" ? prevVisible(sel.gridId) : nextVisible(sel.gridId);
-  selectBlock(target ?? sel.gridId);
+  selectBlock(target ?? sel.gridId, null, sel.surfaceId);
   return true;
 }
 
-function exitLeft(sel: { gridId: string }): boolean {
+function exitLeft(sel: { gridId: string; surfaceId?: string }): boolean {
   clearCellSelectionOnly();
-  selectBlock(sel.gridId);
+  selectBlock(sel.gridId, null, sel.surfaceId);
   return true;
 }
 
@@ -950,7 +950,7 @@ function reselectAfterRemoval(gridId: string, row: number, col: number, surfaceI
   if (next) setCellSel(next);
   else {
     clearCellSelectionOnly();
-    selectBlock(gridId);
+    selectBlock(gridId, null, surfaceId);
   }
 }
 
@@ -989,7 +989,7 @@ function deleteFromSeam(sel: RowSeamSel | ColSeamSel, side: "before" | "after"):
     if (next) setCellSel(next);
     else {
       clearCellSelectionOnly();
-      selectBlock(sel.gridId);
+      selectBlock(sel.gridId, null, sel.surfaceId);
     }
     return true;
   }
@@ -1002,7 +1002,7 @@ function deleteFromSeam(sel: RowSeamSel | ColSeamSel, side: "before" | "after"):
   if (next) setCellSel(next);
   else {
     clearCellSelectionOnly();
-    selectBlock(sel.gridId);
+    selectBlock(sel.gridId, null, sel.surfaceId);
   }
   return true;
 }
@@ -1082,7 +1082,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
         return true;
       }
       clearCellSelectionOnly();
-      selectBlock(sel.gridId);
+      selectBlock(sel.gridId, null, sel.surfaceId);
       return true;
     }
     case "extend":

@@ -83,7 +83,6 @@ settings-appearance = 外观
 
 settings-could-not-read-the-system-tray-state = 无法读取系统托盘状态。
 
-settings-could-not-load-copy-subtree-preference = 无法加载复制子树偏好。
 
 settings-could-not-load-collapsed-copy-preference = 无法加载复制折叠属性偏好。
 
@@ -321,6 +320,8 @@ settings-rescan = 重新扫描
 settings-scan-for-orphans = 扫描未引用文件
 
 settings-ui-appearance = 外观
+settings-back-to-list = 返回设置
+settings-close = 关闭设置
 
 settings-ui-editor = 编辑器
 
@@ -357,7 +358,7 @@ settings-ui-restore-settings-size = 还原设置窗口大小
 
 settings-ui-maximize-settings = 最大化设置窗口
 
-settings-ui-config-edn-could-not-be-read-this-graph-is = 无法读取 config.edn。此图谱为只读，请修复配置并重新打开图谱。
+settings-ui-config-edn-could-not-be-read-this-graph-is = { ui-failure-config-read }
 
 settings-ui-no-matching-settings = 没有匹配的设置
 
@@ -367,7 +368,6 @@ settings-ui-differs-from-logseq = 与 Logseq 不同
 
 settings-og-reference-spacing = Logseq：不加空格，光标停在右括号后。
 
-settings-og-copy-subtree = Logseq：始终复制所选块的整个子树。
 
 settings-og-copy-collapsed = Logseq：复制文本时保留 collapsed::（仅去除 id::）。
 
@@ -531,9 +531,7 @@ settings-ui-ctrl-k-ranking-reset-for-this-graph = 已重置此图谱的 Ctrl+K �
 
 settings-ui-reset-ranking = 重置排序
 
-settings-ui-copy-a-parent-block-s-sub-blocks = 复制父块的子块
 
-settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块。Tine 默认关闭，避免仅选中父块却复制整个子树。
 
 settings-ui-strip-collapsed-when-copying = 复制时去除 collapsed::
 
@@ -782,6 +780,8 @@ settings-prose-file-size = { $value } { $unit }
 diagnostics-refresh-everything = 每次保存时刷新所有内容（调试）
 settings-cm6-label = 实验性：CodeMirror 编辑器
 settings-reference-previews = 引用预览
+settings-reference-previews-preference = 引用预览偏好设置
+toast-reference-previews-save-failed = 无法保存{ settings-reference-previews-preference }。
 settings-reference-previews-hint = 鼠标停在页面、标签或块引用上时，或在触摸屏上长按页面链接或标签时，打开其预览。关闭后预览不再打扰你，此时长按页面链接或标签会打开它的菜单。保存在 <code>config.edn</code> 的 <code>:ui/enable-tooltip?</code> 中，与 Logseq 一致。
 settings-hover-preview-delay = 悬停预览延迟
 settings-hover-preview-delay-seconds = 悬停预览延迟（秒）
@@ -790,3 +790,46 @@ settings-auto-embed-video-links = 自动嵌入粘贴的视频链接
 settings-auto-embed-video-links-hint = 关闭后，粘贴的 YouTube、Vimeo、Loom 和 Bilibili 网址将保留为普通链接。默认开启。粘贴时不会获取视频标题。
 settings-show-workspaces = 显示工作区
 settings-show-workspaces-hint = 在此设备上显示已保存工作区的控件和命令。关闭后仍保留现有工作区。
+settings-show-help-button = 显示帮助按钮
+settings-show-help-button-hint = 在此设备上显示角落里的“?”按钮。关闭后，可在命令面板中用“切换帮助”或在 设置 → 帮助与诊断 中打开帮助。
+
+toast-save-time-tracking-failed = 无法保存{ settings-ui-time-tracking }。
+toast-save-brackets-failed = 无法保存{ settings-ui-show-brackets }。
+toast-save-document-enter-failed = 无法保存{ settings-ui-document-mode-enter-creates-a-new-block }。
+toast-save-outdenting-failed = 无法保存{ settings-ui-logical-outdenting }。
+toast-save-week-start-failed = 无法保存{ settings-ui-first-day-of-week }。
+toast-save-page-format-failed = 无法保存{ settings-ui-file-format }。
+toast-save-favorites-failed = 无法保存{ sidebar-favorites }。
+toast-save-workflow-failed = 无法保存{ settings-ui-task-workflow }。
+toast-save-asset-format-failed = 无法保存{ settings-ui-new-asset-filename }。
+toast-save-launcher-ranking-failed = 无法保存{ settings-ui-learn-ctrl-k-choices }。
+toast-save-media-editor-failed = 无法保存媒体编辑器命令。
+toast-save-reference-click-failed = 无法保存{ settings-ui-click-a-block-reference-to-zoom-in }。
+toast-save-copy-collapsed-failed = 无法保存{ settings-ui-strip-collapsed-when-copying }。
+toast-save-hover-delay-failed = 无法保存{ settings-hover-preview-delay }。
+toast-save-search-results-failed = 无法保存搜索结果偏好。
+toast-save-navigation-buttons-failed = 无法保存{ settings-mobile-navigation-label }。
+toast-save-query-text-failed = 无法保存查询文本偏好。
+toast-save-reuse-tabs-failed = 无法保存{ settings-ui-switch-to-an-already-open-tab-when-navigating }。
+toast-save-note-layout-failed = 无法保存{ settings-ui-right-to-left-note-layout }。
+toast-save-query-export-limit-failed = 无法保存{ query-export-limit-setting-query-export-size-limit }。
+toast-save-reference-completion-failed = 无法保存{ settings-ui-space-after-inserting-a-reference }。
+toast-save-local-images-failed = 无法保存{ settings-ui-load-local-file-images }。
+toast-save-smooth-scroll-failed = 无法保存{ settings-ui-smooth-scrolling-experimental }。
+toast-save-style-failed = 无法保存样式设置。
+toast-save-gallery-theme-failed = 无法保存主题库主题。
+toast-save-automatic-updates-failed = 无法保存{ about-check-for-updates-automatically }。
+toast-save-comment-author-failed = 无法保存{ comment-name-label }。
+toast-save-comment-prompt-failed = 无法保存评论名称提示。
+toast-save-codemirror-failed = 无法保存CodeMirror 编辑器。
+toast-save-link-autocomplete-failed = 无法保存{ settings-ui-link-autocomplete-default }。
+toast-save-capture-enter-failed = 无法保存{ settings-ui-quick-capture-enter-key }。
+toast-save-file-watcher-failed = 无法保存{ settings-ui-watch-for-external-edits }。
+toast-save-spellcheck-failed = 无法保存{ settings-ui-spell-checker }。
+toast-save-spellcheck-languages-failed = 无法保存{ settings-ui-spellcheck-languages }。
+toast-save-workspaces-failed = 无法保存{ settings-show-workspaces }。
+toast-save-help-button-failed = 无法保存{ settings-show-help-button }。
+toast-save-auto-embed-failed = 无法保存{ settings-auto-embed-video-links }。
+toast-save-tray-show-failed = 无法保存{ settings-prose-show-tine-in-the-system-tray }。
+toast-save-tray-minimize-failed = 无法保存{ settings-prose-minimize-to-tray }。
+toast-save-tray-start-failed = 无法保存{ settings-prose-start-minimized-to-tray }。

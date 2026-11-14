@@ -48,7 +48,7 @@ export function logbookWithSecondSupport(): boolean {
 }
 
 export function changeTimetrackingEnabled(enabled: boolean) {
-  changeGraphSetting("enable_timetracking", enabled, (next) => backend().setTimetrackingEnabled(next!), "time tracking preference");
+  changeGraphSetting("enable_timetracking", enabled, (next) => backend().setTimetrackingEnabled(next), msg("toast-save-time-tracking-failed"));
 }
 
 export function showBrackets(): boolean {
@@ -56,7 +56,7 @@ export function showBrackets(): boolean {
 }
 
 export function changeShowBrackets(on: boolean) {
-  changeGraphSetting("show_brackets", on, (next) => backend().setShowBrackets(next), "bracket display preference");
+  changeGraphSetting("show_brackets", on, (next) => backend().setShowBrackets(next), msg("toast-save-brackets-failed"));
 }
 
 /** In document mode, should plain Enter retain the ordinary structural split?
@@ -67,7 +67,7 @@ export function docModeEnterForNewBlock(): boolean {
 }
 
 export function changeDocModeEnterForNewBlock(on: boolean) {
-  changeGraphSetting("doc_mode_enter_for_new_block", on, (next) => backend().setDocModeEnterForNewBlock(next!), "document mode Enter preference");
+  changeGraphSetting("doc_mode_enter_for_new_block", on, (next) => backend().setDocModeEnterForNewBlock(next), msg("toast-save-document-enter-failed"));
 }
 
 /** Logical (Roam-like) outdenting leaves following siblings under their current
@@ -78,7 +78,7 @@ export function logicalOutdenting(): boolean {
 }
 
 export function changeLogicalOutdenting(on: boolean) {
-  changeGraphSetting("logical_outdenting", on, (next) => backend().setLogicalOutdenting(next!), "logical outdenting preference");
+  changeGraphSetting("logical_outdenting", on, (next) => backend().setLogicalOutdenting(next), msg("toast-save-outdenting-failed"));
 }
 
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
@@ -194,13 +194,13 @@ export function firstDayOfWeek(): number {
  *  immediately; invalid indexes clamp to 0..6 and failed writes roll back with a toast. */
 export function changeStartOfWeek(l: number) {
   const n = Math.min(6, Math.max(0, Math.floor(l)));
-  changeGraphSetting("start_of_week", n, (next) => backend().setStartOfWeek(next), "start of week");
+  changeGraphSetting("start_of_week", n, (next) => backend().setStartOfWeek(next), msg("toast-save-week-start-failed"));
 }
 
 /** Persist new-page format and update graphMeta optimistically. Existing files
  * keep their format; failed writes roll back with a toast. */
 export function changePreferredFormat(fmt: "md" | "org") {
-  changeGraphSetting("preferred_format", fmt, (next) => backend().setPreferredFormat(next), "preferred page format");
+  changeGraphSetting("preferred_format", fmt, (next) => backend().setPreferredFormat(next), msg("toast-save-page-format-failed"));
 }
 
 const journalTitleFormatScope = {};
@@ -1413,7 +1413,7 @@ export function requestBlockReferences(id: string) {
   setBlockReferencesRequest({ id, token: ++blockReferencesRequestToken });
 }
 
-export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "sharing" | "plugins" | "diagnostics" | "shortcuts" | "about";
+export type SettingsTabId = "appearance" | "themes" | "editor" | "journals" | "files" | "backups" | "graph" | "sharing" | "plugins" | "diagnostics" | "shortcuts" | "about";
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 
@@ -1421,8 +1421,8 @@ export const [settingsOpen, setSettingsOpen] = createSignal(false);
 // current editor has been committed and no UI interaction may create another
 // mutation until the transition either installs the new graph or aborts.
 export const [graphTransitioning, setGraphTransitioning] = createSignal(false);
-export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | null>(null);
-export function openSettings(tab?: SettingsTabId) {
+export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | "toolbar" | null>(null);
+export function openSettings(tab?: SettingsTabId | "toolbar") {
   if (tab) setSettingsTabRequest(tab);
   setSettingsOpen(true);
 }
@@ -1527,5 +1527,5 @@ export function closePdfExport() {
 
 /** Effective graph-local OG accent-removal setting for frontend search views. */
 export function searchRemoveAccents(): boolean {
-  return graphMeta()?.enable_search_remove_accents !== false;
+  return graphMeta()?.enable_search_remove_accents ?? true;
 }

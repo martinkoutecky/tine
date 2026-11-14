@@ -8,10 +8,9 @@ import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpPageInventoryRev, graphMeta, graphEpoch } from "./graphSession";
 import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, followPagesInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
-import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
-import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded, tryFreezeGraphRewrite } from "./document";
+import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, tryFreezeGraphRewrite } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageFollower, type PageTarget } from "./router";
@@ -42,7 +41,7 @@ import { msg, t, type Msg } from "./i18n";
 import { chooseAliasRename } from "./renameAliasChoice";
 import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 import { primeQuickShareGate } from "./quickShareGate";
-export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
+import { setGraphConfigProblem } from "./graphConfig";
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -53,7 +52,7 @@ const GRAPH_KEY = "tine.graphPath";
  * observers use the new format and in-flight results dated under the old one
  * are dropped (master: same ordering rule as graph bind). Cost: O(favorites),
  * plus one arrangement page read only when membership changes. No write or
- * observable error here, and no data refresh: readers of settings read
+ * data refresh: readers of settings read
  * `graphMeta` reactively, and the store's publication of the same change
  * carries the change summary (full when a build-relevant setting moved). */
 export function applyGraphConfigChange(change: GraphConfigChange): void {
@@ -61,6 +60,7 @@ export function applyGraphConfigChange(change: GraphConfigChange): void {
   if (!previous || previous.root !== change.meta.root
       || captureBinding().backendGeneration !== change.binding_generation) return;
   applyConfigDerivedState(change.meta, previous);
+  setGraphConfigProblem(change.config_problem ?? null);
 }
 
 /** `logseq/custom.css` changed on disk (an editor, Syncthing, another window):
@@ -347,9 +347,8 @@ export async function loadGraphPath(
   // In the epoch just set, before any reader of this binding fetches.
   setChangeSummaryBaseline(result.published_rev);
   void refreshRootRecovery();
-  const configProblem = "config_problem" in result ? result.config_problem : null;
+  const configProblem = ("config_problem" in result ? result.config_problem : null) ?? null;
   setGraphConfigProblem(configProblem);
-  if (configProblem) reportUiFailure("config-read", configProblem);
   void refreshJournalConflicts(); // duplicate days surface through the conflict queue, not a toast
   void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
   if (path) {
@@ -476,7 +475,7 @@ export function refreshAfterRename(follow: PageFollower, reopened?: PageTarget):
 }
 
 installRenameRefreshHandler(refreshAfterRename);
-installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded });
+installFavoritesPageDoor({ createPage, favoritesArrangementPage, favoritesArrangementBlocks });
 
 export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>, "stale"> | "cancelled" | { refused: RenameRefusal };
 

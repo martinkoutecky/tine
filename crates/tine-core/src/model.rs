@@ -488,6 +488,10 @@ pub struct BlockDto {
     /// `page_property`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_preamble: bool,
+    /// Source thread membership for a detached preview/query export root.
+    /// Descendants inherit it during export; ordinary page DTOs omit it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub comment: bool,
     // --- M1: block-header facets, computed ONCE off the lsdoc projection (the one
     // grammar source) and shipped so the frontend never re-derives them with its
     // own scanner. Derived (not authoritative — `raw` round-trips); the frontend
@@ -986,7 +990,7 @@ impl GraphMeta {
         journal_format: &crate::date::JournalFormat,
     ) -> Self {
         Self {
-            display_root: crate::graph_paths::normalize_graph_path(&root),
+            display_root: crate::graph_paths::display_graph_path(&root),
             root,
             default_journal_queries: config.default_journal_queries.clone(),
             disable_scheduled_and_deadline_query: config.disable_scheduled_and_deadline_query,

@@ -2,6 +2,20 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-comment-output.mjs": {
+      "setup":"Synthetic routed page, scratch HOME/XDG and account-home shim; no network.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Copy/export includes marked comments by default; switching comments off removes whole threads and keeps body text. An embedded detached reply retains its source comment carrier in Markdown and is omitted with comments off. Folder publication remembers the choice in the definition and snapshot.","blocking":false,"authority":"H9TvA; D-20261113-CO/CO2"}],
+      "acceptableVariations":["Annotation styling and geometry may vary."],
+      "nonRequirements":["No real gist upload, OS PDF dialog, release burn-in or other platform certification."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-search-comment-cue.mjs": {
+      "setup":"Synthetic graph, scratch HOME/XDG and account-home shim; native Linux palette on a routed page.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Palette labels comment roots and replies as comments beside an ordinary block hit, retains host breadcrumbs and opens the reply visibly without changing graph bytes.","blocking":false,"authority":"COMMENT-OUT-V2; D-20261113-CO2"}],
+      "acceptableVariations":["Result order, markup and spacing may vary."],
+      "nonRequirements":["No device certification or release burn-in."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-zoom-back.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Back after clicking a block bullet restores the reading position in a long routed page and Journals, using both Alt+Left and the back button.","blocking":false,"authority":"UI-ZOOM-BACK-SCROLL; Martin 2026-11-11"}],
       "acceptableVariations": ["Exact pixels and layout may vary; the previously visible reading block must return to view."],
@@ -36,13 +50,13 @@
       "stability":"burn-in"
     },
     "scripts/e2e-cli-page-current.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A script obtains the focused page name and URL, the editing block URL, and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; discussion 925"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"With two graphs open, a script obtains each focused page name and a URL naming its own graph, creating the guarded graph identity once and reusing it; it obtains the editing block URL when it has an authored id:: (none for a plain block), and a typed absence for non-page views without changing notes.","blocking":true,"authority":"D-20261110-CP; D-20261113-PG; discussion 925"}],
       "acceptableVariations": ["URL encoding follows the shared link producer; CLI prose may vary while JSON fields and exit codes follow the contract."],
-      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, graph-qualified page bookmarks, and other platform runtime certification."],
+      "nonRequirements": ["macOS Hookmark execution, durable IDs for previously ID-less blocks, and other platform runtime certification."],
       "stability":"burn-in"
     },
     "scripts/e2e-shift-click-selection.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Shift-click from the editing caret to another block selects the complete range and closes the editor on a routed page, sidebar and journal; cutting the range includes the last block's collapsed children and Undo restores them.","blocking":false,"authority":"GH #924; UI-GH924-SHIFT-CLICK-BLOCK-RANGE"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Shift-click from the editing caret to another block selects the complete range and closes the editor on a routed page, sidebar and journal; cutting the range includes the last block's collapsed children and Undo restores them. Selecting on a routed page, navigating by link, palette, history back/forward or the Journals shortcut and pressing Delete leaves the departed page's file unchanged.","blocking":false,"authority":"GH #924; UI-GH924-SHIFT-CLICK-BLOCK-RANGE; UI-IFODS-ROUTE-SELECTION"}],
       "acceptableVariations": ["Theme, layout, exact click column and save latency may vary."],
       "nonRequirements": ["No keyboard selection changes, reporter attachments, Windows/macOS certification or final release acceptance."],
       "stability":"burn-in"
@@ -332,7 +346,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-query-subscriptions.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}],
+      "contracts": [{"class":"core-operation","userOutcome":"A journal's narrow and links queries stay idle during unrelated continuous typing; the narrow query skips that save and links coalesces into one run after typing pauses. A matching native edit updates both answers. The existing debug full-refresh mode supplies the before control.","blocking":true,"authority":"GX4 S4; HK3 1.5-second quiet period; conservative links invalidation in docs/contracts/tql-links-near.md"}, {"class":"stateful-ux","userOutcome":"On a routed query page, a source page's properties and ordinary result rows stay live: the first click opens an editor, every typed character survives its save, and Enter creates a child that stays focused and editable with durable text.","blocking":true,"authority":"UI-HCP6JS-QUERY-GROUP-LIVE-WHILE-EDITING; UI-QUERY-REF-ENTER-EDITOR-1113; card Hi7GQ; Logseq 6e7afa8eb editor.cljs outliner-insert-block!"}],
       "acceptableVariations": ["Publication and rendering latency, IPC batching and machine load; exact 1.5-second boundaries are covered with fake timers."],
       "nonRequirements": ["Exact pixels, DOM nesting, native certification outside Linux WebKitGTK, or a links query skipping unrelated saves after the pause: the memo conservatively invalidates links on every edit."],
       "stability":"burn-in"
@@ -424,6 +438,12 @@
       "contracts": [{"class":"core-operation","userOutcome":"A large linked-reference panel settles with its nested rows present and native typing remains focused while the panel is visible.","blocking":false,"authority":"M-19 Wave 4 measure-first; provisional GH #746 stall budget 100 ms/s"}],
       "acceptableVariations": ["Expansion latency, frame timing and memory vary with the host; compare repeated baseline and prototype samples."],
       "nonRequirements": ["Exact pixels or DOM shape; unsupported WebKit performance APIs; final release acceptance or burn-in."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-find-references-scope.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Find in page counts the page's own content and its count does not change while Linked References groups mount on scroll; the find bar names the reference panel it leaves out, and its action opens that section's own search with the same query, which finds a match in a group that never mounted.","blocking":true,"authority":"GH #935; Journals rule L10-03"}],
+      "acceptableVariations": ["Read and render latency; how many reference groups mount at once; a few pixels of layout rounding."],
+      "nonRequirements": ["Highlighting inside reference groups; counting reference content in Find; certification outside Linux WebKitGTK; green-suite burn-in, which belongs to the manager."],
       "stability":"burn-in"
     },
     "scripts/e2e-feed-retirement.mjs": {
@@ -521,13 +541,15 @@
       "stability": "burn-in"
     },
     "scripts/e2e-journals-today.mjs": {
+      "setup": "Build with custom-protocol,tine-store/test-faults; run E2E_HOLD_LOAD=1 under Xvfb. The existing pause holds graph completion until the known older journal editor has settled; baseline timing-only mode remains available.",
       "contracts": [
         {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},
         {"class":"stateful-ux","userOutcome":"When graph loading completes, referenced fileless days join the displayed date range in descending order while the focused editor, its text and the viewport position survive; browsing writes no journal files.","blocking":true,"authority":"GF4"}
       ],
       "acceptableVariations":["First-body latency varies with machine load; no fixed latency budget. Minor subpixel layout differences are acceptable while the same content remains at the viewport."],
       "nonRequirements":["Exact pixels, DOM nesting, and native platform certification outside Linux WebKitGTK."],
-      "stability":"burn-in"
+      "stability":"quarantined",
+      "quarantineReason":"IVKfg: uncontrolled setup passed 0/2 in the nightly, then the identical binary passed 3/3, including a false green with five days already merged and an empty editor. The corrected held journey needs a test-faults native build; provision that in the nightly runner before lifting quarantine. See RECEIPT-nightly-reds-1113.md."
     },
     "scripts/e2e-cli-writes.mjs": {
       "setup": "App, serve and CLI share the disposable account home even under HOME_OVERLAY; asserts the app's kernel lease after serve-to-app handover.",
@@ -594,7 +616,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-census-settings.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry. Show Workspaces in Settings hides saved-workspace controls and the creation command on desktop and mobile, then restores the same workspaces.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; its enabled submit button receives pointer clicks without being clipped by the sidebar, and submitting named workspaces persists both names in the graph's workspace registry. Show Workspaces in Settings hides saved-workspace controls and the creation command on desktop and mobile, then restores the same workspaces.","blocking":true}],
       "acceptableVariations":["Form placement, styling and persistence latency may vary while the same workspace creation flow remains available."],
       "nonRequirements":["Exact pixels, a specific generated workspace ID, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -684,7 +706,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-embed-find.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; keyboard folds inside an embed save the nested macro host's source fold while preserving the deeper embedded page; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; keyboard folds inside an embed save the nested macro host's source fold while preserving the deeper embedded page; the existing Find key seeds editor and rendered selections with the first match active and discloses the one folded sidebar embed not searched yet.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
@@ -1402,7 +1424,7 @@
       "stability": "stable"
     },
     "scripts/e2e-query-workspace.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state. Find retains slowly typed text, hands linked and unlinked reference searches to their named section (GH #935), and highlights matches in a query workspace's own rows.", "blocking": true }],
       "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct; a highlighted unlinked mention may itself open and select the exact source occurrence without a redundant numbered jump row.", "One state-dependent bulk toggle may replace separate Collapse all and Expand all buttons for linked and unlinked reference groups."],
       "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
       "stability": "stable"
@@ -1527,9 +1549,11 @@
     "scripts/e2e-structured-paste.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Structured HTML and Markdown paste preserves approved outline structure atomically without unsafe interpretation.", "blocking": true, "authority": "Tine structured-paste safety and persistence contract" },
-        { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true }
+        { "class": "core-operation", "userOutcome": "Keyboard Copy of a selected block leaves its page unchanged; keyboard Cut removes the selected subtree only after the native clipboard holds it, and a keyboard paste on another page reproduces the nested outline.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "Shift+Down first selects the current block and all descendants, then extends by the next sibling subtree; native Copy retains the complete selected forest and leaves the routed page unchanged (GH #941).", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "Keyboard Copy of a selected collapsed block puts the children it hides into the public clipboard text (GH #943).", "blocking": true, "authority": "Martin decisions D-20261112-SU941 and D-20261112-SU10 (GH #943 / #941)" }
       ],
-      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "With Tine's default copy setting the public clipboard text may hold only the selected block while the subtree travels in Tine's private payload; the pasted outline is the oracle."],
+      "acceptableVariations": ["Browser clipboard plumbing and rendered formatting may vary while the persisted safe structure is preserved.", "Clipboard indentation may vary while parent-child structure and all selected content remain intact."],
       "nonRequirements": ["Exact clipboard-event implementation, indentation pixels, or paste animation.", "Exact clipboard text or HTML flavour for block Cut/Copy."],
       "stability": "stable"
     },

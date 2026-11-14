@@ -18,7 +18,7 @@ const root = path.resolve(import.meta.dirname, "..");
 await checkMathTouch(root);
 // Explicit component-only mode for hosts without a native application binary.
 if (process.argv.includes("--touch-only")) process.exit(0);
-const artifacts = path.join(root, "target/artifacts/math-touch-pan");
+const artifacts = process.env.E2E_ARTIFACT_DIR || path.join(root, "target/artifacts/math-touch-pan");
 fs.mkdirSync(artifacts, { recursive: true });
 const out = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(out, "graph");

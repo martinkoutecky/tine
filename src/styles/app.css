@@ -297,9 +297,33 @@ html[data-system-insets="native-viewport"] {
   background: rgba(0, 0, 0, .42);
   touch-action: none;
 }
-.mobile-drawer-close {
-  display: block;
-  margin-block: 8px 0; margin-inline: auto 10px;
+/* GH #926: the drawer is a column, its scroll above a fixed Settings row. */
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.mobile-drawer-settings {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+.mobile-drawer-settings:hover,
+.mobile-drawer-settings:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
 }
 .drawer-floating-background { display: contents; }
 
@@ -1161,15 +1185,18 @@ html[data-system-insets="native-viewport"] {
 .sidebar-header {
   padding: 4px 8px 10px;
 }
+.sidebar-graph-row { display: flex; align-items: center; margin-top: 4px; gap: 4px; }
+.sidebar-graph-row .graph-switch { flex: 1; min-width: 0; margin-top: 0; }
+.sidebar-close { flex: none; display: flex; }
 
 /* Window-level workspaces belong with the other low-frequency sidebar context
    controls, above the graph switcher and navigation tree. */
 .workspace-sidebar-header {
   padding: 12px 16px 2px;
 }
-.workspace-sidebar-header .workspace-switcher,
-.workspace-sidebar-header .workspace-switcher-btn {
+.workspace-sidebar-header :is(.workspace-switcher, .workspace-switcher-btn, .workspace-menu, .workspace-quick-menu) {
   width: 100%;
+  min-width: 0;
 }
 
 .app-logo {
@@ -1304,12 +1331,8 @@ html[data-system-insets="native-viewport"] {
   margin-top: 16px;
 }
 
-.nav-section-header {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  padding: 4px 8px;
-}
+.nav-section > :not(.nav-section-header) { margin-inline-start: 16px; }
+.nav-section-header { padding: 5px 8px; }
 .nav-section-toggle {
   display: flex;
   align-items: center;
@@ -1317,8 +1340,6 @@ html[data-system-insets="native-viewport"] {
   width: 100%;
   border: 0;
   background: transparent;
-  font: inherit;
-  font-size: 11px;
   text-align: start;
   cursor: pointer;
   user-select: none;
@@ -1326,8 +1347,8 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
-/* GH #704: `font: inherit` resets the size; keep the section headings' 11px. */
-.nav-all-pages-open { width: 100%; text-align: start; background: transparent; border: 0; font: inherit; font-size: 11px; cursor: pointer; }
+.nav-all-pages-open { width: 100%; text-align: start; background: transparent; border: 0; cursor: pointer; }
+.nav-first-level { font: inherit; letter-spacing: normal; color: var(--text-secondary); }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
 .nav-toggle-caret,
 .graph-switch-caret,
@@ -4263,22 +4284,22 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
   display: block;
 }
 
-/* Code view/editor share card metrics and the calculator's numbered gutter. */
+.code-block, .code-editor-region { --code-content-inset: max(48px, calc(24px + var(--code-line-digits, 1) * 1ch)); }
 .editor-wrap:has(> .code-editor-region > .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
 .block-editor.code-edit {
   background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
-  padding-block: 30px 10px; padding-inline: 48px 12px; margin: 4px 0;
+  padding-block: 30px 10px; padding-inline: var(--code-content-inset) 12px; margin: 4px 0;
   --tine-editable-font: var(--tine-mono-font, "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
     Consolas, "Courier New", var(--tine-editable-emoji-font), monospace);
   font-size: 0.86em; line-height: 1.5; white-space: pre;
   overflow-x: auto; overflow-y: hidden; min-height: 0;
 }
 .code-language { position: absolute; top: 9px; inset-inline-end: 48px; color: var(--text-muted); font: 11px/16px var(--tine-mono-font, var(--ls-font-mono)); pointer-events: none; }
-.code-gutter { position: absolute; top: 30px; inset-inline-start: 48px; inset-inline-end: 12px; pointer-events: none; font: inherit; white-space: pre; }
+.code-gutter { position: absolute; top: 30px; inset-inline-start: var(--code-content-inset); inset-inline-end: 12px; pointer-events: none; font: inherit; white-space: pre; }
 .gutter-row { position: relative; }
-.code-gutter .calc-lineno { position: absolute; inset-inline-end: calc(100% + 14px); }
+.code-gutter .calc-lineno { position: absolute; inset-inline-end: calc(100% + 14px); white-space: pre; overflow-wrap: normal; }
 .gutter-mirror { visibility: hidden; }
-.code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); inset-inline-start: 49px; inset-inline-end: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
+.code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); inset-inline-start: calc(var(--code-content-inset) + 1px); inset-inline-end: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
 .code-editor-region > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
 .code-editor-region { display: contents; }
 .code-editor-region.mixed-code-region { display: block; position: relative; }
@@ -5558,7 +5579,7 @@ body.file-drop-active::after {
   background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding-block: 30px 10px; padding-inline: 48px 12px;
+  padding-block: 30px 10px; padding-inline: var(--code-content-inset) 12px;
   margin: 4px 0;
   overflow-x: auto;
   font-family: var(--tine-mono-font, var(--ls-font-mono));

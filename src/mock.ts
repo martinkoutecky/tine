@@ -728,7 +728,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         preferred_format: "md",
         enable_timetracking: true,
         show_brackets: true,
-        enable_tooltip: true,
+        enable_tooltip: true, file_name_format: "legacy", quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false,
         enable_search_remove_accents: removeAccents,
         doc_mode_enter_for_new_block: false,
         logical_outdenting: false,
@@ -1608,8 +1608,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const v = mockAppStrings[key];
       return v === undefined ? fallback : v;
     },
-    async setAppString(key: string, value: string): Promise<void> {
-      mockAppStrings[key] = value;
+    async setAppString(key: string, value: string | null): Promise<void> {
+      if (value === null) delete mockAppStrings[key]; else mockAppStrings[key] = value;
     },
     async setUiLocale(): Promise<void> { /* no native shell in the mock */ },
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },

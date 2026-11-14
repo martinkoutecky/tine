@@ -196,19 +196,24 @@ impl CurrentPage {
 }
 
 /// Pending frontend questions belong to this graph binding; timeout removes
-/// them and late answers cannot satisfy later requests. No route cache or I/O.
+/// them and late answers cannot satisfy later requests. No route cache;
+/// identity comes from the Store's bounded read or first guarded create.
 #[derive(Default)]
 struct CurrentPageRequests(Mutex<HashMap<u64, mpsc::SyncSender<CurrentPage>>>);
 
 impl CurrentPageRequests {
     fn ask_current_page(
         &self,
-        send: impl FnOnce(u64) -> Result<(), tauri::Error>,
+        store: &tine_store::Store,
+        send: impl FnOnce(u64, String) -> Result<(), tauri::Error>,
     ) -> Result<Value, super::wire::ErrorBody> {
+        let graph_id = store
+            .ensure_link_identity()
+            .map_err(|cause| super::verbs::internal(super::verbs::Diag::WriteFailed, cause))?;
         let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = mpsc::sync_channel(1);
         self.0.lock().unwrap().insert(id, answer);
-        let result = send(id)
+        let result = send(id, graph_id)
             .ok()
             .and_then(|()| answered.recv_timeout(FLUSH_WAIT).ok());
         self.0.lock().unwrap().remove(&id);
@@ -310,14 +315,18 @@ impl WindowLink {
     }
 
     /// One frontend route question on the admitted owner's request thread.
-    /// The frontend owns workspace-window and pane focus. O(answer bytes), no
-    /// graph I/O. Unresponsive or retired bindings answer busy within 5 s.
+    /// The frontend owns workspace-window and pane focus. O(answer bytes), plus
+    /// one bounded identity read, plus a guarded create on first use.
+    /// Unresponsive or retired bindings answer busy within 5 s.
     pub(crate) fn current_page(&self) -> Result<Value, super::wire::ErrorBody> {
-        self.current.ask_current_page(|id| {
+        let store = self.store.upgrade().ok_or_else(|| {
+            super::verbs::internal(super::verbs::Diag::GraphLoad, "the Store closed")
+        })?;
+        self.current.ask_current_page(&store, |id, graph_id| {
             self.app.emit_to(
                 self.label.as_str(),
                 "owner-current-page-request",
-                json!({"id": id, "binding_generation": self.binding_generation}),
+                json!({"id": id, "binding_generation": self.binding_generation, "graph_id": graph_id}),
             )
         })
     }
@@ -405,15 +414,18 @@ impl WindowLink {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, desktop))]
 mod current_page_tests {
     use super::*;
 
     #[test]
     fn current_page_delivery_failure_is_busy_and_releases_the_request() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _, _) = tine_store::Store::open(temp.path(), Default::default()).unwrap();
         let requests = CurrentPageRequests::default();
-        let result =
-            requests.ask_current_page(|_| Err(std::io::Error::other("window gone").into()));
+        let result = requests.ask_current_page(&store, |_, _| {
+            Err(std::io::Error::other("window gone").into())
+        });
         let error = result.unwrap_err();
         assert_eq!(error.code, "busy");
         assert!(error.message.contains("window did not answer"));
@@ -421,7 +433,297 @@ mod current_page_tests {
     }
 
     #[test]
+    fn current_page_identity_failure_returns_the_cause_without_a_page_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _, _) = tine_store::Store::open(temp.path(), Default::default()).unwrap();
+        let requests = CurrentPageRequests::default();
+        store.inject_fault(tine_store::FaultPoint::MidStepIo);
+        let error = requests
+            .ask_current_page(&store, |_, _| {
+                panic!("failed identity must not publish a link")
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "internal");
+        assert_eq!(error.detail.unwrap()["diag"], "cli-write-failed");
+        assert!(error.message.contains("Couldn't save graph link identity"));
+        assert!(!temp.path().join("logseq/tine-graph-id").exists());
+        assert!(requests.0.lock().unwrap().is_empty());
+        let identity = store.ensure_link_identity().unwrap();
+        let payload = requests
+            .ask_current_page(&store, |id, graph_id| {
+                assert_eq!(graph_id, identity);
+                requests.deliver_current_page(
+                    id,
+                    CurrentPage::CurrentPage {
+                        name: "Notes".into(),
+                        url: format!("tine://page/Notes?graph={graph_id}"),
+                        block_url: None,
+                    },
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert!(payload["url"].as_str().unwrap().ends_with(&identity));
+    }
+
+    #[test]
+    fn current_page_read_only_graph_returns_the_storage_refusal_without_a_link() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("logseq")).unwrap();
+        let config = temp.path().join("logseq/config.edn");
+        let bytes = b"{:a \"\xff\"}\n";
+        std::fs::write(&config, bytes).unwrap();
+        let (store, _, _) = tine_store::Store::open(temp.path(), Default::default()).unwrap();
+        assert!(store.config().problem.is_some(), "graph is read-only");
+        let requests = CurrentPageRequests::default();
+        let error = requests
+            .ask_current_page(&store, |_, _| {
+                panic!("read-only graph must not publish an unqualified link")
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "internal");
+        assert!(error.message.contains("ConfigUnreadable"));
+        assert_eq!(error.detail.unwrap()["diag"], "cli-write-failed");
+        assert!(!temp.path().join("logseq/tine-graph-id").exists());
+        assert_eq!(std::fs::read(config).unwrap(), bytes);
+        assert!(requests.0.lock().unwrap().is_empty());
+    }
+
+    /// PC-3 for the whole successful window request: the owner's question to
+    /// the frontend and the frontend's answer carry the graph identity. The frontend
+    /// is a second thread answering through `answer`, as the webview answers
+    /// through its command. The Store reads one tiny identity per request and
+    /// creates it once; no page read, parse or graph listing. Its lower bound
+    /// is two socket round trips and one frontend question/answer; the budget catches a
+    /// graph scan, a sleep, or a retry loop. Like the wall-time bench in
+    /// docs/BENCH.md, take the minimum of eight samples to limit scheduling
+    /// noise. Each sample includes first creation and all request-work checks.
+    /// The counters are process-global: each sample runs in its own child.
+    #[test]
+    fn a_successful_current_page_request_reads_one_identity_and_creates_it_once() {
+        const CHILD: &str = "TINE_CURRENT_PAGE_COST_CHILD";
+        const BUDGET: Duration = Duration::from_millis(50);
+        if std::env::var_os(CHILD).is_none() {
+            let mut best = Duration::MAX;
+            for sample in 0..8 {
+                let output = std::process::Command::new(tine_store::test_binary::own_test_binary())
+                .args([
+                    "--exact",
+                    "owner::window::current_page_tests::a_successful_current_page_request_reads_one_identity_and_creates_it_once",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+                let (out, err) = (
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                assert!(output.status.success(), "{out}\n{err}");
+                assert!(
+                    out.contains("1 passed"),
+                    "the child ran no case:\n{out}\n{err}"
+                );
+                let nanos = out
+                    .lines()
+                    .find_map(|line| line.strip_prefix("current-page slowest-ns: "))
+                    .expect("child reports its slowest request")
+                    .parse::<u64>()
+                    .unwrap();
+                best = best.min(Duration::from_nanos(nanos));
+                println!("current-page sample {sample}:\n{out}");
+            }
+            assert!(
+                best < BUDGET,
+                "best sample's slowest request {best:?} over {BUDGET:?}"
+            );
+            return;
+        }
+        const REQUESTS: u32 = 200;
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("pages")).unwrap();
+        std::fs::create_dir(temp.path().join("logseq")).unwrap();
+        let note = temp.path().join("pages/Notes.md");
+        let bytes = b"- unchanged\r\n";
+        std::fs::write(&note, bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&note)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(86_400)),
+            )
+            .unwrap();
+        let (store, _, _) = tine_store::Store::open(temp.path(), Default::default()).unwrap();
+        // An answering graph window already has its loaded view.
+        store.whole_graph().unwrap();
+        // Measure the request, with no background config/custom.css probes
+        // racing the counter reset or the identity's own-write notification.
+        store.stop_watcher_for_tests();
+        let store = std::sync::Arc::new(store);
+        let root = tine_store::Store::canonical_root(temp.path()).unwrap();
+        #[cfg(unix)]
+        let socket = temp.path().join("owner.sock");
+        #[cfg(windows)]
+        let socket = super::super::windows_security::pipe_name(&format!(
+            "{:016x}",
+            crate::settings::graph_hash(&root)
+        ))
+        .unwrap();
+        #[cfg(unix)]
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        #[cfg(windows)]
+        let listener = super::super::windows::Listener::bind(&socket).unwrap();
+        let requests = std::sync::Arc::new(CurrentPageRequests::default());
+        let (to_frontend, from_owner) = mpsc::channel::<(u64, String)>();
+        let answers = std::sync::Arc::new(AtomicU64::new(0));
+        let frontend = {
+            let (requests, answers) = (requests.clone(), answers.clone());
+            std::thread::spawn(move || {
+                for (id, graph_id) in from_owner {
+                    answers.fetch_add(1, Ordering::Relaxed);
+                    requests.deliver_current_page(
+                        id,
+                        CurrentPage::CurrentPage {
+                            name: "日本 / Notes".into(),
+                            url: format!(
+                                "tine://page/%E6%97%A5%E6%9C%AC%20%2F%20Notes?graph={graph_id}"
+                            ),
+                            block_url: Some(
+                                "tine://block/92500000-0000-4000-8000-000000000001".into(),
+                            ),
+                        },
+                    );
+                }
+            })
+        };
+        tine_store::cost_counters::reset();
+        let owner = {
+            let (requests, store, root) = (requests.clone(), store.clone(), root.clone());
+            std::thread::spawn(move || {
+                use super::super::wire::{self, Hello, Reply, Request, REQUEST_CAP};
+                let (mut frames, mut questions) = (0, 0);
+                for _ in 0..REQUESTS {
+                    let (mut writer, _) = loop {
+                        match listener.accept() {
+                            Ok(connection) => break connection,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(Duration::from_millis(1));
+                            }
+                            Err(error) => panic!("owner accept failed: {error}"),
+                        }
+                    };
+                    let mut reader = std::io::BufReader::new(writer.try_clone().unwrap());
+                    let line = wire::read_frame(&mut reader, REQUEST_CAP).unwrap().unwrap();
+                    let hello: Hello = wire::read_line(&line).unwrap();
+                    assert_eq!(hello.tine, "cli");
+                    wire::write_frame(&mut writer, &super::super::lease::hello(&root, "app"))
+                        .unwrap();
+                    frames += 1;
+                    let line = wire::read_frame(&mut reader, REQUEST_CAP).unwrap().unwrap();
+                    let request: Request = wire::read_line(&line).unwrap();
+                    assert_eq!(request.verb, "page.current");
+                    let ok = requests
+                        .ask_current_page(&store, |id, graph_id| {
+                            questions += 1;
+                            to_frontend.send((id, graph_id)).unwrap();
+                            Ok(())
+                        })
+                        .unwrap();
+                    wire::write_frame(
+                        &mut writer,
+                        &Reply {
+                            id: request.id,
+                            ok: Some(ok),
+                            error: None,
+                        },
+                    )
+                    .unwrap();
+                    frames += 1;
+                    assert!(
+                        wire::read_frame(&mut reader, REQUEST_CAP)
+                            .unwrap()
+                            .is_none(),
+                        "no extra owner request"
+                    );
+                }
+                (frames, questions)
+            })
+        };
+        let mut slowest = Duration::ZERO;
+        let mut identity = None;
+        for request in 0..REQUESTS {
+            let started = std::time::Instant::now();
+            let mut connection = super::super::client::dial(&socket, &root).unwrap().unwrap();
+            let payload = connection.call("page.current", Value::Null).unwrap();
+            drop(connection);
+            slowest = slowest.max(started.elapsed());
+            assert_eq!(payload["kind"], "current-page");
+            assert_eq!(payload["name"], "日本 / Notes");
+            let published =
+                std::fs::read_to_string(temp.path().join("logseq/tine-graph-id")).unwrap();
+            assert_eq!(published.len(), 37);
+            if let Some(identity) = &identity {
+                assert_eq!(&published, identity);
+            } else {
+                identity = Some(published.clone());
+            }
+            assert!(payload["url"].as_str().unwrap().ends_with(published.trim()));
+            let counts = tine_store::cost_counters::snapshot();
+            assert_eq!(counts.store_reads, u64::from(request + 1));
+            assert_eq!(counts.files_written, 1, "only the first request creates");
+            assert_eq!(counts.bytes_written, 37);
+        }
+        let (frames, questions) = owner.join().unwrap();
+        frontend.join().unwrap();
+        println!("{REQUESTS} requests, slowest {slowest:?} (budget {BUDGET:?})");
+        assert_eq!(questions, REQUESTS, "one question each");
+        assert_eq!(
+            frames,
+            REQUESTS * 2,
+            "hello and verb: two socket round trips each"
+        );
+        assert_eq!(
+            answers.load(Ordering::Relaxed),
+            u64::from(REQUESTS),
+            "one answer each"
+        );
+        assert!(
+            requests.0.lock().unwrap().is_empty(),
+            "every request retires"
+        );
+        let counts = tine_store::cost_counters::snapshot();
+        println!("identity work: {counts:?}");
+        let expected = tine_store::cost_counters::Counts {
+            save_path_resolutions: 5,
+            transaction_record_probes: 2,
+            fsyncs: 2,
+            bytes_written: 37,
+            files_written: 1,
+            asset_stamps_by_path: 1,
+            store_reads: u64::from(REQUESTS),
+            file_renames: 1,
+            ..Default::default()
+        };
+        let counts = tine_store::cost_counters::Counts {
+            snapshot_nanos: 0,
+            ..counts
+        };
+        assert_eq!(
+            format!("{counts:?}"),
+            format!("{expected:?}"),
+            "identity work only"
+        );
+        assert_eq!(std::fs::read(note).unwrap(), bytes);
+        println!("current-page slowest-ns: {}", slowest.as_nanos());
+    }
+
+    #[test]
     fn current_page_question_answers_page_block_and_absence_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, _, _) = tine_store::Store::open(temp.path(), Default::default()).unwrap();
         for page in [
             CurrentPage::CurrentPage {
                 name: "日本 / Notes".into(),
@@ -445,7 +747,7 @@ mod current_page_tests {
             let questions = std::cell::Cell::new(0);
             let started = std::time::Instant::now();
             let payload = requests
-                .ask_current_page(|id| {
+                .ask_current_page(&store, |id, _| {
                     questions.set(questions.get() + 1);
                     requests.deliver_current_page(id, page);
                     Ok(())

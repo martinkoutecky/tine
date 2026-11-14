@@ -319,12 +319,12 @@ pub struct BlockRegions {
     pub properties: Vec<Property>,
     pub planning: Vec<Planning>,
     pub drawers: Vec<Drawer>,
-    pub id: Option<Property>,
+    pub id: Option<Box<Property>>,
     pub quarantined: bool,
     /// Block-level literal containers in source order (see [`LiteralBlock`]).
     pub literal_blocks: Vec<LiteralBlock>,
     /// A fence being typed, when no accepted container closes it.
-    pub open_fence: Option<OpenFence>,
+    pub open_fence: Option<Box<OpenFence>>,
     /// Where lsdoc's headline (the block's title with its line terminator)
     /// ends, when that is not the end of the first line after the block's
     /// leading trim: an empty title before the rows lsdoc reads at the title
@@ -484,7 +484,7 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     result.literals = merged;
     result.literal_blocks.sort_by_key(|b| b.range.0);
     if !document {
-        result.open_fence = open_fence(raw, &result.literals);
+        result.open_fence = open_fence(raw, &result.literals).map(Box::new);
     }
     // Nested content under a literal Custom belongs to that container, even if
     // lsdoc emitted child Properties or timestamps there.
@@ -499,7 +499,8 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
         .properties
         .iter()
         .find(|p| p.primary && p.key.eq_ignore_ascii_case("id"))
-        .cloned();
+        .cloned()
+        .map(Box::new);
     result
 }
 
@@ -990,19 +991,24 @@ impl BlockRegions {
         org: bool,
         remove: impl Fn(&Property) -> bool,
     ) -> String {
-        let selected: Vec<&Property> = self.properties.iter().filter(|p| remove(p)).collect();
-        let mut edits = Vec::new();
-        for (index, r) in self.property_regions.iter().enumerate() {
-            let all: Vec<&Property> = self
-                .properties
-                .iter()
-                .filter(|p| p.region == index)
-                .collect();
-            if org && !all.is_empty() && all.iter().all(|p| remove(p)) {
-                edits.push((*r, String::new()));
-            } else {
-                for p in selected.iter().filter(|p| p.region == index) {
-                    edits.push((p.line, String::new()));
+        let mut edits: Vec<_> = self
+            .properties
+            .iter()
+            .filter(|p| remove(p))
+            .map(|p| (p.line, String::new()))
+            .collect();
+        if org {
+            // A parser region can fold directives after the drawer. Only its
+            // delimiters depend on whether the drawer's own entries survive.
+            let mut entries = self.properties.iter().peekable();
+            for (start, end) in self.property_drawer_boundaries(raw) {
+                while entries.next_if(|p| p.line.0 < start).is_some() {}
+                let mut drawer =
+                    std::iter::from_fn(|| entries.next_if(|p| p.line.0 < end)).peekable();
+                if drawer.peek().is_some() && drawer.all(|p| remove(p)) {
+                    edits.extend(
+                        [start, end].map(|at| (whole_line(raw, Range(at, at)), String::new())),
+                    );
                 }
             }
         }
@@ -1239,14 +1245,11 @@ impl BlockRegions {
                 {
                     return Err("Invalid property edit".into());
                 }
-                let own = org.then(|| self.own_org_region(raw)).flatten();
-                let matching: Vec<&Property> = self
-                    .properties
-                    .iter()
-                    .filter(|p| p.key.eq_ignore_ascii_case(&key) && (!org || Some(p.region) == own))
-                    .collect();
                 if value.is_none() {
-                    self.remove_properties(raw, org, |p| matching.contains(&p))
+                    let own = org.then(|| self.own_org_region(raw)).flatten();
+                    self.remove_properties(raw, org, |p| {
+                        p.key.eq_ignore_ascii_case(&key) && (!org || Some(p.region) == own)
+                    })
                 } else {
                     self.set_values(raw, org, vec![(key, value.unwrap())])?
                 }

@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { isCommentBlock } from "../comments";
 // Static-export sheets (family 7). The Rust publisher hands the app one
 // `SheetInput` per `tine.view` block; this module answers it with a pure DATA
 // fragment (`SheetExport`) computed by the SAME functions the live views call
@@ -35,7 +36,8 @@ import type { ViewSettings } from "../editor/queryIr";
 /** Which pages the export consuming a sheet's inputs publishes; a query sheet's
  * rows on any other page never reach the evaluator. No scope (print) = no boundary. */
 export type SheetScope =
-  | { kind: "live"; allPages: boolean }
+  | { kind: "live"; allPages: boolean; includeComments?: boolean }
+  | { kind: "print"; includeComments?: boolean }
   | { kind: "query"; request: QueryPublicationRequest };
 
 export interface SheetInput {
@@ -170,10 +172,12 @@ function boardBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>, rows:
 }
 
 function gridBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>): SheetBody {
-  const cols = Math.max(1, ...input.rows.map((r) => r.children.length));
+  const rows = input.rows.filter((row) => !isCommentBlock(facetsFromDto(row).properties, true));
+  const cells = rows.map((row) => row.children.filter((cell) => !isCommentBlock(facetsFromDto(cell).properties, true)));
+  const cols = Math.max(1, ...cells.map((row) => row.length));
   const raws = new Map<string, string>();
-  const body = input.rows.map((row, r) => ({
-    cellIds: row.children.map((cell, c) => {
+  const body = cells.map((row, r) => ({
+    cellIds: row.map((cell, c) => {
       const id = `${r}.${c}`;
       raws.set(id, visibleBody(cell.raw, formatForPage(input.page)).join(" "));
       return id;
@@ -210,7 +214,8 @@ export function computeSheetExport(input: SheetInput, env: ExportEnv): SheetExpo
     if (!view) return null;
     const rows = query
       ? query.rows.map((dto, ix) => detach(query.pages[ix] ?? input.page, dto, ix))
-      : input.rows.map((dto, ix) => detach(input.page, dto, ix));
+      : input.rows.map((dto, ix) => detach(input.page, dto, ix))
+        .filter((row) => !isCommentBlock(facetsFromDto(row.dto!).properties, true));
     const body = view === "table"
       ? tableBody(input, cfg, rows, env)
       : view === "board"

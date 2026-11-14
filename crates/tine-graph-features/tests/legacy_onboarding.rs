@@ -13,12 +13,7 @@ use tine_store::{PageId, Resolved, Store};
 const TARGET_ID: &str = "7a1c0f5e-0000-4000-8000-000000000001";
 
 fn scratch(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-onboard-port-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::test_support::fresh_dir(&format!("tine-onboard-port-{label}-"));
     fs::create_dir_all(&dir).unwrap();
     dir
 }

@@ -4,12 +4,15 @@ import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { ChangeKeyRegistry } from "../changeKeyRegistry";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
+import { graphConfigUnreadable } from "../graphConfig";
 import { ownerPath, resolvedTarget } from "../pageIndex";
 import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { sheetConfigFromRaw } from "../sheet/config";
 import { beginResultsChange } from "../queryResultsEpoch";
 import { clearOnBindingInvalidated } from "../binding";
 import { flushFacetOwners } from "../render/seededFacets";
+import { pageIdentityKey } from "../pageIdentity";
+import { initParser, parserReady } from "../render/parse";
 
 export interface Node {
   id: string;
@@ -185,6 +188,12 @@ export const clearCollapseEpochs = (): void => setCollapseEpochState("byId", {})
 export type ReadonlyNode = Readonly<Omit<Node, "children">> & { readonly children: readonly string[] };
 export type ReadonlyFeedPage = Readonly<Omit<FeedPage, "roots">> & { readonly roots: readonly string[] };
 
+/** Effective read-only presentation: the store's graph restriction plus the
+ * page's intrinsic round-trip restriction. O(1), reactive, no page reload. */
+export function pageReadOnly(page: ReadonlyFeedPage | undefined): boolean {
+  return graphConfigUnreadable() || !!page?.readOnly;
+}
+
 /** Live document queries. Each call reads the Solid store in the caller's tracking scope. */
 export function node(id: string): ReadonlyNode { return doc.byId[id]; }
 export function childIds(id: string): readonly string[] { return doc.byId[id]?.children ?? []; }
@@ -354,16 +363,22 @@ export function docHasBlockIdentity(id: string): boolean {
 // once per mounted reference group, on every eviction while scrolling (GH #886).
 // Field reads (roots/preBlock/format) stay fine-grained on the record itself.
 // Prefix keys so Solid's reserved property keys remain ordinary page names.
-const recordTokens = new WeakMap<object, number>();
+const recordTokens = new WeakMap<object, { token: number; name: string; key: string | null }>();
 let nextRecordToken = 0;
-const recordToken = (page: FeedPage): number => {
+const recordIdentity = (page: FeedPage) => {
   const raw = unwrap(page);
-  let token = recordTokens.get(raw);
-  if (token === undefined) recordTokens.set(raw, token = ++nextRecordToken);
-  return token;
+  let record = recordTokens.get(raw);
+  if (!record || record.name !== page.name) {
+    record = { token: record?.token ?? ++nextRecordToken, name: page.name, key: null };
+    recordTokens.set(raw, record);
+  }
+  return record;
 };
 const [pageRecordByName, setPageRecordByName] = createStore<Record<string, number | undefined>>({});
 let pagePositions: Record<string, number> = {};
+let pageNamesByKey = new Map<string, string>();
+let pageNamesByPath = new Map<string, string>();
+let nativePageKeysReady = false;
 /** Republish names, positions and record tokens. `setDoc` calls this inside the
  *  write's own batch, so a reader learns of a replaced or removed record in the
  *  same update as the rest of the write (a lagging memo let a block's memo run
@@ -371,12 +386,24 @@ let pagePositions: Record<string, number> = {};
 function publishPageIndex(): void {
   const positions: Record<string, number> = {};
   const tokens: Record<string, number> = {};
+  const names = new Map<string, string>();
+  const paths = new Map<string, string>();
+  const nativeReady = parserReady();
   doc.pages.forEach((page, i) => {
     const key = `page:${page.name}`;
+    const record = recordIdentity(page);
     positions[key] = i;
-    tokens[key] = recordToken(page);
+    tokens[key] = record.token;
+    if (nativeReady) {
+      record.key ??= pageIdentityKey(page.name);
+      names.set(record.key, page.name);
+    }
+    if (page.id) paths.set(page.id, page.name);
   });
   pagePositions = positions;
+  pageNamesByKey = names;
+  pageNamesByPath = paths;
+  nativePageKeysReady = nativeReady;
   setPageRecordByName(reconcile(tokens));
 }
 
@@ -400,6 +427,29 @@ export const mainPages = createRoot(() =>
 /** A loaded page record by name (anywhere in the working set), or undefined. */
 export function pageByName(name: string): ReadonlyFeedPage | undefined {
   return keyedPage(`page:${name}`);
+}
+
+/** Loaded targets of native publication keys, O(keys), with no page I/O.
+ * Cold Capture can seed text before wasm: its first lookup awaits the parser
+ * and derives those loaded names' keys once, O(loaded names). Warm membership
+ * writes carry the cached native keys. Initialization failures reject. */
+export async function readLoadedPublicationPages(keys: readonly string[]): Promise<ReadonlyFeedPage[]> {
+  if (!keys.length || !doc.pages.length) return [];
+  if (!nativePageKeysReady) {
+    await initParser();
+    publishPageIndex();
+  }
+  return keys.flatMap(key => {
+    const name = pageNamesByKey.get(key);
+    const page = name === undefined ? undefined : pageByName(name);
+    return page ? [page] : [];
+  });
+}
+
+/** Resolve a physical owner in the same loaded membership index, O(1). */
+export function loadedPageByPath(path: string): ReadonlyFeedPage | undefined {
+  const name = pageNamesByPath.get(path);
+  return name === undefined ? undefined : pageByName(name);
 }
 
 /** Record the identity chosen for a new page after its first successful save. */

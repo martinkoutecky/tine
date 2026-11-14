@@ -15,7 +15,7 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, topSelected, node as docNode, type OutlineScope } from "../document";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -29,7 +29,7 @@ import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
-import { rowHostOf, rowPositionOf } from "./block/embedRowHost";
+import { rowHostOf, rowPositionOf, type RowHost } from "./block/embedRowHost";
 import { bodyScopeOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -79,7 +79,7 @@ export function beginDrag(id: string, e: MouseEvent) {
     if (!dragMoved) {
       dragMoved = true;
       // A bullet drag moves the active selection when there is one (GH #240).
-      const selected = selectedIds();
+      const selected = topSelected();
       capturedIds = selected.length ? [...selected] : [id];
       setDragId(id);
       endEdit("drag-start");
@@ -189,7 +189,7 @@ export function beginEditGesture(
   // extends from there into the source rows inside it (D-20261030-EMB).
   const startRow = (e.target as Element | null)?.closest?.(".ls-block");
   const startHost = rowHostOf(startRow);
-  const anchor = startHost ?? { id: blockId, scope: outlineScope };
+  const anchor: RowHost = startHost ?? rowPositionOf(startRow) ?? { id: blockId, scope: outlineScope };
   if (e.shiftKey) {
     const editing = editingId();
     if (!editing && !hasSelection()) return;
@@ -201,8 +201,8 @@ export function beginEditGesture(
       // The editing row's own outline (an embed's rows sit in the embed's scope),
       // so a click outside that outline cannot extend across it.
       const row = documentOf(e).activeElement?.closest(".ls-block");
-      const from = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
-      selectBlock(from.id, from.scope);
+      const from: RowHost = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
+      selectBlock(from.id, from.scope, from.surface);
     }
     // Never across an outline boundary: an unscoped selection must not run into an
     // embed's rows (it would take the source parent with it), nor out of one.
@@ -283,7 +283,7 @@ export function beginEditGesture(
       g.escalated = true;
       endEdit("select-block");
       doc.getSelection()?.removeAllRanges();
-      selectBlock(anchor.id, anchor.scope);
+      selectBlock(anchor.id, anchor.scope, anchor.surface);
       extendSelectionTo(overSelection!, anchor.scope);
     }
   };

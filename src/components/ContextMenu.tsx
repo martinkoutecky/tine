@@ -15,7 +15,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { isConflicted, pageInstanceGeneration } from "../document";
+import { isConflicted, pageInstanceGeneration, pageReadOnly } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { isGuidePageName } from "../guide";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -813,7 +813,7 @@ function PageMenu(props: {
   const fav = () => isFavorite(props.name, props.pageKind);
   const readOnly = () => {
     const page = pageByName(props.name);
-    return !pageTargetMatchesLoaded(target(), page) || !!page?.readOnly;
+    return !pageTargetMatchesLoaded(target(), page) || pageReadOnly(page);
   };
   // A link can name an alias without loading a page of that name. Renaming
   // is a name operation; Rust's planner decides the source and its offers.
@@ -835,7 +835,7 @@ function PageMenu(props: {
     // changes nothing on disk and is the recovery path a stuck conflict needs
     // (og I1d, master 6f8531344, GH #490).
     let conflicted = isConflicted(name);
-    if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
+    if (!conflicted && !pageReadOnly(page) && !(await flushPage(name))) {
       if (owner()) pushToast(msg("context-menu-ui-couldn-t-save-its-on-disk-file-was-not", { name: name }), "error");
       return;
     }
@@ -1159,8 +1159,9 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
   const commentRoot = threadRootOf(id);
   const commentParent = commentRoot ? docNode(commentRoot)!.parent! : id;
   const ids = multi ? selected : [id];
+  const authorActions = removeAuthorTarget(ids) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(ids) }] : [];
   const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
-  const text = (cut = false) => multi ? selectionMarkdown(cut || undefined) : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
+  const text = () => multi ? selectionMarkdown() : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
   const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), msg("context-menu-ui-copied", { count: ids.length }));
   const writable = ids.every(blockWritable);
   const mutate = (tag: string, action: (target: string) => void) => {
@@ -1174,6 +1175,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
   if (!writable) {
     return [
+      ...authorActions,
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
       { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
@@ -1197,7 +1199,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
       : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
-    ...(!multi && removeAuthorTarget([id]) !== null ? [{ label: msg("comment-remove-author"), run: () => removeAuthor(id) }] : []),
+    ...authorActions,
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).
@@ -1229,7 +1231,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
     {
       label: msg("context-menu-ui-cut", { count: ids.length }),
       run: () => {
-        void cutBlocks(ids, text(true), () => !multi || sameSelection() ? text(true) : "", () => multi ? deleteSelection() : deleteBlock(id))
+        void cutBlocks(ids, text(), () => !multi || sameSelection() ? text() : "", () => multi ? deleteSelection() : deleteBlock(id))
           .catch(() => pushToast(msg("context-menu-ui-couldn-t-cut-clipboard-write-failed", { count: ids.length }), "error"));
       },
     },

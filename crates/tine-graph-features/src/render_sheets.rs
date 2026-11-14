@@ -20,7 +20,7 @@
 
 use super::{
     ast_plain_text, body_blocks, decorate, esc, esc_attr, publish_page_allowed, render_block,
-    render_facets, render_opts, Ctx, PageAnchors, PrintOpts, RenderGraph,
+    render_facets, render_opts, render_outline_item, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -79,6 +79,8 @@ pub struct QueryRowsInput {
     /// The page each row belongs to, parallel to `rows`.
     pub pages: Vec<String>,
     pub rows: Vec<BlockDto>,
+    #[serde(skip)]
+    comments: HashMap<usize, String>,
 }
 
 /// How one cell value is shown (`CellView` in `src/sheet/cellPresentation.ts`).
@@ -348,7 +350,7 @@ pub fn sheet_inputs(
                 let query = graph.filter(|_| query_budget > 0).and_then(|graph| {
                     let found = sole_query_macro(block)?;
                     query_budget -= 1;
-                    query_rows(graph, block, &found, Some(&page.name), &|name| {
+                    query_rows(graph, block, &found, Some(&page.name), false, &|name| {
                         published.is_none_or(|keys| keys.contains(&tine_core::refs::page_key(name)))
                     })
                 });
@@ -426,6 +428,7 @@ fn query_rows(
     owner: &DocBlock,
     found: &(String, String),
     current_page: Option<&str>,
+    annotations: bool,
     published: &dyn Fn(&str) -> bool,
 ) -> Option<QueryRowsInput> {
     let (name, argument) = found;
@@ -446,11 +449,33 @@ fn query_rows(
     }
     let mut pages = Vec::new();
     let mut rows = Vec::new();
-    for group in bounded.groups {
+    let mut comments = HashMap::new();
+    for mut group in bounded.groups {
         // A row on a page this export does not publish is left out here, before
         // the app computes cells, counts and aggregates from it.
         if !published(&group.page) {
             continue;
+        }
+        graph.retain_output_rows(&mut group);
+        if annotations {
+            if let Some(doc) = graph
+                .lookups
+                .doc(graph.corpus, graph.whole, &group.page, group.kind)
+            {
+                let wanted = group.blocks.iter().map(|block| block.id.as_str()).collect();
+                let mut found = HashMap::new();
+                crate::output_comments::collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
+                for (ix, block) in group.blocks.iter().enumerate() {
+                    if let Some((source, true)) = found.get(block.id.as_str()) {
+                        let mut header = String::new();
+                        crate::output_comments::open_annotation(
+                            source.projection().properties(),
+                            &mut header,
+                        );
+                        comments.insert(rows.len() + ix, header);
+                    }
+                }
+            }
         }
         for block in group.blocks {
             pages.push(group.page.clone());
@@ -466,6 +491,7 @@ fn query_rows(
         view: parsed.view,
         pages,
         rows,
+        comments,
     })
 }
 
@@ -616,7 +642,26 @@ fn row_anchor(row: &DocBlock, e: &mut Emit) -> String {
     format!(" id=\"{}\"", esc_attr(&anchor))
 }
 
-fn render_table(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut String) {
+fn row_title(title: &str, ix: usize, query: Option<&QueryRowsInput>, ctx: &Ctx) -> String {
+    let mut out = String::new();
+    let comment = query.and_then(|rows| rows.comments.get(&ix));
+    if let Some(header) = comment {
+        out.push_str(header);
+    }
+    out.push_str(&inline(title, ctx));
+    if comment.is_some() {
+        out.push_str("</aside>");
+    }
+    out
+}
+
+fn render_table(
+    owner: Option<&DocBlock>,
+    query: Option<&QueryRowsInput>,
+    body: &Body,
+    e: &mut Emit,
+    out: &mut String,
+) {
     let Body::Table {
         columns,
         rows,
@@ -650,7 +695,7 @@ fn render_table(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut S
         out.push_str(&format!(
             "<tr{id}{}><td>{}</td>",
             style_attr(&row.bg),
-            inline(&row.title, e.ctx)
+            row_title(&row.title, row.ix, query, e.ctx)
         ));
         for cell in &row.cells {
             out.push_str(&format!("<td>{}</td>", cell_html(cell, e.ctx)));
@@ -661,7 +706,13 @@ fn render_table(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut S
     out.push_str(&omitted_note(*omitted));
 }
 
-fn render_board(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut String) {
+fn render_board(
+    owner: Option<&DocBlock>,
+    query: Option<&QueryRowsInput>,
+    body: &Body,
+    e: &mut Emit,
+    out: &mut String,
+) {
     let Body::Board {
         columns,
         filter_error,
@@ -718,7 +769,7 @@ fn render_board(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut S
             out.push_str(&format!(
                 "<li{id}{}><div class=\"sheet-card-title\">{}</div><div class=\"sheet-card-chips\">{chips}</div></li>",
                 style_attr(&card.bg),
-                inline(&card.title, e.ctx)
+                row_title(&card.title, card.ix, query, e.ctx)
             ));
         }
         out.push_str("</ul></div>");
@@ -738,16 +789,28 @@ fn render_grid(owner: &DocBlock, at: &SheetPath, body: &Body, e: &mut Emit, out:
         return;
     };
     let (mut head, mut rows) = (String::new(), String::new());
-    for (r, row) in owner.children.iter().take(MAX_INPUT_ROWS).enumerate() {
-        let is_head = *header && r == 0;
+    for (shown, (r, row)) in owner
+        .children
+        .iter()
+        .take(MAX_INPUT_ROWS)
+        .enumerate()
+        .filter(|(_, row)| !crate::output_comments::is_comment(row, true))
+        .enumerate()
+    {
+        let is_head = *header && shown == 0;
         let tag = if is_head { "th" } else { "td" };
         let dst = if is_head { &mut head } else { &mut rows };
         dst.push_str("<tr>");
         let row_path = at.child(r);
         let ords = render_facets::siblings(&row.children, 0);
-        for c in 0..*cols {
-            match row.children.get(c) {
-                Some(cell) => {
+        let mut cells = row
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| !crate::output_comments::is_comment(cell, true));
+        for _ in 0..*cols {
+            match cells.next() {
+                Some((source_ix, cell)) => {
                     dst.push_str(&format!("<{tag}><ul class=\"sheet-cell-list\">"));
                     render_block(
                         cell,
@@ -758,9 +821,10 @@ fn render_grid(owner: &DocBlock, at: &SheetPath, body: &Body, e: &mut Emit, out:
                         e.anchors,
                         e.index,
                         e.opts,
-                        ords[c],
+                        ords[source_ix],
                         e.tree_depth + 2,
-                        &row_path.child(c),
+                        &row_path.child(source_ix),
+                        false,
                     );
                     dst.push_str(&format!("</ul></{tag}>"));
                 }
@@ -778,6 +842,40 @@ fn render_grid(owner: &DocBlock, at: &SheetPath, body: &Body, e: &mut Emit, out:
         footer_row(footer, false)
     ));
     out.push_str(&omitted_note(*omitted));
+}
+
+// A laid-out body view replaces its outline; preserve the threads it would
+// otherwise hide. Grid cells render their own descendants through render_block.
+fn render_sheet_comments(owner: &DocBlock, grid: bool, e: &Emit, out: &mut String) {
+    let mut stack: Vec<_> = owner
+        .children
+        .iter()
+        .rev()
+        .map(|block| (block, 0))
+        .collect();
+    let mut opened = false;
+    while let Some((block, depth)) = stack.pop() {
+        if crate::output_comments::is_comment(block, true) {
+            if !opened {
+                out.push_str("<ul class=\"sheet-comments\">");
+                opened = true;
+            }
+            render_outline_item(
+                block,
+                block.is_org(),
+                out,
+                e.ctx,
+                0,
+                e.tree_depth + depth + 1,
+                true,
+            );
+        } else if !grid || depth == 0 {
+            stack.extend(block.children.iter().rev().map(|child| (child, depth + 1)));
+        }
+    }
+    if opened {
+        out.push_str("</ul>");
+    }
 }
 
 /// Lay out the app's answer for `owner` in place of its plain child outline.
@@ -812,8 +910,8 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
             ));
             return false;
         }
-        Body::Table { .. } => render_table(Some(owner), &export.body, e, out),
-        Body::Board { .. } => render_board(Some(owner), &export.body, e, out),
+        Body::Table { .. } => render_table(Some(owner), None, &export.body, e, out),
+        Body::Board { .. } => render_board(Some(owner), None, &export.body, e, out),
         Body::Grid { cols, .. } => {
             if !sheets.admit_grid(owner.children.len(), *cols) {
                 out.push_str(&note(
@@ -826,6 +924,7 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
             render_grid(owner, at, &export.body, e, out);
         }
     }
+    render_sheet_comments(owner, matches!(export.body, Body::Grid { .. }), e, out);
     true
 }
 
@@ -862,7 +961,7 @@ pub(super) fn emit_query(
     if !export.query {
         return false;
     }
-    let Some(rows) = query_rows(graph, owner, found, e.ctx.current_page, &|page| {
+    let Some(rows) = query_rows(graph, owner, found, e.ctx.current_page, true, &|page| {
         publish_page_allowed(e.ctx, page)
     }) else {
         return false;
@@ -884,8 +983,8 @@ pub(super) fn emit_query(
             ));
             return false;
         }
-        Body::Table { .. } => render_table(None, &export.body, e, out),
-        Body::Board { .. } => render_board(None, &export.body, e, out),
+        Body::Table { .. } => render_table(None, Some(&rows), &export.body, e, out),
+        Body::Board { .. } => render_board(None, Some(&rows), &export.body, e, out),
         Body::Grid { .. } => return false,
     }
     true

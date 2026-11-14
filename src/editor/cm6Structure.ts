@@ -2,9 +2,9 @@ import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import {
   beginPageHeaderEdit, blockHasFoldableBody, deleteBlock, exitMultilineBlock, indentBlock, insertOutlineAfter, insertSiblingAfterSubtree,
-  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem, moveSelection,
+  mergeWithNext, mergeWithPrev, moveBlockFeed, moveItem,
   node, outdentBlock, pageByName, prevVisible, selectBlock,
-  selectBlockSubtree, setCollapsed, splitBlock, withBlockMoving, type OutlineScope,
+  selectBlockSubtree, setCollapsed, withBlockMoving, type OutlineScope,
   removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter,
   setRaw,
   bodyNeighbor, type PendingEdit,
@@ -33,6 +33,7 @@ import { gridNestedBlock, openGridTarget } from "../sheet/gridEditMove";
 import { gridEntry } from "../sheet/gridNeighbour";
 import { cm6ArrowLeave } from "./cm6ArrowLeave";
 import { BUILTIN_HIDE, SHEET_CELL_HIDE, caretOnPropertyLine, isEditorEmpty, isPropertiesOnly, multilineExitTrim } from "./properties";
+import { splitBlockInView } from "./splitBlockInView";
 
 interface StructureContext {
   cell?: SheetCellCtx | null;
@@ -51,7 +52,7 @@ interface StructureContext {
   annotation(): boolean;
   viewPrev(): string | null;
   viewNext(): string | null;
-  embedExit: { hostBlockId: string; firstRoot(): string | undefined; rowHost?(id: string): { id: string; scope: OutlineScope | null } | null } | null;
+  embedExit: { hostBlockId: string; hostSurface: string; firstRoot(): string | undefined; rowHost?(id: string): { id: string; scope: OutlineScope | null; surface?: string } | null } | null;
   collapse: CollapseSurfaceApi | null;
 }
 
@@ -63,8 +64,8 @@ export function cm6Structure(ctx: StructureContext) {
   const structuralScope = ctx.scope?.navOnly ? null : ctx.scope;
   // Where this row sits: a whole-block embed's root row stands for its host
   // (D-20261030-EMB), as the textarea's `position()` in Block.tsx.
-  const position = (): { id: string; scope: OutlineScope | null } =>
-    ctx.embedExit?.rowHost?.(ctx.id) ?? { id: ctx.id, scope: ctx.scope };
+  const position = (): { id: string; scope: OutlineScope | null; surface?: string } =>
+    ctx.embedExit?.rowHost?.(ctx.id) ?? { id: ctx.id, scope: ctx.scope, surface: ctx.surface };
   const selection = (v: EditorView): CaretSelection => {
     const s = v.state.selection.main;
     return { start: s.from, end: s.to, direction: s.empty ? "none" : s.anchor > s.head ? "backward" : "forward" };
@@ -82,6 +83,16 @@ export function cm6Structure(ctx: StructureContext) {
     const end = Math.min(s.end, v.state.doc.length), start = Math.min(s.start, end);
     v.dispatch({ selection: s.direction === "backward" ? EditorSelection.single(end, start) : EditorSelection.single(start, end) });
     v.focus();
+    // A DOM reorder can clear the browser's range before its selectionchange arrives. CM still holds
+    // the old range then, so the dispatch above writes nothing, and the late selectionchange would read
+    // the cleared range back (whether it comes before or after the next frame). Write the range here.
+    const range = v.dom.ownerDocument.getSelection(), main = v.state.selection.main;
+    if (!range || !v.hasFocus) return;
+    const anchor = v.domAtPos(main.anchor), head = v.domAtPos(main.head);
+    if (range.anchorNode !== anchor.node || range.anchorOffset !== anchor.offset
+      || range.focusNode !== head.node || range.focusOffset !== head.offset) {
+      range.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+    }
   };
   const nudge = (v: EditorView, out: boolean) => {
     const s = selection(v), text = v.state.doc.toString();
@@ -128,8 +139,7 @@ export function cm6Structure(ctx: StructureContext) {
   };
   const selectBlockAtEdge = (v: EditorView, dir: -1 | 1) => {
     if (!atEdge(v, dir > 0)) return false;
-    selectBlock(position().id, position().scope);
-    moveSelection(dir, true);
+    const selected = position(); selectBlock(selected.id, selected.scope, selected.surface);
     return true;
   };
   const commands = guardedCommands<[EditorView]>(v => ctx.current() && !v.compositionStarted, {
@@ -148,14 +158,14 @@ export function cm6Structure(ctx: StructureContext) {
     "editor/select-embedding-block": v => {
       if (!ctx.embedExit) return false;
       const host = v.dom.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
-      selectBlock(ctx.embedExit.hostBlockId);
+      selectBlock(ctx.embedExit.hostBlockId, null, ctx.embedExit.hostSurface);
       host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
       return true;
     },
     "editor/select-all": v => {
       const s = v.state.selection.main;
       if (s.from !== 0 || s.to !== v.state.doc.length) return false;
-      selectBlockSubtree(position().id, position().scope);
+      const selected = position(); selectBlockSubtree(selected.id, selected.scope, selected.surface);
       return true;
     },
     "editor/select-block-up": v => selectBlockAtEdge(v, -1),
@@ -216,8 +226,7 @@ export function cm6Structure(ctx: StructureContext) {
     // a line break and Ctrl/Cmd+Enter sends (GH #891), so no reply branch here.
     const replacement = s.empty ? undefined : ctx.deleteSelection(v, s.from, s.to);
     if (!replacement) ctx.commit(raw);
-    const zoom = ctx.scope?.forceExpandedRoot === ctx.id;
-    splitBlock(ctx.id, s.from, zoom, zoom, editSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement);
+    splitBlockInView(ctx.id, s.from, ctx.scope, navSurface(), gridNestedBlock(ctx.id, ctx.cell) ? SHEET_CELL_HIDE : BUILTIN_HIDE, replacement, ctx.collapse);
     return true;
   };
   const vertical = (v: EditorView, forward: boolean) => {
@@ -252,7 +261,7 @@ export function cm6Structure(ctx: StructureContext) {
     const s = v.state.selection.main, raw = v.state.doc.toString();
     if (plain && s.empty && ctx.annotation()
       && (e.key === "Backspace" && s.head === 0 || e.key === "Delete" && s.head === raw.length)) return false;
-    if (plain && e.key === "Escape") { selectBlock(position().id, position().scope); return true; }
+    if (plain && e.key === "Escape") { const selected = position(); selectBlock(selected.id, selected.scope, selected.surface); return true; }
     if (plain && s.empty && e.key === "Backspace") {
       if (ctx.code() && raw === "" && !node(ctx.id).children.length && bodyScopeOf(ctx.id) !== undefined) {
         const n = node(ctx.id);

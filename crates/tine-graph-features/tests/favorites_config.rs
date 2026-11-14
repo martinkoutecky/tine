@@ -6,8 +6,7 @@ use tine_graph_features::config;
 use tine_store::Store;
 
 fn graph(label: &str, config_edn: Option<&str>) -> (std::path::PathBuf, Store) {
-    let root = std::env::temp_dir().join(format!("tine-fav-config-{label}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-fav-config-{label}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("logseq")).unwrap();
     if let Some(text) = config_edn {

@@ -16,6 +16,8 @@ export interface BlockDto {
   /** Synthetic read-only reference row: the source page's prose before its
    *  first block (CM step 2 batch 8). No outline id; it opens its page. */
   page_preamble?: boolean;
+  /** Source thread membership carried by native detached export hydration. */
+  comment?: boolean;
   // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
   // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
   // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).
@@ -62,6 +64,7 @@ export interface QueryExportBatch {
  * to `parseQuery`. Publication writes a graph query leaf, preserves replaced
  * output in recovery and refuses a changed source fingerprint. */
 export interface QueryPublicationRequest {
+  includeComments?: boolean;
   argument: string;
   dialect: import("./editor/queryIr").QueryTextDialect;
   properties: [string, string][];
@@ -76,6 +79,7 @@ export interface QueryPublicationRequest {
 }
 
 export interface QueryPublicationPlan {
+  includeComments?: boolean;
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
@@ -614,6 +618,8 @@ export type QueryHit =
       page: PageEntry;
       /** Native-hydrated authored page facts for display columns; absent for references. */
       row?: import("./editor/queryIr").PageRow;
+      /** The matched content excerpt belongs to a margin-comment thread. */
+      is_comment?: boolean;
       display_text: string;
       evidence: MatchEvidence[];
       score: number;
@@ -627,6 +633,8 @@ export type QueryHit =
       /** Exact graph-root-relative file that physically owns this block hit. */
       path?: string;
       block: BlockDto;
+      /** Rust-owned thread membership, including replies. */
+      is_comment?: boolean;
       display_text: string;
       evidence: MatchEvidence[];
       score?: number;
@@ -689,31 +697,31 @@ export interface GraphMeta {
   /** OG `:mobile {:gestures/disabled-in-block-with-tags [..]}`: tags that turn the
    *  block swipe gestures off inside a block carrying them. */
   mobile_gestures_disabled_in_block_with_tags: string[];
-  /** OG `:quick-capture-templates {:text "…"}`; null/absent = OG default (shareShape.ts). */
-  quick_capture_template_text?: string | null;
-  /** OG `:quick-capture-templates {:media "…"}`; null/absent = OG default (shareShape.ts). */
-  quick_capture_template_media?: string | null;
+  /** OG `:quick-capture-templates {:text "…"}`; null = OG default (shareShape.ts). */
+  quick_capture_template_text: string | null;
+  /** OG `:quick-capture-templates {:media "…"}`; null = OG default (shareShape.ts). */
+  quick_capture_template_media: string | null;
   /** OG `:quick-capture-options {:default-page "…"}`: where a Quick Capture without a title goes. */
-  quick_capture_default_page?: string | null;
+  quick_capture_default_page: string | null;
   /** OG `:quick-capture-options {:insert-today? true}`: untitled captures go to today's journal, ahead of the default page. */
-  quick_capture_insert_today?: boolean;
+  quick_capture_insert_today: boolean;
   /** OG `:quick-capture-options {:redirect-page? true}`: open the page a capture landed on. */
-  quick_capture_redirect_page?: boolean;
+  quick_capture_redirect_page: boolean;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
-  /** :file/name-format; absent (older backend) = "legacy", the graph default. */
-  file_name_format?: "legacy" | "triple-lowbar";
+  /** Effective :file/name-format, resolved by Rust. */
+  file_name_format: "legacy" | "triple-lowbar";
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
   macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
   enable_timetracking: boolean; // :feature/enable-timetracking?, default true
-  enable_search_remove_accents?: boolean; // :feature/enable-search-remove-accents?, default true
+  enable_search_remove_accents: boolean; // :feature/enable-search-remove-accents?, default true
   show_brackets: boolean; // :ui/show-brackets?, default true
-  /** :ui/enable-tooltip? (page, tag and block-reference previews), true when absent / older backend. */
-  enable_tooltip?: boolean;
-  /** :shortcut/doc-mode-enter-for-new-block?, false when absent / older backend. */
-  doc_mode_enter_for_new_block?: boolean;
-  /** :editor/logical-outdenting?, false when absent / older backend. */
-  logical_outdenting?: boolean;
+  /** Effective :ui/enable-tooltip? (page, tag and block-reference previews), resolved by Rust. */
+  enable_tooltip: boolean;
+  /** Effective :shortcut/doc-mode-enter-for-new-block?, resolved by Rust. */
+  doc_mode_enter_for_new_block: boolean;
+  /** Effective :editor/logical-outdenting?, resolved by Rust. */
+  logical_outdenting: boolean;
   logbook_with_second_support: boolean; // :logbook/settings :with-second-support?, default true
   logbook_enabled_in_timestamped_blocks: boolean;
   logbook_enabled_in_all_blocks: boolean;
@@ -749,6 +757,7 @@ export interface PdfState {
 /** Options for the print-to-PDF export (chosen in the pre-export dialog). Field
  *  names are snake_case to match the Rust `PrintOpts` serde deserialization. */
 export interface PrintOpts {
+  include_comments?: boolean;
   /** Expand `collapsed:: true` blocks (true = print the whole page). */
   expand_collapsed: boolean;
   /** Base body font size, px. */

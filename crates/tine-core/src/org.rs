@@ -265,9 +265,9 @@ mod tests {
             // is busy, including each Shift+Enter before the next character.
             for pause in 1..=typed.len() {
                 let mut doc = parse_org(&original);
-                doc.roots[0].raw = typed[..pause].to_string();
+                doc.roots[0].raw = typed[..pause].to_string().into();
                 let saved = serialize_org_detect(&doc, Some(&original));
-                doc.roots[0].raw = typed.to_string();
+                doc.roots[0].raw = typed.to_string().into();
                 assert_eq!(
                     serialize_org_detect(&doc, Some(&saved)),
                     format!("* {typed}{}", "\n".repeat(trailing)),
@@ -301,11 +301,11 @@ mod tests {
     fn structure_simple() {
         let doc = parse_org("* parent\n** child\n*** grand\n* sibling\n");
         assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "parent");
+        assert_eq!(doc.roots[0].raw(), "parent");
         assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "child");
-        assert_eq!(doc.roots[0].children[0].children[0].raw, "grand");
-        assert_eq!(doc.roots[1].raw, "sibling");
+        assert_eq!(doc.roots[0].children[0].raw(), "child");
+        assert_eq!(doc.roots[0].children[0].children[0].raw(), "grand");
+        assert_eq!(doc.roots[1].raw(), "sibling");
         assert!(doc.roots[1].children.is_empty());
     }
 
@@ -314,7 +314,7 @@ mod tests {
         let doc = parse_org("* TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line\n");
         assert_eq!(doc.roots.len(), 1);
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line"
         );
         // Marker detection (shared with markdown) sees the leading keyword.
@@ -410,9 +410,9 @@ mod tests {
         }
         let doc = parse_org("#+title: T\r\n\r\n* a\r\nbody\r\n*\r\n** b\r\n");
         assert_eq!(doc.pre_block.as_deref(), Some("#+title: T\n"));
-        assert_eq!(doc.roots[0].raw, "a\nbody");
-        assert_eq!(doc.roots[1].raw, "");
-        assert_eq!(doc.roots[1].children[0].raw, "b");
+        assert_eq!(doc.roots[0].raw(), "a\nbody");
+        assert_eq!(doc.roots[1].raw(), "");
+        assert_eq!(doc.roots[1].children[0].raw(), "b");
     }
 
     /// GH #25: the id `rawWithBlockId` (store.ts) writes into an ORG block — a

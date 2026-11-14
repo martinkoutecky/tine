@@ -1,6 +1,6 @@
 import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
-import { LineGutter } from "./LineGutter";
+import { codeGutterStyle, LineGutter } from "./LineGutter";
 import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
@@ -20,7 +20,8 @@ import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
-import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
+import { BeginQuery } from "../components/BeginQuery";
+import { inspectBeginQuery } from "./beginQuery";
 import { readOr } from "../resourceRead";
 import "./codeBlock.css";
 import { QueryMacro } from "../components/Macro";
@@ -42,6 +43,7 @@ function loadHljs() {
 // syntax-highlighted once highlight.js loads. The highlight result is memoized
 // (highlightAuto is expensive) so re-renders don't re-tokenize.
 function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const lines = createMemo(() => (props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n"));
   const [hljs] = createResource(loadHljs);
   const html = createMemo(() => {
     const h = readOr(hljs, undefined, "highlight.js");
@@ -56,9 +58,9 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     }
   });
   return (
-    <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
+    <pre class="code-block" style={codeGutterStyle(lines().length)} classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
       <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
-      <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
+      <LineGutter lines={lines()} code />
       <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
@@ -367,6 +369,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: Sp
         {(item) => (
           <li
             class="md-list-item"
+            value={item.checkbox === undefined ? item.number : undefined}
             classList={{
               "has-checkbox": item.checkbox !== undefined,
               "has-term": !!item.name && item.name.length > 0,
@@ -427,7 +430,7 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   // A hover preview never mounts a live query (GH #735; same rule as inline query macros).
   const beginQuery = inPeek ? null : inspectBeginQuery(raw, format, blocks);
   return beginQuery
-    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} findHost={blockId} />
     : <CheckboxSourceContext.Provider value={raw}>
         {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
       </CheckboxSourceContext.Provider>;

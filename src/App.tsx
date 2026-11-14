@@ -4,7 +4,7 @@ import { installTineLinks } from "./deepLinkNavigation";
 import { installShareIngest } from "./shareIngest";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
-import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { JournalsIcon } from "./components/JournalsIcon";
 import { ShareIcon } from "./components/ShareIcon";
@@ -22,6 +22,10 @@ const KeyedPdfViewer = lazy(() =>
 import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { TopbarOverflowMenu } from "./components/TopbarOverflowMenu";
+import { toolbarActions, toolbarChoice, initToolbarChoice, type ToolbarActionId } from "./toolbarChoice";
+import { createToolbarLayout } from "./toolbarLayout";
+import { ToolbarActionIcon } from "./components/ToolbarActionIcon";
+import { openWorkspaceMenu } from "./workspaceCreation";
 import { WindowOverlays } from "./components/WindowOverlays";
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
 import { CalendarJump } from "./components/CalendarJump";
@@ -51,7 +55,7 @@ import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
 import { openJournalsFromClick } from "./journalsNavigation";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
@@ -233,8 +237,11 @@ installExternalChangeUiHandler(() => {
     pageOpen: (name: string) => routes.some((p) => p.route.kind === "page" && p.route.name === name),
     journalsOpen: routes.some((p) => p.route.kind === "journals"),
     leaveRemovedPage: (name: string) => {
+      // The removal may resolve after a read: leave only panes still on the exact route (name, kind, path) they
+      // showed when the change was observed, never one the reader has since moved, even to a same-named file.
       for (const p of routes) {
-        if (p.route.kind === "page" && p.route.name === name) {
+        if (p.route.kind === "page" && p.route.name === name && allPaneIds().includes(p.paneId)
+          && sameRoute(p.router.route(), p.route)) {
           if (p.router.canGoBack()) p.router.goBack();
           else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
         }
@@ -613,6 +620,16 @@ export function App(): JSX.Element {
     },
   })));
   let openCalendarJump = () => {};
+  const navigationAtBottom = () => touchPrimary() && mobileNavigationAtBottom();
+  const toolbarHasTabs = createMemo(() => tabStripFits() && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID)));
+  const toolbarHasWindowControls = createMemo(() => isTauri() && !osDrawsWindowControls());
+  const toolbar = createToolbarLayout(() => ({
+    available: toolbarActions.map(action => action.id).filter(id =>
+      !(isPublishedExport() && (id === "settings" || id === "share" || id === "workspaces")) && (id !== "workspaces" || showWorkspaces())),
+    workspace: !sidebarOpen(),
+    tabs: toolbarHasTabs(), windowControls: toolbarHasWindowControls(),
+    navigationAtBottom: navigationAtBottom(),
+  }));
   // The page the focused pane shows, when it is one the user can share (not the bundled Guide).
   const sharePage = (): string | null => {
     const current = route();
@@ -692,13 +709,13 @@ export function App(): JSX.Element {
           hasDrawer: () => activeDrawer() !== null,
           canGoBack,
         }),
-        drawerOpenable: () => mobileDrawerMode() && activeDrawer() === null,
+        drawerOpenable: () => !settingsOpen() && mobileDrawerMode() && activeDrawer() === null,
         // The edge swipe never closes the app: iOS has no root rung.
         back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
         openDrawer: () => setLeftSidebarOpen(true),
         drawerProgress: dragOpeningMobileDrawer,
         drawerSettle: () => settleMobileDrawer("left"),
-        surface: () => mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
+        surface: () => mainWindow.document.querySelector<HTMLElement>(".settings-phone .settings-modal") ?? mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
       });
     })();
     onCleanup(() => { disposed = true; uninstall(); });
@@ -836,6 +853,7 @@ export function App(): JSX.Element {
   onMount(() => void initPasteSettings());
   onMount(initHoverPreviewSettings);
   onMount(() => void initNavSettings());
+  onMount(() => void initToolbarChoice());
   onMount(() => { initCommentIdentity(); initCommentNamePrompt(); });
   // tine#841: learn once per opened graph whether it sits in git, so the first
   // margin comment can ask for "Your name" without waiting for the answer.
@@ -1093,7 +1111,6 @@ export function App(): JSX.Element {
   // One shared group: the title bar by default (desktop, phone, tablet; GH #716),
   // or, on a mobile app that turned on "Navigation buttons at the bottom", a row
   // below the document (GH #598). Exactly one of the two is mounted.
-  const navigationAtBottom = () => touchPrimary() && mobileNavigationAtBottom();
   const NavigationActions = () => (
     <div class="navigation-actions topbar-left">
       <button
@@ -1154,6 +1171,55 @@ export function App(): JSX.Element {
     onCleanup(installWindowChrome());
   });
 
+  const toolbarOrder = createMemo(() => {
+    const choice = toolbarChoice();
+    return choice ? [...choice.bar, ...choice.menu] : toolbarActions.map(action => action.id).filter(id => id !== "settings");
+  });
+  const toolbarButtons: Record<ToolbarActionId, () => JSX.Element> = {
+    "calendar": () => (
+      <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" triggerStyle={toolbar.style("calendar")} onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
+    ),
+    "journals": () => (
+      <button class="icon-btn topbar-optional-action" data-toolbar-action="journals" style={toolbar.style("journals")} title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
+        <JournalsIcon />
+      </button>
+    ),
+    "share": () => (
+      <Show when={!isPublishedExport()}>
+        <button class="icon-btn topbar-optional-action topbar-share" data-toolbar-action="share" style={toolbar.style("share")} title={sharePage() ? t("share-topbar-title") : t("share-dialog-no-page")}
+          aria-label={t("share-topbar-title")} data-pane-focus-neutral disabled={!sharePage()} onClick={topbarActions.share}>
+          <ShareIcon />
+        </button>
+      </Show>
+    ),
+    "theme": () => (
+      <button class="icon-btn topbar-optional-action" data-toolbar-action="theme" style={toolbar.style("theme")} title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
+        <ToolbarActionIcon id="theme" light={theme() === "light"} />
+      </button>
+    ),
+    "right-sidebar": () => (
+      <button
+        class="icon-btn topbar-sidebar-action"
+        data-toolbar-action="right-sidebar" style={toolbar.style("right-sidebar")}
+        classList={{ active: rightSidebarOpen() }}
+        title={t("app-toggle-right-sidebar-t-r")}
+        onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}
+      >
+        <ToolbarActionIcon id="right-sidebar" />
+      </button>
+    ),
+    "workspaces": () => (
+      <Show when={toolbarChoice() && showWorkspaces() && !isPublishedExport()}>
+        <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact toolbarStyle={toolbar.style("workspaces")} /></FailureBoundary>
+      </Show>
+    ),
+    settings: () => <Show when={!isPublishedExport()}>
+      <button class="icon-btn" data-toolbar-action="settings" style={toolbar.style("settings")} title={t("app-settings-t-s")} onClick={() => openSettings()}>
+        <ToolbarActionIcon id="settings" />
+      </button>
+    </Show>,
+  };
+
   return (
     <div
       class="app-container"
@@ -1198,12 +1264,15 @@ export function App(): JSX.Element {
                 <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary>
               </div>
             </Show>
-            <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>
-            </Show>
             <FailureBoundary region="The sidebar">
-              <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
+              <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} onClose={() => { if (!dismissDrawerAndRestore("explicit")) setLeftSidebarOpen(false); }} />
             </FailureBoundary>
           </div>
+          {/* A fixed last row of the drawer, outside its scroll, so Settings is
+              two taps away whatever the toolbar shows (GH #926). */}
+          <Show when={mobileDrawerMode() && !isPublishedExport()}>
+            <button type="button" class="mobile-drawer-settings" onClick={() => { dismissDrawerAndRestore("navigation"); openSettings(); }}>{t("settings-ui-settings")}</button>
+          </Show>
           <div
             class="sidebar-resizer"
             onMouseDown={(e) => {
@@ -1232,20 +1301,20 @@ export function App(): JSX.Element {
         {/* The toolbar doubles as the title bar: data-tauri-drag-region lets the
             user drag the window by its empty areas (buttons/tabs, being children
             without the attribute, still click normally; double-click maximizes). */}
-        <header class="topbar" data-tauri-drag-region>
+        <header class="topbar" ref={toolbar.ref} data-toolbar-customized={toolbarChoice() ? "true" : undefined} data-tauri-drag-region>
           <Show when={!navigationAtBottom()}><FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary></Show>
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
-          <Show when={showWorkspaces() && !sidebarOpen() && !isPublishedExport()}>
-            <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact /></FailureBoundary>
+          <Show when={!toolbarChoice() && showWorkspaces() && !sidebarOpen() && !isPublishedExport()}>
+            <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact toolbarStyle={toolbar.style("workspaces")} /></FailureBoundary>
           </Show>
           {/* The tab strip shows whenever the top bar has room for it, on any
               platform (D-20261018-W1); in a drawer-width window (< 640 px) it
               would only crowd the single-row toolbar, so the sidebar's Tabs
               section is the way to switch there. A flex spacer keeps the
               right-side icons pinned to the edge. */}
-          <Show when={tabStripFits() && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+          <Show when={toolbarHasTabs()} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
             <Show when={firstPaneId(layoutRoot(MAIN_WINDOW_ID)) ?? "main"} keyed>
@@ -1253,51 +1322,12 @@ export function App(): JSX.Element {
             </Show>
           </Show>
           <div class="topbar-right">
-            <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
-            <button class="icon-btn topbar-optional-action" title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
-              <JournalsIcon />
-            </button>
-            <Show when={!isPublishedExport()}>
-              <button class="icon-btn topbar-optional-action topbar-share" title={sharePage() ? t("share-topbar-title") : t("share-dialog-no-page")}
-                aria-label={t("share-topbar-title")} data-pane-focus-neutral disabled={!sharePage()} onClick={topbarActions.share}>
-                <ShareIcon />
-              </button>
-            </Show>
-            <button class="icon-btn topbar-optional-action" title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
-              <Show
-                when={theme() === "light"}
-                fallback={
-                  <svg viewBox="0 0 24 24" class="nav-icon">
-                    <path
-                      d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.7"
-                    />
-                  </svg>
-                }
-              >
-                <svg viewBox="0 0 24 24" class="nav-icon">
-                  <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <line x1="12" y1="2" x2="12" y2="5" stroke="currentColor" stroke-width="1.6" />
-                  <line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="1.6" />
-                  <line x1="2" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="1.6" />
-                  <line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.6" />
-                </svg>
-              </Show>
-            </button>
-            <button
-              class="icon-btn topbar-sidebar-action"
-              classList={{ active: rightSidebarOpen() }}
-              title={t("app-toggle-right-sidebar-t-r")}
-              onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
+            <For each={toolbarOrder()}>{id => toolbarButtons[id]()}</For>
             <FailureBoundary region="The toolbar menu"><TopbarOverflowMenu
+              actions={toolbar.placement().menu}
+              visible={toolbar.placement().overflow}
+              onWorkspaces={openWorkspaceMenu}
+              onCustomize={isPublishedExport() ? undefined : () => openSettings("toolbar")}
               onCalendar={topbarActions.calendar}
               onJournals={topbarActions.journals}
               onShare={isPublishedExport() ? undefined : topbarActions.share}
@@ -1308,23 +1338,15 @@ export function App(): JSX.Element {
               onForward={topbarActions.forward}
               canGoBack={canGoBack}
               canGoForward={canGoForward}
+              onSettings={isPublishedExport() ? undefined : () => openSettings()}
             /></FailureBoundary>
-            {/* Settings sits apart at the far right (separated by a divider) so
-                it reads as app-level config, not another content control. */}
-            <Show when={!isPublishedExport()}><span class="topbar-sep" />
-            <button class="icon-btn" title={t("app-settings-t-s")} onClick={() => openSettings()}>
-              <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-                />
-              </svg>
-            </button></Show>
+            {/* The default keeps Settings at the trailing edge beside a divider. */}
+            <Show when={!isPublishedExport() && !toolbarChoice()}><span class="topbar-sep" />{toolbarButtons.settings()}</Show>
             {/* Frameless-window controls live at the very right, where the native
                 title bar's buttons used to be. Hidden when the OS draws its own
                 (macOS Overlay always; Linux/Windows when the native-frame toggle
                 is on). */}
-            <Show when={isTauri() && !osDrawsWindowControls()}>
+            <Show when={toolbarHasWindowControls()}>
               <span class="topbar-sep" />
               <FailureBoundary region="Window controls"><WindowControls /></FailureBoundary>
             </Show>

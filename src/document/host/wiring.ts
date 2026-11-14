@@ -30,9 +30,10 @@ import { isBlockMoving } from "../edits/moves";
 import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
-import { doc, pageByName, setPageId } from "../model";
+import { doc, pageByName, pageReadOnly, setPageId } from "../model";
 import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
@@ -149,7 +150,8 @@ const documentPort: DocumentPort = {
     return true;
   },
   tombstoned: (name) => deletedPages.has(name),
-  took: (name, rev) => { baseRev.set(name, rev); },
+  took: (name, rev) => { invalidatePageRead(name); baseRev.set(name, rev); },
+  released: invalidatePageRead,
 };
 
 /** The document port for one binding's client: a client the binding has
@@ -162,6 +164,7 @@ function portFor(current: () => boolean): DocumentPort {
     install: (name, content) => { if (current()) documentPort.install(name, content); },
     holdsPush: (name) => current() && documentPort.holdsPush(name),
     took: (name, rev) => { if (current()) documentPort.took(name, rev); },
+    released: name => { if (current()) documentPort.released(name); },
   };
 }
 
@@ -217,7 +220,7 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
  * Input was flushed and frozen before the native saved-stop/relaunch. Cost is
  * one Open/Close per loaded graph page, only on this explicit recovery action. */
 async function refreshLoadedHostPages(c: HostClient): Promise<void> {
-  const names = doc.pages.filter(page => !page.guide && !page.readOnly).map(page => page.name);
+  const names = doc.pages.filter(page => !page.guide && !pageReadOnly(page)).map(page => page.name);
   const releases = names.map(name => c.acquire(name));
   try { await c.drain(names); }
   finally { for (const release of releases) release(); }
@@ -538,7 +541,7 @@ function reportProblems(c: HostClient | null, names: string[]): void {
 /** The dirty funnel: every programmatic page mutation, with its edit kinds. */
 export function markDirty(name: string, kinds: EditKind | EditKinds): void {
   const page = pageByName(name);
-  if (!page || page.readOnly || page.guide || deletedPages.has(name)) return;
+  if (!page || pageReadOnly(page) || page.guide || deletedPages.has(name)) return;
   noteQueryInput();
   const c = host();
   if (!c) {
@@ -1010,7 +1013,12 @@ function queueAliasLanding(name: string, owners: string[]): void {
 async function landAliasDraft(c: HostClient, name: string, ownerPath: string): Promise<void> {
   const generation = pageInstanceGeneration(name);
   let owned;
-  try { owned = await readOwned(bindingOwner(), backend().getPageByPath(ownerPath)); }
+  try { owned = await admitRead(bindingOwner(() => host() === c), () => backend().getPageByPath(ownerPath), dto => [name, ...(dto ? [dto.name] : [])], dto => {
+    if (!dto || dto.read_only || dto.guide) return null;
+    const refused = ensurePageLoaded(dto);
+    if (refused) { reportPageLoadRefusal(refused); return null; }
+    return dto;
+  }); }
   catch {
     // The draft stays in the editor, unsaved and listed; say why it did not move.
     pushToast(msg("document-wiring-couldn-t-read-the-page-is-an-alias-of-its", { value1: ownerPath, value2: name }), "error");
@@ -1018,8 +1026,6 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
   }
   const read = owned.kind === "current" ? owned.value : null;
   if (!read || read.read_only || read.guide || host() !== c) return;
-  const refused = ensurePageLoaded(read);
-  if (refused) { reportPageLoadRefusal(refused); return; }
   const owner = read.name;
   const release = c.acquire(owner, { pin: true });
   try {

@@ -8,13 +8,13 @@ import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities,
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 
-const run = path.resolve(`target/artifacts/feat-927-hide-workspaces/native/run-${Date.now()}`);
+const run = path.join(path.resolve(process.env.E2E_ARTIFACT_DIR || "target/artifacts/feat-927-hide-workspaces/native"), `run-${Date.now()}`);
 const graph = path.join(run, "graph");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir), { recursive: true });
+for (const dir of ["home", "data", "config", "cache", "state"]) fs.mkdirSync(path.join(run, dir), { recursive: true });
 fs.writeFileSync(path.join(graph, "pages/Census.md"), "- Workspace creation fixture\n");
 const app = process.env.TINE_APP || path.resolve("target/debug/tine");
-const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
+const env = { ...process.env, HOME: path.join(run, "home"), TINE_GRAPH: graph, XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"), XDG_STATE_HOME: path.join(run, "state"),
   TINE_E2E_FORCE_MOBILE_DRAWERS: "1",
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4596);
@@ -45,6 +45,15 @@ try {
     const field = await browser.$('.workspace-edit-input[aria-label="New workspace name"]');
     await field.waitForDisplayed({ timeout: 5000 });
     await field.setValue(name);
+    // A displayed field can have its submit button clipped by the sidebar.
+    // Wait for the actual pointer target, without scrolling a clipped menu into
+    // place and concealing a layout defect (IcYyc).
+    await browser.waitUntil(() => browser.execute(() => {
+      const button = document.querySelector('.workspace-edit-form button[type="submit"]');
+      if (!button || button.disabled) return false;
+      const rect = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+    }), { timeout: 5000, timeoutMsg: "Workspace submit button cannot receive a pointer click" });
     await browser.$('.workspace-edit-form button[type="submit"]').click();
     await browser.waitUntil(() => browser.execute((name) => document.querySelector(".workspace-switcher-btn")?.getAttribute("aria-label")?.includes(name)
       || document.querySelector(".workspace-switcher-name")?.textContent?.includes(name), name), { timeout: 10_000 });

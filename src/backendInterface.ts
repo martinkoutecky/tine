@@ -225,7 +225,7 @@ export interface Backend {
   publishQuery(request: QueryPublicationRequest, fingerprint: string, sheets: SheetExport[]): Promise<PublicationReceipt>;
   /** Publish a whole-graph read-only app plus static fallback under a picked
    * folder. `allPages` explicitly includes private pages; default public only. */
-  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
+  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[], includeComments?: boolean): Promise<PublicationReceipt>;
   /** Quick share (DESIGN §3.9; src-tauri/src/quick_share). Every GitHub call,
    * the token and each share's key stay native; failures reject with a
    * `QuickShareError`. Prepare builds the exact payload a later create uploads,
@@ -755,7 +755,8 @@ export interface Backend {
   /** Generic device-local STRING preference (tine-settings.json); caller supplies
    *  the key + default. Used by the asset-filename format template. */
   getAppString(key: string, fallback: string): Promise<string>;
-  setAppString(key: string, value: string): Promise<void>;
+  /** Null removes the device preference through the same guarded update. */
+  setAppString(key: string, value: string | null): Promise<void>;
   /** The UI locale the frontend resolved (tine#107): native shell text (the
    *  tray) follows it, since native code never negotiates or formats messages. */
   setUiLocale(locale: string): Promise<void>;

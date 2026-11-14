@@ -6,8 +6,67 @@ UI-MC010-GROUPS, UI-MC010-VISIBILITY, UI-MC010-RESOLVE, UI-MC010-DATES, UI-MC010
 UI-MC010-PHONE, UI-MC010-CLICK-DISPLAY, UI-MC5-MESSAGES, UI-MC5-COLLAPSE, UI-MC9-REVIEW,
 UI-MC12-REVIEW-QUERY, UI-MC12-UNREAD; GH #891 review findings 1 and 2; GH #929.
 
-Not yet built: the page-level discussion thread (design §13). Everything else in
-the design's 0.10 scope is described below.
+Not yet built: the page-level discussion thread (design §13) and the search-hit comment cue.
+Output follows D-20261113-CO/CO2 (H9TvA).
+
+## Counting, listing and output surfaces
+
+Comments require a parent block and the parser-recognized `tine.quote`
+property. All descendants of that comment belong to its thread. A root block
+carrying that property is ordinary body content, not a page discussion thread.
+The discriminator is Rust's `tine_outline::editor_text::comment_quote`, exposed
+through wasm to `isCommentBlock`; `threadRootOf` supplies document ancestry.
+The surface comment index supplies root membership and resolution counts.
+
+Output and unchanged counting/search behavior are covered by:
+`src/document/commentSurfaces.test.ts`,
+`crates/tine-graph-features/tests/comment_surfaces.rs`, and the existing comment
+count, resolution and rendering suites.
+
+| Surface | Treatment of comments |
+|---|---|
+| Body navigation | Skips the whole thread, including unquoted replies. |
+| Empty page / typing target | Seeds a bullet when there are no roots, or after a Markdown properties-only root. A blank body root with a thread remains a body root and is not replaced. A root with `tine.quote` is not excluded. |
+| Comment controls | Counts thread roots rather than messages: resolved count and hidden-descendant “N below” use the comment index; resolved roots are excluded from open counts. Expanded margin and popup have no count badge; phone chip has no visible count. |
+| Text / Markdown export modal | Included by default. Text prefixes each thread block with `[Comment]` (author/date where known); source retains comment properties, including with Remove properties. Include comments off removes the whole thread. |
+| HTML / OPML export modal | Included by default. HTML uses an annotation with a Comment header; OPML prefixes text with `[Comment]`, with author/date where known. Include comments off removes the whole thread. |
+| Copy outline / copy page as Markdown | Includes comment text, replies and source comment properties. The private clipboard retains the complete source subtree. Copying a block reference or link copies its identity rather than its body. |
+| Print / PDF | Included by default as labelled annotations with author/date where known. Include comments off removes threads from the print document used by PDF. |
+| Static site | Included as labelled annotations by default, and present in the search index. `--no-comments` removes threads from pages and the index. |
+| Live / query folder publication | Included by default. The snapshot retains source comment properties; the reader uses the app's margin. Static fallback uses labelled annotations. Include comments off removes threads before building all derived answers. |
+| Quick share | Included by default; the reader shows the app's margin. Include comments off removes whole threads before creating the encrypted snapshot. |
+| Full-text search | Comment text can produce ordinary block hits with the host in the breadcrumb; metadata is absent from display text. With page-content matching enabled, comment text can also produce a page hit. There is no separate comment result family. |
+| Palette / search previews | Uses the search engine's ordinary block hits, display text and breadcrumbs. The result goes in the existing block section, without a comment label. |
+| In-page Find | Includes comment and reply text in match counts, including threads outside the body outline. Hidden comment metadata is excluded. |
+| Backlinks / All pages reference counts | References written in comment text and replies participate in membership and counts, like references in body blocks. These counts measure referring blocks, not page body size. |
+
+There is no word-count feature or page-body-size badge in this inventory.
+The export modal's block count is the requested selection/result count, not a
+recursive count of the exported subtree. Query results and reference panels
+retain engine membership; the live block renderer applies comment presentation
+within a shown subtree. This inventory does not change query semantics.
+
+Repeating folder exports and shares store `tine.comments:: false` on the definition
+block when comments are excluded; absence means include. Re-export and Update all
+read it. A dialog writes the property only for an explicit changed choice, through
+the document's guarded save path. Update all displays mixed saved choices with an
+indeterminate checkbox; changing it applies one choice to the batch and refreshes
+its review. The reviewed fingerprint includes the effective choice.
+
+Flat exports keep expanded embed content under its comment root. The root's
+source properties and the embedded blocks' authors stay with their owners.
+Detached replies carry an empty `tine.quote` in source exports so their comment
+marking survives expansion and copies without transient thread metadata.
+Computed tables, boards and grids show ordinary rows in their view and preserve
+comment threads as annotations alongside it.
+
+The comment discriminator remains `comment_quote`; `output_comments` carries
+thread membership through publication planning, and the frontend export projection
+uses the same discriminator through wasm. O(exported blocks), no added filesystem
+reads, stats or IPC, no per-edit work. Search-hit presentation is a separate task;
+reference counts and Find remain unchanged.
+
+## Interaction
 
 - Settings > Appearance > Comments offers **In the margin** (default) and
   **In a popup** (D-20261108-MC7). This viewer preference uses the same
@@ -85,8 +144,13 @@ the design's 0.10 scope is described below.
   folded "N below" count, and every block's comment children (outline filter,
   highlights, compact entry and popup, margin column) and margin eligibility
   read it. A structural change rescans the scope's trees once with untracked
-  reads. Each mounted block's child-list memo then compares its own list; an
-  unchanged list retains its value and does not rerun downstream comment views.
+  reads. The rescan compares old and new comment lists and notifies only the
+  parents whose lists changed; unchanged parents evaluate no child-list memo.
+  Child-list memos depend on a stable scan result for freshness while a comment's
+  structure and metadata are published in one batch. A separate rescan signal
+  notifies root readers; typing adds no scan reads to child-list accessor reads.
+  Rows and grouped passage headers use the existing node-lifetime binding
+  while deletion notifications settle, until their owners dispose them.
   Covering-index selection follows the block's ancestry rather than a global
   structural revision. A raw edit of any
   block on those pages runs one key screen (plus one facet lookup if it may
@@ -282,6 +346,22 @@ default keys, hidden comments shown by a step) and the native journey
 comment index, and makes no backend read or write other than the ancestor
 reveal's own save (none for a visible target; counted in
 `CommentReview.test.tsx`). Nothing is stored; the current thread is a view signal.
+
+## Full-text search (COMMENT-OUT-V2, D-20261113-CO2)
+
+Full-text search retains comment roots and every descendant reply as ordinary
+block hits. The palette, search workspace and search result excerpts label them
+**comment**, keeping the host block in their existing ancestor breadcrumbs.
+A page whose only matching text is a comment remains a content-search page hit;
+its matching comment also remains a labelled block hit. In-page Find and reference
+counts retain their existing inclusion of comments (V3).
+
+The result-only `QueryHit::Block.is_comment` fact comes from
+`tine_outline::editor_text::comment_quote` over parsed own properties, with a
+parent required for a thread root. The search walk carries membership to all
+descendants. Projection and rendering read that boolean in O(1) per hit, with
+zero additional file reads, writes, stats or IPC calls. Navigation uses the
+existing comment-target reveal path.
 
 ## Styling layer (D-20261111-CSL, GH #929)
 

@@ -1,4 +1,5 @@
 import { focusOnMount } from "../focusOnMount";
+import { ownSelectionSurface } from "../document";
 import { t, msg, render } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
@@ -11,7 +12,7 @@ export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
+import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, pageReadOnly, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
@@ -103,6 +104,7 @@ export function SheetTable(props: {
   onDefaultColumns?: (columns: string[]) => void;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
+  ownSelectionSurface(cellSurfaceKey(props.ownerId, surfaceId), undefined, surfaceId);
   let tableRef: HTMLDivElement | undefined;
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
@@ -394,7 +396,7 @@ export function SheetTable(props: {
     const home = schemaHome() ?? createSchemaHome();
     if (!home) return false;
     if (home.kind === "block") return blockWritable(home.id);
-    return !(pageByName(home.name)?.readOnly ?? false);
+    return !pageReadOnly(pageByName(home.name));
   };
   const writeSchemaFields = (next: readonly FieldSpec[]) => {
     const home = schemaHome() ?? createSchemaHome();
@@ -418,7 +420,7 @@ export function SheetTable(props: {
   const formulaWriteAllowed = (home: FormulaHome | null) => {
     if (!home) return false;
     if (home.kind === "block") return blockWritable(home.id);
-    return !(pageByName(home.name)?.readOnly ?? false);
+    return !pageReadOnly(pageByName(home.name));
   };
   const removeFormula = (field: FieldId) => {
     const name = formulaNameFromField(field);

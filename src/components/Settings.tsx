@@ -2,7 +2,7 @@ import { settings } from "./settingDefinitions";
 import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
-import { graphConfigProblem } from "../graph";
+import { graphConfigUnreadable } from "../graphConfig";
 import { JournalTemplateField } from "./JournalTemplateField";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
@@ -21,20 +21,17 @@ import { changedAny } from "../changeKeys";
 import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
-import { applyGraphChange } from "../document";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
 import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import { touchPrimary } from "../inputCapability";
 import {
-  copyIncludeSubtree,
-  setCopyIncludeSubtree,
   copyStripCollapsed,
   setCopyStripCollapsed,
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab, showWorkspaces, setShowWorkspaces, showHelpButton, setShowHelpButton } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { autoEmbedVideoLinks, setAutoEmbedVideoLinks } from "../pasteSettings";
 import { hoverPreviewDelaySeconds, setHoverPreviewDelaySeconds, previewsEnabled, changePreviewsEnabled } from "../hoverPreviewSettings";
@@ -86,6 +83,7 @@ import { mediaEditorSetting, type SettingDescriptor } from "./settingsDescriptor
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
+import { ToolbarSettings } from "./ToolbarSettings";
 import { CustomCssSettings } from "./CustomCssSettings";
 import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { backend, isTauri, type BackupInfo } from "../backend";
@@ -108,6 +106,7 @@ import { readOr } from "../resourceRead";
 import { activeWindow, listen, queryAllWindows } from "../windowRealm";
 const TABS: { id: SettingsTabId; label: Msg }[] = [
   { id: "appearance", label: msg("settings-ui-appearance") },
+  { id: "themes", label: msg("themes-themes") },
   { id: "editor", label: msg("settings-ui-editor") },
   { id: "journals", label: msg("settings-ui-journals") },
   { id: "files", label: msg("settings-ui-files") },
@@ -123,13 +122,20 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
 const SEARCH_SCROLL_WAIT_MS = 1000;
 const SETTINGS_FLASH_MS = 2000;
 export function Settings(): JSX.Element {
+  const phoneQuery = activeWindow().matchMedia?.("(max-width: 480px) and (pointer: coarse)");
+  const [phone, setPhone] = createSignal(phoneQuery?.matches ?? false);
+  const updatePhone = () => setPhone(phoneQuery?.matches ?? false);
+  phoneQuery?.addEventListener("change", updatePhone);
+  onCleanup(() => phoneQuery?.removeEventListener("change", updatePhone));
+  const [paneOpen, setPaneOpen] = createSignal(false);
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   // A result opens its tab with the matching Advanced section revealed, even
   // though navigation ends the search and restores the normal tab body.
   const [revealedQuery, setRevealedQuery] = createSignal("");
   const [searchTarget, setSearchTarget] = createSignal<SettingDescriptor>();
-  const searching = () => !!settingsQuery().trim() && tab() !== "shortcuts";
+  const shortcutSearch = () => tab() === "shortcuts" && (!phone() || paneOpen());
+  const searching = () => !!settingsQuery().trim() && !shortcutSearch();
   let searchInput: HTMLInputElement | undefined;
   let modalRoot: HTMLDivElement | undefined;
   const [settingsPlatform] = createResource(platformKind);
@@ -160,6 +166,7 @@ export function Settings(): JSX.Element {
     setRevealedQuery(settingsQuery());
     setSettingsQuery("");
     setTab(entry.tab);
+    setPaneOpen(true);
     const run = ++scrollRun;
     const findTarget = () => Array.from(modalRoot?.querySelectorAll<HTMLElement>("[data-setting-id]") ?? [])
       .find((field) => field.dataset.settingId === entry.id);
@@ -197,12 +204,17 @@ export function Settings(): JSX.Element {
     if (!settingsPlatform.loading && tab() === "plugins" && !pluginsAvailable()) setTab("appearance");
   });
 
+  createEffect(() => { if (!settingsOpen()) { setPaneOpen(false); if (phone()) setSettingsQuery(""); } });
   createEffect(() => {
     if (!settingsOpen()) return;
     const requested = settingsTabRequest();
     if (!requested) return;
     if (requested === "plugins" && settingsPlatform.loading) return;
-    setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
+    if (requested === "toolbar") openSearchResult(settings["toolbar-title"]);
+    else {
+      setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
+      setPaneOpen(true);
+    }
     setRevealedQuery("");
     clearSettingsTabRequest();
   });
@@ -220,6 +232,12 @@ export function Settings(): JSX.Element {
     const row = shortcuts().find((row) => row.id === id)!;
     setShortcutOverride(id, shortcutValue(bindingAlternatives(row.effective).filter((_, i) => i !== index)));
   };
+  const backToCategories = () => {
+    setRecording(null);
+    setSettingsQuery("");
+    setRevealedQuery("");
+    setPaneOpen(false);
+  };
   // Settings owns its semantic Escape rungs.  Registering here (rather than in
   // App) keeps shortcut recording/search/disclosures from being skipped by a
   // blanket modal close and ensures disposal follows this component lifetime.
@@ -228,9 +246,10 @@ export function Settings(): JSX.Element {
     const unregister = registerTransientLayer({
       id: "settings",
       root: () => queryAllWindows<HTMLElement>(".settings-modal"),
-      dismiss: () => {
+      dismiss: (reason) => {
         if (recording()) { setRecording(null); return true; }
         if (settingsQuery()) { setSettingsQuery(""); return true; }
+        if (reason === "back" && phone() && paneOpen()) { backToCategories(); return true; }
         closeSettings();
         return true;
       },
@@ -269,16 +288,18 @@ export function Settings(): JSX.Element {
 
   return (
     <Show when={settingsOpen()}>
-      <div class="modal-overlay" classList={{ "settings-maximized": settingsMaximized() }} onClick={closeSettings}>
+      <div class="modal-overlay" classList={{ "settings-maximized": settingsMaximized(), "settings-phone": phone() }} onClick={closeSettings}>
         <div ref={modalRoot} class="settings-modal" onClick={(e) => e.stopPropagation()}>
+          <Show when={!phone() || (!paneOpen() && !searching())}>
           <aside class="settings-nav">
             <div class="settings-nav-title">{t("settings-ui-settings")}</div>
             <For each={availableTabs()}>
               {(t) => (
                 <button
                   class="settings-nav-item"
-                  classList={{ active: tab() === t.id }}
-                  onClick={() => { setSearchTarget(undefined); setRevealedQuery(""); setTab(t.id); }}
+                  data-settings-tab={t.id}
+                  classList={{ active: (!phone() || paneOpen()) && tab() === t.id }}
+                  onClick={() => { setSearchTarget(undefined); setRevealedQuery(""); setTab(t.id); setPaneOpen(true); }}
                 >
                   {render(t.label)}
                 </button>
@@ -286,16 +307,18 @@ export function Settings(): JSX.Element {
             </For>
             <div class="settings-nav-foot">{t("settings-ui-built", { value1: buildStamp() })}</div>
           </aside>
+          </Show>
 
           <div class="settings-pane">
             <div class="settings-pane-head">
-              <span>{render(availableTabs().find((t) => t.id === tab())!.label)}</span>
+              <Show when={phone() && (paneOpen() || searching())}><button type="button" class="icon-btn settings-back" aria-label={t("settings-back-to-list")} onClick={backToCategories}>‹</button></Show>
+              <span class="settings-pane-title">{phone() && !paneOpen() ? t("settings-ui-settings") : render(availableTabs().find((t) => t.id === tab())!.label)}</span>
               <input
                 ref={searchInput}
                 class="settings-search-input"
                 type="search"
-                placeholder={tab() === "shortcuts" ? t("settings-ui-search-shortcuts") : t("settings-ui-search-settings")}
-                aria-label={tab() === "shortcuts" ? t("settings-ui-search-shortcuts-2") : t("settings-ui-search-settings-2")}
+                placeholder={shortcutSearch() ? t("settings-ui-search-shortcuts") : t("settings-ui-search-settings")}
+                aria-label={shortcutSearch() ? t("settings-ui-search-shortcuts-2") : t("settings-ui-search-settings-2")}
                 value={settingsQuery()}
                 onInput={(event) => { setRevealedQuery(""); setSettingsQuery(event.currentTarget.value); }}
                 onKeyDown={(event) => {
@@ -313,12 +336,12 @@ export function Settings(): JSX.Element {
                 onClick={() => setSettingsMaximized(!settingsMaximized())}>
                 {settingsMaximized() ? "❐" : "□"}
               </button>
-              <button class="icon-btn" onClick={closeSettings}>
+              <button class="icon-btn settings-close" aria-label={t("settings-close")} onClick={closeSettings}>
                 ✕
               </button>
             </div>
-            <div class="settings-pane-body">
-              <Show when={graphConfigProblem()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
+            <Show when={!phone() || paneOpen() || searching()}><div class="settings-pane-body">
+              <Show when={graphConfigUnreadable()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={searching()}>
                 <div class="settings-search-results" aria-live="polite">
@@ -344,6 +367,7 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "appearance"}>
                 <AppearanceTab search={revealedQuery()} />
               </Show>
+              <Show when={tab() === "themes"}><ThemeSettings search={revealedQuery()} /></Show>
               <Show when={tab() === "editor"}>
                 <EditorTab search={revealedQuery()} />
               </Show>
@@ -389,7 +413,7 @@ export function Settings(): JSX.Element {
               </Show>
               </Show>
               </Suspense>
-            </div>
+            </div></Show>
           </div>
         </div>
       </div>
@@ -509,8 +533,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
-      <ThemeSettings search={props.search} />
       <LanguageSetting />
+      <ToolbarSettings />
 
       <div class="settings-row" {...settingAttributes(settings["settings-ui-mode"])}>
         <span class="settings-label">{settingLabel(settings["settings-ui-mode"])}</span>
@@ -635,6 +659,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
       <Field setting={settings["settings-show-workspaces"]}>
         <Toggle on={showWorkspaces()} onClick={() => setShowWorkspaces(!showWorkspaces())} />
+      </Field>
+      <Field setting={settings["settings-show-help-button"]}>
+        <Toggle on={showHelpButton()} onClick={() => setShowHelpButton(!showHelpButton())} />
       </Field>
       <Field
         setting={settings["settings-ui-right-to-left-note-layout"]}
@@ -875,15 +902,6 @@ function EditorTab(props: { search: string }): JSX.Element {
         </Field>
 
         <OgField
-        setting={settings["settings-ui-copy-a-parent-block-s-sub-blocks"]}
-
-        ogNote={msg("settings-og-copy-subtree")}
-        ogValue={true}
-        on={copyIncludeSubtree()}
-        onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
-      />
-
-        <OgField
         setting={settings["settings-ui-strip-collapsed-when-copying"]}
 
         ogNote={msg("settings-og-copy-collapsed")}
@@ -917,7 +935,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
     captureChanged = true;
     const v = !captureEnterFiles();
     writePreference(captureEnterFiles, setCaptureEnterFiles, v,
-      (next) => backend().setCaptureEnterFiles(next), "capture Enter preference");
+      (next) => backend().setCaptureEnterFiles(next), msg("toast-save-capture-enter-failed"));
   };
   return (
     <>
@@ -1228,14 +1246,11 @@ function BackupsTab(): JSX.Element {
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  const reconcile = async (op: () => Promise<void>, ok: Msg, kept?: { path: string; name: string }) => {
+  const reconcile = async (op: () => Promise<void>, ok: Msg) => {
     const owner = bindingOwner();
     try {
       const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
-      // Own-origin writes raise no watcher event, so a view of the kept day reloads here through the ordinary
-      // external-change rule (as ConflictResolution's apply does): a clean view takes the merged file.
-      if (kept) await applyGraphChange({ path: kept.path, name: kept.name, kind: "journal", created: false, removed: false }, true);
       pushToast(ok, "success");
       await refreshJournalConflicts();
     } catch (e) {
@@ -1279,7 +1294,6 @@ function JournalConflictsPanel(): JSX.Element {
                     onMerge={!f.canonical && canonical ? () => void reconcile(
                       () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
                       msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name }),
-                      { path: canonical.path, name: c.title },
                     ) : undefined}
                     onRename={(n) => void reconcile(
                       () => backend().renameFileToPage(f.path, n, "rename-page"),
@@ -1332,7 +1346,7 @@ function FilesTab(props: { search: string }): JSX.Element {
     if (m === watchMode()) return;
     watchChanged = true;
     writePreference(watchMode, setWatchMode, m,
-      (next) => backend().setWatchMode(next), "file watcher mode");
+      (next) => backend().setWatchMode(next), msg("toast-save-file-watcher-failed"));
   };
   return (
     <>

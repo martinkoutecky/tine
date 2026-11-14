@@ -5,12 +5,12 @@ import { msg } from "../i18n";
  * phantom bullet (`ensureEmptyBlock`, not dirty until the user types);
  * otherwise a fresh root-level block goes after the last root. Returns
  * whether an editor was started. */
-import { ensureEmptyBlock, insertOutlineAfter, type FeedPage } from "../document";
+import { ensureEmptyBlock, insertOutlineAfter, pageReadOnly, type FeedPage } from "../document";
 import { startEditing } from "../editorController";
 import { pushToast } from "../toasts";
 
 export function focusPageTrailing(page: FeedPage | undefined, surface: string | null): boolean {
-  if (!page || page.readOnly || page.guide) return false;
+  if (!page || pageReadOnly(page) || page.guide) return false;
   const seeded = ensureEmptyBlock(page.name, { afterProperties: true });
   if (seeded) {
     startEditing(seeded, 0, null, surface);

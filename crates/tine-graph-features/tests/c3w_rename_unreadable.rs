@@ -5,7 +5,6 @@
 //! The rename must refuse, naming the file, and leave every byte in place.
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::{Depth, Store};
 
@@ -21,13 +20,7 @@ fn hosted<T>(
 }
 
 fn fixture(label: &str, child: &[u8]) -> (PathBuf, std::sync::Arc<Store>) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-c3w-w2-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-c3w-w2-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

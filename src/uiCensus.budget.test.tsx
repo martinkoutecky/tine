@@ -18,6 +18,7 @@ import { QueryActions } from "./components/QueryActions";
 import { RightSidebar } from "./components/RightSidebar";
 import { WindowControls } from "./components/WindowChrome";
 import { backend } from "./backend";
+import { saveToolbarChoice, toolbarActions } from "./toolbarChoice";
 import { refreshPageIndex, resetPageIndex } from "./pageIndex";
 import { resetStore } from "./document";
 import { loadSingle } from "./document/workingSet";
@@ -39,7 +40,6 @@ vi.mock("@tauri-apps/api/window", () => {
 const counts: Record<string, number> = {};
 const labels: Record<string, string[]> = {};
 // ---- Settings -------------------------------------------------------------
-const SETTINGS_TABS: SettingsTabId[] = ["appearance", "editor", "journals", "files", "backups", "graph", "plugins", "diagnostics", "shortcuts", "about"];
 async function measureSettings() {
   // The home-page picker lists graph pages; an empty graph keeps it structural.
   vi.spyOn(backend(), "quickSwitch").mockResolvedValue([]);
@@ -48,7 +48,8 @@ async function measureSettings() {
     openSettings("appearance");
     const nav = await settled(() => root.querySelectorAll(".settings-nav-item").length);
     counts["settings.tabs"] = nav;
-    for (const tab of SETTINGS_TABS) {
+    const tabs = [...root.querySelectorAll<HTMLElement>(".settings-nav-item")].map(item => item.dataset.settingsTab as SettingsTabId);
+    for (const tab of tabs) {
       openSettings(tab);
       // Anchor: the tab is current once its nav item is active.
       await settled(() => [root.querySelector(".settings-nav-item.active")?.textContent, root.querySelector(".settings-pane-body")?.innerHTML.length]);
@@ -138,9 +139,11 @@ async function measureChrome() {
     counts["topbar.windowControls"] = windowButtons;
     counts["sidebar.left.fixed"] = await settled(() => leftSidebarControls(app.root));
     labels["sidebar.left.fixed"] = [...leftSidebarControlSet(app.root)].map(describeControl);
-    // The overflow menu: open it and count what it offers.
+    // Reach the maximal chosen menu, including its fixed Customize row.
+    saveToolbarChoice({ bar: [], menu: toolbarActions.map(action => action.id) });
     required(overflow.find((el) => el.classList.contains("topbar-overflow-trigger")) ?? null, "the toolbar overflow trigger").click();
-    counts["menu.topbarOverflow"] = await settled(() => document.querySelectorAll("[data-topbar-overflow-action]").length);
+    counts["menu.topbarOverflow"] = await settled(() => document.querySelectorAll('.topbar-overflow-menu [role="menuitem"]').length);
+    expect(counts["menu.topbarOverflow"]).toBe(toolbarActions.length + 3);
     // Every conditional left-sidebar header: Favorites, Recent, Namespaces.
     seedFavorites(["Alpha"]);
     setRecentPages([{ name: "Alpha", kind: "page" }]);
@@ -148,7 +151,7 @@ async function measureChrome() {
     await refreshPageIndex();
     counts["sidebar.left.full"] = await settled(() => leftSidebarControls(app.root));
     labels["sidebar.left.full"] = [...leftSidebarControlSet(app.root)].map(describeControl);
-  } finally { app.dispose(); seedFavorites([]); setRecentPages([]); resetPageIndex(); inventory.mockRestore(); }
+  } finally { app.dispose(); saveToolbarChoice(null); seedFavorites([]); setRecentPages([]); resetPageIndex(); inventory.mockRestore(); }
 }
 
 describe("UI census budgets (desktop)", () => {

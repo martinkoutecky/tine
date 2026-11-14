@@ -252,7 +252,7 @@ mod journal_guide_tests {
     #[test]
     fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
         let places = include_str!("templates/where-things-are.md");
-        assert!(places.contains("**Themes** is the first section under Settings → **Appearance**"));
+        assert!(places.contains("**Appearance** starts with Language, Toolbar and Mode"));
         assert!(places.contains("Settings search reveals these controls too"));
         assert!(places.contains("**System default** follows your system's language"));
         assert!(
@@ -625,6 +625,10 @@ mod journal_guide_tests {
         // og 22b: settings writes never overwrite a half-delivered config.edn.
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("`logseq/config.edn` is live too"));
+        assert!(files.contains("editing resumes and the notice clears automatically"));
+        assert!(files.contains(
+            "An Org file Tine cannot safely round-trip keeps its own read-only restriction"
+        ));
         assert!(files.contains("refused rather than written if `config.edn` is half-written"));
         // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
         assert!(files.contains("pages kept in other folders or at the graph root"));
@@ -783,7 +787,7 @@ mod merge_sibling_guide_tests {
             "after its whole subtree",
             "**Merge selected blocks** is in **Commands**",
             "starts unbound",
-            "keeps every child under it",
+            "Children in the selected subtrees join the merged text too, even when folded",
             "It is one Undo step.",
             "a block ID that other blocks refer to moves to the merged block",
         ] {
@@ -1140,6 +1144,8 @@ mod rename_guide_tests {
 
     #[test]
     fn margin_comments_are_documented() {
+        assert!(include_str!("templates/pages-links-references-search.md")
+            .contains("Comment roots and replies stay in search results, labelled **comment**"));
         for fact in [
             "**Next comment**",
             "**Previous comment**",
@@ -2097,8 +2103,34 @@ mod og_20d_guide_tests {
             "**t w**",
             "**Standard page width**",
             "**Wide page width**",
-            "fill the window",
+            "enlarges the dialog",
             "**Retry**",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing where-things-are detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_things_are_documents_the_help_button_switch_and_settings_paths() {
+        // GH #926 (D-20261111-QP2): a hideable "?" that leaves help reachable,
+        // and Settings two taps away from the "···" menu and the phone drawer.
+        let map = page("Start/Where things are");
+        for detail in [
+            "**Show the help button**",
+            "**Toggle help**",
+            "Settings → **Help & diagnostics**",
+            "**Settings → Appearance → Toolbar**",
+            "**Customize toolbar…**",
+            "**On the toolbar** and **In the … menu**",
+            "the rightmost go into the menu first",
+            "Your choice stays on this device and survives a restart",
+            "**Reset toolbar** restores the default",
+            "fixed **Settings** row",
+            "the toolbar has no workspace switcher",
+            "the first row of the left drawer",
         ] {
             assert!(
                 map.contains(detail),
@@ -2296,6 +2328,11 @@ mod og_20d_guide_tests {
             "tine page current",
             "no-current-page",
             "block_url",
+            "block that has an `id::` has focus",
+            "has `block_url: null`",
+            "Page URLs name their graph with `?graph=UUID`",
+            "creates `logseq/tine-graph-id`",
+            "command exits 1 with the cause on stderr",
             "--output PARENT",
             "absolute path",
             "refuses to replace",
@@ -2409,6 +2446,12 @@ mod og_20d_guide_tests {
             vec!["handle", "printed name", "title::", "file you read"],
             vec!["1 mib", "tine edit", "frame-too-large", "before changing"],
             vec!["tine.author::", "agent", "--author", "tine_author"],
+            vec![
+                "--no-author",
+                "personal script",
+                "no author property",
+                "mcp",
+            ],
             // #840: an edit keeps properties; removal has its own verb.
             vec!["tine edit", "properties stay", "tine prop remove"],
             vec![

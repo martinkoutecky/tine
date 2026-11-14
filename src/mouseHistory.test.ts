@@ -38,7 +38,10 @@ it.each(["dragstart", "mousemove", "selectionchange"])("does not navigate after 
   f.send("mouseup");
   f.send("auxclick");
   expect(f.navigate).not.toHaveBeenCalled();
-  expect(f.dispose.nativeAllowed()).toBe(false); // delayed native release too
+  f.send("dragend");
+  f.send("mousedown", { buttons: 8 });
+  f.send("mouseup");
+  expect(f.navigate.mock.calls).toEqual([["back"]]);
   f.dispose();
 });
 
@@ -55,8 +58,11 @@ it("rejects a moved macOS release even when no DOM mousemove was delivered", () 
   const f = fixture();
   f.send("mousedown", { buttons: 8 });
   f.send("mouseup", { clientX: 60 });
+  f.send("auxclick");
   expect(f.navigate).not.toHaveBeenCalled();
-  expect(f.dispose.nativeAllowed()).toBe(false);
+  f.send("mousedown", { buttons: 8 });
+  f.send("mouseup");
+  expect(f.navigate.mock.calls).toEqual([["back"]]);
   f.dispose();
 });
 

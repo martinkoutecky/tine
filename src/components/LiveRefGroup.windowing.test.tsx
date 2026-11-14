@@ -92,15 +92,15 @@ it("pins the owning editor while offscreen", async () => {
     await vi.waitFor(() => expect(group.querySelector(".ls-block")).toBeNull());
   } finally { dispose(); }
 });
-it("suspends retirement until Find closes", async () => {
+// GH #935: Find does not count reference groups, so it no longer holds them mounted.
+it("retires a distant group while Find is open", async () => {
   const { dispose, groups: [group] } = mount();
   try {
     Observer.near(group, true);
     await vi.waitFor(() => expect(group.querySelector(".ls-block")).not.toBeNull());
     openInPageFind(); Observer.near(group, false);
-    expect(group.querySelector(".ls-block")).not.toBeNull();
-    closeInPageFind({ restoreFocus: false });
     await vi.waitFor(() => expect(group.querySelector(".ls-block")).toBeNull());
+    closeInPageFind({ restoreFocus: false });
   } finally { dispose(); }
 });
 it("drops an obsolete in-flight source read before document admission after a jump", async () => {
@@ -115,7 +115,7 @@ it("drops an obsolete in-flight source read before document admission after a ju
     expect(pageByName("Source 0")).toBeUndefined();
   } finally { dispose(); }
 });
-it("restores visited groups when Find opens without admitting unseen groups", async () => {
+it("does not restore visited groups, or admit unseen ones, when Find opens", async () => {
   const { dispose, groups } = mount(2);
   try {
     Observer.near(groups[0], true);
@@ -123,8 +123,10 @@ it("restores visited groups when Find opens without admitting unseen groups", as
     Observer.near(groups[0], false);
     await vi.waitFor(() => expect(groups[0].querySelector(".ls-block")).toBeNull());
     openInPageFind();
-    await vi.waitFor(() => expect(groups[0].querySelector(".ls-block")).not.toBeNull());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(groups[0].querySelector(".ls-block")).toBeNull();
     expect(groups[1].querySelector(".ls-block")).toBeNull();
+    closeInPageFind({ restoreFocus: false });
   } finally { dispose(); }
 });
 it("pins a native text selection and drag until the interaction ends", async () => {

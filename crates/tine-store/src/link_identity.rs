@@ -1,5 +1,5 @@
 //! Stable graph identity for external links (GH #181). Browsing reads only;
-//! explicit link copy alone creates one 37-byte UUID file through Transaction.
+//! Copy link or `tine page current` creates one 37-byte UUID file through Transaction.
 //! A concurrent creator wins via no-clobber publication. Crash before rename
 //! leaves no identity; crash after rename leaves the complete reusable identity.
 use crate::{Area, Content, Store, StoreError, TxOutcome, Why};
@@ -128,7 +128,7 @@ fn read_identity(root: &Path) -> Result<Option<String>, String> {
 }
 
 impl Store {
-    /// Return or lazily create the stable graph UUID on explicit Copy link.
+    /// Return or lazily create the graph UUID for Copy link or `tine page current`.
     /// O(128 bytes), plus transaction publication cost on first creation. One
     /// file, 37 bytes independent of page size; no per-edit or transport record.
     /// Disk/layout errors and malformed existing identity are returned unchanged.

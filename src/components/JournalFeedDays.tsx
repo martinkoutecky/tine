@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { feedNames, mainPages, pageByName, retireFeedPages, ensurePageLoaded, toLoadablePage, emptyPage, reportPageLoadRefusal, isDirty, isSaving, isConflicted, selectedIds, type FeedPage } from "../document";
+import { admitRead, feedNames, mainPages, pageByName, retireFeedPages, ensurePageLoaded, toLoadablePage, emptyPage, reportPageLoadRefusal, isDirty, isSaving, isConflicted, topSelected, type FeedPage } from "../document";
 import { editingId } from "../editorController";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner } from "../owned";
 import { newIntersectionObserver, newResizeObserver, requestFrame, useOwnerWindow } from "../windowRealm";
 import { captureReadingViewport } from "./readingViewportAnchor";
 import { t } from "../i18n";
@@ -94,7 +94,7 @@ export function JournalFeedDays(props: { children: (page: FeedPage) => JSX.Eleme
   });
   // Reconsider formerly protected pages after their edit/save/selection ends.
   createEffect(() => {
-    editingId(); selectedIds();
+    editingId(); topSelected();
     for (const page of mainPages()) { isDirty(page.name); isSaving(page.name); isConflicted(page.name); }
     schedule();
   });
@@ -126,13 +126,13 @@ function JournalDay(props: { name: string; children: (page: FeedPage) => JSX.Ele
     if (inFlight || page()) return;
     inFlight = true; setFailed(false);
     try {
-      const result = await readOwned(graphOwner(() => live), path ? backend().getPageByPath(path) : backend().getPage(props.name, "journal"));
-      if (result.kind !== "current") return;
-      const anchor = captureReadingViewport(el.parentElement!);
-      const refusal = ensurePageLoaded(toLoadablePage(result.value ?? emptyPage(props.name, "journal"), props.name));
-      anchor?.restore();
-      requestFrame(el, () => { anchor?.restore(); anchor?.release(); });
-      if (refusal) { reportPageLoadRefusal(refusal); setFailed(true); }
+      await admitRead(graphOwner(() => live), () => path ? backend().getPageByPath(path) : backend().getPage(props.name, "journal"), dto => [props.name, ...(dto ? [dto.name] : [])], dto => {
+        const anchor = captureReadingViewport(el.parentElement!);
+        const refusal = ensurePageLoaded(toLoadablePage(dto ?? emptyPage(props.name, "journal"), props.name));
+        anchor?.restore();
+        requestFrame(el, () => { anchor?.restore(); anchor?.release(); });
+        if (refusal) { reportPageLoadRefusal(refusal); setFailed(true); }
+      });
     } catch (error) {
       if (live) { setFailed(true); reportUiFailure("page-refresh", error); }
     } finally { inFlight = false; }

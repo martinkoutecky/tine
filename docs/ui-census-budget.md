@@ -9,6 +9,9 @@ lanes landed; this test keeps the counts from creeping back.
 pixels, and compare it with the frozen table `SURFACES` in
 `scripts/lib/ui-census-budget.mjs`. Both run under `npm test` (render config).
 
+The editor Advanced budget excludes the retired parent-copy preference and its
+Logseq revert (#941).
+
 ## What is counted, and from where
 
 - **Commands** (registries, nothing rendered): `commandDefaults()` (Shortcuts
@@ -30,6 +33,11 @@ pixels, and compare it with the frozen table `SURFACES` in
   and bottom navigation row.
 
 ## Failure modes
+
+H9TvA (D-20261113-CO/CO2) adds the approved **Include comments** checkbox to
+the existing Graph publication controls. `settings.graph.open` is 8 (was 7),
+accounting for that one export content choice. Other surface and performance
+budgets stay unchanged.
 
 MC9 (D-20261109-MC9; GH #891 c13) explicitly adds **Next comment** and
 **Previous comment** to both the palette and Keyboard shortcuts. The approved
@@ -71,6 +79,27 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-13, GH #926 (Martin: "926 yes to all", Q-S3): `settings.tabs`
+  10→11 for the explicitly approved first-level **Themes** category. Its eight
+  existing controls move out of Appearance: `settings.appearance.open` 31→23
+  and `settings.themes.open` = 8, with no net growth in setting controls.
+  A palette-only entry would not provide the approved category or keep the
+  dynamic theme gallery out of Appearance. The census derives its category
+  probes from the rendered navigation IDs. With the toolbar section below
+  (+22 controls, 31→53 before the move), Appearance is 23 + 22 = 45.
+- 2026-11-14, D-20261113-UI / #926 (926-LEFTPANEL, desktop sidebar and phone drawer):
+  `sidebar.left.fixed` 5→6 and `sidebar.left.full` 8→9 for the close icon beside
+  the graph picker. This keeps the explicitly requested close control in the
+  shared header at both widths. Palette-only or a keyboard shortcut cannot
+  provide the requested visible control.
+- 2026-11-13, GH #926 (D-20261113-UI, approved toolbar design section 3):
+  `settings.appearance.open` 31→53 for the seven actions' up/down and section-move
+  buttons (21), plus Reset (1). These are the approved accessible alternatives
+  to dragging in the two ordered lists. `menu.topbarOverflow` 8→10 for Workspaces
+  and Customize toolbar; its probe chooses all optional actions for the menu
+  and counts every menuitem, including the fixed Customize row. The default
+  toolbar count and all timing/memory budgets are unchanged. This records the
+  approved capability's controls, rather than raising a performance budget.
 - 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
   `settings.appearance.open` 30→31 for the explicitly requested **Comments**
   display selector, **In the margin** / **On click**, beside the other display
@@ -112,6 +141,12 @@ journey (`scripts/e2e-*.mjs`), not here.
   blocks** (#764) is a palette and keymap command with no default key and no menu row. **New block after this block's
   children** (#818) is a rebindable editor command with the default key **Alt+Enter** (unbound in OG; in Tine it
   only split the block like Enter, and sheet cells keep their own Alt+Enter). It is not a palette row.
+- 2026-11-12, D-20261111-QP2 / GH #926: `settings.appearance.advanced` 17→18 for the approved
+  **Show the help button** device switch (behind Advanced; Settings search finds it);
+  `settings.diagnostics.open` 6→7 for a closed **Help** disclosure listing the help menu's entries,
+  so help stays reachable with the button hidden; `menu.topbarOverflow` 7→8 for **Settings** as the
+  "…" menu's last row (Settings two taps away at any zoom). The phone drawer's fixed Settings row is
+  drawer-only and outside the desktop census.
 - 2026-11-10, D-20261110-HF / GH #927: `settings.appearance.advanced` 16→17
   for the requested **Show Workspaces** device switch. It stays behind Advanced;
   Settings search reveals it, and the initial Appearance control count stays 29.

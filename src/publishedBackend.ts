@@ -435,7 +435,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           macros: {},
           enable_timetracking: true,
           show_brackets: true,
-          enable_tooltip: true,
+          enable_tooltip: true, file_name_format: "legacy", enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false,
           doc_mode_enter_for_new_block: false,
           logical_outdenting: false,
           logbook_with_second_support: true,
@@ -734,8 +734,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async getAppString(key: string, fallback: string) {
       return appStrings.get(key) ?? fallback;
     },
-    async setAppString(key: string, value: string) {
-      appStrings.set(key, value);
+    async setAppString(key: string, value: string | null) {
+      if (value === null) appStrings.delete(key);
+      else appStrings.set(key, value);
     },
     async setUiLocale() {},
     async loadSession() {

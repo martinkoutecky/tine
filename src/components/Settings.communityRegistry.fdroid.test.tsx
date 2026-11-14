@@ -41,7 +41,7 @@ describe("community registry — disabled (F-Droid build)", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Settings />, root);
-    openSettings("appearance");
+    openSettings("themes");
     await tick();
     const headings = sectionHeadings(root);
     expect(headings).toContain("Themes");

@@ -85,16 +85,17 @@ right-sidebar-on = On { $page }
 right-sidebar-this-block-is-no-longer-available = This block is no longer available.
 
 search-result-row-block = block
+search-result-row-comment = comment
 
 sidebar-tine = Tine
 
 sidebar-journals = Journals
 
-sidebar-favorites = FAVORITES
+sidebar-favorites = Favorites
 
-sidebar-recent = RECENT
+sidebar-recent = Recent
 
-sidebar-namespaces = NAMESPACES
+sidebar-namespaces = Namespaces
 
 sidebar-new-page = + New page
 

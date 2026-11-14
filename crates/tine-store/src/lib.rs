@@ -63,6 +63,10 @@
 #![deny(missing_docs)]
 
 #[cfg(test)]
+#[path = "../../test-support/temp_dir.rs"]
+mod test_support;
+
+#[cfg(test)]
 mod cm_conformance_tests;
 #[cfg(test)]
 mod derived_cache_fuzz_tests;

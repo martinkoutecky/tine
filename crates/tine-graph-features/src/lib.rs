@@ -4,6 +4,10 @@
 //! writes use guarded transactions or the Store's graph creation/publish paths.
 //! Callers need no graph path, lock, cache state, or write protocol.
 
+#[cfg(test)]
+#[path = "../../test-support/temp_dir.rs"]
+mod test_support;
+
 pub mod assets;
 mod build_graph;
 pub mod config;
@@ -15,10 +19,12 @@ pub mod inventory_wire;
 pub mod journals;
 pub mod live_conflict;
 mod macro_budget;
+mod output_comments;
 pub mod pages;
 mod parsed_text;
 pub mod pdf;
 pub mod print;
+mod publication_options;
 pub mod publish;
 pub mod publish_query;
 mod published_answers;
@@ -70,8 +76,8 @@ impl std::fmt::Display for IncompleteTransaction {
 }
 impl std::error::Error for IncompleteTransaction {}
 
-/// A write refused because `logseq/config.edn` could not be read when the graph
-/// loaded, which keeps the graph read-only ([`Refusal::ConfigUnreadable`]). The
+/// A write refused because `logseq/config.edn` could not be read, which keeps
+/// the graph read-only ([`Refusal::ConfigUnreadable`]). The
 /// refusal's type survives native adapters as the fixed wire family
 /// `config-unreadable`, and the read error follows it for logs and the CLI; the
 /// window shows its own catalog sentence for the family, never the detail.
@@ -93,6 +99,18 @@ impl std::fmt::Display for ConfigUnreadable {
     }
 }
 impl std::error::Error for ConfigUnreadable {}
+
+/// Preserve a config read problem at the transaction or Settings boundary.
+/// The typed family owns its display; conversion performs no I/O, O(1).
+fn config_unreadable(cause: tine_store::IoError) -> io::Error {
+    io::Error::new(
+        cause.kind,
+        ConfigUnreadable {
+            after: None,
+            detail: cause.message,
+        },
+    )
+}
 
 /// Preserve the original transaction refusal and every rollback/publication
 /// failure location so callers can inspect disk before retrying.
@@ -161,13 +179,7 @@ fn why_error(why: Why) -> io::Error {
             }
             Refusal::Twin { .. } => io::Error::new(io::ErrorKind::AlreadyExists, "twin page"),
             Refusal::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
-            Refusal::ConfigUnreadable(cause) => io::Error::new(
-                cause.kind,
-                ConfigUnreadable {
-                    after: None,
-                    detail: cause.message,
-                },
-            ),
+            Refusal::ConfigUnreadable(cause) => config_unreadable(cause),
             Refusal::RepeatedFile(_) => {
                 io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
             }

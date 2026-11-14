@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { TopbarOverflowMenu, type TopbarOverflowMenuProps } from "./TopbarOverflowMenu";
+import { toolbarActions } from "../toolbarChoice";
 
 let dispose = () => {};
 
@@ -14,6 +15,7 @@ afterEach(() => {
 
 function mount(actions: Partial<TopbarOverflowMenuProps> = {}) {
   const defaults: TopbarOverflowMenuProps = {
+    actions: toolbarActions.map(action => action.id), visible: true,
     onCalendar: vi.fn(),
     onJournals: vi.fn(),
     onToggleTheme: vi.fn(),
@@ -48,6 +50,25 @@ describe("TopbarOverflowMenu", () => {
       expect(handler).toHaveBeenCalledTimes(1);
       expect(host.querySelector(".topbar-overflow-menu")).toBeNull();
     }
+  });
+
+  it("keeps the chosen optional order and ends with Customize toolbar (GH #926)", () => {
+    const onSettings = vi.fn();
+    const onCustomize = vi.fn();
+    const { host } = mount({ onSettings, onShare: vi.fn(), actions: ["theme", "settings"], onCustomize });
+    host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    const rows = [...host.querySelectorAll<HTMLButtonElement>("[data-topbar-overflow-action]")].filter(row => !["back", "forward"].includes(row.dataset.topbarOverflowAction!));
+    expect(rows.map(row => row.dataset.topbarOverflowAction)).toEqual(["theme", "settings"]);
+    expect(host.querySelector('[role="menu"] button:last-child')!.textContent).toBe("Customize toolbar…");
+    rows[1].click();
+    expect(onSettings).toHaveBeenCalledOnce();
+    expect(host.querySelector(".topbar-overflow-menu")).toBeNull();
+  });
+
+  it("omits the Settings row where Settings does not apply (a published export)", () => {
+    const { host } = mount();
+    host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    expect(host.querySelector('[data-topbar-overflow-action="settings"]')).toBeNull();
   });
 
   it("offers Share as the twin of the topbar button: shown only when wired, disabled with no page", () => {

@@ -16,6 +16,17 @@ export function rootsOf(id: string): string[] {
   return p ? p.roots : [];
 }
 
+/** Whether the block's children are hidden in the view `scope` describes: folded (the
+ * scope's fold override, a zoom's force-expanded root, else the durable flag) or shown
+ * as an opaque Sheet view (grid/table/board) instead of as rows. The one answer visible
+ * traversals share. O(1); the Sheet answer is read only for an unfolded parent. */
+export function hidesChildrenInView(id: string, scope?: OutlineScope | null): boolean {
+  const node = doc.byId[id];
+  if (!node?.children.length) return false;
+  const folded = id !== scope?.forceExpandedRoot && (scope?.collapsed?.(id, node.collapsed) ?? node.collapsed);
+  return folded || blockIsOpaqueSheetView(id);
+}
+
 /** Page-local preorder without DTO copies. Scopes omit missing nodes and can
  * override collapse; ordinary page/feed order retains missing root ids. O(visible nodes). */
 function visitVisible(ids: readonly string[], visit: (id: string) => void, scope?: OutlineScope): void {
@@ -24,8 +35,7 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
     if (!node && scope) continue;
     visit(id);
     if (!node) continue;
-    const collapsed = scope?.collapsed?.(id, node.collapsed) ?? node.collapsed;
-    if ((!collapsed || id === scope?.forceExpandedRoot) && node.children.length && !blockIsOpaqueSheetView(id)) {
+    if (node.children.length && !hidesChildrenInView(id, scope)) {
       // Comments show under their block, before its other children (commentOrder.ts).
       visitVisible(visibleChildren(node.children), visit, scope);
     }
@@ -92,6 +102,8 @@ export interface OutlineScope {
    * mirrors what is rendered rather than the durable `node.collapsed` flags. */
   collapsed?: (id: string, stored: boolean) => boolean;
   navOnly?: boolean;
+  /** O(1) result-root membership for child splits (OG editor.cljs outliner-insert-block!); head placement stays kernel-owned. */
+  splitAsChild?: (id: string) => boolean;
 }
 
 export function scopedVisibleOrder(scope: OutlineScope): string[] {
@@ -155,13 +167,32 @@ export function nextVisible(id: string, scope: OutlineScope | null = null): stri
 }
 
 export function depthOf(id: string): number {
-  let d = 0;
-  let p = doc.byId[id]?.parent ?? null;
-  while (p !== null) {
+  return readDepth(id);
+}
+
+type DepthBatch = { depths: Map<string, number>; path: string[] };
+
+function readDepth(id: string, batch?: DepthBatch): number {
+  let d = -1;
+  for (let at: string | null = id; at !== null; at = doc.byId[at]?.parent ?? null) {
+    const known = batch?.depths.get(at);
+    if (known !== undefined) { d += known + 1; break; }
+    batch?.path.push(at);
     d++;
-    p = doc.byId[p].parent;
+  }
+  if (batch) {
+    let depth = d;
+    for (const at of batch.path) batch.depths.set(at, depth--);
+    batch.path.length = 0;
   }
   return d;
+}
+
+/** Source depths aligned with rows in any order. O(rows + distinct ancestors),
+ * no I/O; the temporary parent answers are discarded when the call returns. */
+export function depthsOf(ids: readonly string[]): number[] {
+  const batch: DepthBatch = { depths: new Map(), path: [] };
+  return ids.map(id => readDepth(id, batch));
 }
 
 /** Check the deepest descendant after reparenting an existing subtree. */

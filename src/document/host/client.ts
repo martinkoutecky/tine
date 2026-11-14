@@ -52,6 +52,8 @@ export interface DocumentPort {
    * the page's baseline for later reads. Took means the host has custody of
    * it, not that it is published on disk (that is `needed`/`waited`). */
   took(name: string, rev: string): void;
+  /** Retire read applicability when the host releases this window's page. */
+  released(name: string): void;
 }
 
 export interface AssetWrites {
@@ -836,6 +838,7 @@ export class HostClient {
 
   /** The page is no longer this window's view of a host page. */
   private unbind(page: Page): void {
+    if (page.on) this.doc.released(page.name);
     page.on = false;
     if (page.key) this.byKey.delete(page.key);
     page.key = null;

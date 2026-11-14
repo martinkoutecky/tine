@@ -1,16 +1,11 @@
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tine_store::{OpenOptions, Store};
 
 #[test]
 fn staged_writer_publishes_files_and_retires_previous_site() {
     let _integration_guard = crate::integration_lock();
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root =
-        std::env::temp_dir().join(format!("tine-site-writer-{}-{unique}", std::process::id()));
+
+    let root = crate::test_support::fresh_dir("tine-site-writer-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();

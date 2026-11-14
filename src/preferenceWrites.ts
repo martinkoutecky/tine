@@ -1,4 +1,4 @@
-import { msg } from "./i18n";
+import { msg, type Msg } from "./i18n";
 /** Device preference tracking is keyed by stable read-callback identity. Reuse
  * one callback per signal for revisions, seeds, startup reads and writes; never
  * share it across signals. Reads land only for the captured revision. Writes
@@ -16,14 +16,14 @@ const states = new WeakMap<Function, State<unknown>>();
 
 /** Apply now and queue persistence by read-callback identity. The callback is
  * invoked only on first write for this key. Latest failure rolls back; every
- * failure toasts. Return does not confirm persistence. O(1) plus backend write. */
+ * failure toasts the unresolved catalog message. Return does not confirm
+ * persistence. O(1) plus backend write. */
 export function writePreference<T>(
   read: () => T,
   apply: (value: T) => void,
   value: T,
   persist: (value: T) => Promise<unknown>,
-  label: string,
-  onFailure?: () => void,
+  failure: Msg,
 ): void {
   let state = states.get(read) as State<T> | undefined;
   if (!state) {
@@ -39,8 +39,7 @@ export function writePreference<T>(
       state.committed = value;
     } catch {
       if (revisionOwner(read, revision)()) apply(state.committed);
-      if (onFailure) onFailure();
-      else pushToast(msg("preference-writes-could-not-save", { label: String(label) }), "error");
+      pushToast(failure, "error");
     } finally {
       if (--state.pending === 0 && state.reconcile) {
         const reload = state.reconcile;

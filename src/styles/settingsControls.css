@@ -1,4 +1,62 @@
 /* Settings appearance and window-size controls. Loaded after app.css. */
+/* #926: only the Settings sheet uses the phone category stack. */
+.modal-overlay.settings-phone {
+  padding: var(--overlay-inset-top) var(--overlay-inset-right) var(--overlay-inset-bottom) var(--overlay-inset-left);
+  background: var(--bg-primary);
+}
+.settings-phone .settings-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.settings-phone .settings-pane { display: contents; }
+.settings-phone .settings-pane-head {
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.settings-phone .settings-pane-title { grid-column: 2; grid-row: 1; }
+.settings-phone .settings-back { grid-column: 1; grid-row: 1; }
+:root[dir="rtl"] .settings-back { transform: scaleX(-1); }
+.settings-phone .settings-close { grid-column: 3; grid-row: 1; }
+.settings-phone .settings-pane-head .icon-btn { margin: 0; min-width: 36px; min-height: 36px; }
+.settings-phone .settings-search-input {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  margin: 0;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+.settings-phone .settings-maximize { display: none; }
+.settings-phone .settings-nav {
+  grid-row: 2;
+  width: auto;
+  flex-direction: column;
+  overflow: auto;
+  padding: 8px 14px;
+  border: 0;
+}
+.settings-phone .settings-nav-title, .settings-phone .settings-nav-foot { display: none; }
+.settings-phone .settings-nav-item {
+  flex: 0 0 auto;
+  padding: 14px 10px;
+  font-size: 15px;
+  white-space: normal;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-phone .settings-nav-item::after { content: "›"; float: inline-end; }
+:root[dir="rtl"] .settings-phone .settings-nav-item::after { content: "‹"; }
+.settings-phone .settings-pane-body { grid-row: 2; min-height: 0; }
+
 @media (min-width: 481px) {
   .modal-overlay.settings-maximized { padding: 4vh 4vw; }
   .settings-maximized .settings-modal {

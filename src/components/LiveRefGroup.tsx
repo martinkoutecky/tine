@@ -1,14 +1,16 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, useContext, type JSX, type Signal } from "solid-js";
 import { nearestAncestors } from "../render/blockTrail";
+import { ownSelectionSurface } from "../document";
 import { createGraphResource } from "../graphResource";
 import { backend } from "../backend";
-import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
+import { graphOwner, latestOwner } from "../owned";
+import { admitRead, beginPageHeaderEdit, blockProperty, blockRef, resolveBlockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, pinPageNearViewport, setBlockProperty, setCollapsed, setCollapsedBlocks, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
+import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
@@ -28,13 +30,12 @@ import { ReservedGroupGeometryContext, reservedGroupHeight } from "../reservedGr
 import { preserveAboveViewport } from "../scrollContainer";
 import { registerQueryResultFold } from "../collapseCommandSurface";
 import { observeViewportWindow } from "../viewportWindow";
-import { inPageFindOpen } from "../inpageFind";
 import { printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { queueReferenceCommit, queueReferenceRead } from "../referenceAdmission";
 import { trackRetirementPin } from "../retirementPins";
 import { BlockList } from "./BlockList";
 import { CommentSurface } from "./CommentSurface";
-import { promotePagePreamble, pageInstanceGeneration, selectedIds } from "../document";
+import { promotePagePreamble, pageInstanceGeneration, topSelected } from "../document";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { t } from "../i18n";
 import { retainResultDraft } from "../queryResultDrafts";
@@ -130,6 +131,7 @@ interface RefOccurrence {
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
+  const [sourceMounted, setSourceMounted] = createSignal(false);
   const [inWindow, setInWindow] = createSignal(untrack(() => props.eager === true));
   const [visible, setVisible] = createSignal(false);
   const [forced, setForced] = createSignal(false);
@@ -147,13 +149,14 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
     initialCollapsed: new Map(), localCollapsed: createSignal({}), contextRoots: createSignal({}),
     excerptFull: createSignal({}), pendingEdits: createSignal(0), geometry: new Map(),
   };
+  ownSelectionSurface(occurrence.surface, undefined, ownerSurface);
   let alive = true;
   const [hasViewport, setHasViewport] = createSignal(false);
   onCleanup(() => { alive = false; });
   const windowed = () => props.surface === "ref" && !props.eager;
   const pinned = () => interaction() || occurrence.pendingEdits[0]() > 0 || (!!editingId() && docNode(editingId()!)?.page === props.page)
-    || selectedIds().some(id => docNode(id)?.page === props.page);
-  const wanted = () => inWindow() || forced() || (visited() && inPageFindOpen()) || (near() && (pinned() || printingOutline()));
+    || topSelected().some(id => docNode(id)?.page === props.page);
+  const wanted = () => inWindow() || forced() || (near() && (pinned() || printingOutline()));
   const priority = () => visible() || forced() ? 0 : 1;
   const reserved = reservedGroupHeight(() => {
     const owner = props.heightKey ?? props.hostBlockId;
@@ -211,12 +214,13 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const estimate = () => Math.max(1, props.blocks.reduce((lines, block) => lines + (block.page_property ? block.raw.split("\n").length : 1), 0)) * 1.9;
 
   return (
-    <div ref={el} class="live-ref-group"
+    <div ref={el} class="live-ref-group" data-find-source-mounted={sourceMounted()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${estimate()}em` } : undefined}>
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
+        onSourceMounted={setSourceMounted}
         readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
-        sourcePinned={() => windowed() && (pinned() || forced() || inPageFindOpen())}
+        sourcePinned={() => windowed() && (pinned() || forced())}
         schedule={windowed() && hasViewport()} /></Show>
       </ReservedGroupGeometryContext.Provider>
     </div>
@@ -226,7 +230,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // The shell retains occurrence choices and geometry. Row maps, resources and
 // rendering belong to each disposable child; unchanged rows stay keyed while
 // that child is mounted.
-function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined;
+function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined; onSourceMounted: (mounted: boolean) => void;
   readCurrent: () => boolean; priority: () => number; sourcePinned: () => boolean; schedule: boolean }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   // The host block's own outline and surface, read before this group provides its own.
@@ -242,7 +246,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // no loads left to do, however many source pages it references.
   const [nearView, setNearView] = createSignal(true);
   const [acquire, setAcquire] = createSignal(0);
-  onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned() ? props.page : null));
+  onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned()
+    || (inPageFindOpen() && (props.surface === "embed" || props.surface === "query")) ? props.page : null));
   onMount(() => {
     const host = props.geometryHost();
     if (host) onCleanup(trackNear(host, setNearView));
@@ -265,25 +270,22 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
       const root = graphMeta()?.root ?? "";
       const owner = latestOwner(readScope, "page", graphOwner(() => alive && props.readCurrent() &&
         graphEpoch() === epoch && (graphMeta()?.root ?? "") === root));
-      const read = () => readOwned(owner, path ? backend().getPageByPath(path) : backend().getPage(p, k));
-      const result = scheduled ? await queueReferenceRead(read, owner, priority) : await read();
-      if (!result || !owner()) return false;
-      if (result.kind === "stale") return false;
-      const dto = result.value;
-      // The component may have unmounted while this read was in flight. Never
-      // let an old graph's DTO enter the new graph's shared working set.
-      if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
-      // Page names are not unique across kinds, while the frontend working set
-      // is name-keyed. Refuse a page/journal twin that occupied the slot during
-      // the await, and reject a mismatched backend response defensively.
-      const after = pageByName(p);
-      if (after) return after.kind === k && (!path || after.id === path);
-      if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
-      const admit = () => owner() && !ensurePageLoaded(dto);
-      const admitted = scheduled ? await queueReferenceCommit(admit, owner, priority) : admit();
-      if (!admitted || !owner()) return false; // declined: stay on the DTO path
-      const loaded = pageByName(p);
-      return loaded?.kind === k && (!path || loaded.id === path);
+      const read = () => path ? backend().getPageByPath(path) : backend().getPage(p, k);
+      const result = await admitRead(owner, () => scheduled ? queueReferenceRead(read, owner, priority) : read(), dto => [p, ...(dto ? [dto.name] : [])], dto => {
+        // The component may have unmounted while this read was in flight. Never
+        // let an old graph's DTO enter the new graph's shared working set.
+        if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
+        // Page names are not unique across kinds, while the frontend working set
+        // is name-keyed. Refuse a page/journal twin that occupied the slot during
+        // the await, and reject a mismatched backend response defensively.
+        const after = pageByName(p);
+        if (after) return after.kind === k && (!path || after.id === path);
+        if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
+        if (ensurePageLoaded(dto)) return false;
+        const loaded = pageByName(p);
+        return loaded?.kind === k && (!path || loaded.id === path);
+      }, scheduled ? commit => queueReferenceCommit(commit, owner, priority) : undefined);
+      return result.kind === "current" && result.value;
     },
     { storage: initial => {
       const [read, write] = createSignal<boolean | undefined>(initial);
@@ -335,6 +337,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     return source?.id === id ? source : undefined;
   };
   const ready = () => readOr(readyResource, undefined, "reference group source page") && queryReady();
+  createEffect(() => props.onSourceMounted(!!ready() && !!pageByName(props.page)));
+  onCleanup(() => props.onSourceMounted(false));
 
   // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).
@@ -552,6 +556,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // An embed's key names its host in the host's surface, so a caret kept on the
   // embed root survives the host moving (Tab, D-20261030-EMB) and remounting it.
   const surface = props.occurrence.surface;
+  const hostSurface = useContext(SurfaceContext);
   const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = props.occurrence.initialCollapsed;
   // Only ref/query results own local disclosure here. Writable inner embed folds
@@ -728,11 +733,11 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
             into the host page; the other rows stay surface-local. */}
         <EmbedNavExitContext.Provider value={
           props.surface === "embed" && props.hostBlockId
-            ? { hostBlockId: props.hostBlockId, firstRoot: () => groupedIds()[0], rowHost: (id) => {
+            ? { hostBlockId: props.hostBlockId, hostSurface, firstRoot: () => groupedIds()[0], rowHost: (id) => {
               // D-20261030-EMB: a whole-block host's one bullet is its root row.
               const host = props.hostBlockId!;
               return id === props.embedId && isBlockEmbedMacro(detectMacro(docNode(host)?.raw ?? "", formatForBlock(host)))
-                ? { id: host, scope: hostScope } : null;
+                ? { id: host, scope: hostScope, surface: hostSurface } : null;
             } }
             : null
         }>
@@ -750,6 +755,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
           collapsed: (id, stored) => props.surface === "preview" ? stored
             : contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
           navOnly: true,
+          // Result surfaces only: embeds and previews keep the ordinary split.
+          splitAsChild: props.surface === "query" || props.surface === "ref" ? (id) => resultRootIds().has(id) : undefined,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} render={(id, authorNeighbors) => {

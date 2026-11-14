@@ -36,7 +36,7 @@ type Item =
   | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[]; matchedAlias?: string; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
-  | { t: "block"; page: string; pageKind: PageKind; path?: string; blockId: string; pageHeader?: boolean; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
+  | { t: "block"; page: string; pageKind: PageKind; path?: string; blockId: string; pageHeader?: boolean; isComment?: boolean; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
 
 interface Section {
   header: string;
@@ -260,6 +260,7 @@ export function QuickSwitcher(): JSX.Element {
           blockId: blockDtoExternalId(hit.block),
           pageHeader: !!(hit.block.page_property || hit.block.page_preamble),
           text: hit.display_text,
+          isComment: hit.is_comment,
           crumb: hit.block.breadcrumb ?? [],
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
           adaptiveClass: hit.match_class ?? "body_evidence",
@@ -763,7 +764,7 @@ function Row(props: { item: Item }): JSX.Element {
       );
     case "block":
       return (
-        <SearchResultRow page={it.page} breadcrumb={it.crumb} text={it.text} spans={it.spans} />
+        <SearchResultRow page={it.page} breadcrumb={it.crumb} text={it.text} spans={it.spans} isComment={it.isComment} />
       );
   }
 }

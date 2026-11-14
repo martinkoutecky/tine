@@ -590,10 +590,11 @@ const UPDATER_CAUSES: [&str; 7] = [
     "unknown",
 ];
 
+mod editor_focus;
 mod page_open;
 
-/// Record closed frontend health, updater, close, toast, journal-feed and
-/// page-refusal facts. Free text never enters these event fields.
+/// Record closed frontend health, updater, close, toast, journal-feed,
+/// page-refusal and editor-focus facts. Free text never enters these event fields.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diagnostic_frontend_event(
@@ -608,9 +609,14 @@ pub(crate) fn diagnostic_frontend_event(
     journal_feed_reason: Option<String>,
     journal_feed_cause: Option<String>,
     page_open: Option<page_open::Refusal>,
+    editor_focus: Option<editor_focus::Missed>,
 ) {
     if kind == "page_open_refused" {
         page_open::record(page_open);
+        return;
+    }
+    if kind == "editor_focus_missed" {
+        editor_focus::record(editor_focus);
         return;
     }
     if kind == "journal_feed" {

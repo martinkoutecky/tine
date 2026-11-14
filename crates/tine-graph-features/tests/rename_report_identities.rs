@@ -6,7 +6,6 @@
 //! only that page, once.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
@@ -22,13 +21,7 @@ fn renamed_as(
     new: &str,
     merge_into: Option<&str>,
 ) -> (PathBuf, pages::RenameReport) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-rename-identities-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-rename-identities-");
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

@@ -229,9 +229,10 @@ describe("query results (GH #726)", () => {
       });
       expect(editingId()).toBe("hit");
       editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
-      await vi.waitFor(() => expect(selectedIds()).toEqual(["hit"]));
+      await vi.waitFor(() => expect(selectedIds()).toEqual(["hit", "hit-kid"]));
       document.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: key === "x", metaKey: key === "x", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId.hit).toBeUndefined());
+      expect(doc.byId["hit-kid"]).toBeUndefined();
       expect(pageByName("Src")!.roots).toEqual(["before"]);
       expect(pageByName("Host")!.roots).toEqual(["query", "after"]);
       expect(doc.byId.query.raw).toBe("{{tine-query @block}}");

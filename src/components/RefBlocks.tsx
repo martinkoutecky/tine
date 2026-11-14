@@ -21,7 +21,8 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
 import { PropertyRows } from "../render/PropertyRows";
-import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
+import { BeginQuery } from "./BeginQuery";
+import { inspectBeginQuery } from "../render/beginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { isElementNode } from "../windowRealm";

@@ -20,6 +20,7 @@ use tine_core::query::{
 use tine_core::refs;
 pub(crate) mod eval;
 pub(crate) mod exec;
+mod export_hydration;
 pub(crate) mod index;
 pub(crate) mod link_graph;
 pub(crate) mod memo;
@@ -731,7 +732,8 @@ fn page_property_block_with_config(
         "page-property:{:?}:{}",
         entry.kind,
         refs::page_key(&entry.name)
-    );
+    )
+    .into();
     Some(block)
 }
 
@@ -753,7 +755,7 @@ pub(crate) fn pre_blocks_with_config(
     if !raw.is_empty() {
         let mut block =
             tine_core::page_properties::property_projection_with_config(&raw, is_org, config);
-        block.uuid = format!("page-property:{:?}:{key}", entry.kind);
+        block.uuid = format!("page-property:{:?}:{key}", entry.kind).into();
         out.push(block);
     }
     if let Some(range) = prose {
@@ -762,7 +764,7 @@ pub(crate) fn pre_blocks_with_config(
             is_org,
             config,
         );
-        block.uuid = format!("page-preamble:{:?}:{key}", entry.kind);
+        block.uuid = format!("page-preamble:{:?}:{key}", entry.kind).into();
         out.push(block);
     }
     out.into_iter()
@@ -777,7 +779,7 @@ fn pre_block_dto(block: &DocBlock) -> BlockDto {
 }
 
 fn mark_pre_block_dto(dto: &mut BlockDto, block: &DocBlock) {
-    if block.uuid.starts_with("page-preamble:") {
+    if block.uuid.text().starts_with("page-preamble:") {
         dto.page_preamble = true;
     } else {
         dto.page_property = true;
@@ -817,7 +819,7 @@ pub(crate) fn changed_explicit_reference_names(
         entry,
         doc,
         config,
-        &|block| changed.contains(&block.uuid),
+        &|block| changed.contains(&*block.uuid.text()),
         header_changed,
         false,
     )
@@ -911,7 +913,7 @@ fn block_reference_evidence(
         config,
     );
     (!result.occurrences.is_empty()).then(|| ReferenceBlockEvidence {
-        block_id: block.uuid.clone(),
+        block_id: block.uuid.to_string(),
         occurrences: result.occurrences,
         total: result.total,
         truncated: result.truncated,
@@ -1275,7 +1277,7 @@ fn backlink_filter_entry(
     BacklinkFilterEntry {
         page: page.to_string(),
         kind,
-        block_id: block.uuid.clone(),
+        block_id: block.uuid.to_string(),
         text,
         facets,
         truncated: text_truncated || facets_truncated,
@@ -1321,7 +1323,7 @@ pub(crate) fn backlink_filter_context(
                     pre,
                     &tine_core::query::atom::ParseConfig::from_config(graph.config()),
                 ) {
-                    if ids.contains(&block.uuid) {
+                    if ids.contains(&*block.uuid.text()) {
                         let entry = backlink_filter_entry(
                             &page.name,
                             page.kind,
@@ -1353,7 +1355,7 @@ pub(crate) fn backlink_filter_context(
                 out: &mut Vec<&'a DocBlock>,
             ) {
                 for block in blocks {
-                    if ids.contains(&block.uuid) {
+                    if ids.contains(&*block.uuid.text()) {
                         out.push(block);
                     }
                     collect(&block.children, ids, out);
@@ -1686,7 +1688,7 @@ pub(crate) fn changed_reference_source_blocks<'a>(
         out: &mut Vec<&'a DocBlock>,
     ) {
         for block in roots {
-            if changed.contains(&block.uuid) {
+            if changed.contains(&*block.uuid.text()) {
                 out.push(block);
             }
             select(&block.children, changed, out);
@@ -1724,7 +1726,7 @@ pub(crate) fn changed_block_reference_targets(
         }
     }
     walk(&doc.roots, &mut |block| {
-        if changed.contains(&block.uuid) {
+        if changed.contains(&*block.uuid.text()) {
             targets.extend(block.projection().block_refs().iter().cloned());
         }
     });
@@ -2387,11 +2389,9 @@ pub(crate) fn export_query_subtrees(
             }
         }
 
-        // Borrow at most `max_roots` matching blocks. Walking with an explicit
-        // stack avoids both recursive call growth and variadic child spreading on
-        // a page with hundreds of thousands of direct children.
+        // Borrow at most `max_roots` blocks in one depth-bounded ancestry walk.
         let total_wanted = wanted_by_page.values().map(HashSet::len).sum::<usize>();
-        let mut found: HashMap<(PageKind, String, String), &DocBlock> = HashMap::new();
+        let mut found: HashMap<(PageKind, String, String), (&DocBlock, bool)> = HashMap::new();
         // The page's header property block is a row of a block query (exec.rs
         // `Hit::PageProperty`) but lives in `Document::pre_block`, not in
         // `roots`: it is rebuilt here exactly as the query rebuilds it.
@@ -2408,29 +2408,29 @@ pub(crate) fn export_query_subtrees(
                 .pre_block
                 .as_deref()
                 .and_then(|pre| page_property_block(entry, pre))
-                .filter(|header| wanted.contains(header.uuid.as_str()))
+                .filter(|header| wanted.contains(&*header.uuid.text()))
             {
                 headers.insert(
-                    (entry.kind, entry.name.clone(), header.uuid.clone()),
+                    (entry.kind, entry.name.clone(), header.uuid.to_string()),
                     header,
                 );
             }
-            let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
-            while let Some(block) = stack.pop() {
+            for (block, comment) in export_hydration::blocks_with_comment_context(&doc.roots) {
                 let property_id = block.property("id");
-                let matched = if wanted.contains(block.uuid.as_str()) {
-                    Some(block.uuid.as_str())
+                let uuid = block.uuid.text();
+                let matched = if wanted.contains(&*uuid) {
+                    Some(&*uuid)
                 } else {
                     property_id.as_deref().filter(|id| wanted.contains(*id))
                 };
                 if let Some(id) = matched {
-                    found.insert((entry.kind, entry.name.clone(), id.to_string()), block);
+                    found.insert(
+                        (entry.kind, entry.name.clone(), id.to_string()),
+                        (block, comment),
+                    );
                     if found.len() + headers.len() == total_wanted {
                         break;
                     }
-                }
-                for child in block.children.iter().rev() {
-                    stack.push(child);
                 }
             }
         }
@@ -2445,7 +2445,10 @@ pub(crate) fn export_query_subtrees(
                 let mut omitted_nodes = 0usize;
                 for root in query.roots {
                     let wanted = (root.kind, root.page.clone(), root.id.clone());
-                    let Some(block) = found.get(&wanted).copied().or_else(|| headers.get(&wanted))
+                    let Some((block, comment)) = found
+                        .get(&wanted)
+                        .copied()
+                        .or_else(|| headers.get(&wanted).map(|block| (block, false)))
                     else {
                         // The graph changed between query evaluation and the
                         // borrowed hydration snapshot. Count the missing result as
@@ -2464,6 +2467,7 @@ pub(crate) fn export_query_subtrees(
                         continue;
                     };
                     dto.page_property = headers.contains_key(&wanted);
+                    dto.comment = comment;
                     shown += 1;
                     if let Some(group) = groups
                         .iter_mut()
@@ -2513,18 +2517,16 @@ pub(crate) fn preview_block_with_budget(
     // The exact block index names the answering page (see `resolve_blocks`).
     let (_, (entry, doc)) = graph.block_owner_page(uuid, true)?;
     touch_page();
-    let mut found: Option<&DocBlock> = None;
-    walk(&doc.roots, &mut |block| {
-        if found.is_none() && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
-        {
-            found = Some(block);
-        }
-    });
-    let block = found?;
+    let (block, comment) = export_hydration::blocks_with_comment_context(&doc.roots)
+        .find(|(block, _)| block.uuid == uuid || block.property("id").as_deref() == Some(uuid))?;
     let total = subtree_node_count(block);
     let mut remaining_nodes = max_nodes;
     let mut remaining_bytes = max_bytes;
     let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+        .map(|mut dto| {
+            dto.comment = comment;
+            dto
+        })
         .into_iter()
         .collect::<Vec<_>>();
     let emitted = max_nodes - remaining_nodes;
@@ -2606,10 +2608,8 @@ fn resolve_ids_in_page<'a>(
         // A block's identity is its uuid AND its persisted `id::`: one block
         // can answer two requested ids. O(1) lookups, no per-id rescan.
         let property = b.property("id");
-        for key in [Some(b.uuid.as_str()), property.as_deref()]
-            .into_iter()
-            .flatten()
-        {
+        let uuid = b.uuid.text();
+        for key in [Some(&*uuid), property.as_deref()].into_iter().flatten() {
             let Some(&id) = want.get(key) else {
                 continue;
             };
@@ -2656,9 +2656,7 @@ mod tests {
 
     #[test]
     fn malformed_advanced_query_returns_unsupported() {
-        let dir =
-            std::env::temp_dir().join(format!("tine-malformed-advanced-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-malformed-advanced-");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         let graph = test_snapshot(&dir);
         let result = run_advanced_query(&graph, "[:find ?b :where (");
@@ -2671,8 +2669,7 @@ mod tests {
     /// block's `alias::` line is block text, the same answer save-time promotion gives.
     #[test]
     fn a_table_first_bullet_contributes_no_page_alias() {
-        let dir = std::env::temp_dir().join(format!("tine-gh210-alias-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-gh210-alias-");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         std::fs::write(dir.join("pages/Header.md"), "- alias:: Plain\n").unwrap();
         std::fs::write(
@@ -2707,8 +2704,7 @@ mod tests {
 
     #[test]
     fn org_directives_resolve_alias_and_match_page_facets() {
-        let dir = std::env::temp_dir().join(format!("tine-org-query-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-org-query-");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         std::fs::write(
             dir.join("pages/Book.org"),
@@ -2739,8 +2735,7 @@ mod tests {
 
     #[test]
     fn uppercase_template_marker_is_removed_from_inserted_copy() {
-        let dir = std::env::temp_dir().join(format!("tine-template-case-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-template-case-");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         std::fs::write(
             dir.join("pages/Templates.md"),
@@ -2766,9 +2761,7 @@ mod tests {
     #[test]
     fn advanced_content_and_search_follow_real_graph_accent_policy() {
         use std::fs;
-        let dir =
-            std::env::temp_dir().join(format!("tine-query-accent-off-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-query-accent-off-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -3407,11 +3400,7 @@ mod tests {
         use std::fs;
 
         const ROOT: &str = "12345678-1234-4234-8234-123456789abc";
-        let dir = std::env::temp_dir().join(format!(
-            "tine-backlink-filter-context-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-backlink-filter-context-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -3478,11 +3467,7 @@ mod tests {
     /// as complete.
     #[test]
     fn backlink_filter_context_propagates_page_property_entry_truncation() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-backlink-filter-pp-trunc-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-backlink-filter-pp-trunc-");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         std::fs::create_dir_all(dir.join("journals")).unwrap();
         let tags = (0..BACKLINK_FILTER_MAX_FACETS + 20)
@@ -3538,11 +3523,7 @@ mod tests {
         const DEC_7_B: &str = "44444444-4444-4444-8444-444444444444";
         const OUTSIDE_JOURNAL: &str = "55555555-5555-4555-8555-555555555555";
         const NAMED_SCHEDULED: &str = "66666666-6666-4666-8666-666666666666";
-        let dir = std::env::temp_dir().join(format!(
-            "tine-og-between-journal-bounds-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-og-between-journal-bounds-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -3604,11 +3585,7 @@ mod tests {
     fn property_facets_group_folded_keys() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-property-key-norm-facets-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-property-key-norm-facets-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -3636,11 +3613,7 @@ mod tests {
     fn header_pre_block_is_a_block_referrer_and_counts_as_one() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-header-preblock-block-refs-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-header-preblock-block-refs-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         const ID: &str = "12345678-1234-4234-8234-123456789abc";
@@ -3702,11 +3675,7 @@ mod tests {
     fn property_facets_include_header_page_properties() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-header-preblock-facets-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-header-preblock-facets-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -3734,11 +3703,7 @@ mod tests {
     fn autocomplete_property_facets_follow_og_visibility_sources_and_budget() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-property-autocomplete-facets-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-property-autocomplete-facets-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -3785,11 +3750,7 @@ mod tests {
     fn gh737_autocomplete_values_split_page_ref_sets_and_keep_plain_text_whole() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-gh737-autocomplete-values-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-gh737-autocomplete-values-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -3861,7 +3822,7 @@ mod tests {
             ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
             ("Fuzzy Existing", "pages/Fuzzy Existing.md", "- body\n"),
         ]);
-        let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+        let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
         // A context-free lookup correctly includes the now-saved reference.
         assert_eq!(quick_switch(&graph, "Fz", 8)[0].name, "Fz");
         let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
@@ -3890,7 +3851,7 @@ mod tests {
     fn completion_baseline_preserves_other_referrers_files_and_aliases() {
         for source in ["- [[Fz]]\n- #Fz\n", "- [[Fz]]\n  - [[Fz]]\n"] {
             let graph = graph_from_page_snapshot(&[("Notes", "pages/Notes.md", source)]);
-            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
             assert_eq!(
                 quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
                 "Fz"
@@ -3901,7 +3862,7 @@ mod tests {
                 ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
                 ("Other", "pages/Other.md", sibling),
             ]);
-            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
             assert_eq!(
                 quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
                 "Fz"
@@ -3912,7 +3873,7 @@ mod tests {
                 ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
                 (name, "pages/Owner.md", raw),
             ]);
-            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.to_string());
             let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
             assert_eq!(results[0].name, "Fz");
             assert_eq!(results[0].rel_path_str(), "pages/Owner.md");
@@ -4111,9 +4072,7 @@ mod tests {
     #[test]
     fn quick_switch_topk_matches_stable_full_sort_with_ties() {
         use std::fs;
-        let dir =
-            std::env::temp_dir().join(format!("tine-quick-switch-topk-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-quick-switch-topk-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
 
@@ -4159,11 +4118,7 @@ mod tests {
     fn block_search_topk_keeps_late_best_match_and_ranks_it_first() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-block-search-topk-best-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-block-search-topk-best-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
@@ -4195,11 +4150,7 @@ mod tests {
     fn block_search_topk_uses_stable_traversal_ties() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-block-search-topk-ties-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-block-search-topk-ties-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         for name in ["aa", "bb", "cc", "dd"] {
@@ -4252,11 +4203,7 @@ mod tests {
     fn block_search_groups_preserve_interleaved_global_rank() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-block-search-ranked-groups-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-block-search-ranked-groups-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/aa.md"), "- needle\n- xneedle\n").unwrap();
@@ -4294,9 +4241,7 @@ mod tests {
         const ON_PAGE: &str = "11111111-1111-4111-8111-111111111111";
         const EXPLICIT_REF: &str = "22222222-2222-4222-8222-222222222222";
         const UNRELATED: &str = "33333333-3333-4333-8333-333333333333";
-        let dir =
-            std::env::temp_dir().join(format!("tine-og-bare-page-union-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-og-bare-page-union-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -4391,11 +4336,7 @@ mod tests {
         const DIRECT_REF: &str = "77777777-7777-4777-8777-777777777777";
         const UNRELATED_CHILD: &str = "88888888-8888-4888-8888-888888888888";
         const INVALIDATION_WITNESS: &str = "99999999-9999-4999-8999-999999999999";
-        let dir = std::env::temp_dir().join(format!(
-            "tine-og-bare-page-path-refs-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-og-bare-page-path-refs-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -4513,8 +4454,7 @@ mod tests {
     #[test]
     fn backlinks_ordered_by_referrer_journal_date_desc() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-backlinks-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-backlinks-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -4581,9 +4521,7 @@ mod tests {
     #[test]
     fn canonical_reference_evidence_keeps_mixed_alias_occurrences_and_properties() {
         use std::fs;
-        let dir =
-            std::env::temp_dir().join(format!("tine-reference-evidence-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-reference-evidence-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
@@ -4645,11 +4583,7 @@ mod tests {
     fn property_keys_create_backlink_membership_with_key_evidence() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-property-key-backlinks-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-property-key-backlinks-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/url.md"),
@@ -4721,11 +4655,7 @@ mod tests {
     fn property_key_membership_uses_canonical_key_fold_and_og_eligibility() {
         use std::fs;
 
-        let dir = std::env::temp_dir().join(format!(
-            "tine-property-key-eligibility-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-property-key-eligibility-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(
@@ -4751,8 +4681,7 @@ mod tests {
     #[test]
     fn task_marker_pages_link_tasks_instead_of_plain_status_mentions() {
         use std::fs;
-        let dir =
-            std::env::temp_dir().join(format!("tine-task-marker-backlinks-{}", std::process::id()));
+        let dir = crate::test_support::fresh_dir("tine-task-marker-backlinks-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/Source.md"),
@@ -4778,9 +4707,7 @@ mod tests {
     #[test]
     fn priority_markers_link_to_the_priority_page_like_og() {
         use std::fs;
-        let dir =
-            std::env::temp_dir().join(format!("tine-priority-backlinks-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-priority-backlinks-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/Source.md"),
@@ -4807,9 +4734,7 @@ mod tests {
     fn disabled_property_pages_suppress_only_key_membership() {
         use std::fs;
 
-        let dir =
-            std::env::temp_dir().join(format!("tine-property-key-disabled-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-property-key-disabled-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(
@@ -4843,8 +4768,7 @@ mod tests {
     #[test]
     fn og_page_identity_and_reference_grouping_use_nfc_without_accent_folding() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-ref-nfc-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-ref-nfc-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/Café.md"), "- target\n").unwrap();
         fs::write(
@@ -4874,8 +4798,7 @@ mod tests {
     #[test]
     fn plain_page_property_is_unlinked_and_diagnostics_agree() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-page-prop-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-page-prop-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
         fs::write(dir.join("pages/PageProps.md"), "note:: Target\n\n- body\n").unwrap();
@@ -4907,8 +4830,7 @@ mod tests {
     #[test]
     fn duplicate_source_page_names_only_include_the_active_file() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-ref-groups-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-ref-groups-");
         fs::create_dir_all(dir.join("pages/a")).unwrap();
         fs::create_dir_all(dir.join("pages/b")).unwrap();
         fs::write(dir.join("pages/a/Note.md"), "- first [[Target]]\n").unwrap();
@@ -4926,8 +4848,7 @@ mod tests {
     #[test]
     fn structural_id_value_never_creates_an_unlinked_group() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-ref-id-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-ref-id-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/6a55b643.md"), "- target\n").unwrap();
         fs::write(
@@ -4943,8 +4864,7 @@ mod tests {
     #[test]
     fn bounded_occurrence_evidence_reaches_reference_results() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-ref-total-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-ref-total-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
         fs::write(
@@ -4964,11 +4884,7 @@ mod tests {
     #[test]
     fn real_title_beats_colliding_alias() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!(
-            "tine-real-page-before-alias-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-real-page-before-alias-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/X.md"), "- real title\n").unwrap();
         fs::write(dir.join("pages/Y.md"), "alias:: X\n\n- [[X]]\n").unwrap();
@@ -5030,9 +4946,7 @@ mod tests {
         }
 
         const DEPTH: usize = crate::model::PARSE_INPUT_MAX_DEPTH;
-        let dir =
-            std::env::temp_dir().join(format!("tine-non-overlap-results-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-non-overlap-results-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         let nested = (0..DEPTH)
@@ -5116,9 +5030,7 @@ mod tests {
         use std::fs;
 
         const TARGET_ID: &str = "11111111-1111-4111-8111-111111111111";
-        let dir =
-            std::env::temp_dir().join(format!("tine-og-query-root-gap-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-og-query-root-gap-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -5182,9 +5094,7 @@ mod tests {
     fn query_export_hydrates_only_selected_subtrees_under_one_session_budget() {
         use std::fs;
 
-        let dir =
-            std::env::temp_dir().join(format!("tine-query-export-budget-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-query-export-budget-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
 
@@ -5268,9 +5178,7 @@ mod tests {
     fn query_export_hydrates_the_header_property_row() {
         use std::fs;
 
-        let dir =
-            std::env::temp_dir().join(format!("tine-query-export-header-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-query-export-header-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -5308,8 +5216,7 @@ mod tests {
     fn interactive_search_stops_inside_a_page_when_superseded() {
         use std::cell::Cell;
         use std::fs;
-        let dir = std::env::temp_dir().join(format!("tine-search-cancel-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-search-cancel-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -5332,11 +5239,7 @@ mod tests {
     #[test]
     fn result_families_stop_constructing_at_row_and_byte_budgets() {
         use std::fs;
-        let dir = std::env::temp_dir().join(format!(
-            "tine-result-construction-budget-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-result-construction-budget-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -5399,7 +5302,7 @@ mod tests {
 mod region_template_regression {
     #[test]
     fn store_template_query_preserves_literal_metadata() {
-        let root = std::env::temp_dir().join(format!("og-d1-templates-{}", std::process::id()));
+        let root = crate::test_support::fresh_dir("og-d1-templates-");
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::write(root.join("pages/Template.md"),"- Task\n  template:: Example\n  id:: actual\n  ```\n  id:: literal\n  template:: literal\n  ```\n").unwrap();
         let (store, _, _) = crate::Store::open(&root, crate::OpenOptions::default()).unwrap();

@@ -8,11 +8,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
+- Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
+- Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).
+- Selecting blocks on deeply nested pages is faster (Ifogg).
+- CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
+- The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
+- Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
+- Choose and reorder toolbar buttons in Settings → Appearance → Toolbar. Other buttons stay in the … menu, and Reset restores the default. The choice is saved on this device (#926).
+
+- Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
+- Open windows keep the saved interface language when change broadcasts arrive out of order (CBNyU).
+- Code line numbers stay readable with wrapping enabled, and the gutter grows to fit larger numbers in reading and both editors (GH #946).
+- In-block numbered lists show their stored numbers after editing (GH #947).
+- Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
+- Find in page says how many embeds and queries are not searched yet, and updates matches as they load without retyping (#935).
+- Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).
+- iOS TestFlight and Microsoft Store builds now enable quick share when their deployed-viewer check passes (internal: REG-QS-ATTEST-STORES-09).
+
+- Late page reads preserve newer saved text, and merges and conflict resolutions refresh pages already on screen (Hd-bI).
+- Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
+- Remove author works on a block selection, including folded descendants, from Commands, a bound shortcut or the context menu. It skips read-only blocks and removes all selected attributions in one undo step (#918).
+- Leaving a page clears its block selection, preventing Delete and other selection keys from changing blocks on the hidden page (Ifods).
+- Block selections now include each selected block's whole subtree, folded children included. Shift+Up/Down extend by sibling subtrees, and Shift+click, dragging, select-all and bulk actions use the same selection. Copying a parent always includes its children; the parent-copy setting has been retired (#941).
+- Search labels matching margin comments and replies as comments, with their host breadcrumbs (COMMENT-OUT-V2).
+- Exports, print and publication include labelled margin comments by default; **Include comments** and CLI `--no-comments` can omit entire threads. Repeating exports remember the choice (H9TvA).
+- Embedded comments and replies, including query macro results, retain export labels and obey **Include comments**; excluding comments keeps ordinary page-property and preamble query rows (H9TvA).
+- Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
+- An unreadable `config.edn` is explained on page banners and in Settings errors. A live arrival raises one notice and makes open pages read-only; repairing it clears the graph restriction without reopening (Hl2_0).
+- A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).
+
 - CLI query export is faster while Tine is open: it reuses the graph owner and looks up the query UUID through the existing index (perf-cli-export-1111).
+- Diagnostics: when a block's editor does not have the caret one frame after Tine asked it to edit (for example after Enter), the diagnostic report now records a content-free `editor.focus-missed` event (whether the window had focus, whether an edit guard held the request, whether the editor was mounted, and the focused element's kind; no note text, titles or paths), at most once every five minutes, so a report can tell the possible causes apart (GH #939).
 
 ### Added
 
 - **Open current page in right sidebar** and **Open today's journal in right sidebar** are command-palette commands with no default key; bind them in Settings → Keyboard shortcuts. The first does what the page menu's **Open in sidebar** does (it is offered while a page is shown); the second is Logseq's "open today in the sidebar" and works from any page, even before today's journal has a file (GH #928; UI-GH928-SIDEBAR-COMMANDS).
+- **Settings → Appearance → Advanced → Show the help button** hides the "?" button in the corner on this device. Help stays reachable: **Toggle help** in the command palette, **Shift+?**, and a new **Help** list in Settings → Help & diagnostics (#926).
+- Settings is never more than two taps away on a phone: the left drawer ends with a fixed **Settings** row; a Settings button moved off the toolbar is in the "…" menu (#926).
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
 - `tine add --under` a comment or one of its replies dates each message it inserts (a creation-only UTC minute `tine.date`); lines nested under a message stay undated body text, and ordinary outline insertion gets no date (D-20261108-MC5; GH #891).
 - Restyle comments with supported CSS classes and tokens for passage highlights and card backgrounds; target comments and attributed blocks by author with `data-author` in `logseq/custom.css` (GH #929).
@@ -60,11 +93,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+
+- A page whose properties cannot be parsed is refused consistently while opening, including during startup, and an edit cannot overwrite its unreadable bytes (internal: REG-READABLE-OWNER-COLD; HbcTw).
+- The sidebar keeps workspace creation and menu controls within reach instead of clipping them into the editor (IcYyc).
+- All Pages keeps timestamps and backlink counts current when updates for different pages arrive out of order (REG-ALLPAGES-METRIC-ORDER).
+- Enter after text in a query or linked-reference result creates a child and keeps editing it, even when the child does not match the query (internal: UI-QUERY-REF-ENTER-EDITOR-1113).
+- A phone toolbar keeps Calendar, Journals, Share and the theme toggle on the bar down to about a 360-pixel-wide window instead of moving them into "…" on a 390-pixel phone: the small workspace switcher no longer sits on the bar at that width, and workspaces stay one tap away as the first row of the left drawer. On Settings → Keyboard shortcuts on a phone, every command's id now starts at the same place, with Unbind and Reset at the end of the line (#926).
+- On iOS, Settings → Graph and the graph lists show a graph as the folder inside Tine's Documents folder (for example `Documents/Graphs/Work notes`) instead of the long app-sandbox path; Copy path still copies the full path (#926).
+- Moving a block with Alt+Shift+Up/Down in the CodeMirror editor keeps its selected text selected; depending on timing it could collapse to the start of the block (internal: UI-CM6-MOVE-KEEPS-BROWSER-RANGE-1112).
 - Org pages: renaming or merging a page now also updates links to it inside emphasis (`*[[page]]*`, `/see [[page][label]]/`), also inside quote and other `#+BEGIN_…` blocks; before, those links kept the old name. Linked References mark such links where they stand (internal: REG-LSDOC-0511-ORG-LINK-SPANS).
+- `tine page current` prints a block link only when the block has an `id::` of its own. Before, a block without one got a temporary link that stopped working the next time the graph loaded; now it has no block link, and the command still never writes to your notes ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - Going back after zooming into a block preserves the reading position when a session save runs while the page or Journals feed is loading, and shows the block you were reading even when the long page lays out differently on return, for example after a window resize (internal: UI-ZOOM-BACK-SCROLL).
 - An Org page saved with Windows (CRLF) line endings that contains an empty headline (`*`) is editable again instead of opening read-only, and lines typed or blocks added on a CRLF Org page now get CRLF like the rest of the file (internal: REG-ORG-CRLF-EMPTY-HEADLINE).
 - An empty task (a bare `TODO` or `DONE` with no text) stays a task when Tine gives it a block id, folds it or schedules it, in Org and Markdown pages; before, the saved file was read back as the plain word. A bare task Logseq saved with an id drawer now opens as a task too (internal: REG-BARE-TASK-HIDDEN-ROWS).
+- Find in page no longer changes its count while Linked References load on scroll: it counts the page's own content, the find bar says "Linked references not searched" (likewise Unlinked and block references), and **search linked references** opens that section's own search with your query, which covers every group (GH #935; internal: UI-GH935-FIND-REFERENCES-SCOPE).
 
+- Copying a collapsed block, or a block shown as a sheet (table, board or grid), with Ctrl/Cmd+C on a block selection or Copy blocks in the block menu puts the children it hides on the clipboard, nested folds included; before, with the default "Copy a parent block's sub-blocks" off, the copied text silently left them out. An expanded parent selected alone still copies alone; with the setting on, copies remain whole subtrees as in Logseq (GH #943).
 - Git: a graph whose `.git` is a file pointing to a separate git folder, as Logseq's own version control sets it up, can now be committed and synced; Tine no longer says the graph is not inside its repository's work tree, and adds its `.gitignore` lines there as in any other graph. The layout is left as it is (GH #872).
 - A completed case-only page rename stays visible during the storage handoff, so opening or deleting it immediately afterwards no longer reports that the page is missing (internal: REG-RENAME-READ-AFTER-WRITE).
 - With a default journal template, today's journal again shows as a journal day, and clicking its title opens it instead of reporting that the page is no longer available at that path. A tab or link that remembered the wrong kind of page for a file now opens that file (GH #863).
@@ -228,7 +272,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
+- **Remove author** is a command: run it from Commands with an authored block selected, or bind a key under Settings → Keyboard shortcuts (none by default) and press it while editing the block. It does exactly what **Remove author** in the block's menu does (GH #918).
 - **Settings → Appearance → Advanced → Show Workspaces** hides saved-workspace controls on desktop and mobile while keeping existing workspaces for when you turn it on again (#927).
 - Hover a block's bullet to see when its text last changed in git. Uncommitted edits, unavailable dates and the history limit are shown explicitly, without storing timestamp properties (GH #831).
 - Set and remove page or journal properties with `tine prop set|remove --page` / `--journal`, and `tine add` imports a page-property header when it creates a page (GH #839).
@@ -251,7 +295,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Persian (فارسی) is available as an interface language, Tine's first right-to-left one: menus, settings and messages mirror, and the note layout defaults to right to left. Choose it under Settings → Appearance → Language. The Guide stays in English (#823).
 - Settings → Editor → Advanced offers one **Hover preview delay**, in seconds, for page and block references (#824). The default is 1 second; large values keep previews out of the way, and touch long-press keeps its own delay.
 - `tine export query GRAPH '((UUID))'` publishes the query block's result pages, with `--name` for the output and `--force` to replace an existing export while retaining it in recovery. It uses the shared query publisher; Sheets retain the command-line plain-outline rendering.
-- **Merge selected blocks** (#764) joins a selection of two or more blocks on one page into the first one: the texts on separate lines in the order you see them, every child kept under it, in one Undo step. It is in the command palette and starts unbound; assign a key under Settings → Shortcuts. It follows Backspace's rules for block IDs and properties: a referenced block ID moves to the merged block, and if that would lose a referenced ID, Tine refuses and says why. Selections that hold a query, an embed, a sheet or a PDF highlight, or blocks from two pages, are refused.
+- **Merge selected blocks** (#764) joins a selection of two or more blocks on one page into the first one: the texts on separate lines in the order you see them, every child kept under it, in one Undo step. It is in the command palette and starts unbound; assign a key under Settings → Keyboard shortcuts. It follows Backspace's rules for block IDs and properties: a referenced block ID moves to the merged block, and if that would lose a referenced ID, Tine refuses and says why. Selections that hold a query, an embed, a sheet or a PDF highlight, or blocks from two pages, are refused.
 - **Alt+Enter** while editing adds a new block at the same level after the current block's whole subtree, and puts the caret in it (#818). It is the rebindable command **New block after this block's children**. Until now Alt+Enter in the classic editor behaved like plain Enter and split the block at the caret; in sheet cells it still adds a child.
 
 ### Fixed
@@ -316,6 +360,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).
 - `tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).
 - Large graphs retain less memory by storing immutable block projection lists compactly and releasing parser region buffer slack.
+- Large graphs retain about 22% less Rust heap (measured on generated graphs of 1,000 to 30,000 files) through smaller block and projection records, block IDs stored as 16 bytes when their spelling allows it, and a more compact block-owner index (D-20261101-MEM).
 - Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
 - Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.
