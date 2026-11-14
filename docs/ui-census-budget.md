@@ -83,8 +83,15 @@ journey (`scripts/e2e-*.mjs`), not here.
   `sidebar.left.fixed` 5→6 and `sidebar.left.full` 8→9 for the close icon beside
   the graph picker. This keeps the explicitly requested close control in the
   shared header at both widths. Palette-only or a keyboard shortcut cannot
-  provide the requested visible control. The lane receipt records this rationale
-  for the integration commit; this implementation lane does not commit.
+  provide the requested visible control.
+- 2026-11-13, GH #926 (D-20261113-UI, approved toolbar design section 3):
+  `settings.appearance.open` 31→53 for the seven actions' up/down and section-move
+  buttons (21), plus Reset (1). These are the approved accessible alternatives
+  to dragging in the two ordered lists. `menu.topbarOverflow` 8→10 for Workspaces
+  and Customize toolbar; its probe chooses all optional actions for the menu
+  and counts every menuitem, including the fixed Customize row. The default
+  toolbar count and all timing/memory budgets are unchanged. This records the
+  approved capability's controls, rather than raising a performance budget.
 - 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
   `settings.appearance.open` 30→31 for the explicitly requested **Comments**
   display selector, **In the margin** / **On click**, beside the other display

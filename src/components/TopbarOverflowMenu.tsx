@@ -1,8 +1,13 @@
-import { t } from "../i18n";
-import { Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { render, t } from "../i18n";
+import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { toolbarActionLabel, type ToolbarActionId } from "../toolbarChoice";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 
 export interface TopbarOverflowMenuProps {
+  actions: ToolbarActionId[];
+  visible: boolean;
+  onWorkspaces?: () => void;
+  onCustomize?: () => void;
   onCalendar: () => void;
   onJournals: (event: MouseEvent) => void;
   /** Share the current page; absent where sharing does not apply (a published export). */
@@ -19,9 +24,8 @@ export interface TopbarOverflowMenuProps {
 }
 
 /**
- * Low-priority topbar actions at compact widths. The toolbar's container query
- * only changes which controls are visible; this component owns the same actions
- * and lets the shared transient registry dismiss its popover.
+ * Optional rows come from the toolbar placement owner, in its menu order.
+ * Fixed navigation retains its container tiers. Shared transient dismissal.
  */
 export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element {
   let root: HTMLDivElement | undefined;
@@ -57,9 +61,14 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
     close(true);
     action();
   };
+  const handlers = () => ({ calendar: props.onCalendar, journals: props.onJournals,
+    share: props.onShare, theme: props.onToggleTheme,
+    "right-sidebar": () => props.onToggleRightSidebar(trigger),
+    workspaces: props.onWorkspaces, settings: props.onSettings });
+  const rows = () => props.actions.filter(id => handlers()[id]);
 
   return (
-    <div class="topbar-overflow" ref={root}>
+    <div class="topbar-overflow" ref={root} style={{ display: props.visible ? "block" : "none" }}>
       <button
         ref={trigger}
         type="button"
@@ -73,21 +82,15 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
       >···</button>
       <Show when={open()}>
         <div ref={menu} class="topbar-overflow-menu" role="menu" aria-label={t("topbar-overflow-menu-more-toolbar-actions")}>
-          <button type="button" role="menuitem" data-topbar-overflow-action="calendar" onClick={() => run(props.onCalendar)}>{t("topbar-overflow-menu-calendar")}</button>
-          <button type="button" role="menuitem" data-topbar-overflow-action="journals" onClick={(event) => run(() => props.onJournals(event))}>{t("topbar-overflow-menu-journals")}</button>
-          <Show when={props.onShare}>
-            <button type="button" role="menuitem" data-topbar-overflow-action="share" disabled={props.canShare ? !props.canShare() : false} onClick={() => run(props.onShare!)}>{t("topbar-overflow-menu-share")}</button>
-          </Show>
-          <button type="button" role="menuitem" data-topbar-overflow-action="theme" onClick={() => run(props.onToggleTheme)}>{t("topbar-overflow-menu-toggle-theme")}</button>
-          <button type="button" role="menuitem" data-topbar-overflow-action="right-sidebar" onClick={() => run(() => props.onToggleRightSidebar(trigger))}>{t("topbar-overflow-menu-toggle-right-sidebar")}</button>
+          <For each={rows()}>{id => <button type="button" role="menuitem" data-topbar-overflow-action={id}
+            disabled={id === "share" && props.canShare ? !props.canShare() : false}
+            onClick={event => run(() => handlers()[id]!(event))}>{render(toolbarActionLabel(id))}</button>}</For>
           <div class="topbar-overflow-sep" role="separator" />
           <button type="button" role="menuitem" data-topbar-overflow-action="back" disabled={!props.canGoBack()} onClick={() => run(props.onBack)}>{t("topbar-overflow-menu-back")}</button>
           <button type="button" role="menuitem" data-topbar-overflow-action="forward" disabled={!props.canGoForward()} onClick={() => run(props.onForward)}>{t("topbar-overflow-menu-forward")}</button>
-          {/* Always the last row, whatever else the toolbar has collapsed, so
-              Settings is never more than two taps away (GH #926). */}
-          <Show when={props.onSettings}>
+          <Show when={props.onCustomize}>
             <div class="topbar-overflow-settings-sep" role="separator" />
-            <button type="button" role="menuitem" data-topbar-overflow-action="settings" onClick={() => run(props.onSettings!)}>{t("settings-ui-settings")}</button>
+            <button type="button" role="menuitem" onClick={() => run(props.onCustomize!)}>{t("toolbar-customize")}</button>
           </Show>
         </div>
       </Show>

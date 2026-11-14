@@ -734,8 +734,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async getAppString(key: string, fallback: string) {
       return appStrings.get(key) ?? fallback;
     },
-    async setAppString(key: string, value: string) {
-      appStrings.set(key, value);
+    async setAppString(key: string, value: string | null) {
+      if (value === null) appStrings.delete(key);
+      else appStrings.set(key, value);
     },
     async setUiLocale() {},
     async loadSession() {
