@@ -44,10 +44,11 @@ export const SURFACES = Object.freeze({
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
 
   // --- Settings ---------------------------------------------------------------
-  "settings.tabs": { env: "desktop", budget: 10, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" },
-  "settings.appearance.open": settingsOpen("appearance", 53), // D-20261113-UI / #926: 3 move controls × 7 actions + Reset
+  "settings.tabs": { env: "desktop", budget: 11, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" }, // D-20261113 / #926: Themes is its own category.
+  "settings.appearance.open": settingsOpen("appearance", 45), // D-20261113-UI / #926: 23 after Themes moved out, + 3 move controls × 7 toolbar actions + Reset
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
   "settings.appearance.advanced": settingsAdvanced("appearance", 18), // D-20261111-QP2 / GH #926: Show the help button
+  "settings.themes.open": settingsOpen("themes", 8),
   // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
   "settings.editor.open": settingsOpen("editor", 10),
   // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
@@ -88,8 +89,8 @@ export const SURFACES = Object.freeze({
   // --- Chrome at rest (DOM present; CSS-only hiding is not visible to jsdom) --
   "topbar.atRest": { env: "desktop", budget: 13, what: "controls in the desktop topbar: toolbar buttons (not the ··· trigger) plus the frameless window controls", source: "App header.topbar controls outside .topbar-overflow, plus WindowControls buttons" },
   "topbar.windowControls": { env: "desktop", budget: 3, what: "frameless window controls", source: "WindowControls buttons" },
-  "sidebar.left.fixed": { env: "desktop", budget: 5, what: "controls in the left sidebar of an empty graph", source: "App .left-sidebar: workspace and graph switchers, Journals, All pages, New page" },
-  "sidebar.left.full": { env: "desktop", budget: 8, what: "controls in the left sidebar with Favorites, Recent and Namespaces present", source: "the same selector with a favorite, a recent page and a namespaced page" },
+  "sidebar.left.fixed": { env: "desktop", budget: 6, what: "controls in the left sidebar of an empty graph", source: "App .left-sidebar: workspace and graph switchers, Close navigation sidebar, Journals, All pages, New page" },
+  "sidebar.left.full": { env: "desktop", budget: 9, what: "controls in the left sidebar with Favorites, Recent and Namespaces present", source: "the same selector with a favorite, a recent page and a namespaced page" },
   "sidebar.right.header": { env: "desktop", budget: 2, what: "controls in the right sidebar header", source: "RightSidebar .right-sidebar-header buttons" },
   "sidebar.right.item": { env: "desktop", budget: 4, what: "controls in one right sidebar item head", source: "RightSidebar .rs-item-head: toggle, title, ⋯, close" },
 

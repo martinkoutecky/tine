@@ -297,10 +297,6 @@ html[data-system-insets="native-viewport"] {
   background: rgba(0, 0, 0, .42);
   touch-action: none;
 }
-.mobile-drawer-close {
-  display: block;
-  margin-block: 8px 0; margin-inline: auto 10px;
-}
 /* GH #926: the drawer is a column, its scroll above a fixed Settings row. */
 .app-container[data-mobile-drawer-mode="true"] .left-sidebar {
   display: flex;
@@ -1189,6 +1185,9 @@ html[data-system-insets="native-viewport"] {
 .sidebar-header {
   padding: 4px 8px 10px;
 }
+.sidebar-graph-row { display: flex; align-items: center; margin-top: 4px; gap: 4px; }
+.sidebar-graph-row .graph-switch { flex: 1; min-width: 0; margin-top: 0; }
+.sidebar-close { flex: none; display: flex; }
 
 /* Window-level workspaces belong with the other low-frequency sidebar context
    controls, above the graph switcher and navigation tree. */
@@ -1332,12 +1331,8 @@ html[data-system-insets="native-viewport"] {
   margin-top: 16px;
 }
 
-.nav-section-header {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  padding: 4px 8px;
-}
+.nav-section > :not(.nav-section-header) { margin-inline-start: 16px; }
+.nav-section-header { padding: 5px 8px; }
 .nav-section-toggle {
   display: flex;
   align-items: center;
@@ -1345,8 +1340,6 @@ html[data-system-insets="native-viewport"] {
   width: 100%;
   border: 0;
   background: transparent;
-  font: inherit;
-  font-size: 11px;
   text-align: start;
   cursor: pointer;
   user-select: none;
@@ -1354,8 +1347,8 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
-/* GH #704: `font: inherit` resets the size; keep the section headings' 11px. */
-.nav-all-pages-open { width: 100%; text-align: start; background: transparent; border: 0; font: inherit; font-size: 11px; cursor: pointer; }
+.nav-all-pages-open { width: 100%; text-align: start; background: transparent; border: 0; cursor: pointer; }
+.nav-first-level { font: inherit; letter-spacing: normal; color: var(--text-secondary); }
 .nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
 .nav-toggle-caret,
 .graph-switch-caret,

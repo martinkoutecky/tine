@@ -121,7 +121,10 @@ it.each([1000, 10000, 50000].flatMap(size => (["flat", "deep", "folded"] as Shap
     const dropped = measuring ? await heap() : 0;
     rows.push({ size, shape, visible, ...counts, retained, topologyBytes, clearedDelta: cleared - before, droppedDelta: dropped - before, released, ms, load: loadavg() });
     if (measuring) writeFileSync(process.env.SEL_COST_OUTPUT!, JSON.stringify(rows, null, 2));
-    expect(counts.reads).toBeLessThanOrEqual(visible * (shape === "deep" ? 60 : 9) + 64);
+    // First selection must fit the 500 ms interaction budget at 10k blocks,
+    // including the counter instrumentation (Ryzen 5 8600G reference host).
+    if (size === 10000 && shape === "deep") expect.soft(ms).toBeLessThan(500);
+    expect(counts.reads).toBeLessThanOrEqual(visible * (shape === "deep" ? 12 : 9) + 64);
     expect(counts.nodesVisited).toBeLessThanOrEqual(visible + 32);
     expect(counts.childEntries).toBeLessThanOrEqual(1);
     expect(counts.methodArrays).toBeLessThanOrEqual(3);

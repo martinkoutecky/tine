@@ -20,10 +20,17 @@ try {
   browser = await chromium.launch({ args: ["--no-sandbox"] });
   for (const width of [1280, 390]) {
     for (const locale of ["en", "zh-CN"]) {
-      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: width === 390 });
       await page.goto(`http://localhost:${port}/`);
       await page.locator('button.icon-btn[title^="Settings"]').first().click();
       await page.locator(".settings-modal").waitFor();
+      if (width === 390) {
+        assert.equal(await page.locator(".settings-pane-body").count(), 0, "phone opens the category list");
+        await page.locator(".settings-nav-item").filter({ hasText: /^Themes$/ }).click();
+        await page.locator('[data-setting-id="themes-style"]').waitFor();
+        await page.getByRole("button", { name: "Back to Settings", exact: true }).click();
+        await page.locator(".settings-nav-item").filter({ hasText: /^Appearance$/ }).click();
+      }
       await page.locator("select.settings-select").filter({ has: page.locator('option[value="zh-CN"]') }).selectOption(locale);
       const search = page.locator(".settings-search-input");
       const fields = page.locator(".settings-pane-body .settings-field");

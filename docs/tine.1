@@ -77,7 +77,7 @@ tine\-edit(1)
 Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one. Supplying a LOGBOOK drawer requires \-\-rev from the read; otherwise reread and pass \-\-rev (refused:revision\-required)
 .TP
 tine\-add(1)
-Insert a page fragment, attributing every new block to its author
+Insert a page fragment, attributing new blocks unless \-\-no\-author is set
 .TP
 tine\-delete(1)
 Delete a block with its children; refuses broken references without \-\-yes and prints the removed text (up to 65,536 UTF\-8 bytes, with omitted byte count)

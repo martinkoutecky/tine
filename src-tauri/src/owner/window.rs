@@ -543,6 +543,9 @@ mod current_page_tests {
         let (store, _, _) = tine_store::Store::open(temp.path(), Default::default()).unwrap();
         // An answering graph window already has its loaded view.
         store.whole_graph().unwrap();
+        // Measure the request, with no background config/custom.css probes
+        // racing the counter reset or the identity's own-write notification.
+        store.stop_watcher_for_tests();
         let store = std::sync::Arc::new(store);
         let root = tine_store::Store::canonical_root(temp.path()).unwrap();
         #[cfg(unix)]

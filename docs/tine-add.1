@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH tine-add 1  "add " 
 .SH NAME
-tine\-add \- Insert a page fragment, attributing every new block to its author
+tine\-add \- Insert a page fragment, attributing new blocks unless \-\-no\-author is set
 .SH SYNOPSIS
-\fBtine add\fR [\fB\-\-under\fR] [\fB\-\-after\fR] [\fB\-\-debug\fR] [\fB\-\-before\fR] [\fB\-\-page\fR] [\fB\-\-journal\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fICONTENT\fR> 
+\fBtine add\fR [\fB\-\-under\fR] [\fB\-\-after\fR] [\fB\-\-debug\fR] [\fB\-\-before\fR] [\fB\-\-page\fR] [\fB\-\-journal\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-\-no\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fICONTENT\fR> 
 .SH DESCRIPTION
-Insert a page fragment, attributing every new block to its author
+Insert a page fragment, attributing new blocks unless \-\-no\-author is set
 .SH OPTIONS
 .TP
 \fB\-\-under\fR \fI<BLOCK>\fR
@@ -44,6 +44,9 @@ May also be specified with the \fBTINE_RUN\fR environment variable.
 .TP
 \fB\-\-author\fR \fI<AUTHOR>\fR
 Author on created blocks and on the run\*(Aqs commits (default: TINE_AUTHOR, else agent; blank environment values count as unset). With `edit`, the flag (not the variable) also sets the block\*(Aqs tine.author::
+.TP
+\fB\-\-no\-author\fR
+Skip automatic block attribution for personal scripts. Existing properties and git run commit names stay unchanged
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

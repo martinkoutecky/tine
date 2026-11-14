@@ -20,7 +20,8 @@ import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
-import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
+import { BeginQuery } from "../components/BeginQuery";
+import { inspectBeginQuery } from "./beginQuery";
 import { readOr } from "../resourceRead";
 import "./codeBlock.css";
 import { QueryMacro } from "../components/Macro";
@@ -435,7 +436,7 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   // A hover preview never mounts a live query (GH #735; same rule as inline query macros).
   const beginQuery = inPeek ? null : inspectBeginQuery(raw, format, blocks);
   return beginQuery
-    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} findHost={blockId} />
     : <BodySourceContext.Provider value={{ raw, codeEditAction }}>
         {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
       </BodySourceContext.Provider>;
