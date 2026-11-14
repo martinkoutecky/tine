@@ -44,6 +44,7 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
         uuid: QUERY_ID.into(),
         name: Some("Review".into()),
         force: false,
+        no_comments: false,
         epoch: 0,
     };
     // Freeze the old path's shared publisher output before using the socket.

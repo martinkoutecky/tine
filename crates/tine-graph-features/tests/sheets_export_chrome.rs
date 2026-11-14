@@ -69,6 +69,7 @@ fn publish() -> (Scratch, String, String) {
         &base.join("output"),
         "export",
         false,
+        true,
         &bundle(),
         exports(),
     )

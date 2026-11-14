@@ -33,8 +33,8 @@ import { changed } from "../changeKeys";
 import { isBlockMoving } from "./edits/moves";
 import { hostState } from "./host/wiring";
 
-interface Deferred { change: GraphChange; binding: Binding }
-interface Replay { ready(page: string): boolean; run(change: GraphChange): void }
+interface Deferred { change: GraphChange; binding: Binding; own: boolean }
+interface Replay { ready(page: string): boolean; run(change: GraphChange, own: boolean): void }
 
 const deferred = new Map<string, Deferred>();
 const [deferredCount, setDeferredCount] = createSignal(0);
@@ -47,8 +47,8 @@ let replay: Replay | null = null;
 export function installDeferredReloadReplay(next: Replay): void { replay = next; }
 
 /** Record `change` for replay once loaded page `page` is replaceable. */
-export function deferExternalReload(page: string, change: GraphChange): void {
-  deferred.set(page, { change, binding: captureBinding() });
+export function deferExternalReload(page: string, change: GraphChange, own = false): void {
+  deferred.set(page, { change, binding: captureBinding(), own });
   setDeferredCount(deferred.size);
   watchTransitions();
 }
@@ -82,7 +82,7 @@ export function replayDeferredExternalReloads(): void {
     if (!replay.ready(name)) continue;
     deferred.delete(name);
     // Fire and forget like a live watcher event; a decline re-defers.
-    replay.run(entry.change);
+    replay.run(entry.change, entry.own);
   }
   setDeferredCount(deferred.size);
 }

@@ -1608,8 +1608,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const v = mockAppStrings[key];
       return v === undefined ? fallback : v;
     },
-    async setAppString(key: string, value: string): Promise<void> {
-      mockAppStrings[key] = value;
+    async setAppString(key: string, value: string | null): Promise<void> {
+      if (value === null) delete mockAppStrings[key]; else mockAppStrings[key] = value;
     },
     async setUiLocale(): Promise<void> { /* no native shell in the mock */ },
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },

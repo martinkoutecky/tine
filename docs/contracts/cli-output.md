@@ -15,6 +15,12 @@ prints `Published N pages to PATH` on success. If public-page selection publishe
 stderr also explains that no publishable page has `public:: true` and names `--all-pages` as the override.
 This warning keeps the successful export status (exit 0).
 
+Static, live and query exports include comment threads by default. `--no-comments`
+omits complete threads and leaves their body hosts intact. Static HTML labels
+included comments as annotations (author/date where known); the live viewer uses
+the app's margin. Query export also reads the definition's `tine.comments:: false`;
+the CLI flag excludes comments for that run without editing the definition.
+
 `tine export query GRAPH '((UUID))' [--name NAME] [--force]` uses the same
 plain-text success line and warning/recovery reporting. It publishes the one
 query block's result pages into `published-queries/<folder>/` through the shared

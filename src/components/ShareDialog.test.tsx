@@ -74,6 +74,20 @@ const blockTarget = (macro: string, extra: Record<string, unknown> = {}) => ({
   macro, query: { argument: macro.replace(/^\{\{\S+ |\}\}$/g, ""), dialect: "macro_tql", properties: [["tine.view", "table"]],
     currentPage: "Notes", hostBlockId: "block-1", name: "My query", ...extra } as never });
 
+it("carries an explicit comments exclusion into the folder review and its new definition", async () => {
+  const root = await open({ page: "Project" });
+  const box = [...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!.querySelector("input")!;
+  expect(box.checked).toBe(true);
+  box.click();
+  await vi.waitFor(() => expect(plan).toHaveBeenLastCalledWith(expect.objectContaining({ includeComments: false })));
+  await vi.waitFor(() => expect(exportButton(root).disabled).toBe(false));
+  exportButton(root).click();
+  const request = queryExportRequest()!;
+  expect(request.includeComments).toBe(false);
+  await queryExportAfter(request)!({ folder: "project", includeComments: false });
+  expect(doc.appended[0][2]).toEqual([["tine.export", "project"], ["tine.comments", "false"]]);
+});
+
 it("Re-share opens while the device listing is still loading, then keeps Link selected", async () => {
   const gist = "1234567890abcdef1234567890abcdef";
   doc.properties.set("block-1\0tine.share", `octo/${gist}`);

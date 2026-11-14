@@ -985,6 +985,7 @@ fn preparation_capacity_preserves_reviewed_previews() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let ids: Vec<_> = (0..MAX_PREPARED)
         .map(|_| {
@@ -1064,6 +1065,7 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     };
     let prepared = f.service.prepare_share(&store, &request, &scratch).unwrap();
     assert_eq!(prepared.preview.pages.len(), 1);

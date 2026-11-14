@@ -1,5 +1,7 @@
 import { blockTextDirection, type TextDirection } from "../render/textDirection";
 import type { ExportNode } from "./exportText";
+import { exportCommentLabel } from "./exportProjection";
+import { escapeXmlText } from "./exportMarkup";
 import {
   includesChildren,
   expandExportNodes,
@@ -8,7 +10,7 @@ import {
 } from "./exportMarkup";
 
 function listItem(node: ExportNode, options: MarkupExportOptions, level: number, indent: string, inherited: TextDirection = "ltr"): string[] {
-  const text = nodeHtml(node, options);
+  const text = (node.comment ? `<aside class="comment"><header>${escapeXmlText(exportCommentLabel(node))}</header>${nodeHtml(node, options)}</aside>` : nodeHtml(node, options));
   const children = includesChildren(level, options.maxDepth) ? node.children : [];
   const direction = blockTextDirection(node.raw, node.format ?? "md") ?? inherited;
   const open = direction !== inherited ? `<li dir="${direction}">` : "<li>";

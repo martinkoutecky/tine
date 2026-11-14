@@ -15,14 +15,16 @@ it("I-12: sheet transfers use the shared hidden-key answerer, rename uses parser
   expect(rename).not.toContain("transitionFence");
   expect(rename).not.toContain("[A-Za-z0-9_./-]");
   const hydration = read("./queryHydration.ts");
-  expect(hydration).toContain("if (occupied) return;");
-  expect(hydration).toContain("if (after) return;");
+  expect(hydration).toContain("admitRead(graphOwner(() => sameGraph(root, epoch) && !pageByName(group.page))");
+  const admission = read("../document/readAdmission.ts");
+  expect(admission).toContain("attempt < 2 && owner()");
+  expect(admission).toContain('if (!owner()) return { kind: "stale" }');
   expect(hydration).toContain("identitiesByName.get(group.page)?.size === 1");
 });
 
 it("I-12/I-22: native grid layout uses the same row cap as export inputs and charges bounded area", () => {
   const native = readFileSync(new URL("../../crates/tine-graph-features/src/render_sheets.rs", import.meta.url), "utf8");
-  expect(native).toContain("owner.children.iter().take(MAX_INPUT_ROWS).enumerate()");
+  expect(native.replace(/\s/g, "")).toContain("owner.children.iter().take(MAX_INPUT_ROWS).enumerate()");
   expect(native).toContain("rows.min(MAX_INPUT_ROWS).saturating_mul(cols)");
   expect(native).toContain("sheets.admit_grid(owner.children.len(), *cols)");
 });
