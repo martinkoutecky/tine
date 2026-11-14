@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly } from "./codeFence";
+import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret } from "./codeFence";
 
 describe("codeFenceOnly", () => {
   it("detects a whole-block markdown fence with a language", () => {
@@ -208,4 +208,26 @@ it.each(["md", "org"] as const)("mixed %s projection preserves CRLF outside the 
   expect(p).toMatchObject({ open: prefix, body: "body", close: suffix });
   expect(codeBodyJoin(p, "edited")).toBe(prefix + "edited" + suffix);
   expect(codeBodyProjection(raw, format, 0)).toBeNull();
+});
+
+// Review HOLD on a2c44ce5a (#879): the label put the caret on the delimiter end, before the separator, so typing
+// a language into `#+BEGIN_SRC python` produced `#+BEGIN_SRCrust python`, which no longer parses as code.
+describe("codeLanguageCaret", () => {
+  it.each([
+    ["org", "#+BEGIN_SRC python\nprint(1)\n#+END_SRC", "python"],
+    ["md", "```js\nx\n```", "js"],
+    ["md", "``` js\nx\n```", "js"],
+    ["md", "```\t js\nx\n```", "js"],
+  ] as const)("lands on the language (%s %j)", (format, text, lang) => {
+    const caret = codeLanguageCaret(text, format);
+    expect(text.slice(caret, caret + lang.length)).toBe(lang);
+    const typed = text.slice(0, caret) + "rust" + text.slice(caret + lang.length);
+    expect(codeFenceOnly(typed, format)?.lang).toBe("rust");
+  });
+  it("lands right after the backticks of an unlabelled Markdown fence", () => {
+    const text = "```\nx\n```";
+    const caret = codeLanguageCaret(text, "md");
+    expect(caret).toBe(3);
+    expect(codeFenceOnly(text.slice(0, caret) + "rust" + text.slice(caret), "md")?.lang).toBe("rust");
+  });
 });

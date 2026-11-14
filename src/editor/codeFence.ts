@@ -17,7 +17,17 @@ export interface CodeFenceShape {
  * parser regions only; no syntax recognition or writes. */
 export function codeLanguageCaret(text: string, format: "md" | "org", bodyStart?: number): number {
   const fences = codeFences(text, format);
-  return (bodyStart === undefined ? fences[0] : fences.find(f => f.openEnd === bodyStart))?.delimEnd ?? 0;
+  const fence = bodyStart === undefined ? fences[0] : fences.find(f => f.openEnd === bodyStart);
+  return fence ? languageStart(text, fence) : 0;
+}
+
+/** On the info string's language: past the separator whitespace after the delimiter
+ * (`#+BEGIN_SRC python`, "``` js"), so typing replaces or extends the language rather
+ * than gluing text onto the delimiter. O(separator length). */
+function languageStart(text: string, fence: LiteralContainer): number {
+  let at = fence.delimEnd;
+  while (text[at] === " " || text[at] === "\t") at++;
+  return at;
 }
 
 /** Map a rendered fence's parser source byte to its language caret in this
@@ -25,7 +35,8 @@ export function codeLanguageCaret(text: string, format: "md" | "org", bodyStart?
  * cached parser regions; no writes. */
 export function codeSourceCaret(text: string, format: "md" | "org", sourceByte: number): number | null {
   const start = utf8ByteToUtf16Offset(text, rebulletedSourceByteToRawByte(text, sourceByte));
-  return codeFences(text, format).find(f => f.start === start)?.delimEnd ?? null;
+  const fence = codeFences(text, format).find(f => f.start === start);
+  return fence ? languageStart(text, fence) : null;
 }
 
 /** The code container that IS the whole block's wrapper: the parser's first fence, source or
