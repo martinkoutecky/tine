@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Skipping a new code block's language picker keeps the caret after typed or composed text, so typing `123` no longer produces `231` (#879).
+- On Windows, **Open in new window** no longer freezes Tine once a page window has been opened in an earlier session. The window-size memory no longer restores page windows from inside window creation, where it deadlocked; Tine's own session restore still places the windows it reopens (GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK).
 - Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
 - Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).
 - iOS TestFlight and Microsoft Store builds now enable quick share when their deployed-viewer check passes (internal: REG-QS-ATTEST-STORES-09).
