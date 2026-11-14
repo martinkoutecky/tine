@@ -198,15 +198,12 @@ pub struct OpenFence {
     pub delim_end: usize,
 }
 
-fn opener_delim_end(opener: &str, marker_limit: usize) -> usize {
+fn opener_delim_end(opener: &str, limit: usize) -> usize {
     let t = opener.trim_start();
     let lead = opener.len() - t.len();
     let c = t.as_bytes().first().copied();
     lead + if matches!(c, Some(b'`' | b'~')) {
-        t.bytes()
-            .take_while(|&b| Some(b) == c)
-            .take(marker_limit)
-            .count()
+        t.bytes().take_while(|&b| Some(b) == c).count().min(limit)
     } else {
         t.find(char::is_whitespace).unwrap_or(t.len())
     }
