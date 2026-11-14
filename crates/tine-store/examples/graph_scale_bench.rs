@@ -537,6 +537,7 @@ fn bench_publish(root: &Path) -> io::Result<(f64, usize)> {
             parent.path(),
             "site",
             store.config().all_pages_public,
+            true,
         )?;
         durations.push(started.elapsed());
         let count = receipt.pages;

@@ -1,7 +1,7 @@
 import { msg } from "./i18n";
 import { backend } from "./backend";
-import { ensurePageLoaded, pageByName, reportPageLoadRefusal } from "./document";
-import { graphOwner, readOwned } from "./owned";
+import { admitRead, ensurePageLoaded, pageByName, reportPageLoadRefusal } from "./document";
+import { graphOwner } from "./owned";
 import { pushToast } from "./toasts";
 import type { PageKind } from "./types";
 
@@ -25,13 +25,13 @@ export async function loadSourcePage(source: SourcePage, notDone: string): Promi
     return !!loaded && loaded.kind === source.pageKind && (source.path === undefined || loaded.id === source.path);
   };
   if (exact()) return true;
-  const result = await readOwned(graphOwner(), source.path ? backend().getPageByPath(source.path) : backend().getPage(source.page, source.pageKind));
+  const result = await admitRead(graphOwner(), () => source.path ? backend().getPageByPath(source.path) : backend().getPage(source.page, source.pageKind), dto => [source.page, ...(dto ? [dto.name] : [])], dto => dto ? ensurePageLoaded(dto) : "missing");
   if (result.kind === "stale") return false;
-  if (!result.value) {
+  if (result.value === "missing") {
     pushToast(msg("source-page-is-no-longer-there", { page: String(source.page), not_done: String(notDone) }), "error");
     return false;
   }
-  const refusal = ensurePageLoaded(result.value);
+  const refusal = result.value;
   if (refusal) {
     reportPageLoadRefusal(refusal, notDone);
     return false;

@@ -1,5 +1,6 @@
 //! HTML byte rendering for print and static publication.
 
+use crate::output_comments::{collect_wanted_doc_blocks, flat_text, OutlineNode};
 use crate::render_query_cache::{QueryCache, QueryCacheKey, SharedQueryCache};
 use crate::{macro_budget::within as budgeted, print::PrintOpts};
 use serde_json::json;
@@ -9,7 +10,7 @@ use std::io;
 use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
 use tine_core::lsdoc::ast::{Block, Inline, Url};
-use tine_core::model::{BlockDto, BlockPreview, Format, PageKind, RefGroup};
+use tine_core::model::{BlockPreview, Format, PageKind, RefGroup};
 use tine_core::projection::{block_to_bounded_dto, subtree_node_count};
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_core::refs::block_id;
@@ -33,6 +34,7 @@ pub use render_sheets::{sheet_inputs, SheetExport, SheetIndex, SheetInput};
 mod review_tests;
 
 pub(crate) struct RenderGraph<'a> {
+    pub include_comments: bool,
     pub corpus: &'a Corpus,
     pub whole: &'a WholeGraph,
     pub store: &'a Store,
@@ -54,6 +56,7 @@ impl<'a> RenderGraph<'a> {
         sheets: Option<&'a SheetIndex>,
     ) -> Self {
         Self {
+            include_comments: true,
             corpus,
             whole,
             store,
@@ -79,9 +82,13 @@ impl<'a> RenderGraph<'a> {
     }
 
     /// The bounded preview of a block and whether its page is Org.
-    fn publish_preview_block(&self, uuid: &str) -> Option<(BlockPreview, bool)> {
+    fn publish_preview_block(&self, uuid: &str) -> Option<(BlockPreview, bool, bool)> {
         let hit = self.lookups.block(self.corpus, self.whole, uuid)?;
-        let (page, block) = (&hit.page, hit.block());
+        let (block, comment) = hit.block();
+        if comment && !self.include_comments {
+            return None;
+        }
+        let page = &hit.page;
         let total = subtree_node_count(block);
         let mut remaining_nodes = 10_000;
         let mut remaining_bytes = 8 * 1024 * 1024;
@@ -97,11 +104,36 @@ impl<'a> RenderGraph<'a> {
             },
             truncated: total.saturating_sub(10_000 - remaining_nodes),
         };
-        Some((preview, block.is_org()))
+        Some((preview, block.is_org(), comment))
     }
 
     fn list_pages(&self) -> Vec<&CorpusPage> {
         self.corpus.pages.iter().collect()
+    }
+
+    // Shallow query rows carry no ancestor properties. Reuse source hydration
+    // (one parsed-page walk per result group) to identify excluded threads.
+    fn retain_output_rows(&self, group: &mut RefGroup) {
+        if self.include_comments {
+            return;
+        }
+        let Some(doc) = self
+            .lookups
+            .doc(self.corpus, self.whole, &group.page, group.kind)
+        else {
+            group.blocks.clear();
+            return;
+        };
+        let wanted = group.blocks.iter().map(|block| block.id.as_str()).collect();
+        let mut found = HashMap::new();
+        collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
+        let kept: HashSet<_> = found
+            .into_iter()
+            .filter_map(|(id, (_, comment))| (!comment).then_some(id))
+            .collect();
+        group.blocks.retain(|block| {
+            block.page_property || block.page_preamble || kept.contains(block.id.as_str())
+        });
     }
 
     fn read_asset_limited(
@@ -1105,45 +1137,6 @@ fn emit_block_inner(raw: &str, org: bool, out: &mut String, ctx: &Ctx, depth: u8
 
 const MAX_RENDER_TREE_DEPTH: usize = 128;
 
-/// A block tree the renderer walks: a bounded embed preview (`BlockDto`) or a
-/// parsed document (`DocBlock`). One walk renders both (I-12).
-trait OutlineNode: Sized {
-    fn raw_text(&self) -> &str;
-    fn child_nodes(&self) -> &[Self];
-}
-
-impl OutlineNode for BlockDto {
-    fn raw_text(&self) -> &str {
-        &self.raw
-    }
-    fn child_nodes(&self) -> &[Self] {
-        &self.children
-    }
-}
-
-impl OutlineNode for DocBlock {
-    fn raw_text(&self) -> &str {
-        self.raw()
-    }
-    fn child_nodes(&self) -> &[Self] {
-        &self.children
-    }
-}
-
-/// A subtree's raw text, one block per line in preorder (the over-deep fallback).
-fn flat_text<N: OutlineNode>(root: &N) -> String {
-    let mut text = String::new();
-    let mut stack = vec![root];
-    while let Some(block) = stack.pop() {
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(block.raw_text());
-        stack.extend(block.child_nodes().iter().rev());
-    }
-    text
-}
-
 /// Render an embedded or query-result block as an `<li>` with its facets and
 /// children, at `depth` (bounds macro recursion) and `tree_depth` (bounds the
 /// outline). `org` is the format of the page the block lives on.
@@ -1154,39 +1147,39 @@ fn render_outline_item<N: OutlineNode>(
     ctx: &Ctx,
     depth: u8,
     tree_depth: usize,
+    in_comment: bool,
 ) {
+    let comment = in_comment
+        || crate::output_comments::is_comment_properties(node.properties(), tree_depth > 0);
+    if comment && ctx.graph.is_some_and(|graph| !graph.include_comments) {
+        return;
+    }
     out.push_str("<li>");
+    if comment {
+        crate::output_comments::open_annotation(node.properties(), out);
+    }
     if tree_depth >= MAX_RENDER_TREE_DEPTH {
         out.push_str("<pre class=\"outline-flat\">");
         out.push_str(&esc(&flat_text(node)));
-        out.push_str("</pre></li>");
+        out.push_str("</pre>");
+        if comment {
+            out.push_str("</aside>");
+        }
+        out.push_str("</li>");
         return;
     }
     emit_block_inner(node.raw_text(), org, out, ctx, depth);
     if !node.child_nodes().is_empty() {
         out.push_str("<ul>");
         for child in node.child_nodes() {
-            render_outline_item(child, org, out, ctx, depth, tree_depth + 1);
+            render_outline_item(child, org, out, ctx, depth, tree_depth + 1, comment);
         }
         out.push_str("</ul>");
     }
-    out.push_str("</li>");
-}
-
-fn collect_wanted_doc_blocks<'a>(
-    blocks: &'a [DocBlock],
-    wanted: &std::collections::HashSet<&str>,
-    found: &mut std::collections::HashMap<&'a str, &'a DocBlock>,
-) {
-    let mut stack: Vec<_> = blocks.iter().rev().collect();
-    while let Some(block) = stack.pop() {
-        if wanted.contains(block.uuid.as_str()) {
-            found.insert(block.uuid.as_str(), block);
-        }
-        // OG can retain a matching descendant below a non-matching child of a
-        // retained ancestor. Keep walking so both roots hydrate from source.
-        stack.extend(block.children.iter().rev());
+    if comment {
+        out.push_str("</aside>");
     }
+    out.push_str("</li>");
 }
 
 /// Query DTOs intentionally carry shallow membership rows. Static publishing
@@ -1214,8 +1207,8 @@ fn render_query_groups(
         let mut found = std::collections::HashMap::with_capacity(wanted.len());
         collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
         for block in &group.blocks {
-            if let Some(source) = found.get(block.id.as_str()) {
-                render_outline_item(*source, source.is_org(), out, ctx, depth, 0);
+            if let Some((source, comment)) = found.get(block.id.as_str()) {
+                render_outline_item(*source, source.is_org(), out, ctx, depth, 0, *comment);
             }
         }
     }
@@ -1348,12 +1341,12 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
                 .into();
         }
         return match graph.publish_preview_block(uuid) {
-            Some((preview, org)) if publish_page_allowed(ctx, &preview.group.page) => {
+            Some((preview, org, comment)) if publish_page_allowed(ctx, &preview.group.page) => {
                 let mut out = String::from(
                     "<div class=\"embed block-embed single-root\"><ul class=\"embed-outline\">",
                 );
                 for blk in &preview.group.blocks {
-                    render_outline_item(blk, org, &mut out, ctx, depth, 0);
+                    render_outline_item(blk, org, &mut out, ctx, depth, 0, comment);
                 }
                 if preview.truncated > 0 {
                     out.push_str(&format!(
@@ -1488,7 +1481,7 @@ fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) 
         esc(page)
     );
     for b in &doc.roots {
-        render_outline_item(b, b.is_org(), &mut out, ctx, depth, 0);
+        render_outline_item(b, b.is_org(), &mut out, ctx, depth, 0, false);
     }
     out.push_str("</ul></div>");
     out
@@ -1547,15 +1540,18 @@ fn render_block(
     ord: Ordinal,
     tree_depth: usize,
     at: &SheetPath,
+    in_comment: bool,
 ) {
+    let comment = in_comment || crate::output_comments::is_comment(b, tree_depth > 0);
     if tree_depth >= MAX_RENDER_TREE_DEPTH {
         out.push_str("<li><pre class=\"outline-flat\">");
+        if comment {
+            out.push_str("[Comment] ");
+        }
         out.push_str(&esc(&flat_text(b)));
         out.push_str("</pre></li>");
         return;
     }
-    // ONE lsdoc parse → the canonical body skeleton (M3), property/planning-filtered like
-    // the app's `bodyBlocks`. No second hand-rolled inline parser (the old `render_inline`).
     let blocks = body_blocks(b.raw(), b.is_org());
     // BEGIN_QUERY is a static-site feature. The print context deliberately has
     // no public-page capability (`pages: None`) and retains its prior rendering
@@ -1580,6 +1576,9 @@ fn render_block(
         ""
     };
     out.push_str(&format!("<li id=\"{}\"{class}>", esc_attr(&anchor)));
+    if comment {
+        crate::output_comments::open_annotation(b.projection().properties(), out);
+    }
     // The container payload is executable/configuration source, not visible
     // page prose. In particular, malformed payload bytes must not be copied to
     // the publication search index after the visible block fails closed.
@@ -1592,12 +1591,6 @@ fn render_block(
         index.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
     }
 
-    // Header facets (task checkbox + marker, priority) → the decorated body (lsdoc's
-    // canonical render_html; a `# heading` block is wrapped in `<span class="heading-text
-    // h{n}">` by render_html itself, so the export markup matches the app) → trailer facets
-    // (SCHEDULED/DEADLINE, block properties). Macros in the body are expanded via `ctx`.
-    // Static parents disclose from their own row. Leaves and print keep the
-    // original markup; every static child stays in the document and index.
     if view_fold {
         out.push_str(if b.collapsed() {
             "<details class=\"outline-fold\">"
@@ -1701,11 +1694,6 @@ fn render_block(
         }
     }
 
-    // A collapsed block hides its children on screen; the print export expands them
-    // by default (a PDF usually wants the whole page), but the dialog can keep them
-    // folded to match what's visible.
-    // Static pages keep every child in the HTML and let readers disclose it
-    // without a script. Print retains its expand/omit policy.
     if view_fold || opts.expand_collapsed || !b.collapsed() {
         let mut emit = render_sheets::Emit {
             ctx,
@@ -1734,6 +1722,7 @@ fn render_block(
                     child_ord,
                     tree_depth + 1,
                     &at.child(i),
+                    comment,
                 );
             }
             out.push_str("</ul>");
@@ -1741,6 +1730,9 @@ fn render_block(
     }
     if view_fold {
         out.push_str("</details>");
+    }
+    if comment {
+        out.push_str("</aside>");
     }
     out.push_str("</li>");
 }
@@ -1776,6 +1768,7 @@ fn page_html(
             ord,
             0,
             &SheetPath::root(i),
+            false,
         );
     }
     body.push_str("</ul>");
@@ -1970,8 +1963,6 @@ pub fn page_print_html(
         query_cache: None,
         pages: None,
     };
-    // `page_html` builds the heading + outline and wraps it in `shell`; we want the
-    // same body but the print shell, so mirror its body build here.
     let mut blocks: Vec<serde_json::Value> = Vec::new();
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
@@ -1994,6 +1985,7 @@ pub fn page_print_html(
             ord,
             0,
             &SheetPath::root(i),
+            false,
         );
     }
     body.push_str("</ul>");

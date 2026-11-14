@@ -22,6 +22,8 @@ import { conflictQueue, setConflictInventory } from "../conflictQueue";
 import { setJournalConflicts } from "../ui";
 import { ConflictOverview } from "./ConflictOverview";
 import type { PaneRouter } from "../router";
+import { resetStore } from "../document";
+import { resolutionPublication } from "./ownPublication.test.support";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
@@ -80,6 +82,7 @@ beforeEach(() => {
   vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
 });
 afterEach(() => {
+  resetStore();
   document.body.innerHTML = "";
   setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
   setJournalConflicts([]);
@@ -103,8 +106,9 @@ describe("a duplicate journal day resolves at the page (master 9dc54e4a7)", () =
   });
 
   it("applies the no-loss fold through the guarded duplicate-day command, retires the object and reloads the day", async () => {
+    const live = resolutionPublication(day);
     vi.spyOn(backend(), "duplicateJournalDiff").mockResolvedValue(disjoint);
-    const resolve = vi.spyOn(backend(), "resolveDuplicateJournalDay").mockResolvedValue();
+    const resolve = vi.spyOn(backend(), "resolveDuplicateJournalDay").mockImplementation(live.publish);
     const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
     const { host, dispose } = mount(day);
     await settle();
@@ -114,7 +118,7 @@ describe("a duplicate journal day resolves at the page (master 9dc54e4a7)", () =
     expect(resolve).toHaveBeenCalledWith(KEEPER, STRAY, { "0": "mine", "1": "theirs" }, "keeper-rev", "stray-rev", ["replace-page", "delete-page"], "union");
     expect(sync).not.toHaveBeenCalled();
     expect(conflictQueue()).toEqual([]);
-    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: KEEPER, name: "Friday, 26-06-2026", kind: "journal", created: false, removed: false }, true);
+    expect(live.shown()).toEqual(["resolved live content"]);
     expect(toasts().at(-1)?.message).toContain("Folded the other file");
     dispose();
   });

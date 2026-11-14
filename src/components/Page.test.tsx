@@ -828,17 +828,17 @@ describe("Journals feed generation lifecycle", () => {
       .mockResolvedValueOnce(feedResponse([journalDto("day-two")], { as_of_day: 20300716 }));
     const mounted = mount(() => <PageView />);
     try {
-      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(0);
       expect(api).toHaveBeenCalledTimes(1);
       vi.setSystemTime(new Date(2030, 6, 16, 12));
       window.dispatchEvent(new Event("focus"));
-      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(0);
       expect(api).toHaveBeenCalledTimes(3);
-      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(0);
       expect(api).toHaveBeenCalledTimes(3);
       Object.defineProperty(document, "hidden", { configurable: true, value: false });
       document.dispatchEvent(new Event("visibilitychange"));
-      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(0);
       expect(api).toHaveBeenCalledTimes(4);
       expect(doc.feed).toContain("day-two");
     } finally {
@@ -1789,14 +1789,11 @@ describe("page actions entry point", () => {
     mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
     const { root, dispose } = mount(() => <PageView />);
     try {
-      await tick();
-      await tick();
-      expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull();
+      await vi.waitFor(() => expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull());
 
       setDoc("pages", 0, "kind", "journal");
       mainPaneRouter.openPage(dto.name, "journal", { inPlace: true });
-      await tick();
-      expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull();
+      await vi.waitFor(() => expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull());
 
       setDoc("pages", 0, "guide", true);
       await tick();
@@ -2310,7 +2307,7 @@ describe("page properties", () => {
 
     const { root, dispose } = mount(() => <PageView />);
     try {
-      await tick();
+      await vi.waitFor(() => expect([...root.querySelectorAll(".prop-key")].map(key => key.textContent)).toContain("tags"));
       const rows = [...root.querySelectorAll<HTMLElement>(".prop-row")];
       const row = (key: string) => rows.find((candidate) => candidate.querySelector(".prop-key")?.textContent === key)!;
       expect([...row("tags").querySelectorAll(".prop-value .page-ref")].map((link) => link.textContent)).toEqual(["books", "Knowledge work"]);

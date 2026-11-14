@@ -93,6 +93,7 @@ fn request(argument: &str, name: &str) -> QueryExportRequest {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: true,
+        include_comments: None,
     }
 }
 

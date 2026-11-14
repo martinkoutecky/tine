@@ -10,7 +10,13 @@ fn main() {
     };
     let (store, _, _) = Store::open(&root, Default::default()).expect("open graph");
     // The site `tine publish` writes (the CLI's export), outside the graph.
-    let receipt = publish_static(&store, &parent, "site", store.config().all_pages_public)
-        .expect("publish security fixture");
+    let receipt = publish_static(
+        &store,
+        &parent,
+        "site",
+        store.config().all_pages_public,
+        true,
+    )
+    .expect("publish security fixture");
     println!("{}\n{}", receipt.pages, receipt.path);
 }

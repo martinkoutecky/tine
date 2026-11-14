@@ -12,6 +12,8 @@ pub(crate) struct Args {
     pub(crate) uuid: String,
     pub(crate) name: Option<String>,
     pub(crate) force: bool,
+    #[serde(default)]
+    pub(crate) no_comments: bool,
     /// The invoking CLI's export clock (its `SOURCE_DATE_EPOCH` or now), so
     /// the owner's own environment never stamps the output.
     pub(crate) epoch: i64,
@@ -25,8 +27,11 @@ pub(crate) fn publish(
     args: Args,
     bundle: &[(String, Vec<u8>)],
 ) -> Result<ExportReceipt, String> {
-    let request = query_request_by_uuid(store, &args.uuid, args.name.as_deref(), args.force)
+    let mut request = query_request_by_uuid(store, &args.uuid, args.name.as_deref(), args.force)
         .map_err(|e| e.to_string())?;
+    if args.no_comments {
+        request.include_comments = Some(false);
+    }
     let plan = plan_query(store, &request).map_err(|e| e.to_string())?;
     if plan.exists && !args.force {
         return Err(format!("output already exists at {}; use --force to replace it (the previous export is kept in recovery)", plan.path));

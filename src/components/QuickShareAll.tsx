@@ -1,4 +1,4 @@
-import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { t, msg } from "../i18n";
 import { bindingOwner, readOwned, readOwnedResource, writeOwned } from "../owned";
@@ -6,7 +6,7 @@ import { graphScopedSignal, refuseStaleWrite } from "../binding";
 import { EXPORT_PROPERTY, SHARE_PROPERTY } from "../exportsPage";
 import { pendingRecordId, shareGistId } from "../quickShare/definitions";
 import { QUICK_SHARE_OFF, quickShareErrorText, type QuickSharePrepared } from "../quickShare/commands";
-import type { QueryPublicationRequest, QueryPublicationPlan } from "../types";
+import type { PageKind, QueryPublicationRequest, QueryPublicationPlan } from "../types";
 import { exportSheets } from "../sheet/exportSheets";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
 import { queryMacroExtents } from "../editor/queryMacro";
@@ -16,6 +16,8 @@ import { trapTab } from "./focusableElements";
 import { pushToast } from "../toasts";
 import { dbg } from "../debug";
 import { FolderExportMembership } from "./FolderExportMembership";
+import { stageExportComments } from "../exportComments";
+import { ensurePageLoaded, flushPage, pageByName, pageLoadRefusalMessage } from "../document";
 
 const [batchOwner, setBatchOwner] = graphScopedSignal<object>("binding");
 
@@ -30,7 +32,7 @@ export function QuickShareAll(): JSX.Element {
   </>;
 }
 
-interface Entry { title: string; prepared?: QuickSharePrepared; folder?: { request: QueryPublicationRequest; plan: QueryPublicationPlan }; note?: string; outcome?: string }
+interface Entry { title: string; definition?: { id: string; raw: string; page: string; kind: PageKind }; prepared?: QuickSharePrepared; folder?: { request: QueryPublicationRequest; plan: QueryPublicationPlan }; note?: string; outcome?: string }
 
 /** Preparation only reads. Confirm consumes the same one-use native previews as single Re-share, in order. */
 function BatchDialog(props: { close: () => void; target: object }): JSX.Element {
@@ -39,6 +41,9 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
   const [confirmed, setConfirmed] = createSignal(false);
   const [acknowledged, setAcknowledged] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [includeComments, setIncludeComments] = createSignal<boolean | undefined>();
+  const choices = () => entries().flatMap(entry => entry.folder ? [entry.folder.plan.includeComments ?? true] : entry.prepared ? [entry.prepared.preview.includeComments ?? true] : []);
+  const mixedComments = () => choices().some(Boolean) && choices().some(value => !value);
   const pending = new Set<string>();
   let alive = true;
   const owner = bindingOwner(() => alive);
@@ -50,6 +55,10 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
   onCleanup(() => { alive = false; for (const id of pending) void discard(id); });
   const add = (entry: Entry) => setEntries(rows => [...rows, entry]);
   const prepare = async () => {
+    setBusy("prepare"); setError(null);
+    for (const id of [...pending]) await discard(id);
+    if (!owner()) return;
+    setEntries([]);
     try {
       const listed = await readOwned(owner, backend().quickShareList().catch(() => QUICK_SHARE_OFF));
       if (listed.kind === "stale") return;
@@ -71,12 +80,12 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
             const source = queryWorkspaceDsl(block.raw.slice(macros[0].start, macros[0].end));
             const request: QueryPublicationRequest = { argument: source.argument, dialect: source.dialect,
               properties: block.properties ?? [], currentPage: group.page, hostBlockId: block.id,
-              name: group.page, folder, replace: true, includeQueryText: false, assetBudgetBytes: queryExportBudgetBytes() };
+              name: group.page, folder, replace: true, includeComments: includeComments(), includeQueryText: false, assetBudgetBytes: queryExportBudgetBytes() };
             const plan = await readOwned(owner, backend().publishQueryPlan(request));
             if (plan.kind === "stale") return;
             if (seen.has(`folder:${plan.value.folder}`)) add({ title, note: t("folder-export-duplicate") });
             else if (!plan.value.pages.length) add({ title, note: t("folder-export-empty") });
-            else { seen.add(`folder:${plan.value.folder}`); add({ title, folder: { request, plan: plan.value } }); }
+            else { seen.add(`folder:${plan.value.folder}`); add({ title, definition: { id: block.id, raw: block.raw, page: group.page, kind: group.kind }, folder: { request, plan: plan.value } }); }
           } catch (failure) { if (owner()) add({ title, note: quickShareErrorText(failure) }); }
         }
         const value = block.properties?.find(([key]) => key.toLowerCase() === SHARE_PROPERTY)?.[1].trim();
@@ -95,10 +104,10 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
           const source = queryWorkspaceDsl(block.raw.slice(macros[0].start, macros[0].end));
           const answer = await readOwnedResource(owner, backend().quickSharePrepare({ argument: source.argument,
             dialect: source.dialect, properties: block.properties ?? [], currentPage: group.page, hostBlockId: block.id,
-            name: row.title || group.page, includeQueryText: false }, row.shareId), preview => discard(preview.prepareId));
+            name: row.title || group.page, includeComments: includeComments(), includeQueryText: false }, row.shareId), preview => discard(preview.prepareId));
           if (answer.kind === "stale") return;
           pending.add(answer.value.prepareId);
-          add({ title: answer.value.preview.title, prepared: answer.value });
+          add({ title: answer.value.preview.title, definition: { id: block.id, raw: block.raw, page: group.page, kind: group.kind }, prepared: answer.value });
         } catch (failure) {
           if (owner()) add({ title, note: quickShareErrorText(failure) });
         }
@@ -111,6 +120,16 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
     if (batchOwner() !== props.target) return refuseStaleWrite(t("quick-share-all"));
     if (busy() || confirmed() || !owner() || (entries().some(entry => entry.folder?.plan.anchor === "block") && !acknowledged())) return;
     setConfirmed(true); setBusy("upload");
+    const persistOwner = bindingOwner();
+    const choice = includeComments();
+    const completed = new Map<string, Set<NonNullable<Entry["definition"]>>>();
+    const rememberChoice = (entry: Entry) => {
+      const source = entry.definition;
+      if (choice === undefined || !source) return;
+      const sources = completed.get(source.page) ?? new Set();
+      sources.add(source);
+      completed.set(source.page, sources);
+    };
     for (const entry of entries()) {
       if (!owner()) break;
       if (entry.folder) {
@@ -119,8 +138,10 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
           const { request, plan } = entry.folder;
           const sheets = await exportSheets(undefined, { kind: "query", request });
           if (!owner()) break;
-          const answer = await writeOwned(owner, backend().publishQuery(request, plan.fingerprint, sheets));
+          const answer = await writeOwned(persistOwner, backend().publishQuery(request, plan.fingerprint, sheets));
           if (answer.kind === "stale") break;
+          rememberChoice(entry);
+          if (!owner()) break;
           outcome = t("query-export-dialog-exported", { pages: answer.value.pages, path: answer.value.path,
             retired: answer.value.retired ?? "", previous: answer.value.retired ? 1 : 0 });
           if (answer.value.warnings.length) outcome += ` ${answer.value.warnings.join(" ")}`;
@@ -134,8 +155,10 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
       if (!preview || !pending.delete(preview.prepareId)) continue;
       let outcome: string;
       try {
-        const answer = await writeOwned(owner, backend().quickShareCreate(preview.prepareId));
+        const answer = await writeOwned(persistOwner, backend().quickShareCreate(preview.prepareId));
         if (answer.kind === "stale") break;
+        rememberChoice(entry);
+        if (!owner()) break;
         outcome = t("quick-share-reshared");
       } catch (failure) {
         outcome = quickShareErrorText(failure);
@@ -145,6 +168,27 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
     }
     // A retired graph/view must never start the rest of the uploads.
     for (const id of pending) void discard(id);
+    // Stage each page's completed choices together, after the asynchronous
+    // outputs, so autosave cannot repeatedly write the same definition page.
+    for (const [page, sources] of completed) {
+      if (!persistOwner()) break;
+      try {
+        const first = sources.values().next().value!;
+        if (pageByName(page)?.kind !== first.kind) {
+          const loaded = await readOwned(persistOwner, backend().getPage(page, first.kind));
+          if (loaded.kind === "stale") break;
+          if (!loaded.value) throw new Error(t("export-definition-cannot-edit"));
+          const refusal = ensurePageLoaded(loaded.value);
+          if (refusal) throw new Error(pageLoadRefusalMessage(refusal));
+        }
+        let changed = false;
+        for (const source of sources) {
+          try { changed = !!stageExportComments(source.id, choice!, persistOwner, source.raw) || changed; }
+          catch (failure) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); }
+        }
+        if (changed && !(await flushPage(page))) throw new Error(t("export-definition-save-failed", { page }));
+      } catch (failure) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); }
+    }
     if (owner()) setBusy(null);
   };
   let dialog!: HTMLDivElement;
@@ -192,6 +236,8 @@ function BatchDialog(props: { close: () => void; target: object }): JSX.Element 
           <Show when={entries().some(entry => entry.folder?.plan.anchor === "block")}>
             <label><input type="checkbox" checked={acknowledged()} onChange={event => setAcknowledged(event.currentTarget.checked)} />{t("query-export-dialog-all-blocks-on-these-pages-will-be-exported")}</label>
           </Show>
+          <label><input type="checkbox" checked={includeComments() ?? choices().every(Boolean)} ref={el => createEffect(() => { el.indeterminate = mixedComments(); })}
+            disabled={!!busy() || confirmed()} onChange={event => { setIncludeComments(event.currentTarget.checked); void prepare(); }} />{t("export-include-comments")}</label>
           <Show when={!busy() && !entries().length && !error()}><p>{t("quick-share-all-empty")}</p></Show>
         </div>
         <div class="share-foot">

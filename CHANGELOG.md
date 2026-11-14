@@ -16,11 +16,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - In-block numbered lists show their stored numbers after editing (GH #947).
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
 
+- Late page reads preserve newer saved text, and merges and conflict resolutions refresh pages already on screen (Hd-bI).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
 - Remove author works on a block selection, including folded descendants, from Commands, a bound shortcut or the context menu. It skips read-only blocks and removes all selected attributions in one undo step (#918).
 - Leaving a page clears its block selection, preventing Delete and other selection keys from changing blocks on the hidden page (Ifods).
 - Block selections now include each selected block's whole subtree, folded children included. Shift+Up/Down extend by sibling subtrees, and Shift+click, dragging, select-all and bulk actions use the same selection. Copying a parent always includes its children; the parent-copy setting has been retired (#941).
 - Search labels matching margin comments and replies as comments, with their host breadcrumbs (COMMENT-OUT-V2).
+- Exports, print and publication include labelled margin comments by default; **Include comments** and CLI `--no-comments` can omit entire threads. Repeating exports remember the choice (H9TvA).
+- Embedded comments and replies, including query macro results, retain export labels and obey **Include comments**; excluding comments keeps ordinary page-property and preamble query rows (H9TvA).
 - Failed graph and device setting saves name the setting in the active interface language (l10n-labels-1113).
 - An unreadable `config.edn` is explained on page banners and in Settings errors. A live arrival raises one notice and makes open pages read-only; repairing it clears the graph restriction without reopening (Hl2_0).
 - A failed Reference previews change names the preference in the interface language, including Simplified Chinese (GH #824).

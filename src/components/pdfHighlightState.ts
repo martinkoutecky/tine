@@ -2,7 +2,7 @@ import { msg, t } from "../i18n";
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
-import { flushPage, isConflicted, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../document";
+import { flushPage, isConflicted, isDirty, trackAssetWrite } from "../document";
 import { bindingOwner, latestOwner, readOwned, serializeOwned, writeOwned, type Owner } from "../owned";
 import { hlsPageName } from "../pdf";
 import { isPdfOwnershipCurrent, pdfOwnershipKey, registerPdfParticipant, trackPdfMutation, type PdfOwnership } from "../pdfOwnership";
@@ -219,12 +219,6 @@ export function createPdfHighlightState(options: PdfHighlightStateOptions) {
         }
       }
       return false;
-    }
-    try {
-      const reloaded = await readOwned(graphCurrent, reloadHlsIfLoaded(hlsName));
-      if (reloaded.kind === "stale") return false;
-    } catch (error) {
-      if (landingOwner()) pushToast(msg("pdf-highlight-saved-but-notes-couldn-t-reload", { detail: String(String(error)) }), "error");
     }
     return !cleanupPending();
   };
