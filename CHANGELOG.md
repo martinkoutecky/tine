@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
 - The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
 - Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
+- Code block language labels open the fence source for editing by mouse, touch or keyboard, in either editor. Code without a language shows a plain-text label (GH #879).
 - Choose and reorder toolbar buttons in Settings → Appearance → Toolbar. Other buttons stay in the … menu, and Reset restores the default. The choice is saved on this device (#926).
 
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
