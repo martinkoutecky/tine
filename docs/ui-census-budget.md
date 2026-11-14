@@ -74,6 +74,12 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-14, D-20261113-UI / #926 (926-LEFTPANEL, desktop sidebar and phone drawer):
+  `sidebar.left.fixed` 5→6 and `sidebar.left.full` 8→9 for the close icon beside
+  the graph picker. This keeps the explicitly requested close control in the
+  shared header at both widths. Palette-only or a keyboard shortcut cannot
+  provide the requested visible control. The lane receipt records this rationale
+  for the integration commit; this implementation lane does not commit.
 - 2026-11-08, GH #891 (D-20261108-MC4 and the 0.10 On click lane brief):
   `settings.appearance.open` 30→31 for the explicitly requested **Comments**
   display selector, **In the margin** / **On click**, beside the other display
