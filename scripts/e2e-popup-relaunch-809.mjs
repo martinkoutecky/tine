@@ -119,11 +119,32 @@ async function popupRendered(before) {
     popup = (await browser.getWindowHandles()).find(handle => !before.has(handle));
     return !!popup;
   }, { timeout: 20_000, timeoutMsg: "No separate workspace window appeared" });
-  await browser.switchToWindow(popup);
-  await browser.waitUntil(() => browser.execute((body) => document.body.textContent.includes(body), pageBody),
-    { timeout: 20_000, timeoutMsg: "Popup stayed blank instead of showing the page" });
-  const label = await browser.execute(() => window.name);
+  // Hosted msedgedriver can lose a fresh popup's handle ("web view not found") although the popup booted (11/07,
+  // 11/14 runs 43591083141, 43593140677). Retry the switch; if the driver never attaches, fall back to main's flight
+  // recorder: the newest open must reach frontend.bootstrap-done (weaker: the page text is then not read).
+  let label;
+  for (let attempt = 1; attempt <= 3 && label === undefined; attempt++) {
+    try {
+      await browser.switchToWindow(popup);
+      await browser.waitUntil(() => browser.execute((body) => document.body.textContent.includes(body), pageBody),
+        { timeout: 20_000, timeoutMsg: "Popup stayed blank instead of showing the page" });
+      label = await browser.execute(() => window.name);
+    } catch (error) {
+      if (!/web view not found|no such window/i.test(String(error?.message ?? error))) throw error;
+      step("popup-driver-lost-handle", { attempt });
+      await browser.switchToWindow(mainHandle);
+      await browser.pause(1_000);
+    }
+  }
   await browser.switchToWindow(mainHandle);
+  if (label === undefined) {
+    await browser.waitUntil(async () => {
+      const opens = (await diagnostics()).sessions.current.filter(e => e.event === "workspace.open");
+      const newest = Math.max(...opens.map(e => e.sequence));
+      return opens.some(e => e.sequence === newest && e.stage === "frontend.bootstrap-done");
+    }, { timeout: 20_000, timeoutMsg: "Popup never finished booting (main's flight recorder)" });
+    label = "(driver lost the popup; booted per main's flight recorder)";
+  }
   const events = (await diagnostics()).sessions.current;
   const entered = events.filter(e => e.stage === "native.builder-entry").map(e => e.sequence);
   const returned = new Set(events.filter(e => e.stage === "native.build-returned").map(e => e.sequence));
@@ -210,8 +231,13 @@ try {
   // Session restore reopens launch 1's popup at startup, under a seeded label.
   const notPopups = new Set([mainHandle]);
   for (const handle of await browser.getWindowHandles()) {
-    await browser.switchToWindow(handle);
-    if (isAuxiliaryWindow(await browser.getUrl())) notPopups.add(handle);
+    // A handle the driver cannot attach to (see popupRendered) is left as a popup candidate.
+    try {
+      await browser.switchToWindow(handle);
+      if (isAuxiliaryWindow(await browser.getUrl())) notPopups.add(handle);
+    } catch (error) {
+      if (!/web view not found|no such window/i.test(String(error?.message ?? error))) throw error;
+    }
   }
   await browser.switchToWindow(mainHandle);
   const restored = await popupRendered(notPopups);
