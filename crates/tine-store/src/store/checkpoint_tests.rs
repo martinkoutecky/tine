@@ -168,6 +168,91 @@ fn pre_ecmascript_editor_trim_checkpoints_are_rebuilt() {
     store.close();
 }
 
+#[test]
+fn pre_native_header_checkpoints_rebuild_once_then_load() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("pages")).unwrap();
+    let path = root.path().join("pages/Empty.org");
+    let text = ":PROPERTIES:\n:END:\n";
+    fs::write(&path, text).unwrap();
+    set_mtime(&path, old());
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    // The unchanged envelope/body schema lets us stamp a valid checkpoint as
+    // generation 31. Rejection must happen before its derived state is served.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&31_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+
+    let rebuilt = open_cp(root.path(), &cp);
+    rebuilt.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&rebuilt), "format");
+    assert_eq!(
+        parse_passes(&rebuilt),
+        1,
+        "rebuild parses the one page once"
+    );
+    let check_header = |store: &Store| {
+        let view = store.whole_graph_reconciled().unwrap();
+        let (_, doc) = view
+            .graph
+            .pages
+            .slots()
+            .map(|(_, page)| page)
+            .find(|(entry, _)| entry.rel_path_str() == "pages/Empty.org")
+            .unwrap();
+        let pre = doc.pre_block.as_deref().unwrap();
+        let rows = tine_core::page_properties::pre_block_projections(pre, true);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].0,
+            tine_core::page_properties::PreBlockKind::Properties
+        );
+        assert_eq!(rows[0].1.raw(), ":PROPERTIES:\n:END:");
+        assert!(doc.roots.is_empty());
+    };
+    check_header(&rebuilt);
+    warm(&rebuilt);
+    let image = captured(&rebuilt);
+    let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+    warm(&fresh);
+    check_header(&fresh);
+    assert_eq!(
+        image,
+        captured(&fresh),
+        "rebuilt indexes equal a cold build"
+    );
+    assert_eq!(
+        rebuilt
+            .whole_graph_reconciled()
+            .unwrap()
+            .graph
+            .block_index_image(),
+        fresh
+            .whole_graph_reconciled()
+            .unwrap()
+            .graph
+            .block_index_image()
+    );
+    fresh.close();
+    assert!(matches!(
+        rebuilt.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    rebuilt.close();
+
+    let loaded = open_cp(root.path(), &cp);
+    loaded.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&loaded), "loaded");
+    assert_eq!(parse_passes(&loaded), 0, "the rebuild happens only once");
+    check_header(&loaded);
+    warm(&loaded);
+    assert_eq!(image, captured(&loaded));
+    loaded.close();
+    assert_eq!(fs::read_to_string(path).unwrap(), text);
+}
+
 /// FORMAT 22 (D-20261102-CM4 CM-REFONLY): a format-21 referenced-name index
 /// lacks property-key and task-marker (and priority) pages; it must rebuild, so the
 /// reference-only pages appear on a warm launch over unchanged files.
@@ -1255,7 +1340,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (31, GOLDEN),
+        (32, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
