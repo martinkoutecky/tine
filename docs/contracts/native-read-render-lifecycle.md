@@ -1,5 +1,14 @@
 # Native reads and renderer work ownership
 
+Working-set admission compares returned page generations at the synchronous
+installation boundary, including after a scheduled commit wait. Each relevant
+invalidation during an outstanding read can justify one sequential reread;
+N such invalidations cost at most N+1 reads, with concurrent changes coalesced.
+Unrelated changes add no reads. Owner retirement or a cancelled commit returns
+stale; an actual owned read failure rejects. A finite burst of invalidations
+therefore ends with the current answer, without a fabricated read failure.
+`readAdmission.test.ts` and `Page.readAdmission.test.tsx` enforce this boundary.
+
 Live block rows and their editors read the live node while it exists. During the
 reactive flush that deletes or merges a block, render facts retain the node
 captured at mount until the owner retires; they must not take down the containing

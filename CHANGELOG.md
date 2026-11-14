@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
 - Selecting blocks on deeply nested pages is faster (Ifogg).
 - CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
