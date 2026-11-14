@@ -345,7 +345,10 @@ fn static_export_explains_empty_public_selection_and_all_pages_override() {
 }
 
 fn run_query_export(graph: &Path, uuid: &str, extra: &[&str]) -> Result<ExportReceipt, String> {
-    let mut argv = vec!["tine", "export", "query", graph.to_str().unwrap(), uuid];
+    let mut argv = vec!["tine", "export", "query", graph.to_str().unwrap()];
+    if !uuid.is_empty() {
+        argv.push(uuid);
+    }
     argv.extend_from_slice(extra);
     let parsed = Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
     let Some(Command::Export {
@@ -367,6 +370,129 @@ fn run_query_export(graph: &Path, uuid: &str, extra: &[&str]) -> Result<ExportRe
                 .to_vec(),
         )],
     )
+}
+
+#[test]
+fn query_export_sources() {
+    for source in [vec!["--query", "(task TODO)"], vec!["--page", "sHoRtCuT"]] {
+        let graph = doctor_fixture("query-sources");
+        let raw = "alias:: Shortcut\n- `{{query (task DONE)}}`\n- parent\n  - {{query (task TODO)}}\n- {{query (task DONE)}}\n- TODO selected\n";
+        std::fs::write(graph.path().join("pages/Tasks.md"), raw).unwrap();
+        let mut args = source.clone();
+        args.extend(["--name", "Review"]);
+        let receipt = run_query_export(graph.path(), "", &args).unwrap();
+        assert_eq!(receipt.pages, 1);
+        assert!(Path::new(&receipt.path).join("app/snapshot.json").is_file());
+        let refused = run_query_export(graph.path(), "", &args).unwrap_err();
+        assert!(refused.contains("--force"), "{refused}");
+        args.push("--force");
+        let replaced = run_query_export(graph.path(), "", &args).unwrap();
+        assert!(Path::new(replaced.retired.as_ref().unwrap()).is_dir());
+        assert_eq!(
+            std::fs::read_to_string(graph.path().join("pages/Tasks.md")).unwrap(),
+            raw
+        );
+    }
+}
+
+#[test]
+fn query_export_source_usage() {
+    let mut cli = Cli::command();
+    let command = cli
+        .find_subcommand_mut("export")
+        .unwrap()
+        .find_subcommand_mut("query")
+        .unwrap();
+    let usage = command.render_usage().to_string();
+    assert!(
+        usage.find("<GRAPH>").unwrap() < usage.find("UUID").unwrap(),
+        "{usage}"
+    );
+    let uuid = "82400000-0000-4000-8000-000000000001";
+    for source in [
+        vec!["--query", "(task TODO)", "--name", "Review"],
+        vec!["--page", "Tasks"],
+        vec![uuid],
+    ] {
+        let mut argv = vec!["tine", "export", "query", "/synthetic"];
+        argv.extend(source);
+        assert!(Cli::try_parse_from(argv).is_ok());
+    }
+    for source in [
+        vec![],
+        vec!["--query", "(task TODO)"],
+        vec![uuid, "--query", "(task TODO)", "--name", "Review"],
+        vec![uuid, "--page", "Tasks"],
+        vec![
+            "--query",
+            "(task TODO)",
+            "--page",
+            "Tasks",
+            "--name",
+            "Review",
+        ],
+    ] {
+        let mut argv = vec!["tine", "export", "query", "/synthetic"];
+        argv.extend(source);
+        let error = Cli::try_parse_from(argv).unwrap_err();
+        assert_eq!(error.exit_code(), 2, "{error}");
+    }
+}
+
+#[test]
+fn query_export_inline_dialects() {
+    let graph = doctor_fixture("query-inline-dialects");
+    std::fs::write(graph.path().join("pages/Selected.md"), "- TODO selected\n").unwrap();
+    for (name, text) in [
+        ("Simple", "(task TODO)"),
+        (
+            "Advanced",
+            "{:query [:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]]}",
+        ),
+    ] {
+        let result =
+            run_query_export(graph.path(), "", &["--query", text, "--name", name]).unwrap();
+        assert_eq!(result.pages, 1);
+    }
+    for text in ["(unknown-clause x)", "(task DONE)"] {
+        assert!(
+            run_query_export(graph.path(), "", &["--query", text, "--name", "Refused"]).is_err()
+        );
+    }
+    assert!(!graph.path().join("published-queries/refused").exists());
+}
+
+#[test]
+fn query_export_page_parser_order_and_errors() {
+    let graph = doctor_fixture("query-page-order");
+    let raw = "title:: Namespace/Queries\nalias:: Shortcut\n- property host\n  note:: {{query (task DONE)}}\n- ```clojure\n  {{query (task DONE)}}\n  ```\n- `{{query (task DONE)}}`\n- {{embed [[Elsewhere]]}}\n- parent\n  - {{query (task TODO)}}\n    \n    {{query (task DONE)}}\n- {{query (task DONE)}}\n";
+    std::fs::write(graph.path().join("pages/Host.md"), raw).unwrap();
+    std::fs::write(graph.path().join("pages/Selected.md"), "- TODO selected\n").unwrap();
+    std::fs::write(
+        graph.path().join("pages/Elsewhere.md"),
+        "- {{query (task DONE)}}\n",
+    )
+    .unwrap();
+    let result = run_query_export(graph.path(), "", &["--page", "namespace/QUERIES"]).unwrap();
+    assert_eq!(result.pages, 1);
+    assert!(result
+        .path
+        .ends_with("published-queries/query-namespace-queries"));
+    let missing = run_query_export(graph.path(), "", &["--page", "Absent"]).unwrap_err();
+    assert!(missing.contains("no page"), "{missing}");
+    let empty = run_query_export(graph.path(), "", &["--page", "Selected"]).unwrap_err();
+    assert!(empty.contains("no query"), "{empty}");
+    std::fs::write(
+        graph.path().join("pages/Twin.md"),
+        "alias:: Shortcut\n- {{query (task TODO)}}\n",
+    )
+    .unwrap();
+    let ambiguous = run_query_export(graph.path(), "", &["--page", "Shortcut"]).unwrap_err();
+    assert!(ambiguous.contains("alias of 2 pages"), "{ambiguous}");
+    assert_eq!(
+        std::fs::read_to_string(graph.path().join("pages/Host.md")).unwrap(),
+        raw
+    );
 }
 
 #[test]

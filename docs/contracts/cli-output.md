@@ -21,13 +21,34 @@ included comments as annotations (author/date where known); the live viewer uses
 the app's margin. Query export also reads the definition's `tine.comments:: false`;
 the CLI flag excludes comments for that run without editing the definition.
 
-`tine export query GRAPH '((UUID))' [--name NAME] [--force]` uses the same
-plain-text success line and warning/recovery reporting. It publishes the one
-query block's result pages into `published-queries/<folder>/` through the shared
+`tine export query GRAPH ('((UUID))' | --query TEXT | --page PAGE) [--name NAME] [--force]` uses the same
+plain-text success line and warning/recovery reporting. It publishes the selected
+query's result pages into `published-queries/<folder>/` through the shared
 query publisher in the graph's existing app or headless owner (starting one when needed).
 Unknown UUIDs, non-query blocks, multiple queries and existing
 output without `--force` exit 1 with an explanation on stderr. A bare UUID is
 also accepted. Sheets retain the documented CLI plain-outline rendering.
+
+Exactly one source is required; missing or conflicting sources exit 2 before
+contacting an owner. Inline `--query` requires `--name` and accepts the complete
+argument of `{{query …}}`: OG simple queries or advanced queries, selected by
+the shared Rust macro-query discriminator (no TQL auto-detection). It has no
+host page or block properties. `--page` resolves names exactly as `page show`
+(case, aliases, namespaces and journal titles), then selects the first
+parser-recognized query in depth-first document order: parent before children,
+siblings in authored order, first query within a block. It does not follow
+embeds; code and properties count only when the body parser recognizes a query.
+A page without a query exits 1. Page selection uses the query's title, else
+`Query PAGE` with the resolved page name; UUID naming remains `Query UUID`.
+The selected block retains its properties and host context. All sources share
+the publisher's validation, privacy rules, refusal and recovery behavior.
+
+Source resolution adds no durable writes. Inline input costs O(text bytes);
+page lookup uses the existing bounded name resolver, file inventory and named
+corpus, then O(page bytes) parser work up to the first query, without visiting
+unrelated pages. UUID resolution retains its indexed candidate-page cost.
+Each invocation sends one publication verb after owner discovery; query
+evaluation, review and output retain the shared publisher's cost bounds.
 
 ## One payload, two renderings
 

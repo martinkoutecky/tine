@@ -422,21 +422,33 @@ enum ExportFormat {
     Static(ExportArgs),
     /// Write the read-only Tine app.
     Live(LiveExportArgs),
-    /// Publish the pages selected by one query block UUID into published-queries/.
+    /// Publish result pages of a query into published-queries/.
     /// Sheets keep plain row outlines, as in other command-line exports.
     Query(QueryExportArgs),
 }
 
 #[derive(Debug, Args)]
+#[command(group(clap::ArgGroup::new("source").required(true).args(["uuid", "query", "page"])))]
+#[command(
+    override_usage = "tine export query [OPTIONS] <GRAPH> <((UUID))|--query <TEXT>|--page <PAGE>>"
+)]
 struct QueryExportArgs {
     #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
     graph: PathBuf,
 
     /// Persisted block UUID, bare or wrapped as ((UUID)); quote parentheses in the shell.
     #[arg(value_name = "((UUID))")]
-    uuid: String,
+    uuid: Option<String>,
 
-    /// Output name; defaults to the BEGIN_QUERY title or Query UUID.
+    /// Inline argument of a query macro: Logseq simple or advanced, as decided by the shared parser.
+    #[arg(long, value_name = "TEXT", requires = "name")]
+    query: Option<String>,
+
+    /// First query on this page, in document order (parents before children; embeds are not followed).
+    #[arg(long, value_name = "PAGE")]
+    page: Option<String>,
+
+    /// Output name; required for --query, otherwise the title or Query UUID/PAGE.
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
 
@@ -604,16 +616,28 @@ fn export_query(args: QueryExportArgs) -> Result<ExportReceipt, String> {
 }
 
 fn query_export_args(args: &QueryExportArgs) -> Result<crate::owner::query_export::Args, String> {
-    let raw = args.uuid.trim();
-    let uuid = raw
-        .strip_prefix("((")
-        .and_then(|value| value.strip_suffix("))"))
-        .unwrap_or(raw);
-    let uuid = uuid::Uuid::parse_str(uuid)
-        .map_err(|_| "expected a block UUID, bare or wrapped as ((UUID))".to_owned())?
-        .to_string();
+    use crate::owner::query_export::Source;
+    let source = if let Some(raw) = &args.uuid {
+        let raw = raw.trim();
+        let uuid = raw
+            .strip_prefix("((")
+            .and_then(|value| value.strip_suffix("))"))
+            .unwrap_or(raw);
+        let uuid = uuid::Uuid::parse_str(uuid)
+            .map_err(|_| "expected a block UUID, bare or wrapped as ((UUID))".to_owned())?
+            .to_string();
+        Source::Uuid { uuid }
+    } else if let Some(query) = &args.query {
+        Source::Inline {
+            query: query.clone(),
+        }
+    } else {
+        Source::Page {
+            page: args.page.clone().expect("clap requires a source"),
+        }
+    };
     Ok(crate::owner::query_export::Args {
-        uuid,
+        source,
         name: args.name.clone(),
         force: args.force,
         no_comments: args.no_comments,
