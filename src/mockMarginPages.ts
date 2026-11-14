@@ -4,7 +4,7 @@ import type { BlockDto } from "./types";
 
 /** Page names and their blocks; mock.ts wraps them as pages (I-12 keeps page
  * construction in the mock backend and document/convert.ts). */
-export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) => BlockDto): [string, BlockDto[]][] {
+export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[]][] {
   return [
     ["Message outlines regression", [
       b("A passage worth discussing.", [
@@ -39,6 +39,42 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[]) =>
       "Author alignment referrers", [
         b("One reference ((88300000-0000-4000-8000-000000000003))"),
         ...Array.from({ length: 12 }, (_, i) => b(`Reference ${i + 1} ((88300000-0000-4000-8000-000000000004))`)),
+      ],
+    ],
+    [
+      // GH #893: mixed owner/authored blocks, a folded authored block, nesting,
+      // a numbered block and live copies (block embed, linked reference).
+      "Author mark gap", [
+        b("You wrote this block, so it has no author mark."),
+        b("An agent wrote this block. Its first letter starts where yours does.\ntine.author:: Ada"),
+        b("A second agent block in the same run, long enough to wrap onto another line in a narrow window.\ntine.author:: Ada"),
+        b("Back to your own words."),
+        b("A folded agent block\ntine.author:: Bo\ncollapsed:: true\nid:: 89300000-0000-4000-8000-000000000001", [b("Hidden child")], true),
+        b("Your parent block", [
+          b("An agent child, one level in\ntine.author:: Ada", [
+            b("An agent grandchild, two levels in\ntine.author:: Bo"),
+            b("Your grandchild"),
+          ]),
+          b("Your child"),
+        ]),
+        b("A numbered agent block\ntine.author:: Ada\nlogseq.order-list-type:: number"),
+        b("An agent block that mentions [[Author mark refs]]\ntine.author:: Bo\nid:: 89300000-0000-4000-8000-000000000002"),
+      ],
+    ],
+    [
+      "Author mark copies", [
+        b("{{embed ((89300000-0000-4000-8000-000000000002))}}"),
+      ],
+    ],
+    ["Author mark refs", [b("This page is mentioned by an agent block.")]],
+    [
+      // GH #893: an authored block that also carries a margin comment on a passage of its text.
+      "Author tint comment", [
+        b("You wrote the line above."),
+        b("An agent drafted this passage worth discussing, and a reader commented on it.\ntine.author:: Ada", [
+          b("Which passage? Name it.\ntine.quote:: passage worth discussing\ntine.date:: 2026-11-07T13:37Z"),
+        ]),
+        b("A second agent block next to the commented one.\ntine.author:: Ada"),
       ],
     ],
     [

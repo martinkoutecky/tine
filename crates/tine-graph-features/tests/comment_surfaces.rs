@@ -63,6 +63,58 @@ fn detached_export_hydration_carries_comment_roots_and_replies() {
     );
 }
 
+/// Iif8k: reference-panel rows are shallow, detached roots. Their DTO must say
+/// whether the source block belongs to a comment thread so Copy/Export labels
+/// or omits it; a root carrying `tine.quote` is body text.
+#[test]
+fn reference_rows_carry_comment_roots_and_replies() {
+    let _integration_guard = crate::integration_lock();
+    let scratch = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+    fs::create_dir_all(scratch.path().join("pages")).unwrap();
+    fs::write(scratch.path().join("pages/Source.md"), "- ROOTQUOTE [[Target]] Target ((6a1b2c3d-0000-4000-8000-0000000000aa))\n  tine.quote:: root is body\n  - Body\n    - COMMENTMARKER [[Target]] Target ((6a1b2c3d-0000-4000-8000-0000000000aa))\n      tine.quote:: Body\n      - REPLYMARKER [[Target]] Target ((6a1b2c3d-0000-4000-8000-0000000000aa))\n  - ORDINARY [[Target]] Target ((6a1b2c3d-0000-4000-8000-0000000000aa))\n").unwrap();
+    fs::write(
+        scratch.path().join("pages/Target.md"),
+        "- Referenced\n  id:: 6a1b2c3d-0000-4000-8000-0000000000aa\n",
+    )
+    .unwrap();
+    let store = Store::open(scratch.path(), Default::default()).unwrap().0;
+    let whole = store.whole_graph().unwrap();
+    let membership = |groups: &[tine_core::model::RefGroup]| {
+        let mut rows: Vec<(String, bool)> = groups
+            .iter()
+            .flat_map(|group| &group.blocks)
+            .map(|block| {
+                let json = serde_json::to_value(block).unwrap();
+                (
+                    block.raw.split_whitespace().next().unwrap().to_owned(),
+                    json["comment"].as_bool().unwrap_or(false),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    let expected = [
+        ("COMMENTMARKER".to_owned(), true),
+        ("ORDINARY".to_owned(), false),
+        ("REPLYMARKER".to_owned(), true),
+        ("ROOTQUOTE".to_owned(), false),
+    ];
+    assert_eq!(membership(&whole.backlinks("Target").unwrap()), expected);
+    assert_eq!(
+        membership(&whole.unlinked_references("Target").unwrap()),
+        expected
+    );
+    assert_eq!(
+        membership(
+            &whole
+                .block_referrers("6a1b2c3d-0000-4000-8000-0000000000aa")
+                .unwrap()
+        ),
+        expected
+    );
+}
+
 #[test]
 fn detached_macros_keep_native_print_annotation_context() {
     let _integration_guard = crate::integration_lock();

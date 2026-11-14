@@ -4,23 +4,31 @@
 owner; there is no inheritance. Editing and moving keep that property. This
 display contract adds no graph writes or file format.
 
-Ordinary blocks written by someone else draw a two-pixel gutter line centred
-in the existing bullet-to-text gap (six pixels for dots, four for numbers).
-Showing or hiding it never changes text
-coordinates. It remains visible in both block editors. Comments and replies
-keep their existing author headers and have no author gutter line.
-The bulletless host of a whole-block embed also has no mark of its own; the
-source block draws its own attribution.
+Ordinary blocks written by someone else sit on a faint tint of that author's
+colour (one stable colour per name, the same as the chip's), rounded, behind the
+block's own row and never its children. The tint hangs four pixels into the
+bullet-to-text gap (three for numbered bullets) and four past the right edge,
+and padding takes the same room back, so text coordinates never change: the
+first letter is at the same offset from the bullet as in an owner block.
+It remains visible in both block editors. While a block is selected the
+selection colour replaces the tint, so a selected row has one colour. Comments
+and replies keep their existing author headers and tints and have no author
+tint of their own. The bulletless host of a whole-block embed also has no tint;
+the source block tints itself. A block that is authored and also carries a
+comment shows both: the row tint, and the comment's inline highlight on the
+quoted passage.
 
 Consecutive siblings in one rendered list with the same author share a
-continuous line and a chip on the first block. An owner block, author change,
+card and a chip on the first block: members touch, the run's inner corners are
+square and its outer corners rounded. An owner block, author change,
 different parent/page, embed, comment thread or child outline breaks the run.
 A block with children may finish a run but does not connect to its next sibling,
 including when folded; a child starts its own sibling context. Embed hosts are
 singletons (including a block containing an inline embed; code examples remain
 literal). Each rendered subset starts independently, including embedded and
-sidebar copies. Hovering or focusing an individual gutter mark shows that
-block's author. The first chip retains its **Remove author** menu.
+sidebar copies. Every tinted row has the author's name as its tooltip (not
+while it is being edited), so a continuation without a chip still names its
+author. The first chip retains its **Remove author** menu.
 
 **Remove author** is a palette command and bindable shortcut, without a default
 key. It acts on the complete block selection (folded descendants included), or
@@ -35,13 +43,15 @@ O(selected property bytes), plus the existing affected-page undo/save cost.
 
 **Show/Hide author marks** is an independent palette command, rebindable under
 Settings → Keyboard shortcuts, without a default key. Settings → Appearance
-groups its switch with **Show/Hide comments**. It controls gutter lines only
-(GH #896's definition of a mark); author chips, comment headers and comment
+groups its switch with **Show/Hide comments**. It controls the row tint and its
+tooltip only (GH #896's definition of a mark); author chips, comment headers and comment
 visibility remain available. Marks are shown by default, preserving the prior
 default. The device preference uses the existing display-preference writer;
 refused storage leaves its value unchanged and uses the existing error toast.
 
-Cost: one O(sibling IDs) adjacency map per rendered list, rebuilt only when
+Cost: the tint is CSS on one class and one tooltip attribute per authored row;
+it adds no DOM element, listener or signal beyond the row's existing author fact
+(the earlier gutter element and its hover label are gone). One O(sibling IDs) adjacency map per rendered list, rebuilt only when
 list membership/order changes. Reused ID arrays cost O(1) to admit; if a view
 filter emits a new array, an O(sibling IDs) equality check compares its existing
 IDs only, without reading authors or graph nodes. Equal membership keeps the

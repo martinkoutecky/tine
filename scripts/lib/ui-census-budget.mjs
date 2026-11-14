@@ -61,6 +61,7 @@ export const SURFACES = Object.freeze({
   "settings.files.advanced": settingsAdvanced("files", 3),
   "settings.backups.open": settingsOpen("backups", 3),
   "settings.graph.open": settingsOpen("graph", 8),
+  "settings.sharing.open": settingsOpen("sharing", 1),
   "settings.plugins.open": settingsOpen("plugins", 5),
   "settings.diagnostics.open": settingsOpen("diagnostics", 7), // D-20261111-QP2 / GH #926: the Help disclosure
   "settings.shortcuts.open": settingsOpen("shortcuts", 1, " (the rows are the commands budget)"),

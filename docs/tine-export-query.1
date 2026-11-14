@@ -2,18 +2,24 @@
 .el .ds Aq '
 .TH tine-export-query 1  "query " 
 .SH NAME
-tine\-export\-query \- Publish the pages selected by one query block UUID into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
+tine\-export\-query \- Publish result pages of a query into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
 .SH SYNOPSIS
-\fBtine export query\fR [\fB\-\-name\fR] [\fB\-\-debug\fR] [\fB\-\-force\fR] [\fB\-\-no\-comments\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> <\fI((UUID))\fR> 
+\fBtine export query\fR [\fB\-\-query\fR] [\fB\-\-debug\fR] [\fB\-\-page\fR] [\fB\-\-name\fR] [\fB\-\-force\fR] [\fB\-\-no\-comments\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> [\fI((UUID))\fR] 
 .SH DESCRIPTION
-Publish the pages selected by one query block UUID into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
+Publish result pages of a query into published\-queries/. Sheets keep plain row outlines, as in other command\-line exports
 .SH OPTIONS
 .TP
-\fB\-\-name\fR \fI<NAME>\fR
-Output name; defaults to the BEGIN_QUERY title or Query UUID
+\fB\-\-query\fR \fI<TEXT>\fR
+Inline argument of a query macro: Logseq simple or advanced, as decided by the shared parser
 .TP
 \fB\-\-debug\fR
 Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-page\fR \fI<PAGE>\fR
+First query on this page, in document order (parents before children; embeds are not followed)
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Output name; required for \-\-query, otherwise the title or Query UUID/PAGE
 .TP
 \fB\-\-force\fR
 Replace an existing output, keeping the previous export in recovery
@@ -27,5 +33,5 @@ Print help
 <\fIGRAPH\fR>
 
 .TP
-<\fI((UUID))\fR>
+[\fI((UUID))\fR]
 Persisted block UUID, bare or wrapped as ((UUID)); quote parentheses in the shell
