@@ -17,7 +17,7 @@ it("I-12: sheet transfers use the shared hidden-key answerer, rename uses parser
   const hydration = read("./queryHydration.ts");
   expect(hydration).toContain("admitRead(graphOwner(() => sameGraph(root, epoch) && !pageByName(group.page))");
   const admission = read("../document/readAdmission.ts");
-  expect(admission).toContain("attempt < 2 && owner()");
+  expect(admission).toContain("attempt <= clock - started && owner()");
   expect(admission).toContain('if (!owner()) return { kind: "stale" }');
   expect(hydration).toContain("identitiesByName.get(group.page)?.size === 1");
 });

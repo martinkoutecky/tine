@@ -5,6 +5,8 @@ import { visibleBody } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
 import { blockDirAttr } from "../render/textDirection";
 import { AstBody } from "../render/body";
+import { codeSourceCaret } from "../editor/codeFence";
+import { startEditing } from "../editorController";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { timetrackingEnabled, openDatePicker } from "../ui";
@@ -22,7 +24,7 @@ import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
 import { isQuarantined, parseBlock, parserReady, soleBlockMacro } from "../render/parse";
 import { isQueryMacroName } from "../editor/queryMacro";
 import { beginEditGesture, renderedClickOffset } from "./blockGestures";
-import { HIDE_ALL, splitProps } from "../editor/properties";
+import { HIDE_ALL, splitProps, BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 import { OccurrenceHostContext } from "../refOccurrence";
 import type { Span } from "../render/ast";
@@ -143,7 +145,12 @@ function RenderedContent(props: {
   };
 
   const body = () => (
-    <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={headingLevel()} />}>
+    <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={headingLevel()} codeEditAction={() => readOnly() || props.inertBody ? undefined : byte => {
+      if (readOnly()) return;
+      const raw = node().raw;
+      const caret = codeSourceCaret(raw, fmt(), byte);
+      if (caret !== null) startEditing(props.id, rawOffsetToVisibleOffset(raw, caret, BUILTIN_HIDE, fmt()), props.owner ?? null);
+    }} />}>
       <AnnotationBody
         highlightId={blockExternalId(props.id) ?? props.id}
         color={annotation()!.color}

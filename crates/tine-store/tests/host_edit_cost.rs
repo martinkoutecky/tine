@@ -53,6 +53,65 @@ const ALONE: Graph = Graph {
     no_watcher: false,
 };
 
+#[test]
+fn authored_id_spellings_survive_guarded_saves_byte_exactly() {
+    let _guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    let mut fixtures = Vec::new();
+    for (n, id) in [
+        "aaaaaaaa-0000-4000-8000-000000000001",
+        "AAAAAAAA-0000-4000-8000-000000000001",
+        "aaaaaaaa000040008000000000000001",
+        "urn:uuid:aaaaaaaa-0000-4000-8000-000000000001",
+        "authored-key-é",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for org in [false, true] {
+            for crlf in [false, true] {
+                let format = if org { "org" } else { "md" };
+                let path = format!("pages/Id{n}-{org}-{crlf}.{format}");
+                let source = if org {
+                    format!("* body\n:PROPERTIES:\n:ID: {id}\n:END:\n")
+                } else {
+                    format!("- body\n  id:: {id}\n")
+                };
+                let source = if crlf {
+                    source.replace('\n', "\r\n")
+                } else {
+                    source
+                };
+                fs::write(dir.path().join(&path), &source).unwrap();
+                fixtures.push((path, source));
+            }
+        }
+    }
+    let store = Arc::new(Store::open(dir.path(), Default::default()).unwrap().0);
+    store.whole_graph_reconciled().unwrap();
+    let host = crate::test_host_writer::HostWriter::start(&store);
+    for (path, source) in fixtures {
+        let page = PageId::from(path.as_str());
+        let mut read = store.page(&page).unwrap();
+        read.doc.blocks[0].raw = read.doc.blocks[0].raw.replacen("body", "edited", 1);
+        host.save(
+            EditKind::SaveBlock,
+            &page,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(dir.path().join(&path)).unwrap(),
+            source.replacen("body", "edited", 1).as_bytes(),
+            "{path}"
+        );
+    }
+    drop(host);
+    store.close();
+}
+
 /// `edits` submits of the page's first block, each answered before the next,
 /// then publication of the last. Returns the counts from the first submit to
 /// publication, and the page file's final length.

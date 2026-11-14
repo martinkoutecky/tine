@@ -9,6 +9,7 @@ use tine_core::query::{
     ir::{ExecutionContext, Query},
 };
 use tine_core::refs::page_key;
+use tine_core::BlockId;
 
 /// In-memory, binding-owned readers. These never enter a checkpoint.
 #[derive(Clone, serde::Deserialize)]
@@ -984,17 +985,17 @@ impl Store {
 fn changed_blocks(before: &Document, after: &Document, out: &mut BTreeSet<String>) {
     fn flatten<'a>(
         roots: &'a [DocBlock],
-        parent: &'a str,
-        map: &mut HashMap<&'a str, (&'a DocBlock, &'a str, usize)>,
+        parent: Option<&'a BlockId>,
+        map: &mut HashMap<&'a BlockId, (&'a DocBlock, Option<&'a BlockId>, usize)>,
     ) {
         for (position, block) in roots.iter().enumerate() {
             map.insert(&block.uuid, (block, parent, position));
-            flatten(&block.children, &block.uuid, map);
+            flatten(&block.children, Some(&block.uuid), map);
         }
     }
     let (mut was, mut now) = (HashMap::new(), HashMap::new());
-    flatten(&before.roots, "", &mut was);
-    flatten(&after.roots, "", &mut now);
+    flatten(&before.roots, None, &mut was);
+    flatten(&after.roots, None, &mut now);
     let mut changed = HashSet::new();
     for id in was.keys().chain(now.keys()) {
         let equal = match (was.get(id), now.get(id)) {
@@ -1014,12 +1015,12 @@ fn changed_blocks(before: &Document, after: &Document, out: &mut BTreeSet<String
             changed.insert(*id);
         }
     }
-    fn emit(roots: &[DocBlock], changed: &HashSet<&str>, out: &mut BTreeSet<String>) -> bool {
+    fn emit(roots: &[DocBlock], changed: &HashSet<&BlockId>, out: &mut BTreeSet<String>) -> bool {
         let mut any = false;
         for block in roots {
             let descendants = emit(&block.children, changed, out);
-            if descendants || changed.contains(block.uuid.as_str()) {
-                out.insert(block.uuid.clone());
+            if descendants || changed.contains(&block.uuid) {
+                out.insert(block.uuid.to_string());
                 if let Some(id) = tine_core::refs::block_id(block.raw(), block.is_org()) {
                     out.insert(id);
                 }

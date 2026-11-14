@@ -567,10 +567,10 @@ by `assign_doc_runtime_ids` at load, using the captured documents rather than
 live editor ids. Runtime ids use 16-byte UUIDs grouped by owning page slot;
 authored ids retain their exact spelling. The writer borrows cached projections
 and derives structural ids without cloning documents or building a temporary
-owner tree. Cold build sorts borrowed ids once and bulk-builds the AVL;
+owner tree. Cold build sorts borrowed ids once and bulk-builds the persistent B+tree;
 incremental publication keeps persistent updates over changed ids.
 Resident canonical lowercase UUID keys use a separate u128-keyed persistent
-AVL with entries inside shared nodes; other spellings keep exact string keys.
+B+tree with entries inside shared leaves; other spellings keep exact string keys.
 The writer and loader share the page namespace and child-id derivation.
 Warm launch decodes those rows without rebuilding the index
 from blocks. A malformed owner slot declines the whole disposable checkpoint
