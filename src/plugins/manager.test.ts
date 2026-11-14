@@ -89,7 +89,7 @@ describe("installed plugin lifecycle", () => {
     let releaseFirst!: () => void;
     const writes: string[] = [];
     vi.spyOn(api, "setAppString").mockImplementation(async (_key, serialized) => {
-      writes.push(serialized);
+      writes.push(serialized!);
       if (writes.length === 1) await new Promise<void>((resolve) => { releaseFirst = resolve; });
     });
     const manager = new PluginManager();
