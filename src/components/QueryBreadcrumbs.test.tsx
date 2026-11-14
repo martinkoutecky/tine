@@ -157,6 +157,23 @@ it.each([false, true])("simple list View switch hides context, persists and undo
   } finally { dispose(); }
 });
 
+it("does not offer a breadcrumb switch on a legacy table query", async () => {
+  engine(false, "og");
+  // query-table:: true / a trailing `table` select the legacy table with no tine.view (review F2, GH #881).
+  const parsed = vi.mocked(backend().parseQuery).getMockImplementation()!;
+  vi.mocked(backend().parseQuery).mockImplementation(async (...args) => ({ ...(await parsed(...args)), legacy_table: true }));
+  setDoc({ byId: { query: { id: "query", raw: "{{query (task TODO)}}\nquery-table:: true", page: "Queries", parent: null, children: [], collapsed: false } },
+    pages: [{ name: "Queries", title: "Queries", kind: "page", roots: ["query"], preBlock: null, format: "md", readOnly: false, guide: false }],
+    feed: ["Queries"], loaded: true });
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <QueryMacro body="query (task TODO)" blockId="query" />, root);
+  try {
+    await vi.waitFor(() => expect(root.textContent).toContain("buy apples"));
+    const panel = await openCalmQuery(root, "View");
+    expect(panel.querySelector('input[aria-label="Show breadcrumbs"]')).toBeNull();
+  } finally { dispose(); }
+});
+
 it.each(["table", "board", "search", "page"] as const)("does not offer a breadcrumb switch for %s results", face => {
   const root = document.createElement("div"); document.body.append(root);
   const noop = () => {};

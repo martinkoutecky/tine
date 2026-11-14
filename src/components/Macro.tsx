@@ -322,7 +322,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     // These renderer-only properties must also travel to the generated home.
     // They do not belong to parseQuery's key (query-table itself does).
     const legacyDisplay = hostAllProperties()
-      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc");
+      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc"
+        || key.toLowerCase() === "tine.breadcrumbs");
     return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
       properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
   };
@@ -1117,7 +1118,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 session={builderSession}
                 onChange={applyEdit}
                 display={{ view: displayView, apply: applyDisplay,
-                  breadcrumbs: { shown: () => listOptions().breadcrumb !== false, set: setBreadcrumbs },
+                  // A legacy table (query-table, trailing `table`) renders as a table, so the switch would do nothing.
+                  get breadcrumbs() { return legacyTable() ? undefined : { shown: () => listOptions().breadcrumb !== false, set: setBreadcrumbs }; },
                   defaultColumns: effectiveDefaultColumns,
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
