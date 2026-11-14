@@ -43,8 +43,15 @@ const env = { ...fixture.env, TINE_GRAPH: graph, HOME: path.join(run, "home"),
   XDG_CACHE_HOME: path.join(run, "cache"), XDG_STATE_HOME: path.join(run, "state"),
   APPDATA: path.join(run, "appdata"), LOCALAPPDATA: path.join(run, "localappdata"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
-// tauri-plugin-window-state keeps its file in the app config directory.
-const stateFile = path.join(run, process.platform === "win32" ? "appdata" : "config", APP_ID, ".window-state.json");
+// tauri-plugin-window-state keeps its file in the app config directory. On Windows that directory comes from the
+// Known Folder API (dirs-sys known_folder_roaming_app_data), which ignores the APPDATA override above, so the file is
+// in the real profile. That is only acceptable on a throwaway hosted runner, never on someone's own machine.
+if (process.platform === "win32" && process.env.GITHUB_ACTIONS !== "true") {
+  throw new Error("On Windows this journey writes the real profile's window state: run it on a hosted runner only");
+}
+const stateFile = process.platform === "win32"
+  ? path.join(process.env.APPDATA, APP_ID, ".window-state.json")
+  : path.join(run, "config", APP_ID, ".window-state.json");
 const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   journey: "scripts/e2e-popup-relaunch-809.mjs", platform: process.platform, app, stage: "launch-1", steps: [], status: "running",
   expected: "A clean quit saves no workspace-popup geometry; on relaunch with a saved popup geometry, Open in new window renders the page and main stays responsive" };
@@ -75,6 +82,19 @@ async function launch(name) {
     capabilities: tauriCapabilities(app, `gh809-${name}`, process.platform, target.debuggerAddress),
   });
   await ensureMainWindow(browser);
+  // A restored popup is also a non-auxiliary app window, and on Windows the driver may attach to it first
+  // (run 43603538420: the session sat on ws-main-1). Main is the window whose Tauri label is "main".
+  await browser.waitUntil(async () => {
+    for (const handle of await browser.getWindowHandles()) {
+      try {
+        await browser.switchToWindow(handle);
+        if (await browser.execute(() => window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label) === "main") return true;
+      } catch (error) {
+        if (!/web view not found|no such window/i.test(String(error?.message ?? error))) throw error;
+      }
+    }
+    return false;
+  }, { timeout: 30_000, timeoutMsg: "No window labelled main" });
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
   mainHandle = await browser.getWindowHandle();
@@ -119,11 +139,50 @@ async function popupRendered(before) {
     popup = (await browser.getWindowHandles()).find(handle => !before.has(handle));
     return !!popup;
   }, { timeout: 20_000, timeoutMsg: "No separate workspace window appeared" });
-  await browser.switchToWindow(popup);
-  await browser.waitUntil(() => browser.execute((body) => document.body.textContent.includes(body), pageBody),
-    { timeout: 20_000, timeoutMsg: "Popup stayed blank instead of showing the page" });
-  const label = await browser.execute(() => window.name);
+  // Hosted msedgedriver can lose a fresh popup's handle ("web view not found") although the popup booted (11/07,
+  // 11/14 runs 43591083141, 43593140677). Retry the switch; if the driver never attaches, fall back to main's flight
+  // recorder: the newest open must reach frontend.bootstrap-done (weaker: the page text is then not read).
+  let label;
+  for (let attempt = 1; attempt <= 3 && label === undefined; attempt++) {
+    try {
+      await browser.switchToWindow(popup);
+      await browser.waitUntil(() => browser.execute((body) => document.body.textContent.includes(body), pageBody),
+        { timeout: 20_000, timeoutMsg: "Popup stayed blank instead of showing the page" });
+      label = await browser.execute(() => window.name);
+    } catch (error) {
+      if (!/web view not found|no such window/i.test(String(error?.message ?? error))) {
+        // Record what the attached window actually shows, every handle's identity, and main's open stages.
+        const seen = await browser.execute(() => ({ url: location.href, name: window.name, title: document.title,
+          text: document.body.textContent.slice(0, 400) })).catch(e => String(e));
+        const handles = [];
+        for (const handle of await browser.getWindowHandles().catch(() => [])) {
+          try {
+            await browser.switchToWindow(handle);
+            handles.push({ handle, url: await browser.getUrl(), name: await browser.execute(() => window.name) });
+          } catch (e) { handles.push({ handle, error: String(e).slice(0, 120) }); }
+        }
+        await browser.switchToWindow(mainHandle).catch(() => {});
+        const opens = await diagnostics().then(d => d.sessions.current.filter(e => e.event === "workspace.open"))
+          .catch(e => String(e));
+        step("popup-blank-evidence", { popup, before: [...before], seen, handles, opens });
+        // The runner replaces result.json with its own summary; keep the evidence in stdout too.
+        console.log(`EVIDENCE ${JSON.stringify({ popup, before: [...before], seen, handles, opens })}`);
+        throw error;
+      }
+      step("popup-driver-lost-handle", { attempt });
+      await browser.switchToWindow(mainHandle);
+      await browser.pause(1_000);
+    }
+  }
   await browser.switchToWindow(mainHandle);
+  if (label === undefined) {
+    await browser.waitUntil(async () => {
+      const opens = (await diagnostics()).sessions.current.filter(e => e.event === "workspace.open");
+      const newest = Math.max(...opens.map(e => e.sequence));
+      return opens.some(e => e.sequence === newest && e.stage === "frontend.bootstrap-done");
+    }, { timeout: 20_000, timeoutMsg: "Popup never finished booting (main's flight recorder)" });
+    label = "(driver lost the popup; booted per main's flight recorder)";
+  }
   const events = (await diagnostics()).sessions.current;
   const entered = events.filter(e => e.stage === "native.builder-entry").map(e => e.sequence);
   const returned = new Set(events.filter(e => e.stage === "native.build-returned").map(e => e.sequence));
@@ -154,7 +213,11 @@ function readState() {
 async function quitCleanly(name) {
   const previous = fs.existsSync(stateFile) ? fs.statSync(stateFile).mtimeMs : 0;
   // The tray/keyboard Quit path: close requests, frontend flush, orderly exit.
-  await browser.execute(() => { void window.__TAURI_INTERNALS__.invoke("request_app_quit"); }).catch(() => {});
+  // 0.9 has no request_app_quit command; there the tray's Quit is a close request to main (tray::quit).
+  await browser.execute(() => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    void invoke("request_app_quit").catch(() => invoke("plugin:window|close", { label: "main" }));
+  }).catch(() => {});
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (fs.existsSync(stateFile) && fs.statSync(stateFile).mtimeMs > previous) break;
@@ -166,7 +229,7 @@ async function quitCleanly(name) {
   }
   await sleep(1500); // let the process finish exiting before the next launch
   stopSession();
-  step(`${name}-quit-cleanly`, { stateFile: path.relative(run, stateFile) });
+  step(`${name}-quit-cleanly`, { stateFile });
 }
 
 const watchdog = setTimeout(() => {
@@ -210,8 +273,13 @@ try {
   // Session restore reopens launch 1's popup at startup, under a seeded label.
   const notPopups = new Set([mainHandle]);
   for (const handle of await browser.getWindowHandles()) {
-    await browser.switchToWindow(handle);
-    if (isAuxiliaryWindow(await browser.getUrl())) notPopups.add(handle);
+    // A handle the driver cannot attach to (see popupRendered) is left as a popup candidate.
+    try {
+      await browser.switchToWindow(handle);
+      if (isAuxiliaryWindow(await browser.getUrl())) notPopups.add(handle);
+    } catch (error) {
+      if (!/web view not found|no such window/i.test(String(error?.message ?? error))) throw error;
+    }
   }
   await browser.switchToWindow(mainHandle);
   const restored = await popupRendered(notPopups);
