@@ -755,7 +755,8 @@ export interface Backend {
   /** Generic device-local STRING preference (tine-settings.json); caller supplies
    *  the key + default. Used by the asset-filename format template. */
   getAppString(key: string, fallback: string): Promise<string>;
-  setAppString(key: string, value: string): Promise<void>;
+  /** Null removes the device preference through the same guarded update. */
+  setAppString(key: string, value: string | null): Promise<void>;
   /** The UI locale the frontend resolved (tine#107): native shell text (the
    *  tray) follows it, since native code never negotiates or formats messages. */
   setUiLocale(locale: string): Promise<void>;

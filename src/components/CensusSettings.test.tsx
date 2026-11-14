@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { Settings } from "./Settings";
 import { Sidebar } from "./Sidebar";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
-import { closeSettings, openSettings } from "../ui";
+import { closeSettings, openSettings, setLeftSidebarOpen, sidebarOpen } from "../ui";
 import { commandDefaults, installKeybindings, paletteCommands } from "../keybindings";
 import { backend } from "../backend";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
@@ -61,11 +61,15 @@ it("hides empty Namespaces and follows live graph inventory", async () => {
 });
 
 it.each([false, true])("opens the switcher's same new-workspace form from Commands (compact=%s)", async (compact) => {
-  const root = mount(() => <WorkspaceSwitcher compact={compact} />);
-  const command = paletteCommands().find((c) => c.id === "workspace/new");
-  expect(command?.label).toBe("New workspace…"); command!.run(); await tick();
-  expect(root.querySelector('[aria-label="New workspace name"]')).not.toBeNull();
-  expect(root.querySelector(".workspace-switcher-mark")?.textContent).toBe("W");
+  const wasOpen = sidebarOpen();
+  setLeftSidebarOpen(!compact);
+  try {
+    const root = mount(() => <WorkspaceSwitcher compact={compact} />);
+    const command = paletteCommands().find((c) => c.id === "workspace/new");
+    expect(command?.label).toBe("New workspace…"); command!.run(); await tick();
+    expect(root.querySelector('[aria-label="New workspace name"]')).not.toBeNull();
+    expect(root.querySelector(".workspace-switcher-mark")?.textContent).toBe("W");
+  } finally { setLeftSidebarOpen(wasOpen); }
 });
 
 it("offers saved-workspace creation in the main window where its switcher lives", () => {
