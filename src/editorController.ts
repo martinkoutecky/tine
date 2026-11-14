@@ -121,6 +121,8 @@ export interface HistoryEditorContext {
   blockId: string;
   selectionStart: number;
   selectionEnd: number;
+  /** Visible-source body start when code editing was chosen; absent for source. */
+  codeBodyStart?: number;
   owner: string | null;
   surface: string;
 }
@@ -129,7 +131,7 @@ export interface HistoryEditorTarget {
   blockId: string;
   owner: string | null;
   surface: string;
-  selection: () => { start: number; end: number };
+  selection: () => { start: number; end: number; codeBodyStart?: number };
   focused?: () => boolean;
   viewport?: () => { editor: HTMLElement; scroller: HTMLElement | null };
 }
@@ -187,11 +189,13 @@ export function captureHistoryEditorContext(): HistoryEditorContext | null {
   ) ?? candidates.find((candidate) => !surface || candidate.surface === surface) ?? candidates[0];
   let start = 0;
   let end = 0;
+  let codeBodyStart: number | undefined;
   if (target) {
     try {
       const selection = target.selection();
       start = Math.max(0, Math.trunc(selection.start));
       end = Math.max(start, Math.trunc(selection.end));
+      codeBodyStart = selection.codeBodyStart;
     } catch {
       // A target can unmount between the edit signal read and selection read.
     }
@@ -201,16 +205,18 @@ export function captureHistoryEditorContext(): HistoryEditorContext | null {
   }
   const targetSurface = target?.surface ?? editingSurface() ?? surface;
   if (!targetSurface) return null;
-  return {
+  const context: HistoryEditorContext = {
     blockId,
     selectionStart: start,
     selectionEnd: end,
     owner: target?.owner ?? owner,
     surface: targetSurface,
   };
+  if (codeBodyStart !== undefined) context.codeBodyStart = codeBodyStart;
+  return context;
 }
 
-/** Queue a surface-scoped editor reopen after data replay. The store validates
+/** Queue a surface-scoped editor reopen after data replay or navigation. The caller validates
  * block existence and supplies the restored text length; this controller clamps
  * the request before any textarea sees it. */
 export function restoreHistoryEditorContext(
@@ -233,11 +239,11 @@ export function restoreHistoryEditorContext(
 export function takeHistoryEditorSelectionFor(
   blockId: string,
   surface: string,
-): { start: number; end: number } | null {
+): { start: number; end: number; codeBodyStart?: number } | null {
   const pending = pendingHistoryEditorRestore();
   if (!pending || pending.blockId !== blockId || pending.surface !== surface) return null;
   setPendingHistoryEditorRestore(null);
-  return { start: pending.selectionStart, end: pending.selectionEnd };
+  return { start: pending.selectionStart, end: pending.selectionEnd, codeBodyStart: pending.codeBodyStart };
 }
 
 export { activeSurface, editingId, editingOwner, editingSurface };

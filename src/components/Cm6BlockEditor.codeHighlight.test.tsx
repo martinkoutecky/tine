@@ -41,7 +41,7 @@ afterEach(() => {
   HighlightWorker.paused = false; HighlightWorker.replies = []; HighlightWorker.instances = [];
 });
 
-function mount(raw: string, caret = raw.length, format: "md" | "org" = "md") {
+function mount(raw: string, caret = raw.indexOf("\n") + 1, format: "md" | "org" = "md") {
   vi.stubGlobal("Worker", HighlightWorker);
   loadSingle({ name: "Highlight", title: "Highlight", kind: "page", format, pre_block: null,
     blocks: [{ id: "highlight", raw, collapsed: false, children: [] }] });
@@ -56,7 +56,7 @@ it.each([
   ["md", "```python\ndef greet():\n    return '文😀'\n```", "def", "'文😀'"],
   ["org", "#+BEGIN_SRC python\ndef greet():\n    return '文😀'\n#+END_SRC", "def", "'文😀'"],
 ] as const)("keeps %s code token classes while editing and after typing", async (format, raw, keyword, string) => {
-  const { root, editor } = mount(raw, raw.length, format);
+  const { root, editor } = mount(raw, raw.indexOf("\n") + 1, format);
   await vi.waitFor(() => expect(root.querySelector(".cm-content .hljs-keyword")?.textContent).toBe(keyword));
   expect(root.querySelector(".cm-content .hljs-string")?.textContent).toBe(string);
   expect(editor.value()).not.toMatch(/```|#\+(BEGIN|END)/);
@@ -67,7 +67,7 @@ it.each([
   expect(editor.kind).toBe("cm6");
 });
 
-it("highlights mixed raw and projected fences without changing the reveal boundary", async () => {
+it("highlights mixed raw source without hiding fences when the caret moves", async () => {
   const raw = "before\n```js\nconst answer = 42;\n```\nafter";
   const { root, editor } = mount(raw, raw.indexOf("```"));
   await vi.waitFor(() => expect(root.querySelector(".cm-content .hljs-keyword")?.textContent).toBe("const"));
@@ -75,11 +75,10 @@ it("highlights mixed raw and projected fences without changing the reveal bounda
   expect(root.querySelector('[data-cm6-construct="src"]')).toBeNull();
   editor.selectByUser(raw.indexOf("answer"));
   await vi.waitFor(() => expect(root.querySelector(".cm-content .hljs-keyword")?.textContent).toBe("const"));
-  expect(editor.value()).toBe("const answer = 42;");
-  editor.select(0); editor.keydown({ key: "ArrowLeft" });
   expect(editor.value()).toBe(raw);
   editor.select(0);
-  expect(root.querySelector('[data-cm6-construct="src"]')).not.toBeNull();
+  expect(root.querySelector('[data-cm6-construct="src"]')).toBeNull();
+  expect(root.querySelector(".cm-content")!.textContent).toContain("```js");
   expect(node("highlight").raw).toBe(raw);
   expect(editor.kind).toBe("cm6");
 });

@@ -1,16 +1,14 @@
-/** One editor's reversible code view (GH #510). Selection in raw mixed text
- * enters a parser-owned body on collapsed native selection; boundary motion returns to raw
+/** One editor's reversible code view (GH #510, D-20261114-CS879). Explicit entry
+ * selects a parser-owned body; boundary motion returns to raw
  * coordinates without committing. O(block text), no writes or syntax recognition.
  * Prefix/suffix stay frozen during body edits, including paste of fence-like text.
  * Code clicks select a body; block navigation retains the editable raw wrapper.
  * `shown` projects the visible buffer; `join` splices the body into original raw
  * `source`, preserving hidden metadata too (source defaults to the visible raw).
  * `enter` takes a visible-source UTF-16 range and selects a body only if it contains the range.
- * `syncSelection` maps a collapsed native raw selection into that body.
  * `leaveOnKey` consumes boundary arrows/Backspace and restores raw coordinates.
  * `leaveRange` supplies that same transition to editors with state-owned selections.
- * `selection` supplies visible-source coordinates to history in either view.
- * `implicitStandalone` retains the CodeMirror editor's existing body-first policy.
+ * `selection` maps editor coordinates to source and carries the chosen body into restores, in O(1).
  * `revealRaw` alone calls the editor's guarded
  * commit before disabling projection and returning visible source, or null if
  * no code view is showing. Editors own display and caret placement. */
@@ -18,7 +16,7 @@ import { createMemo, createSignal, type Accessor } from "solid-js";
 import { codeFences } from "./fences";
 import { codeBodyJoin, codeBodyProjection, type CodeBodyProjection } from "./codeFence";
 
-export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Accessor<"md" | "org">, enabled: Accessor<boolean>, source: Accessor<string> = visibleRaw, implicitStandalone = false) {
+export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Accessor<"md" | "org">, enabled: Accessor<boolean>, source: Accessor<string> = visibleRaw) {
   const capture = (p: CodeBodyProjection) => {
     const index = codeFences(visibleRaw(), format()).findIndex(f => f.openEnd === p.open.length);
     const original = codeFences(source(), format())[index];
@@ -39,29 +37,20 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
       if (!p.close.startsWith("\n") && !p.close.startsWith("\r\n") && body.endsWith(separator)) body = body.slice(0, -separator.length);
       return { ...p, body };
     }
-    return implicitStandalone ? codeBodyProjection(text, format()) : null;
+    return null;
   });
   const mixed = () => shown() !== null && codeBodyProjection(visibleRaw(), format()) === null;
   const enter = (caret: number, end = caret) => {
     if (!enabled() || rawMode()) return;
     const p = codeBodyProjection(visibleRaw(), format(), caret);
     setRegion(p && end <= p.open.length + p.body.length ? capture(p) : null);
-  };
-  const syncSelection = (ta: HTMLTextAreaElement) => {
-    // Whole-block raw editing stays raw as the caret moves through its source,
-    // like OG's block editor. Mixed regions retain their inline edit behavior.
-    if (shown() || codeBodyProjection(visibleRaw(), format()) || ta.selectionStart !== ta.selectionEnd) return;
-    const caret = ta.selectionStart;
-    enter(caret);
-    const p = shown();
-    if (p) {
-      ta.value = p.body;
-      ta.setSelectionRange(caret - p.open.length, caret - p.open.length);
-    }
+    // Source entry on an existing fence stays source, including language completion.
+    // An initially plain editor can still create a scaffold and enter its body.
+    if (!shown() && codeFences(visibleRaw(), format()).length) setRawMode(true);
   };
   const leaveRange = (e: KeyboardEvent, value: string, start: number, end: number) => {
     const p = shown();
-    if (!p || (implicitStandalone && !mixed()) || e.ctrlKey || e.metaKey || e.altKey) return null;
+    if (!p || e.ctrlKey || e.metaKey || e.altKey) return null;
     // Preserve the existing empty-card deletion door (GH #488).
     if (e.key === "Backspace" && value === "" && !mixed()) return null;
     const before = (e.key === "ArrowLeft" || e.key === "Backspace") && start === 0
@@ -73,6 +62,7 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     // Boundary arrows expose the adjacent fence; Escape uses revealRaw below.
     const caret = before ? p.open.length - 1 : p.open.length + p.body.length + 1;
     setRegion(null);
+    setRawMode(true);
     return { anchor: e.shiftKey ? anchor : caret, head: caret, direction: before ? "backward" as const : "forward" as const };
   };
   const leaveOnKey = (e: KeyboardEvent, ta: HTMLTextAreaElement) => {
@@ -83,7 +73,7 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
     ta.setSelectionRange(Math.min(range.anchor, range.head), Math.max(range.anchor, range.head), range.direction);
     return true;
   };
-  return { shown, mixed, enter, syncSelection, leaveOnKey, leaveRange,
+  return { shown, mixed, enter, leaveOnKey, leaveRange,
     // OG extensions/code.cljs render!: Esc saves the code editor and calls
     // edit-block! with :max. Stay raw for this editing session so native
     // selection cannot immediately hide the delimiters again (GH #865).
@@ -101,9 +91,9 @@ export function createCodeBodyEditor(visibleRaw: Accessor<string>, format: Acces
       if (!captured) return null;
       return codeBodyJoin(captured.source, body);
     },
-    selection: (ta: HTMLTextAreaElement) => {
+    selection: (start: number, end: number) => {
       const offset = shown()?.open.length ?? 0;
-      return { start: ta.selectionStart + offset, end: ta.selectionEnd + offset };
+      return offset ? { start: start + offset, end: end + offset, codeBodyStart: offset } : { start, end };
     },
   };
 }

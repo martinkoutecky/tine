@@ -43,12 +43,13 @@ function external(blocks: PageDto["blocks"]): PageDto {
   return { ...page(NAME, blocks), rev: "external" };
 }
 
-async function carryAcross(before: string, after: string, offset = 0) {
+async function carryAcross(before: string, after: string, offset = 0, caret?: number) {
   loadSingle(page(NAME, [blk("a", "Alpha"), blk("b", before)]));
   startEditing("b", offset);
   const { root, dispose } = mountOutline();
   const old = editorIn(root);
   expect(old).not.toBeNull();
+  if (caret !== undefined) old.selectByUser(caret);
   installPageContent(NAME, external([blk("a", "Alpha"), blk("b", after)]));
   old.reportBlur();
   await Promise.resolve();
@@ -56,6 +57,16 @@ async function carryAcross(before: string, after: string, offset = 0) {
 }
 
 describe("an editor carried across an external reload", () => {
+  it("keeps source mode when its caret is inside code during the reload", async () => {
+    const before = "```js\nlet x = 1\n```", after = "```js\nlet x = 2\n```";
+    const { root, dispose } = await carryAcross(before, after, 0, before.indexOf("let") + 2);
+    try {
+      expect(doc.byId.b.raw).toBe(after);
+      expect(editingId()).toBe("b");
+      expect(editorIn(root).value()).toBe(after);
+      expect(editorIn(root).element.classList.contains("code-edit")).toBe(false);
+    } finally { dispose(); }
+  });
   it.each([0, "```js\n".length])("keeps an external edit of a code block and the carried editor (entry %i)", async offset => {
     const after = "```js\nlet x = 2\n```";
     const { root, dispose } = await carryAcross("```js\nlet x = 1\n```", after, offset);
@@ -63,7 +74,7 @@ describe("an editor carried across an external reload", () => {
       expect(doc.byId.b.raw).toBe(after);
       expect(editingId()).toBe("b");
       const editor = editorIn(root);
-      expect(editor.value()).toBe(offset === 0 && editor.kind === "textarea" ? after : "let x = 2");
+      expect(editor.value()).toBe(offset === 0 ? after : "let x = 2");
     } finally {
       dispose();
     }

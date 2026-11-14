@@ -4,7 +4,6 @@ import { node, pageByName } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { endEdit, startEditing } from "../editorController";
 import { editorIn } from "../tests/editorDriver";
-import { useEditorKind } from "../tests/editorKind";
 import { blk, installBlockEditorLifecycle, mount, page } from "../tests/blockEditorTestkit";
 import { Block } from "./Block";
 
@@ -15,9 +14,7 @@ vi.mock("../inputCapability", async original => ({
 }));
 
 installBlockEditorLifecycle();
-// The CodeMirror experiment retains its current entry policy; GH #879 there
-// is a separate follow-up. Keep this classic-editor contract explicit.
-useEditorKind("textarea");
+// Run under both render and CM6 configs: block navigation always opens source.
 afterEach(() => endEdit("page-navigation"));
 const raw = "```js\nconst x = 1;\n```";
 

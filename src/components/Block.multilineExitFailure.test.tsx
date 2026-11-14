@@ -6,8 +6,8 @@
 // "nothing was changed" toast is true. The trim used to be committed before the insert was asked,
 // and a refused insert kept it (`const x = 1\n` became `const x = 1`, with no sibling).
 //
-// Both editors share the branch, so one table drives both. The textarea is the stable default and
-// the CodeMirror editor the development one; `useEditorKind` runs each half on its own engine.
+// Both editors share the branch, so one table drives both;
+// `useEditorKind` runs each half on its own engine.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
@@ -62,17 +62,14 @@ interface ExitCase {
   /** The editor's text and caret after the first Enter. */
   typed: string; caret: number;
   raw: string; exited: string;
-  /** Raw offset of a user selection that opens the block's code body, for a block that is not all code. */
+  /** Raw click offset that opens the block's code body. */
   open?: number;
-  /** The editor that has this block's special kind; the other shows the same block as another kind. */
-  only?: EditorKind;
 }
 
 const cases: ExitCase[] = [
-  // A block that is all code opens as its body in CodeMirror; the textarea shows the fences (the fence case).
-  { kind: "code (whole block)", only: "cm6", blocks: [["first", "first"], ["target", "```js\nconst x = 1\n```"]], id: "target",
+  // Both editors enter a code body by its click offset, never a later selection.
+  { kind: "code (whole block)", open: 6, blocks: [["first", "first"], ["target", "```js\nconst x = 1\n```"]], id: "target",
     typed: "const x = 1\n", caret: 12, raw: "```js\nconst x = 1\n\n```", exited: "```js\nconst x = 1\n```" },
-  // A code body inside other text opens on a user selection inside it, in both editors.
   { kind: "code (in text)", blocks: [["first", "first"], ["target", "intro\n```js\nconst x = 1\n```"]], id: "target", open: 23,
     typed: "const x = 1\n", caret: 12, raw: "intro\n```js\nconst x = 1\n\n```", exited: "intro\n```js\nconst x = 1\n```" },
   { kind: "calc", blocks: [["first", "first"], ["target", "```calc\n1+1\n2+2\n```"]], id: "target",
@@ -93,7 +90,6 @@ const parserCalls = () => ({
 
 describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s editor", (kind) => {
   useEditorKind(kind);
-  const mine = cases.filter((c) => c.only === undefined || c.only === kind);
   let dispose: (() => void) | undefined;
   beforeEach(async () => { await initParser(); setToasts([]); });
   afterEach(() => {
@@ -106,11 +102,10 @@ describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s 
   function mount(c: ExitCase): { editor: EditorDriver; root: HTMLElement } {
     loadSingle({ name: "Third", title: "Third", kind: "page", pre_block: null, format: "md",
       blocks: c.blocks.map(([id, raw]) => ({ id, raw, collapsed: false, children: [] })) });
-    startEditing(c.id, c.blocks.find(([id]) => id === c.id)![1].length);
+    startEditing(c.id, c.open ?? c.blocks.find(([id]) => id === c.id)![1].length);
     const root = document.createElement("div"); document.body.append(root);
     dispose = render(() => <Editor id={c.id} />, root);
     const editor = editorIn(root);
-    if (c.open !== undefined) editor.selectByUser(c.open);
     editor.input(c.typed, c.caret);
     expect(doc.byId[c.id].raw, `${c.kind}: the first Enter's text reached the block`).toBe(c.raw);
     return { editor, root };
@@ -122,7 +117,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s 
   };
   const roots = () => pageByName("Third")!.roots;
 
-  it.each(mine)("$kind: a failed exit changes nothing, in the editor or in the block, and says so", (c) => {
+  it.each(cases)("$kind: a failed exit changes nothing, in the editor or in the block, and says so", (c) => {
     const { editor, root } = mount(c);
     const slot = doc.byId[c.id];
     const rootsBefore = [...roots()];
@@ -150,7 +145,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s 
     expect(failure()).toHaveLength(1);
   });
 
-  it.each(mine)("$kind: after a failed exit the retried Enter trims the line and opens the sibling", (c) => {
+  it.each(cases)("$kind: after a failed exit the retried Enter trims the line and opens the sibling", (c) => {
     const { editor } = mount(c);
     wasm.failNextApply = true;
     enter(editor);
@@ -163,7 +158,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s 
     expect(editingId()).toBe(after[index + 1]);
   });
 
-  it.each(mine)("$kind: a failed exit keeps the redo history", (c) => {
+  it.each(cases)("$kind: a failed exit keeps the redo history", (c) => {
     const { editor } = mount(c);
     // One undone edit to redo, in the page's other block, so the editor under test is left alone.
     const other = c.blocks.find(([id]) => id !== c.id)![0];
@@ -177,7 +172,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s 
     expect(doc.byId[other].raw).toBe("edited elsewhere");
   });
 
-  it.each(mine)("$kind: a successful exit trims the line, opens the sibling and undoes as one step", (c) => {
+  it.each(cases)("$kind: a successful exit trims the line, opens the sibling and undoes as one step", (c) => {
     const { editor } = mount(c);
     writes.document = 0; wasm.calls = {};
     expect(enter(editor).defaultPrevented).toBe(true);
@@ -197,7 +192,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("the double-Enter exit on the %s 
   // PC-3/PC-5: the exit asks the parser, and writes the store, what it did before the trim was staged
   // (measured on a399250b5 with this same table): the clock once for the trim, the outline apply once for
   // the insert, no offset or read-set call, and one store write for the trim plus one for the insert.
-  it.each(mine)("$kind: a successful exit makes the parser and store calls it always made", (c) => {
+  it.each(cases)("$kind: a successful exit makes the parser and store calls it always made", (c) => {
     const { editor } = mount(c);
     writes.document = 0; wasm.calls = {};
     enter(editor);

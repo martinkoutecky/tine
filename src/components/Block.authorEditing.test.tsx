@@ -85,12 +85,7 @@ it.each(["> some quoted text", "> first\n> second", "> [!TIP]\n> helpful", "Titl
 it.each(["> tine.author:: quoted example", "> quote\n> tine.author:: quoted example", "```\ntine.author:: example\n```", "> quote\nuser.author:: example"])("authorship lookalikes stay editable content: %j", raw => {
   const root = mount(raw); startEditing("p", 0);
   const editor = editorIn(root);
-  // CM6 enters a whole code block's payload directly; Escape reveals its
-  // editable fences. A property-looking code line remains text in either view.
-  if (editor.kind === "cm6" && raw.startsWith("```")) {
-    expect(editor.value()).toBe("tine.author:: example");
-    editor.keydown({ key: "Escape" });
-  }
+  // Block entry opens source in both editors; property-looking code stays text.
   expect(editor.value()).toBe(raw);
   const at = raw.indexOf("example");
   editor.select(at, at + "example".length);

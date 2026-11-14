@@ -61,7 +61,7 @@ it("Backspace at the body start returns to raw without deleting prose or a wrapp
     expect(ta.selection()[0]).toBe(prefix.length - 1);
     ta.select(prefix.length + 2, prefix.length + 2);
     ta.reportSelection(new Event("select", { bubbles: true }));
-    expect(ta.value()).toBe("one\ntwo"); expect(ta.selection()[0]).toBe(2);
+    expect(ta.value()).toBe(raw); expect(ta.selection()[0]).toBe(prefix.length + 2);
   } finally { dispose(); }
 });
 it("Shift+Arrow can select across a body boundary and raw paste remains one edit", async () => {

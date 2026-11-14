@@ -47,7 +47,8 @@ interface StructureContext {
   stage(text: string): PendingEdit;
   /** Taking `from..to` out of the editor and the block, decided but not made. */
   deleteSelection(v: EditorView, from: number, to: number): PendingEdit;
-  code(): boolean;
+  /** Visible-source body start, or null in source mode. O(1). */
+  code(): number | null;
   calc(): boolean;
   annotation(): boolean;
   viewPrev(): string | null;
@@ -68,7 +69,7 @@ export function cm6Structure(ctx: StructureContext) {
     ctx.embedExit?.rowHost?.(ctx.id) ?? { id: ctx.id, scope: ctx.scope, surface: ctx.surface };
   const selection = (v: EditorView): CaretSelection => {
     const s = v.state.selection.main;
-    return { start: s.from, end: s.to, direction: s.empty ? "none" : s.anchor > s.head ? "backward" : "forward" };
+    return { start: s.from, end: s.to, direction: s.empty ? "none" : s.anchor > s.head ? "backward" : "forward", codeBodyStart: ctx.code() ?? undefined };
   };
   const softNewline = (v: EditorView) => {
     v.dispatch(v.state.replaceSelection("\n"), { scrollIntoView: true, userEvent: "input" });

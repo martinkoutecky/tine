@@ -41,7 +41,6 @@ function clickCode(
   const dispose = render(() => (
     <For each={pageByName(init.name)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  const content = root.querySelector(".block-content") as HTMLElement;
   const code = root.querySelectorAll("pre.code-block > code")[init.card ?? 0]!;
   const target = landOn(code);
   (document as unknown as { caretRangeFromPoint: () => Range }).caretRangeFromPoint = () => {
@@ -50,7 +49,7 @@ function clickCode(
     range.collapse(true);
     return range;
   };
-  content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+  code.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   return { root, dispose };
 }

@@ -527,7 +527,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-code-wrap-toggle.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Palette, bound shortcut and Settings code wrapping preserve unobscured reading text in mounted main, split and sidebar scrollers in both directions with the classic and CodeMirror editor preferences, without changing note source. Clicking the code language label opens the fence source in both editors; removing and restoring its language saves exact note bytes without the placeholder.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Palette, bound shortcut and Settings code wrapping preserve unobscured reading text in mounted main, split and sidebar scrollers in both directions with the classic and CodeMirror editor preferences, without changing note source. Clicking the code language label opens the fence source in both editors; removing and restoring its language saves exact note bytes without the placeholder. In desktop and phone layouts, clicking code edits its body, while clicking prose or the block edge edits raw source; moving the caret keeps fences visible in Markdown and Org, with and without surrounding prose, without changing file bytes.", "blocking": true, "authority": "GH #453; GH #879 D-20261114-CS879" }],
       "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"

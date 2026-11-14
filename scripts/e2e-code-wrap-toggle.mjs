@@ -27,9 +27,18 @@ const file = path.join(graph, "pages/Wrap Demo.md");
 const source = '- Long outline parent\n' + Array.from({ length: 16 }, (_, n) =>
   `  - \`\`\`js\n    ${Array.from({ length: 3 }, () => '// ' + 'long code line '.repeat(28)).join("\n    ")}\n    \`\`\`\n  - Reading marker ${n}\n`).join("");
 fs.writeFileSync(file, source);
+const modeFiles = ["md", "org"].map(format => {
+  const open = format === "md" ? "```js" : "#+BEGIN_SRC js", close = format === "md" ? "```" : "#+END_SRC";
+  const blocks = [`${open}\none\ntwo\n${close}`, `Before\n${open}\none\ntwo\n${close}\nAfter`];
+  const text = blocks.map(raw => format === "md" ? `- ${raw.replaceAll("\n", "\n  ")}\n` : `* ${raw}\n`).join("");
+  const file = path.join(graph, `pages/Code modes ${format}.${format}`);
+  fs.writeFileSync(file, text);
+  return { format, file, text, blocks };
+});
 const env = { ...process.env, HOME: path.join(out, "home"), TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
   XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
   XDG_STATE_HOME: path.join(out, "state"),
+  TINE_E2E_FORCE_MOBILE_DRAWERS: "1",
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4876);
 const paletteAction = process.env.E2E_WRAP_PALETTE_ACTION || "click";
@@ -41,10 +50,14 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServer
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), workingDiff: true, app,
   binarySha256: createHash("sha256").update(fs.readFileSync(app)).digest("hex"), paletteAction,
-  journey: "Palette, binding and Settings preserve visible reading text in main, split and sidebar with both editors", offsets: [] };
+  journey: "Code click edits the body; elsewhere edits stable source. Wrap preserves reading text in three panes. Both editors.", offsets: [], codeModes: [] };
 let browser;
 let stage = "startup";
 const screenshot = async (file) => {
+  await browser.execute(async () => {
+    await Promise.allSettled(document.getAnimations().filter(a => a.playState === "running" && Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a => a.finished));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
   // WebKitGTK can stall on repeated WebDriver screenshots; capture Xvfb.
   if (process.platform === "linux") execFileSync("import", ["-window", "root", file], { timeout: 10000 });
   else await browser.saveScreenshot(file);
@@ -90,9 +103,7 @@ try {
   }));
   for (const mode of modes) {
     stage = `choose ${mode}`;
-    // The fresh device starts with the classic editor. Only the opt-in needs a
-    // setting change, keeping the classic journey usable on older Betas too.
-    if (mode === "cm6") await setting("Experimental: CodeMirror editor", "CodeMirror", true);
+    await setting("Experimental: CodeMirror editor", "CodeMirror", mode === "cm6");
     // Verify the chosen engine mounts, then return to its rendered code card.
     await browser.$(".main-content pre.code-block").click();
     await browser.$(mode === "cm6" ? '.main-content [data-block-editor="cm6"]' : ".main-content textarea.block-editor").waitForDisplayed();
@@ -116,6 +127,67 @@ try {
     await browser.keys("js"); await browser.keys(["Escape"]); await browser.keys(["Escape"]);
     await waitForFileText(file, text => text === source);
     await browser.waitUntil(() => browser.execute(() => !document.querySelector('.main-content textarea.block-editor, .main-content [data-block-editor="cm6"]')));
+    const editorText = () => browser.execute(() => {
+      const editor = document.querySelector('.main-content textarea.block-editor, .main-content .cm-content');
+      return editor?.value ?? (editor ? [...editor.querySelectorAll(':scope > .cm-line')].map(line => line.textContent).join('\n') : null);
+    });
+    const assertMode = async (expected, body) => {
+      await browser.waitUntil(async () => await editorText() === expected, { timeout: 10000, timeoutMsg: `Expected ${body ? "code body" : "raw fences"}: ${expected}` });
+      const styled = await browser.execute(() => !!document.querySelector('.main-content .code-edit'));
+      if (styled !== body) throw Error(`Code mode presentation disagrees with entry (${mode}, body=${body})`);
+    };
+    for (const [layout, width] of [["desktop", 1800], ["phone", 390]]) {
+      await browser.setWindowSize(width, 900);
+      for (const fixture of modeFiles) {
+        await openPageByName(browser, `Code modes ${fixture.format}`);
+        if (layout === "phone") {
+          for (const selector of ['.right-sidebar > .right-sidebar-header .rs-close', '.mobile-drawer-close', '.sidebar-close']) {
+            const close = await browser.$(selector);
+            if (await close.isDisplayed()) await close.click();
+          }
+          await browser.waitUntil(() => browser.execute(() => document.querySelector('.app-container')?.getAttribute('data-active-drawer') === ""));
+        }
+        for (const [index, raw] of fixture.blocks.entries()) {
+          const shape = index ? "mixed" : "only";
+          stage = `${mode}: ${layout} ${fixture.format} ${shape} click-target modes`;
+          // Interior code click, then Escape: same live bytes in either view.
+          await (await browser.$$('.main-content pre.code-block > code'))[index].click();
+          await assertMode("one\ntwo", true);
+          await screenshot(path.join(out, `${mode}-${layout}-${fixture.format}-${shape}-body.png`));
+          await browser.keys(["Escape"]);
+          await assertMode(raw, false);
+          await browser.keys(["Control", "Home", "NULL"]);
+          await browser.keys(["ArrowDown"]); await browser.keys(["ArrowDown"]);
+          await assertMode(raw, false);
+          await screenshot(path.join(out, `${mode}-${layout}-${fixture.format}-${shape}-source.png`));
+          await browser.keys(["Escape"]);
+          await browser.waitUntil(async () => await editorText() === null);
+          // Press outside the code card, on prose or the content's outer edge.
+          const point = await browser.execute(index => {
+            const content = document.querySelectorAll('.main-content .block-content')[index];
+            content.scrollIntoView({ block: "center" });
+            const rect = content.getBoundingClientRect();
+            return { x: Math.round(rect.left + 10), y: Math.round(rect.top + (index ? 12 : 1)) };
+          }, index);
+          await browser.performActions([{ type: "pointer", id: "code-entry", parameters: { pointerType: "mouse" }, actions: [
+            { type: "pointerMove", origin: "viewport", duration: 0, ...point }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 },
+          ] }]);
+          await browser.releaseActions();
+          await assertMode(raw, false);
+          await browser.keys(["Control", "Home", "NULL"]);
+          await browser.keys(["ArrowDown"]); await browser.keys(["ArrowDown"]);
+          await assertMode(raw, false);
+          await browser.keys(["Escape"]);
+          await browser.waitUntil(async () => await editorText() === null);
+          if (fs.readFileSync(fixture.file, "utf8") !== fixture.text) throw Error("Mode switching changed source bytes");
+          proof.codeModes.push({ mode, layout, format: fixture.format, shape, bodyClick: true, elsewhereClick: true, rawCaret: true, bytesUnchanged: true });
+        }
+      }
+    }
+    stage = `${mode}: restore three reading panes`;
+    await browser.setWindowSize(1800, 1000);
+    if (!await browser.$('.right-sidebar').isDisplayed()) await browser.$('[data-toolbar-action="right-sidebar"]').click();
+    await openPageByName(browser, "Wrap Demo");
     // Opening three copies can still be admitting lazy bodies and restoring
     // scroll. Establish settled marker offsets before measuring.
     await browser.waitUntil(async () => {
@@ -170,7 +242,7 @@ try {
   try { await screenshot(path.join(out, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(out, "failure-dom.html"), await browser.getPageSource()); } catch {}
   fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ ...proof, stage,
-    expected: "Three mounted reading markers retain offsets within 3px in both directions; source unchanged",
+    expected: "Click target chooses code body or stable raw source; three mounted reading markers retain offsets within 3px; source unchanged",
     observed: String(error.stack), classification: String(error.message).startsWith("Viewport moved:") ? "product" : "ambiguous; inspect log and DOM" }, null, 2));
   throw error;
 } finally {

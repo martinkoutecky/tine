@@ -116,7 +116,7 @@ it("Settings globally wraps reading and editing, and remembers the device prefer
   expect(codeWrapping()).toBe(false);
   expect(root.querySelector(".code-language")?.textContent).toBe("python");
   expect([...root.querySelectorAll("pre.code-block .calc-lineno")].map(el => el.textContent)).toEqual(["1", "2", "1", "2"]);
-  startEditing("code", 0); await tick();
+  startEditing("code", "```python\n".length); await tick();
   const ta = maybeEditorIn(root)!;
   expectWrap(ta, false);
   const toggle = root.querySelector<HTMLButtonElement>('[data-setting-label="Wrap code lines"] [role="switch"]')!;
@@ -151,7 +151,7 @@ it("open code cards react immediately to the global wrap preference", async () =
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <><Block id="edit" /><Block id="view" /></>, root);
   try {
-    startEditing("edit", 0); await tick();
+    startEditing("edit", "```js\n".length); await tick();
     changeCodeWrapping(true); await tick();
     expectWrap(maybeEditorIn(root)!, true);
     expect.soft(root.querySelector("pre.code-block")?.classList.contains("code-wrapping")).toBe(true);

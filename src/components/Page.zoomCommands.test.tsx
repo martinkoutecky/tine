@@ -2,7 +2,7 @@ import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
+import { node, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { maybeEditorIn } from "../tests/editorDriver";
@@ -31,9 +31,10 @@ const dto: PageDto = {
   blocks: [leaf("top", [leaf("mid", [leaf("deep")])])],
 };
 
-async function mounted() {
-  loadSingle(dto);
-  vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+async function mounted(code?: string) {
+  const content = code === undefined ? dto : { ...dto, blocks: [leaf("top", [{ ...leaf("mid", [leaf("deep")]), raw: code }])] };
+  loadSingle(content);
+  vi.spyOn(backend(), "getPage").mockResolvedValue(content as PageRead);
   mainPaneRouter.replaceActiveRoute({ kind: "page", name: dto.name, pageKind: "page" });
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -41,6 +42,29 @@ async function mounted() {
   await vi.waitFor(() => expect(root.querySelector('[data-block-id="deep"]')).not.toBeNull());
   return { root, dispose };
 }
+
+it.each([false, true])("keeps code source/body mode through keyboard zoom (body: %s)", async body => {
+  const raw = "```js\none\ntwo\n```";
+  const { root, dispose } = await mounted(raw);
+  try {
+    startEditing("mid", body ? raw.indexOf("one") : 0, null, "main");
+    const caret = body ? 1 : raw.indexOf("one") + 1;
+    maybeEditorIn(root)!.select(caret);
+    for (const command of ["editor/zoom-in", "editor/zoom-out"]) {
+      expect(runGlobalCommand(command)).toBe(true);
+      // The command queues its editor reopen after navigation.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+      await vi.waitFor(() => {
+        const editor = maybeEditorIn(root)!;
+        expect(editor.blockId).toBe("mid");
+        expect(editor.value()).toBe(body ? "one\ntwo" : raw);
+        expect(editor.element.classList.contains("code-edit")).toBe(body);
+        expect(editor.selection()).toEqual([caret, caret]);
+      });
+    }
+    expect(node("mid").raw).toBe(raw);
+  } finally { dispose(); }
+});
 
 // GH #799 on a routed page: the keyboard twin of the bullet click and the breadcrumb.
 it("Zoom in on block opens the edited block's zoomed view with the caret still in it; Zoom out one level steps to the parent", async () => {
