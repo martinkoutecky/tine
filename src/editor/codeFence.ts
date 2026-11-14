@@ -1,4 +1,5 @@
 import { codeFences, type LiteralContainer } from "./fences";
+import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
 
 // GH #357: is the WHOLE visible block text one fenced code block?
 // The block editor uses the answer only to stabilize its own visual box
@@ -9,6 +10,61 @@ export interface CodeFenceShape {
   /** Info-string language id ("" when none). "calc" is excluded — those
    *  blocks have their own specialized editing mode. */
   lang: string;
+}
+
+/** Language caret in visible-source UTF-16 coordinates for the shown code body,
+ * or the first fence when the editor already shows source. O(block text), cached
+ * parser regions only; no syntax recognition or writes. */
+export function codeLanguageCaret(text: string, format: "md" | "org", bodyStart?: number): number {
+  const fences = codeFences(text, format);
+  const fence = bodyStart === undefined ? fences[0] : fences.find(f => f.openEnd === bodyStart);
+  return fence ? languageEntry(text, fence).at : 0;
+}
+
+/** On the info string's language: past the separator whitespace after the delimiter
+ * (`#+BEGIN_SRC python`, "``` js"), so typing replaces or extends the language rather
+ * than gluing text onto the delimiter. A bare Org source or example delimiter needs a
+ * space when a language is typed, never just on activation. O(opener length). */
+function languageEntry(text: string, fence: LiteralContainer): { at: number; separator: string } {
+  let at = fence.delimEnd;
+  while (text[at] === " " || text[at] === "\t") at++;
+  return { at, separator: (fence.kind === "src" || fence.kind === "example") && text.slice(fence.start, fence.delimEnd).trimStart().startsWith("#") && at === fence.delimEnd ? " " : "" };
+}
+
+/** Post-input language insertion, shared by both editors. Supply Org's separator
+ * only when inserting at its parser-owned language slot. O(block text), cached
+ * parser regions; returns an edit for the existing guarded commit, never writes.
+ * Supply replaced text when an editor reports a whole-buffer replacement. */
+export function codeLanguageInput(text: string, format: "md" | "org", caret: number, inserted: string, replaced = ""): { value: string; caret: number; change: { from: number; insert: string } } | null {
+  let start = 0, oldEnd = replaced.length, end = inserted.length;
+  while (start < oldEnd && start < end && replaced[start] === inserted[start]) start++;
+  while (oldEnd > start && end > start && replaced[oldEnd - 1] === inserted[end - 1]) { oldEnd--; end--; }
+  caret -= inserted.length - end;
+  inserted = inserted.slice(start, end);
+  if (!inserted || inserted.trimStart() !== inserted) return null;
+  const from = caret - inserted.length;
+  const before = text.slice(0, from) + text.slice(caret);
+  const fence = codeFences(before, format).find(fence => fence.delimEnd === from);
+  const entry = fence && languageEntry(before, fence);
+  return entry?.separator ? { value: text.slice(0, from) + entry.separator + text.slice(from), caret: caret + entry.separator.length,
+    change: { from, insert: entry.separator } } : null;
+}
+
+/** Buffer-only insertion adapter for textarea commits and finalized IME drafts.
+ * Find the changed range in O(block text), then use the same language owner.
+ * Unchanged buffers and deletions never supply a separator. No writes. */
+export function codeLanguageChange(before: string, text: string, format: "md" | "org"): ReturnType<typeof codeLanguageInput> {
+  if (before === text) return null;
+  return codeLanguageInput(text, format, text.length, text, before);
+}
+
+/** Map a rendered fence's parser source byte to its language caret in this
+ * fragment's visible source, or null for an unmappable span. O(fragment text),
+ * cached parser regions; no writes. */
+export function codeSourceCaret(text: string, format: "md" | "org", sourceByte: number): number | null {
+  const start = utf8ByteToUtf16Offset(text, rebulletedSourceByteToRawByte(text, sourceByte));
+  const fence = codeFences(text, format).find(f => f.start === start);
+  return fence ? languageEntry(text, fence).at : null;
 }
 
 /** The code container that IS the whole block's wrapper: the parser's first fence, source or

@@ -3,6 +3,8 @@ render-more-blocks = 还有 { $count }+ 个块
 render-more-blocks-exact = 还有 { $count } 个块
 
 render-copy-code = 复制代码
+render-code-plain = 纯文本
+render-edit-code-language = 编辑代码语言
 
 render-copy-result = 复制结果
 
