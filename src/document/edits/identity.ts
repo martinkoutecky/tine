@@ -18,7 +18,15 @@ import { existingBlockId } from "../../blockIdentity";
 export function blockExternalId(id: string, facts?: BlockIdentityFacts): string | null {
   const node = doc.byId[id];
   if (!node) return null;
-  return existingBlockId(node.raw, formatForBlock(id), facts) ?? node.id;
+  return authoredBlockId(id, facts) ?? node.id;
+}
+
+/** The `id::` the loaded node's text carries, or null: a block with none has only
+ * the runtime key, which changes at the next load and is no durable address.
+ * No I/O; O(block bytes) when the parser facts are not already cached. */
+export function authoredBlockId(id: string, facts?: BlockIdentityFacts): string | null {
+  const node = doc.byId[id];
+  return node ? existingBlockId(node.raw, formatForBlock(id), facts) : null;
 }
 
 export interface LoadedBlockRef {
