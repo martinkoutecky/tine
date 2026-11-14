@@ -129,10 +129,10 @@ impl<'a> RenderGraph<'a> {
         collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
         let kept: HashSet<_> = found
             .into_iter()
-            .filter_map(|(id, (_, comment))| (!comment).then_some(id))
+            .filter_map(|(_, (block, comment))| (!comment).then(|| block.uuid.clone()))
             .collect();
         group.blocks.retain(|block| {
-            block.page_property || block.page_preamble || kept.contains(block.id.as_str())
+            block.page_property || block.page_preamble || kept.contains(&block.id.as_str().into())
         });
     }
 

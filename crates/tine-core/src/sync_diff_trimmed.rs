@@ -21,11 +21,11 @@ impl PersistedIds {
     }
     pub(super) fn of(&mut self, block: &DocBlock) -> Option<String> {
         let memo = &mut self.by_body[usize::from(block.is_org)];
-        if let Some(id) = memo.get(block.raw.as_str()) {
+        if let Some(id) = memo.get(&*block.raw) {
             return id.clone();
         }
         let id = persisted_id(block);
-        memo.insert(block.raw.clone(), id.clone());
+        memo.insert(block.raw.to_string(), id.clone());
         id
     }
     /// Exactly [`anchor_fingerprint`], through the memo.

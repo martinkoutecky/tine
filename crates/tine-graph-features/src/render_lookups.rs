@@ -139,7 +139,7 @@ impl Lookups {
                     .collect();
                 while let Some((path, block)) = stack.pop() {
                     let at = || (page, path.clone().into_boxed_slice());
-                    map.entry(block.uuid.clone()).or_insert_with(at);
+                    map.entry(block.uuid.to_string()).or_insert_with(at);
                     if let Some(id) = block.property("id") {
                         map.entry(id).or_insert_with(at);
                     }

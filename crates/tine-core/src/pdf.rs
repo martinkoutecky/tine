@@ -642,9 +642,9 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
         lines.push(":END:".to_string());
     }
     DocBlock {
-        raw: lines.join("\n"),
+        raw: lines.join("\n").into_boxed_str(),
         children: Vec::new(),
-        uuid: String::new(),
+        uuid: Default::default(),
         is_org: format == Format::Org,
         property_ref_config: None,
         proj: std::sync::OnceLock::new(),
@@ -930,7 +930,7 @@ mod tests {
             h.id
         ));
         let merged = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[h.clone()]);
-        let raws: Vec<&str> = merged.roots.iter().map(|b| b.raw.as_str()).collect();
+        let raws: Vec<&str> = merged.roots.iter().map(|b| b.raw()).collect();
         assert!(
             raws.iter().any(|r| r.contains("my summary note")),
             "user note dropped: {raws:?}"
@@ -1042,7 +1042,7 @@ mod tests {
         assert_eq!(merged.roots.len(), 2);
         assert_eq!(merged.roots[0].children.len(), 1, "note child preserved");
         assert_eq!(
-            merged.roots[0].children[0].raw,
+            merged.roots[0].children[0].raw(),
             "my note about this highlight"
         );
         assert!(merged.roots[1].raw.contains("second highlight"));
@@ -1077,7 +1077,7 @@ mod tests {
             1,
             "note child must survive a recolor"
         );
-        assert_eq!(merged.roots[0].children[0].raw, "my note");
+        assert_eq!(merged.roots[0].children[0].raw(), "my note");
     }
 
     #[test]
