@@ -1,6 +1,6 @@
 # Roadmap
 
-*Written by Claude (Opus 5.5), read and approved by Martin. Last updated 2026-11-11.*
+*Written by Claude (Opus 5.5), read and approved by Martin. Last updated 2026-11-14.*
 
 This page says where Tine is going as Martin sees it today. It is not a promise: it changes whenever the plan
 changes, and this file's git history shows every change. Each issue with a planned version carries it as a
@@ -20,32 +20,41 @@ stable after a soak with no open severe regression.
 
 ## 0.10: in development
 
-- **The CodeMirror editor** shows formatting as you type and is the default. **Settings → Editor → Advanced → Use classic editor** switches back; please report problems, because the classic editor is planned to be retired.
-- **A written model of what pages, journals, names and renames mean** ([conceptual model](conceptual-model/SPEC.md)),
-  with machine-checked proofs, and Tine changed to follow it. This is where edge cases such as renaming onto
-  a date or an alias get one consistent answer.
-- **Conflict review**: when two devices changed the same page, Tine shows the merged outline before you apply
-  it ([#901](https://github.com/martinkoutecky/tine/discussions/901)).
+- **The CodeMirror editor becomes the default.** It shows formatting as you type; Martin has used it daily
+  since early November. The classic editor stays: **Settings → Editor → Advanced → Use classic editor**. If you
+  switch back because something in the new editor is wrong, please report it: the plan is to retire the
+  classic editor.
 - **Margin comments, second round**: threads that collapse, next and previous comment, an "on click" mode,
   and layouts for narrow windows and phones.
-- **MCP, first version**: agents can read and write your graph through the Model Context Protocol, with the
-  same commands and the same safe save path as the `tine` command line. Off by default; you switch it on per
-  graph on each device ([#109](https://github.com/martinkoutecky/tine/issues/109)).
 - **Right-to-left languages**, Persian first ([#823](https://github.com/martinkoutecky/tine/issues/823)).
 - Many smaller changes, for example a Logseq-style properties panel ([#920](https://github.com/martinkoutecky/tine/issues/920)) and several keys for one command
   ([#878](https://github.com/martinkoutecky/tine/issues/878)).
 
 [Issues planned for 0.10](https://github.com/martinkoutecky/tine/milestone/5)
 
-## 0.11: plugins
+## 0.11: plugins, and three things moved from 0.10
 
 One release with everything plugins need, so that "Tine has plugins" means it when it is announced: a much
 wider plugin API ([#790](https://github.com/martinkoutecky/tine/issues/790)), plugins that draw a whole view of the graph (for example columns, or a graph view,
 [#183](https://github.com/martinkoutecky/tine/issues/183)), a plugin and theme store ([#822](https://github.com/martinkoutecky/tine/issues/822)), and a keyboard-shortcut engine shared with plugins ([#284](https://github.com/martinkoutecky/tine/issues/284), discussion
 [#383](https://github.com/martinkoutecky/tine/discussions/383)).
 
-Design starts once 0.9 is stable and the conceptual-model work in 0.10 is finished. What you want plugins to
-do is collected in discussion [#728](https://github.com/martinkoutecky/tine/discussions/728); every request there gets an answer from the design.
+Plugin design starts once 0.9 is stable. What you want plugins to do is collected in discussion
+[#728](https://github.com/martinkoutecky/tine/discussions/728); every request there gets an answer from the design.
+
+Moved here from 0.10 on 14 November:
+
+- **A written model of what pages, journals, names and renames mean** ([conceptual model](conceptual-model/SPEC.md)),
+  with machine-checked proofs, and Tine changed to follow it. This is where edge cases such as renaming onto
+  a date or an alias get one consistent answer. The first parts are in 0.10; the rest comes here.
+- **Conflict review**: when two devices changed the same page, Tine shows the merged outline before you apply
+  it ([#901](https://github.com/martinkoutecky/tine/discussions/901)), and conflicts can be resolved from the command line
+  ([#902](https://github.com/martinkoutecky/tine/issues/902)).
+- **MCP, first version**: agents can read and write your graph through the Model Context Protocol, with the
+  same commands and the same safe save path as the `tine` command line. Off by default; you switch it on per
+  graph on each device ([#109](https://github.com/martinkoutecky/tine/issues/109)).
+
+How these and plugins are ordered inside 0.11 is not settled yet.
 
 [Issues planned for 0.11](https://github.com/martinkoutecky/tine/milestone/6)
 
