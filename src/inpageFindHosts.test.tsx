@@ -95,3 +95,28 @@ it("walks a pane shared by many journal-day scopes once when the inventory build
     } finally { dispose(); }
   });
 });
+
+// Review HOLD on f43757ae2: a query table renders 200 rows and a load-more control; the rest is not searched yet.
+it("counts a host whose table or board still offers more rows as unsearched", () => {
+  setDoc({ byId: { query: { id: "query", raw: "{{query (task TODO)}}", children: [], parent: null, page: "Host", collapsed: false } } });
+  const scope = document.createElement("div");
+  document.body.append(scope);
+  createRoot(dispose => {
+    try {
+      const inventory = createPendingFindHosts(() => [{ roots: ["query"], format: "md", element: scope }]);
+      const host = document.createElement("div");
+      host.dataset.findHost = "query"; host.dataset.findAnswered = "true";
+      scope.append(host);
+      inventory.refresh([{ target: scope, addedNodes: [host], removedNodes: [] } as unknown as MutationRecord]);
+      expect(inventory.count()).toBe(0);
+      const more = document.createElement("button");
+      more.className = "sheet-add-row-ghost sheet-load-more";
+      host.append(more);
+      inventory.refresh([{ target: host, addedNodes: [more], removedNodes: [] } as unknown as MutationRecord]);
+      expect(inventory.count()).toBe(1);
+      more.remove();
+      inventory.refresh([{ target: host, addedNodes: [], removedNodes: [more] } as unknown as MutationRecord]);
+      expect(inventory.count()).toBe(0);
+    } finally { dispose(); }
+  });
+});

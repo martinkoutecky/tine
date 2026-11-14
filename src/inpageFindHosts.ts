@@ -48,7 +48,7 @@ export function countFindHosts(raw: string, format: Format): number {
 }
 
 const HOST = "[data-find-host]";
-const UNSEARCHED = '[data-find-answered="false"],[data-find-source-mounted="false"],.ast-deferred,.sheet-cell-defer,.query-pending-groups';
+const UNSEARCHED = '[data-find-answered="false"],[data-find-source-mounted="false"],.ast-deferred,.sheet-cell-defer,.sheet-load-more,.query-pending-groups';
 type Scope = { roots: readonly string[]; format: Format; element: HTMLElement | null };
 
 /** Pending in-outline macro hosts, independent of the search query. Inventory
