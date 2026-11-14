@@ -97,7 +97,7 @@ pub fn query_request_by_uuid(
     let properties = block
         .properties()
         .into_iter()
-        .filter(|(key, _)| query_parse_property(key) || legacy_table_property(key))
+        .filter(|(key, _)| query_parse_property(key) || display_only_property(key))
         .collect();
     Ok(QueryExportRequest {
         argument,
@@ -519,14 +519,19 @@ fn close_query_result(
 /// block text for the renderer; only query-table affects the parsed reading.
 /// Publication owns baking this exact key, rather than making the reader
 /// guess which differently configured query's answer it can reuse.
+/// Properties that are part of a query's parse key: what the renderer's
+/// `hostProperties` sends to the engine (`src/components/Macro.tsx`).
 fn query_parse_property(key: &str) -> bool {
-    key.starts_with("tine.") || key == "query-table"
+    (key.starts_with("tine.") || key == "query-table") && !display_only_property(key)
 }
 
-fn legacy_table_property(key: &str) -> bool {
+/// Renderer-only properties: not part of the parse key, but they travel to a
+/// generated query home so the export looks like the source block.
+/// `tine.breadcrumbs` is presentation only (GH #881).
+fn display_only_property(key: &str) -> bool {
     matches!(
         key,
-        "query-properties" | "query-sort-by" | "query-sort-desc"
+        "query-properties" | "query-sort-by" | "query-sort-desc" | "tine.breadcrumbs"
     )
 }
 
@@ -674,7 +679,7 @@ pub(crate) fn snapshot_at(
         };
         let mut raw = format!("{{{{{macro_name} {}}}}}", request.argument.trim());
         for (key, value) in &request.properties {
-            if (query_parse_property(key) || legacy_table_property(key))
+            if (query_parse_property(key) || display_only_property(key))
                 && !key.contains('\n')
                 && !value.contains('\n')
             {
