@@ -220,7 +220,7 @@ fn lazy_lines(
         if let Some(block) = doc.roots.first() {
             let original = format!("[[GJ5 Baseline]] [[孤独基线]] {}", block.raw());
             let mut names: Vec<String> = snapshot
-                .referenced_names_for_completion(Some((&entry.name, &block.uuid, &original)))
+                .referenced_names_for_completion(Some((&entry.name, &block.uuid.text(), &original)))
                 .into_iter()
                 .map(|name| name.into_owned())
                 .collect();
@@ -378,7 +378,7 @@ impl crate::Store {
                 out.push_str(&format!(
                     "preview {:?} {}\n",
                     block.uuid,
-                    serde_json::to_string(&view.preview_block(&block.uuid, 10000).unwrap())
+                    serde_json::to_string(&view.preview_block(&block.uuid.text(), 10000).unwrap())
                         .unwrap()
                 ));
                 previews(view, out, &block.children);
@@ -395,7 +395,7 @@ impl crate::Store {
         fn ids(image: &mut String, blocks: &[DocBlock], prefix: &str) {
             for (i, block) in blocks.iter().enumerate() {
                 let path = format!("{prefix}/{i}");
-                *image = image.replace(&block.uuid, &format!("<runtime {path}>"));
+                *image = image.replace(&*block.uuid.text(), &format!("<runtime {path}>"));
                 ids(image, &block.children, &path);
             }
         }

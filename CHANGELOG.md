@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
+- Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).
 - Selecting blocks on deeply nested pages is faster (Ifogg).
 - CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
 - The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
@@ -359,6 +360,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).
 - `tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).
 - Large graphs retain less memory by storing immutable block projection lists compactly and releasing parser region buffer slack.
+- Large graphs retain about 22% less Rust heap (measured on generated graphs of 1,000 to 30,000 files) through smaller block and projection records, block IDs stored as 16 bytes when their spelling allows it, and a more compact block-owner index (D-20261101-MEM).
 - Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
 - Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.

@@ -529,7 +529,7 @@ impl Plan {
         out: &mut Vec<Hit<'a>>,
     ) {
         for (ordinal, block) in facts.pre_blocks().iter().enumerate() {
-            if !self.page_property_rows && !block.uuid.starts_with("page-preamble:") {
+            if !self.page_property_rows && !block.uuid.text().starts_with("page-preamble:") {
                 continue;
             }
             if eval::eval_block(&self.filter, block, &PathRefCounts::new(), ctx) {

@@ -17,7 +17,8 @@ pub(super) fn pre_blocks_with_config(
                 PreBlockKind::Properties => "page-property",
                 PreBlockKind::Preamble => "page-preamble",
             };
-            block.uuid = format!("{prefix}:{:?}:{}", entry.kind, refs::page_key(&entry.name));
+            block.uuid =
+                format!("{prefix}:{:?}:{}", entry.kind, refs::page_key(&entry.name)).into();
             block
         })
         .collect()
