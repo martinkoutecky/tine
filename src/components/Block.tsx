@@ -7,6 +7,7 @@ import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
+import { CodeLanguage } from "../render/CodeLanguage";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { codeGutterStyle, LineGutter } from "../render/LineGutter";
@@ -103,7 +104,7 @@ import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
+import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeSourceCaret } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
@@ -715,18 +716,11 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
   const codeLines = createMemo(() => codeEditing() ? (codeShown()?.body ?? editorValue()).split("\n") : []);
   const codeWrapCommit = codeView.join;
-  // One door to the fence language picker: `/Code block` and the hand-typed ```
-  // scaffold both come here (GH #507). While open `codeShown` keeps the raw
-  // view so the opener line stays visible; choosing a language, or Escape,
-  // then drops into the body-only view.
   let scaffoldLanguagePicker = false;
   const openFenceLanguagePicker = (raw: string, fenceEnd: number) =>
     completion.openLanguagePicker(raw, fenceEnd);
   let acListRef: HTMLDivElement | undefined;
-  // The autocomplete popup is rendered through a Portal (fixed-positioned), so a
-  // clipping ancestor — the right sidebar's `overflow:auto`, a modal — can't cut
-  // it off. We anchor it to the textarea's viewport rect and recompute while it's
-  // open (the editor grows as you type) and on scroll/resize.
+  // Anchor the autocomplete Portal to the caret, outside clipping ancestors.
   const [acRect, setAcRect] = createSignal<{ left: number; top: number; bottom: number } | null>(null);
   // The popup hangs against the CARET'S line (OG's caret-aware placement), not the
   // bottom of a tall editor: a page-properties block with many rows would
@@ -944,8 +938,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       + (renderedClickOffset(event.currentTarget as HTMLElement, raw, pageFmt(), event) ?? raw.length);
     event.preventDefault();
     event.stopPropagation();
-    // The same parser-owned entry boundary handles another code card, or
-    // returns to raw source for prose. No content is rewritten on a click.
+    // Parser-owned entry selects another code body or the surrounding source.
     codeView.enter(offset);
     ref.value = textareaValue();
     const caret = Math.max(0, Math.min(ref.value.length, offset - (codeShown()?.open.length ?? 0)));
@@ -2211,12 +2204,17 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     if (prepared instanceof Promise) void prepared.then(insert);
     else insert(prepared);
   }
+  const revealCodeLanguage = (caret: number) => {
+    if (!blockWritable(props.id)) return;
+    codeView.revealRaw(ref.value, commit);
+    ref.value = editorValue(); ref.focus(); ref.setSelectionRange(caret, caret); autosize();
+  };
   return (
     <div class="editor-wrap" dir={blockDirAttr(docNode(props.id)?.raw ?? "", pageFmt())} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
-      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></BlockRenderBoundary></div>}</Show>
+      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} codeEditAction={() => !blockWritable(props.id) ? undefined : byte => { const caret = codeSourceCaret(before(), pageFmt(), byte); if (caret !== null) revealCodeLanguage(caret); }} /></BlockRenderBoundary></div>}</Show>
       <div class="code-editor-region" style={codeGutterStyle(codeLines().length)} dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
-        <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
+        <CodeLanguage lang={(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang ?? ""} onEdit={!blockWritable(props.id) ? undefined : () => revealCodeLanguage(codeLanguageCaret(editorValue(), pageFmt(), codeShown()?.open.length))} />
         <Show when={codeShown() ?? codeBodyProjection(editorValue(), pageFmt())}>
           {code => <CopyButton text={code().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
         </Show>
@@ -2253,7 +2251,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         rows={1}
       />
       </div>
-      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><BlockRenderBoundary raw={after()}><AstBody raw={after()} format={pageFmt()} /></BlockRenderBoundary></div>}</Show>
+      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><BlockRenderBoundary raw={after()}><AstBody raw={after()} format={pageFmt()} codeEditAction={() => !blockWritable(props.id) ? undefined : byte => { const caret = codeSourceCaret(after(), pageFmt(), byte); if (caret !== null) revealCodeLanguage(editorValue().length - after().length + caret); }} /></BlockRenderBoundary></div>}</Show>
       <Show when={isCalc()}>
         <div class="calc-results">
           <For each={calcRows()}>

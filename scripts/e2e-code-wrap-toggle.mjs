@@ -8,6 +8,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -96,6 +97,24 @@ try {
     await browser.$(".main-content pre.code-block").click();
     await browser.$(mode === "cm6" ? '.main-content [data-block-editor="cm6"]' : ".main-content textarea.block-editor").waitForDisplayed();
     await browser.keys(["Escape"]); await browser.keys(["Escape"]);
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector('.main-content textarea.block-editor, .main-content [data-block-editor="cm6"]')));
+    stage = `${mode}: language label opens source`;
+    await browser.$('.main-content button.code-language').click();
+    await browser.waitUntil(() => browser.execute(() => {
+      const editor = document.querySelector('.main-content textarea.block-editor, .main-content .cm-content');
+      return (editor?.value ?? editor?.textContent ?? '').startsWith('```js');
+    }));
+    await browser.keys(["Delete"]); await browser.keys(["Delete"]);
+    await browser.keys(["Escape"]); await browser.keys(["Escape"]);
+    await browser.waitUntil(() => browser.execute(() => !document.querySelector('.main-content textarea.block-editor, .main-content [data-block-editor="cm6"]')));
+    const withoutLanguage = source.replace('```js', '```');
+    await waitForFileText(file, text => text === withoutLanguage);
+    const plainLabel = await browser.$('.main-content button.code-language');
+    if (await plainLabel.getText() !== "plain") throw Error("Unlabelled code lost its source control");
+    await plainLabel.click();
+    await browser.$(mode === "cm6" ? '.main-content [data-block-editor="cm6"]' : ".main-content textarea.block-editor").waitForDisplayed();
+    await browser.keys("js"); await browser.keys(["Escape"]); await browser.keys(["Escape"]);
+    await waitForFileText(file, text => text === source);
     await browser.waitUntil(() => browser.execute(() => !document.querySelector('.main-content textarea.block-editor, .main-content [data-block-editor="cm6"]')));
     // Opening three copies can still be admitting lazy bodies and restoring
     // scroll. Establish settled marker offsets before measuring.

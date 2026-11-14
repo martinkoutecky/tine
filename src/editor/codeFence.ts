@@ -1,4 +1,5 @@
 import { codeFences, type LiteralContainer } from "./fences";
+import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
 
 // GH #357: is the WHOLE visible block text one fenced code block?
 // The block editor uses the answer only to stabilize its own visual box
@@ -9,6 +10,22 @@ export interface CodeFenceShape {
   /** Info-string language id ("" when none). "calc" is excluded — those
    *  blocks have their own specialized editing mode. */
   lang: string;
+}
+
+/** Language caret in visible-source UTF-16 coordinates for the shown code body,
+ * or the first fence when the editor already shows source. O(block text), cached
+ * parser regions only; no syntax recognition or writes. */
+export function codeLanguageCaret(text: string, format: "md" | "org", bodyStart?: number): number {
+  const fences = codeFences(text, format);
+  return (bodyStart === undefined ? fences[0] : fences.find(f => f.openEnd === bodyStart))?.delimEnd ?? 0;
+}
+
+/** Map a rendered fence's parser source byte to its language caret in this
+ * fragment's visible source, or null for an unmappable span. O(fragment text),
+ * cached parser regions; no writes. */
+export function codeSourceCaret(text: string, format: "md" | "org", sourceByte: number): number | null {
+  const start = utf8ByteToUtf16Offset(text, rebulletedSourceByteToRawByte(text, sourceByte));
+  return codeFences(text, format).find(f => f.start === start)?.delimEnd ?? null;
 }
 
 /** The code container that IS the whole block's wrapper: the parser's first fence, source or

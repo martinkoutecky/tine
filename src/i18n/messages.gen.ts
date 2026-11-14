@@ -2398,6 +2398,7 @@ export interface MessageArgs {
   "render-asset-moved-to-trash": {};
   "render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more": {};
   "render-click-to-open-the-highlight-in-its-pdf-shift-click-sidebar-right-click-for-more": {};
+  "render-code-plain": {};
   "render-copied-to-clipboard": {};
   "render-copy-code": {};
   "render-copy-image": {};
@@ -2410,6 +2411,7 @@ export interface MessageArgs {
   "render-couldn-t-open-the-pdf-for-this-highlight": {};
   "render-couldn-t-save-this-block-so-the-image-file-was-not-moved-to-the-trash": {};
   "render-drag-to-resize": {};
+  "render-edit-code-language": {};
   "render-embed": {};
   "render-expand": {};
   "render-icon": { "name": string | number };
