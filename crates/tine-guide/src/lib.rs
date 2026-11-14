@@ -224,6 +224,16 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn sidebar_commands_are_documented() {
+        let journals = include_str!("templates/journals-tasks-scheduling.md");
+        let context = include_str!("templates/keep-context-visible.md");
+        assert!(journals.contains("**Open today's journal in right sidebar**"));
+        assert!(context.contains("**Open current page in right sidebar**"));
+        assert!(context.contains("**Open today's journal in right sidebar**"));
+        assert!(context.contains("neither has a key until you assign one"));
+    }
+
+    #[test]
     fn reference_change_notices_offer_undo() {
         let reference = include_str!("templates/pages-links-references-search.md");
         assert!(

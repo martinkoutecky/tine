@@ -256,6 +256,13 @@
       "nonRequirements": ["No pixel assertions, no enumeration of scripts or block kinds (scripts/shot-rtl-notes.mjs and component tests hold those), no CM6 run, no platform other than Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-popup-relaunch-809.mjs": {
+      "setup": "Synthetic one-page graph, scratch HOME/XDG/APPDATA and per-launch WebView2 profiles, account-home shim on Linux; two launches on the same app data; no network.",
+      "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K > page result > right-click > Open in new window renders the page in a separate window, then Quit exits cleanly and the saved window state names main but no workspace popup (ws-*). With a saved, on-screen, non-default geometry added for the first popup labels (the state an earlier Tine could leave), a relaunch on the same app data reopens launch 1's popup from the session and then opens another the same way: each renders the page, every native build returns, and main answers with no unrecovered native main-thread stall. GH809_ROOT_CAUSE=1 lets a pre-fix build continue past the saved-state check.","blocking":false,"authority":"GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK"}],
+      "acceptableVariations": ["Window geometry, native decoration, which monitor the OS chooses, popup label numbers and timing may vary. The contextmenu event is dispatched to the visible result row."],
+      "nonRequirements": ["No private graph, exact pixels, popup position after relaunch, fixed timing or release burn-in. A Linux pass proves only the saved-state half: GTK delivers the restore's move later, so Linux never deadlocked; the deadlock half needs hosted Windows."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-workspace-flight-hang.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"After a test-only native UI-thread block during Ctrl+K result > Open in new window, a background flush retains open stages and native liveness stalls. Force-kill and relaunch on the same scratch profile exposes them in the diagnostics report's previous unclean session.","blocking":false,"authority":"GH #809; ADR 0058 workspace-window stages"}],
       "acceptableVariations": ["Window geometry, event interleaving and background flush scheduling may vary. The journey waits for persisted milestones rather than exact latency."],

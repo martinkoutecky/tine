@@ -22,10 +22,11 @@ vi.mock("./backend", async (importOriginal) => {
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
-import { closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
+import { applySidebarSession, openPageInSidebar, rightSidebar, rightSidebarOpen, closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { appNow, journalTitle } from "./journal";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
 import { clearSelection, hasSelection, moveSelection, resetStore, selectBlock, selectedIds, setRaw, undo } from "./document";
@@ -1477,5 +1478,88 @@ describe("webview reload chords (GH #797)", () => {
     fake.dispatchCaptureKeydown(tracked.event);
     expect(reload).toHaveBeenCalledTimes(2);
     again();
+  });
+});
+
+// GH #928: two remappable commands that park a page in the right sidebar, unbound by default.
+describe("open in right sidebar commands (GH #928)", () => {
+  const ids = ["sidebar/open-current-page", "sidebar/open-today"];
+  const reset = () => applySidebarSession({ right: false, items: [] });
+  afterEach(reset);
+
+  it("are listed with English labels, global scope and no default binding", () => {
+    const rows = commandDefaults();
+    expect(rows.find((c) => c.id === "sidebar/open-current-page")).toMatchObject({ english: "Open current page in right sidebar", binding: "", scope: "global" });
+    expect(rows.find((c) => c.id === "sidebar/open-today")).toMatchObject({ english: "Open today's journal in right sidebar", binding: "", scope: "global" });
+  });
+
+  it("open today's journal in the sidebar even though that day has no file or loaded page yet", () => {
+    reset();
+    paletteCommands().find((c) => c.id === "sidebar/open-today")!.run();
+    expect(rightSidebarOpen()).toBe(true);
+    expect(rightSidebar()).toEqual([{ kind: "page", name: journalTitle(appNow()), pageKind: "journal", path: undefined }]);
+    // Again: the same slot comes to the top, it is not duplicated.
+    paletteCommands().find((c) => c.id === "sidebar/open-today")!.run();
+    expect(rightSidebar()).toHaveLength(1);
+  });
+
+  it("open the focused pane's page exactly as the page menu's Open in sidebar does, file owner included", () => {
+    reset();
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "page", name: "Notes", pageKind: "page", path: "pages/Notes.md" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    paletteCommands().find((c) => c.id === "sidebar/open-current-page")!.run();
+    const viaCommand = rightSidebar();
+    reset();
+    openPageInSidebar({ name: "Notes", pageKind: "page", path: "pages/Notes.md" }); // the menu's call
+    expect(viaCommand).toEqual(rightSidebar());
+    expect(viaCommand).toMatchObject([{ kind: "page", name: "Notes", pageKind: "page", path: "pages/Notes.md" }]);
+  });
+
+  it("open a journal page as a journal", () => {
+    reset();
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Nov 3rd, 2026", pageKind: "journal" }], pos: 0, pinned: false }], activeIndex: 0 });
+    paletteCommands().find((c) => c.id === "sidebar/open-current-page")!.run();
+    expect(rightSidebar()).toMatchObject([{ kind: "page", name: "Nov 3rd, 2026", pageKind: "journal" }]);
+  });
+
+  it("offer Open current page only where a page is shown (not in the journals feed), and do nothing otherwise", () => {
+    reset();
+    expect(paletteCommands().some((c) => c.id === "sidebar/open-current-page")).toBe(false);
+    expect(paletteCommands().some((c) => c.id === "sidebar/open-today")).toBe(true);
+    expect(runGlobalCommand("sidebar/open-current-page")).toBe(true);
+    expect(rightSidebar()).toEqual([]);
+    expect(rightSidebarOpen()).toBe(false);
+    resetPaneLayoutToSingle(pageSnapshot("Notes"));
+    expect(paletteCommands().some((c) => c.id === "sidebar/open-current-page")).toBe(true);
+  });
+
+  it("can be bound to a key from config.edn and then fire on it, while editing too", () => {
+    reset();
+    resetPaneLayoutToSingle(pageSnapshot("Notes"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "sidebar/open-current-page": "alt+shift+d", "sidebar/open-today": "alt+shift+j" });
+    const press = (key: string, code: string) => {
+      const tracked = trackedKeyEvent({ key, code, altKey: true, shiftKey: true });
+      fake.dispatchCaptureKeydown(tracked.event);
+      return tracked.prevented();
+    };
+    expect(press("D", "KeyD")).toBe(true);
+    expect(rightSidebar()).toMatchObject([{ name: "Notes", pageKind: "page" }]);
+    expect(press("J", "KeyJ")).toBe(true);
+    expect(rightSidebar()).toMatchObject([{ name: journalTitle(appNow()), pageKind: "journal" }, { name: "Notes" }]);
+    dispose();
+  });
+
+  it("do nothing on those keys when unbound (no default)", () => {
+    reset();
+    resetPaneLayoutToSingle(pageSnapshot("Notes"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({});
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "J", code: "KeyJ", altKey: true, shiftKey: true }).event);
+    expect(rightSidebar()).toEqual([]);
+    dispose();
+    for (const id of ids) expect(commandDefaults().find((c) => c.id === id)!.binding).toBe("");
   });
 });
