@@ -68,10 +68,14 @@ async function snapshot(id) {
     const wr = wrapper.getBoundingClientRect(), br = bullet?.getBoundingClientRect();
     const background = getComputedStyle(wrapper).backgroundColor;
     const tinted = row.classList.contains("author-tinted") && background !== "rgba(0, 0, 0, 0)" && background !== "transparent";
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
-    let text; while ((text = walker.nextNode())) if (text.textContent.trim() && !text.parentElement.closest(".author-chip, .ref-count, .margin-marker")) break;
-    const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 1);
-    return { textX: range.getBoundingClientRect().left, wrapperX: wr.left,
+    // While the block is being edited the editor replaces .block-content: there is no rendered text to measure.
+    let textX = null;
+    if (content) {
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      let text; while ((text = walker.nextNode())) if (text.textContent.trim() && !text.parentElement.closest(".author-chip, .ref-count, .margin-marker")) break;
+      if (text) { const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 1); textX = range.getBoundingClientRect().left; }
+    }
+    return { textX, wrapperX: wr.left,
       bulletRight: br?.right, tint: tinted ? { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom } : null,
       gutterLines: row.querySelectorAll(".author-mark").length, title: wrapper.getAttribute("title"),
       chip: wrapper.querySelector(".author-chip")?.textContent ?? null };
