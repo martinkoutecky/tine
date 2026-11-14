@@ -284,14 +284,14 @@ compatibility requirement: a viewer built for another corpus passes only if
 it decrypts and renders this writer's entire corpus. The successful check
 attests this writer's fixture fingerprint, never the viewer's build fingerprint.
 Desktop and Android release builds consume the release preflight's output.
-The independently dispatched iOS TestFlight and Microsoft Store (MSIX x64
+The Flatpak, iOS TestFlight and Microsoft Store (MSIX x64
 and ARM64) workflows run the same check against their checked-out writer and
 pass its output to the native build. A failed check leaves the value empty;
 these workflows may still package with sharing disabled. The log line
 `Quick share viewer-first gate passed`, rather than a green workflow alone,
-proves the check succeeded. Flatpak's offline manifest has no attestation
-input yet, so Flatpak builds keep sharing disabled pending an offline
-attestation mechanism decision.
+proves the check succeeded. Flatpak identity derivation embeds the check's
+output in the manifest's build environment so the sandboxed native build
+receives it and a changed attestation invalidates the build cache.
 A debug build and the old launch-time `TINE_QUICK_SHARE=1` switch cannot
 bypass this gate. Off: `quick_share_list` answers
 `enabled: false` (the share dialog's Link stays "coming soon", Settings has no

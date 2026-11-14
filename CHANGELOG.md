@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
+- Bullet threading keeps parent stubs and child connectors aligned at fractional display scaling, with clean branch junctions in All nested outlines (GH #129).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
 - Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).
@@ -24,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - In-block numbered lists show their stored numbers after editing (GH #947).
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
 - Find in page says how many embeds and queries are not searched yet, and updates matches as they load without retyping (#935).
+- Skipping a new code block's language picker keeps the caret after typed or composed text, so typing `123` no longer produces `231` (#879).
 - On Windows, **Open in new window** no longer freezes Tine once a page window has been opened in an earlier session. The window-size memory no longer restores page windows from inside window creation, where it deadlocked; Tine's own session restore still places the windows it reopens (GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK).
 - Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).
 - iOS TestFlight and Microsoft Store builds now enable quick share when their deployed-viewer check passes (internal: REG-QS-ATTEST-STORES-09).
@@ -45,6 +48,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Open current page in right sidebar** and **Open today's journal in right sidebar** are command-palette commands with no default key; bind them in Settings → Keyboard shortcuts. The first does what the page menu's **Open in sidebar** does (it is offered while a page is shown); the second is Logseq's "open today in the sidebar" and works from any page, even before today's journal has a file (GH #928; UI-GH928-SIDEBAR-COMMANDS).
 - **Settings → Appearance → Advanced → Show the help button** hides the "?" button in the corner on this device. Help stays reachable: **Toggle help** in the command palette, **Shift+?**, and a new **Help** list in Settings → Help & diagnostics (#926).
 - Settings is never more than two taps away on a phone: the left drawer ends with a fixed **Settings** row; a Settings button moved off the toolbar is in the "…" menu (#926).
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
