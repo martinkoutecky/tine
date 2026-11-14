@@ -28,6 +28,11 @@ pub fn pdf_asset_file(path: &str) -> String {
     }
 }
 
+/// Generate a PDF pointer that resolves back to the literal asset name. O(path bytes).
+pub(crate) fn pdf_asset_pointer(filename: &str) -> String {
+    format!("../assets/{}", filename.replace('%', "%25"))
+}
+
 /// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
 /// invalid or truncated escape is left literal rather than dropped.
 pub fn percent_decode(s: &str) -> String {

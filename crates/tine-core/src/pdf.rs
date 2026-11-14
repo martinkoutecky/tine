@@ -502,7 +502,7 @@ pub fn merge_hls_page_for_format(
     removed: &HashSet<String>,
     format: Format,
 ) -> Document {
-    let asset_path = format!("../assets/{pdf_filename}");
+    let asset_path = crate::asset_path::pdf_asset_pointer(pdf_filename);
     let pointers = match format {
         Format::Md => vec![
             format!("file:: [{label}]({asset_path})"),
@@ -619,6 +619,22 @@ fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> St
     }
 }
 
+fn markdown_annotation(body: &str, metadata: &str) -> String {
+    // Logseq's property writer puts properties before a quote-leading body.
+    let start = tine_outline::lsdoc_block_parse::trim_block_start(body);
+    let parsed = tine_outline::lsdoc_block_parse::parse_text_bounded(start, "md");
+    let quote = |block: Option<&lsdoc::ast::Block>| matches!(block, Some(lsdoc::ast::Block::Quote { .. }));
+    if parsed.as_ref().is_some_and(|p| quote(p.blocks.first())) {
+        format!("{metadata}\n{body}")
+    } else {
+        // A trailing quote must end before the metadata, including lazy continuations.
+        let needs_blank = parsed.as_ref().is_some_and(|p| quote(p.blocks.last()))
+            && !body.ends_with("\n\n") && !body.ends_with("\r\n\r\n");
+        let separator = if needs_blank { "\n" } else { "" };
+        format!("{body}{separator}{metadata}")
+    }
+}
+
 /// Refresh an existing annotation block's `hl-color::` / `hl-page::` to match the
 /// (possibly recolored / re-paged) highlight, preserving everything else — the
 /// user's text body, any extra properties, and the note children.
@@ -677,7 +693,7 @@ fn refresh_annotation(
         )
         .expect("parsed annotation");
     let raw = if let Some(body) = body {
-        format!("{body}{raw}")
+        markdown_annotation(&body, &raw)
     } else {
         raw
     };
@@ -716,7 +732,12 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
         }
     }
     DocBlock {
-        raw: lines.join("\n").into_boxed_str(),
+        raw: if format == Format::Md {
+            lines[0].push('\n');
+            markdown_annotation(&lines[0], &lines[1..].join("\n"))
+        } else {
+            lines.join("\n")
+        }.into_boxed_str(),
         children: Vec::new(),
         uuid: Default::default(),
         is_org: format == Format::Org,
@@ -756,6 +777,91 @@ mod tests {
             text: Some("some highlighted text".into()),
             image: None,
         }
+    }
+
+    #[test]
+    fn r3_quote_annotations_keep_identity_after_creation_and_refresh() {
+        let mut plain = sample();
+        plain.text = Some("plain\n".into());
+        let md = crate::doc::serialize(&hls_page_document("x.pdf", "x", &[plain]));
+        assert!(md.contains("- plain\n\n  hl-page:: 42"), "{md}");
+        let mut failures = Vec::new();
+        for quote in ["> single", "> first\n> second", "> > nested", "> first\nlazy continuation"] {
+            for prefix in ["", "intro\n\n"] {
+                for newline in ["\n", "\r\n"] {
+                    for refresh in [false, true] {
+                        let body = format!("{prefix}{quote}").replace('\n', newline);
+                        let mut h = sample();
+                        h.text = Some(body.clone());
+                        let existing = refresh.then(|| crate::doc::parse(&format!(
+                            "- hl-page:: 1{newline}  hl-color:: red{newline}  ls-type:: annotation{newline}  id:: {}{newline}  {newline}  {}{newline}",
+                            h.id, body.replace('\n', "\n  ")
+                        )));
+                        let mut doc = merge_hls_page(existing.as_ref(), "x.pdf", "x", &[h.clone()]);
+                        if prefix.is_empty() {
+                            let block = &doc.roots[0];
+                            let quote_at = block.raw().find('>').unwrap();
+                            assert!(block.projection().regions.property_regions.iter().all(|range| range.1 <= quote_at), "body={body:?}, refresh={refresh}, raw={:?}, regions={:?}", block.raw(), block.projection().regions.property_regions);
+                        }
+                        for save in 0..2 {
+                            let serialized = crate::doc::serialize(&doc).replace("\r\n", "\n").replace('\n', newline);
+                            let parsed = crate::doc::parse(&serialized);
+                            let block = &parsed.roots[0];
+                            if parsed.roots.len() != 1
+                                || block.property("ls-type").as_deref() != Some("annotation")
+                                || block.property("id").as_deref() != Some(h.id.as_str())
+                                || block.property("hl-page").as_deref() != Some("42")
+                                || block.property("hl-color").as_deref() != Some("yellow")
+                            {
+                                failures.push(format!("body={body:?}, refresh={refresh}, save={save}, blocks={}, type={:?}", parsed.roots.len(), block.property("ls-type")));
+                            }
+                            assert!(block.raw().replace("\r\n", "\n").contains(&body.replace("\r\n", "\n")));
+                            doc = merge_hls_page(Some(&parsed), "x.pdf", "x", &[h.clone()]);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn r3_generated_pdf_pointers_round_trip_and_keep_label() {
+        let mut failures = Vec::new();
+        for file in ["a%20b.pdf", "a%25b.pdf", "a%2Fb.pdf", "a%2Eb.pdf", "a%41b.pdf", "a%FFb.pdf", "nested/a%20b.pdf", "a%ZZ%.pdf", "plain.pdf"] {
+            for format in [Format::Md, Format::Org] {
+                let doc = merge_hls_page_for_format(None, file, "Original label", &[], &HashSet::new(), format);
+                let serialized = match format {
+                    Format::Md => crate::doc::serialize(&doc),
+                    Format::Org => crate::org::serialize_org(&doc),
+                };
+                let parsed = match format {
+                    Format::Md => crate::doc::parse(&serialized),
+                    Format::Org => crate::org::parse_org(&serialized),
+                };
+                let regions = crate::block_regions::parse_document(parsed.pre_block.as_deref().unwrap(), format == Format::Org);
+                assert_eq!(regions.page_properties().count(), 2);
+                for property in regions.page_properties() {
+                    if property.key.eq_ignore_ascii_case("file-path") {
+                        if crate::asset_path::pdf_asset_file(&property.value) != file {
+                            failures.push(format!("{format:?} file-path: {file}"));
+                        }
+                    } else if property.key.eq_ignore_ascii_case("file") {
+                        use lsdoc::ast::{Inline, Url};
+                        let nodes = tine_outline::lsdoc_block_parse::parse_inline_bounded(&property.value, if format == Format::Org { "org" } else { "md" }).unwrap();
+                        let [Inline::Link { url: Url::Search { v } | Url::File { v }, .. }] = nodes.as_slice() else { panic!("{serialized}") };
+                        if crate::asset_path::pdf_asset_file(v) != file {
+                            failures.push(format!("{format:?} file: {file}"));
+                        }
+                    }
+                }
+                let again = merge_hls_page_for_format(Some(&parsed), file, "Replacement label", &[], &HashSet::new(), format);
+                if again.pre_block != parsed.pre_block {
+                    failures.push(format!("{format:?} second-save label changed: {file}"));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]
