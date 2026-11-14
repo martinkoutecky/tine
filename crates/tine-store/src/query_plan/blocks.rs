@@ -125,8 +125,8 @@ pub(super) fn execute_blocks(
                     // of their entire descendant trees. The source page owns the
                     // hierarchy and live consumers hydrate it once per page.
                     let mut dto = tine_core::projection::block_to_shallow_dto(winner.block);
-                    dto.page_property = winner.block.uuid.starts_with("page-property:");
-                    dto.page_preamble = winner.block.uuid.starts_with("page-preamble:");
+                    dto.page_property = winner.block.uuid.text().starts_with("page-property:");
+                    dto.page_preamble = winner.block.uuid.text().starts_with("page-preamble:");
                     dto.breadcrumb = winner
                         .ancestors
                         .iter()

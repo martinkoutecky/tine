@@ -319,12 +319,12 @@ pub struct BlockRegions {
     pub properties: Vec<Property>,
     pub planning: Vec<Planning>,
     pub drawers: Vec<Drawer>,
-    pub id: Option<Property>,
+    pub id: Option<Box<Property>>,
     pub quarantined: bool,
     /// Block-level literal containers in source order (see [`LiteralBlock`]).
     pub literal_blocks: Vec<LiteralBlock>,
     /// A fence being typed, when no accepted container closes it.
-    pub open_fence: Option<OpenFence>,
+    pub open_fence: Option<Box<OpenFence>>,
     /// Where lsdoc's headline (the block's title with its line terminator)
     /// ends, when that is not the end of the first line after the block's
     /// leading trim: an empty title before the rows lsdoc reads at the title
@@ -484,7 +484,7 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     result.literals = merged;
     result.literal_blocks.sort_by_key(|b| b.range.0);
     if !document {
-        result.open_fence = open_fence(raw, &result.literals);
+        result.open_fence = open_fence(raw, &result.literals).map(Box::new);
     }
     // Nested content under a literal Custom belongs to that container, even if
     // lsdoc emitted child Properties or timestamps there.
@@ -499,7 +499,8 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
         .properties
         .iter()
         .find(|p| p.primary && p.key.eq_ignore_ascii_case("id"))
-        .cloned();
+        .cloned()
+        .map(Box::new);
     result
 }
 
