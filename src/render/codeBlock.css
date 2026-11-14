@@ -1,3 +1,7 @@
+button.code-language { border: 0; background: transparent; padding: 6px; margin: -6px; cursor: pointer; }
+button.code-language:hover { color: var(--text-primary); }
+button.code-language:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 1px; }
+
 /* GH #787: a classic, always-present scrollbar strip on a long-line code card. An
    overlay bar (WebKit's default) takes no layout, so its few-pixel thumb hides in the
    card's bottom padding, a press misses it, and the press lands on the card, which

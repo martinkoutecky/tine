@@ -3508,6 +3508,8 @@ html[data-system-insets="native-viewport"] {
 @media print { .sticky-ancestor { display: none; } [data-sticky-parent] > .block-main { margin-top: 0; } }
 
 .block-main {
+  --block-first-line-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+  --thread-bullet-y: calc(1px + var(--block-first-line-height) / 2);
   display: flex;
   align-items: flex-start;
   min-height: 26px;
@@ -3542,7 +3544,7 @@ html[data-system-insets="native-viewport"] {
 .block-controls {
   display: flex;
   align-items: center;
-  height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+  height: var(--block-first-line-height);
   flex: 0 0 auto;
 }
 
@@ -3552,9 +3554,9 @@ html[data-system-insets="native-viewport"] {
    text is 1.7em–0.9em, so its line box scales with the level.) */
 /* height = heading line box = heading font-size (1.7/1.4/1.2em) × the 1.6
    .block-content line-height, so the bullet centers exactly on the line. */
-.block-main.bullet-h1 > .block-controls { height: 2.72em; }
-.block-main.bullet-h2 > .block-controls { height: 2.24em; }
-.block-main.bullet-h3 > .block-controls { height: 1.92em; }
+.block-main.bullet-h1 { --block-first-line-height: 2.72em; }
+.block-main.bullet-h2 { --block-first-line-height: 2.24em; }
+.block-main.bullet-h3 { --block-first-line-height: 1.92em; }
 
 .collapse-toggle {
   width: 18px;
@@ -3772,8 +3774,9 @@ html[data-system-insets="native-viewport"] {
    then pushes the children content back to its indented position. */
 .block-children {
   border-inline-start: 1px solid var(--guide-line, var(--guide-color));
-  margin-inline-start: -3px;
-  padding-inline-start: 3px;
+  --block-guide-offset: -3px;
+  margin-inline-start: var(--block-guide-offset);
+  padding-inline-start: calc(-1 * var(--block-guide-offset));
 }
 
 .block-children-left-border:not(:disabled):hover + .block-children,
@@ -3801,10 +3804,29 @@ html[data-system-insets="native-viewport"] {
 /* Host-owned `thread-lines` rendering; the guest cannot inject CSS or DOM. */
 .plugin-thread-lines {
   --thread-bullet-x: 26px;
+  --thread-stub-x: calc(var(--thread-bullet-x) - var(--thread-width, 1px) / 2);
+  --thread-rail-x: calc(var(--thread-stub-x) - var(--ls-block-indent) - 1px);
   --thread-active-color: var(--thread-color, var(--ls-link-text-color));
   --thread-normal-color: color-mix(in srgb, var(--guide-color) 82%, transparent);
 }
 .plugin-thread-lines-standard { --thread-normal-color: var(--guide-color); }
+/* A painted guide must not set the indent: borders round under browser zoom.
+   Preserve its 1px layout contribution with padding shared by every segment. */
+.plugin-thread-lines > .block-children-container > .block-children {
+  position: relative;
+  border-inline-start-width: 0;
+  padding-inline-start: calc(1px - var(--block-guide-offset));
+}
+.plugin-thread-lines > .block-children-container > .block-children::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0;
+  bottom: 0;
+  border-inline-start: 1px solid;
+  border-inline-start-color: inherit;
+  pointer-events: none;
+}
 .ls-block.plugin-thread-lines:not(.plugin-thread-lines-active) > .block-children-container > .block-children {
   border-inline-start-color: transparent;
 }
@@ -3819,26 +3841,29 @@ html[data-system-insets="native-viewport"] {
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within {
   --thread-elbow-color: var(--thread-active-color);
 }
+.plugin-thread-lines > .block-main,
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main {
   position: relative;
-  --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
 }
-:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
-:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
-:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main::before {
   content: "";
   position: absolute;
-  inset-inline-start: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  inset-inline-start: var(--thread-rail-x);
   top: -1px; /* Overlap separately rasterized border ends at fractional DPR (GH #129). */
   width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
   height: calc(1px + var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
   box-sizing: border-box;
   border-inline-start: var(--thread-width, 1px) solid var(--thread-incoming-color);
   border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
-  border-end-start-radius: 6px;
+  border-end-start-radius: 0;
   pointer-events: none;
   z-index: 1;
+}
+/* A rail that continues to another sibling makes a T junction. Only its end
+   turns a corner; a straight stroke through that curve would draw twice. */
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:last-child) > .ls-block:last-child > .block-main::before,
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within > .block-main::before {
+  border-end-start-radius: 6px;
 }
 
 /* Active elbows follow host-owned focus; ordinary guide borders stay visible. */
@@ -3846,19 +3871,11 @@ html[data-system-insets="native-viewport"] {
   display: none;
 }
 
-/* Emphasize the edited block's ancestry as the Logseq plugin does (GH #614). */
-.plugin-thread-lines > .block-main {
-  position: relative;
-  --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
-}
-.plugin-thread-lines > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
-.plugin-thread-lines > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
-.plugin-thread-lines > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
 /* Start beneath the parent bullet and span preceding siblings to the active elbow. */
 .plugin-thread-lines:not(.collapsed) > .block-main::after {
   content: "";
   position: absolute;
-  inset-inline-start: calc(var(--thread-bullet-x) - var(--thread-width, 1px) / 2);
+  inset-inline-start: var(--thread-stub-x);
   top: var(--thread-bullet-y);
   bottom: 0;
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
@@ -3870,7 +3887,7 @@ html[data-system-insets="native-viewport"] {
 :is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
   content: "";
   position: absolute;
-  inset-inline-start: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  inset-inline-start: var(--thread-rail-x);
   top: 0;
   bottom: 0;
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
@@ -3899,7 +3916,7 @@ html[data-system-insets="native-viewport"] {
 .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
   content: "";
   position: absolute;
-  inset-inline-start: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  inset-inline-start: var(--thread-rail-x);
   top: 0;
   bottom: 0;
   border-inline-start: var(--thread-width, 1px) solid var(--thread-normal-color);
@@ -3980,8 +3997,7 @@ html[data-system-insets="native-viewport"] {
   }
 
   .block-children {
-    margin-inline-start: calc(8px - var(--ls-block-indent));
-    padding-inline-start: calc(var(--ls-block-indent) - 8px);
+    --block-guide-offset: calc(8px - var(--ls-block-indent));
   }
 
   .block-children-left-border {
@@ -4294,7 +4310,7 @@ html[data-mobile-editing-dock] .app-container[data-mobile-drawer-mode="true"] :i
   font-size: 0.86em; line-height: 1.5; white-space: pre;
   overflow-x: auto; overflow-y: hidden; min-height: 0;
 }
-.code-language { position: absolute; top: 9px; inset-inline-end: 48px; color: var(--text-muted); font: 11px/16px var(--tine-mono-font, var(--ls-font-mono)); pointer-events: none; }
+.code-language { position: absolute; top: 9px; inset-inline-end: 48px; color: var(--text-muted); font: 11px/16px var(--tine-mono-font, var(--ls-font-mono)); }
 .code-gutter { position: absolute; top: 30px; inset-inline-start: var(--code-content-inset); inset-inline-end: 12px; pointer-events: none; font: inherit; white-space: pre; }
 .gutter-row { position: relative; }
 .code-gutter .calc-lineno { position: absolute; inset-inline-end: calc(100% + 14px); white-space: pre; overflow-wrap: normal; }

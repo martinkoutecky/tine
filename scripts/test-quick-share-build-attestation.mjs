@@ -7,7 +7,6 @@ const variable = "TINE_QUICK_SHARE_VIEWER_G1_READY";
 const check = "node scripts/check-release-readiness.mjs --quick-share-only";
 
 // Workflow contract checks follow test-release-pipeline.mjs's source assertions.
-// Flatpak is deliberately excluded pending a decision on offline attestation.
 function job(workflow, name) {
   const body = workflow.split(`\n  ${name}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0];
   assert.ok(body, `missing job ${name}`);
@@ -66,3 +65,14 @@ for (const [workflow, name, command] of [
     consumes(body, expression, workflow);
   });
 }
+
+test("Flatpak carries the checked writer's attestation into its sandbox", () => {
+  const source = read("flatpak");
+  const checked = checkedOutput(job(source, "viewer-ready"), "Flatpak viewer check");
+  assert.ok(source.includes(`quick_share_viewer_g1_ready: ${checked.expression}`));
+  const builder = job(source, "flatpak-builder");
+  assert.match(builder, /needs: viewer-ready/);
+  consumes(builder, "${{ needs.viewer-ready.outputs.quick_share_viewer_g1_ready }}", "Flatpak derivation");
+  const derivation = fs.readFileSync(new URL("../scripts/derive-flatpak-identity.mjs", import.meta.url), "utf8");
+  assert.ok(derivation.includes(`process.env.${variable}`));
+});
