@@ -1,8 +1,8 @@
-//! Explicit-reference postings with one shared path allocation per page.
+//! Explicit-reference postings sharing paths within each page's insertion batch.
 use super::*;
 
 /// Page name → the paths of the pages explicitly referencing it. A page's
-/// postings share one path allocation.
+/// newly inserted postings share a path allocation; earlier batches can differ.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(from = "ExplicitIndexWire")]
 pub(super) struct SnapshotExplicitIndex {

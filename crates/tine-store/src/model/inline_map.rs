@@ -8,14 +8,16 @@ use std::sync::Arc;
 
 /// A node splits above this many entries. Bounds the bytes one path copy clones.
 const MAX: usize = 32;
+/// Every non-root node stays at least half full, including after bulk builds.
+const MIN: usize = MAX / 2;
 /// Bulk construction leaves room to insert without an immediate split.
 const FILL: usize = 24;
 
 #[derive(Debug)]
 enum Node<K, V> {
     Leaf(Vec<(K, V)>),
-    /// Children with a lower bound on their keys. The first child also takes
-    /// every key below its bound, so a removal never has to update a bound.
+    /// Children with lower bounds on their keys. The first bound is ignored;
+    /// later bounds partition the keys and are updated when siblings rebalance.
     Inner(Vec<(K, Arc<Node<K, V>>)>),
 }
 impl<K: Clone, V: Clone> Clone for Node<K, V> {
@@ -47,7 +49,22 @@ fn split<T>(rows: &mut Vec<T>) -> Vec<T> {
     rows.shrink_to_fit();
     tail
 }
+/// Merge siblings when they fit, otherwise give each half of their rows.
+fn balance<T>(left: &mut Vec<T>, right: &mut Vec<T>) {
+    left.append(right);
+    if left.len() > MAX {
+        *right = split(left);
+    } else {
+        left.shrink_to_fit();
+    }
+}
 impl<K: Ord + Clone, V: Clone> Node<K, V> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Leaf(rows) => rows.len(),
+            Self::Inner(rows) => rows.len(),
+        }
+    }
     /// Sets `key`; returns whether it is new, and the upper half of a split.
     fn put(node: &mut Arc<Self>, key: K, value: V) -> (bool, Option<(K, Arc<Self>)>) {
         match Arc::make_mut(node) {
@@ -86,21 +103,45 @@ impl<K: Ord + Clone, V: Clone> Node<K, V> {
             }
         }
     }
-    /// Removes a present `key`; returns whether this node is now empty.
-    fn delete(node: &mut Arc<Self>, key: &K) -> bool {
+    /// Removes a present key; repairs at most one sibling per level. With MAX
+    /// fixed, copying/rebalancing and releasing spare capacity cost O(log N).
+    fn delete(node: &mut Arc<Self>, key: &K) {
         match Arc::make_mut(node) {
             Self::Leaf(rows) => {
                 if let Ok(at) = rows.binary_search_by(|(k, _)| k.cmp(key)) {
                     rows.remove(at);
                 }
-                rows.is_empty()
+                rows.shrink_to_fit();
             }
             Self::Inner(rows) => {
                 let at = child_at(rows, key);
-                if Self::delete(&mut rows[at].1, key) {
-                    rows.remove(at);
+                Self::delete(&mut rows[at].1, key);
+                if rows[at].1.len() < MIN && rows.len() > 1 {
+                    let lower = at.saturating_sub(1);
+                    let bound = {
+                        let (left, right) = rows.split_at_mut(lower + 1);
+                        match (
+                            Arc::make_mut(&mut left[lower].1),
+                            Arc::make_mut(&mut right[0].1),
+                        ) {
+                            (Self::Leaf(left), Self::Leaf(right)) => {
+                                balance(left, right);
+                                right.first().map(|(key, _)| key.clone())
+                            }
+                            (Self::Inner(left), Self::Inner(right)) => {
+                                balance(left, right);
+                                right.first().map(|(key, _)| key.clone())
+                            }
+                            _ => unreachable!("siblings have the same height"),
+                        }
+                    };
+                    if let Some(bound) = bound {
+                        rows[lower + 1].0 = bound;
+                    } else {
+                        rows.remove(lower + 1);
+                    }
                 }
-                rows.is_empty()
+                rows.shrink_to_fit();
             }
         }
     }
@@ -135,10 +176,11 @@ impl<K: Ord + Clone, V: Clone> InlineMap<K, V> {
         let len = entries.len();
         fn chunk<T>(rows: impl ExactSizeIterator<Item = T>) -> Vec<Vec<T>> {
             let mut left = rows.len();
-            let mut chunks = Vec::with_capacity(left / FILL + 1);
-            let mut rows = rows.peekable();
-            while rows.peek().is_some() {
-                let take = FILL.min(left);
+            let groups = left.div_ceil(FILL).min((left / MIN).max(1));
+            let mut chunks = Vec::with_capacity(groups);
+            let mut rows = rows;
+            for remaining in (1..=groups).rev() {
+                let take = left.div_ceil(remaining);
                 left -= take;
                 let mut chunk = Vec::with_capacity(take);
                 chunk.extend(rows.by_ref().take(take));
@@ -184,8 +226,18 @@ impl<K: Ord + Clone, V: Clone> InlineMap<K, V> {
         }
         self.len -= 1;
         let root = self.root.as_mut().expect("the key is present");
-        if Node::delete(root, key) {
-            self.root = None;
+        Node::delete(root, key);
+        loop {
+            match self.root.as_deref().expect("not yet empty") {
+                Node::Leaf(rows) if rows.is_empty() => {
+                    self.root = None;
+                    break;
+                }
+                Node::Inner(rows) if rows.len() == 1 => {
+                    self.root = Some(Arc::clone(&rows[0].1));
+                }
+                _ => break,
+            }
         }
     }
     pub(super) fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
@@ -215,6 +267,9 @@ impl<K: Ord + Clone, V: Clone> InlineMap<K, V> {
         })
     }
 }
+
+#[cfg(test)]
+mod deletion_tests;
 
 #[cfg(test)]
 mod tests {

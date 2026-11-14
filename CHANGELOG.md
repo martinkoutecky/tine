@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).
 - Selecting blocks on deeply nested pages is faster (Ifogg).
 - CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
 - The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
