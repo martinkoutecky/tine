@@ -966,7 +966,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const rawCaret = historySelection ? historySelection.codeBodyStart ?? null
       : want !== null && typeof want === "object" && "start" in want ? want.codeBodyStart ?? null
       : typeof want === "number" ? want : null;
-    codeView.enter(rawCaret ?? 0, historySelection?.end ?? rawCaret ?? 0);
+    codeView.enter(rawCaret ?? 0); // a restored range may outrun a shorter body; it is clamped below
     ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
     ref.focus({ preventScroll: true }); // the engine's own focus scroll differs; revealCaretSettled (onMount) owns it (GH #745)
     const v = ref.value;

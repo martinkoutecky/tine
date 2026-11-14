@@ -474,7 +474,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       // Numeric and history targets use visible-source coordinates; structural
       // remounts carry their body start separately from editor coordinates.
       if (!isCalc()) {
-        if (historySelection) codeView.enter(historySelection.codeBodyStart ?? 0, historySelection.end);
+        if (historySelection) codeView.enter(historySelection.codeBodyStart ?? 0); // range clamped below
         else if (typeof want === "number") codeView.enter(want);
         else codeView.enter(want && "start" in want ? want.codeBodyStart ?? 0 : 0);
         syncView();

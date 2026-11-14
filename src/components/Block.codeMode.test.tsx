@@ -36,6 +36,22 @@ describe.each<EditorKind>(["textarea", "cm6"])("code mode in %s", kind => {
       expect(node("code").raw).toBe(raw);
     } finally { dispose(); }
   });
+  // Review HOLD 3dbab7a56: undo restores a selection past the now shorter body; the body stays chosen.
+  it("keeps the code body when undo shortens it below the restored selection", () => {
+    const raw = "```js\nx\n```";
+    loadSingle(page("Undo shorter", [blk("code", raw)]));
+    const { root, dispose } = mount(() => <Block id="code" />);
+    try {
+      root.querySelector("pre.code-block > code")!.dispatchEvent(new MouseEvent("mousedown", { button: 0, bubbles: true, cancelable: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      const editor = editorIn(root);
+      editor.select(1); editor.type("a long appended string");
+      expect(undo()).toBe(true);
+      expect(editorIn(root).value()).toBe("x");
+      expect(editorIn(root).element.classList.contains("code-edit")).toBe(true);
+      expect(node("code").raw).toBe(raw);
+    } finally { dispose(); }
+  });
   it.each((["md", "org"] as const).flatMap(format => [false, true].map(empty => ({ format, empty }))))(
     "opens the code card without a caret range: %j", ({ format, empty }) => {
       const open = format === "md" ? "```js\n" : "#+BEGIN_SRC js\n";
