@@ -1267,6 +1267,7 @@ export interface MessageArgs {
   "in-page-find-find-and-replace": {};
   "in-page-find-find-in-page": {};
   "in-page-find-next-match-enter": {};
+  "in-page-find-pending-hosts": { "count": number };
   "in-page-find-previous-match-shift-enter": {};
   "in-page-find-references-block": {};
   "in-page-find-references-linked": {};

@@ -25,6 +25,21 @@ panel's own search, which covers every group (the panel root carries
 chunks, retaining their geometry with the occurrence. Large root lists use the
 ordinary outline windows and model-based reveal/navigation scope.
 
+In-outline embeds and queries belong to Find's page scope. Find counts their
+loaded rendered content and discloses the number of hosts not searched yet,
+including parser-identified hosts in unvisited outline windows. Each embed or
+query macro counts once; queries are not run to count their groups. An embed
+leaves that number when its source is mounted; a query leaves when it has
+answered and all content it renders is mounted (including an empty answer).
+The match count may grow while the note is visible. Mounts update matches and
+the note together without retyping. When no hosts remain pending, the full
+count stays stable while scrolling. Find does not mount offscreen content to
+compute this number. The inventory is independent of the search text; scope
+changes build it from the outline, while edits and DOM mount deltas patch it.
+Already mounted embed/query sources stay pinned while Find is open, so scrolling
+cannot replace searched live descendants with shallow result copies. Closing
+Find releases that hold. Unvisited hosts and reference panels gain no hold.
+
 Visible admissions precede overscan work. At most two source reads wait
 concurrently. Shell creation and document admission yield between groups at
 frame/task boundaries. Queued obsolete work is discarded; in-flight replies

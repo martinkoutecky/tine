@@ -9,6 +9,7 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { Block, BulletOpenContext, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { detectMacro } from "./Rendered";
+import { inPageFindOpen } from "../inpageFind";
 import { isBlockEmbedMacro } from "./blockParts";
 import { observeNear, trackNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
@@ -129,6 +130,7 @@ interface RefOccurrence {
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(untrack(() => props.eager === true));
+  const [sourceMounted, setSourceMounted] = createSignal(false);
   const [inWindow, setInWindow] = createSignal(untrack(() => props.eager === true));
   const [visible, setVisible] = createSignal(false);
   const [forced, setForced] = createSignal(false);
@@ -210,10 +212,11 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const estimate = () => Math.max(1, props.blocks.reduce((lines, block) => lines + (block.page_property ? block.raw.split("\n").length : 1), 0)) * 1.9;
 
   return (
-    <div ref={el} class="live-ref-group"
+    <div ref={el} class="live-ref-group" data-find-source-mounted={sourceMounted()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${estimate()}em` } : undefined}>
       <ReservedGroupGeometryContext.Provider value={occurrence.geometry}>
       <Show when={near()}><MountedRefGroup {...props} occurrence={occurrence} geometryHost={() => el}
+        onSourceMounted={setSourceMounted}
         readCurrent={() => alive && (!windowed() || !hasViewport() || wanted())} priority={priority}
         sourcePinned={() => windowed() && (pinned() || forced())}
         schedule={windowed() && hasViewport()} /></Show>
@@ -225,7 +228,7 @@ export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
 // The shell retains occurrence choices and geometry. Row maps, resources and
 // rendering belong to each disposable child; unchanged rows stay keyed while
 // that child is mounted.
-function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined;
+function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence; geometryHost: () => HTMLElement | undefined; onSourceMounted: (mounted: boolean) => void;
   readCurrent: () => boolean; priority: () => number; sourcePinned: () => boolean; schedule: boolean }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   // The host block's own outline and surface, read before this group provides its own.
@@ -241,7 +244,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
   // no loads left to do, however many source pages it references.
   const [nearView, setNearView] = createSignal(true);
   const [acquire, setAcquire] = createSignal(0);
-  onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned() ? props.page : null));
+  onCleanup(pinPageNearViewport(() => nearView() || props.sourcePinned()
+    || (inPageFindOpen() && (props.surface === "embed" || props.surface === "query")) ? props.page : null));
   onMount(() => {
     const host = props.geometryHost();
     if (host) onCleanup(trackNear(host, setNearView));
@@ -334,6 +338,8 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
     return source?.id === id ? source : undefined;
   };
   const ready = () => readOr(readyResource, undefined, "reference group source page") && queryReady();
+  createEffect(() => props.onSourceMounted(!!ready() && !!pageByName(props.page)));
+  onCleanup(() => props.onSourceMounted(false));
 
   // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).

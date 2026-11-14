@@ -974,6 +974,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   return (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        data-find-host={props.blockId} data-find-answered={!!displayed()
+          && (!collapsed() || (groups().length === 0 && !pageRows()?.length && !displayed()?.both?.pages.length))}
         style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
