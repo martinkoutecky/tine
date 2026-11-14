@@ -314,15 +314,19 @@ fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {
 /// The encoded annotation page of a PDF with a `%` in its key.
 const ENCODED: &str = "pages/hls__half%25.md";
 
-/// Two honest savers: A saves unchanged yellow and parks, B saves blue and
-/// publishes, then A resumes. A must merge B's sidecar again on its replan.
+/// Two honest savers: A repairs stale page metadata from unchanged yellow and
+/// parks, B saves blue and publishes, then A resumes. A must merge B's sidecar
+/// again on its replan.
 #[test]
 fn a_page_replan_merges_the_other_savers_sidecar_again() {
     let _integration_guard = crate::integration_lock();
     let loaded = vec![highlight(A, "yellow", None)];
     let (_dir, root) = graph(&[
         ("assets/half%.edn", &pdf::write_highlights(&loaded, "")),
-        (ENCODED, &page("half%.pdf", &[(A, "text of a")])),
+        (
+            ENCODED,
+            &page("half%.pdf", &[(A, "text of a")]).replace("hl-color:: yellow", "hl-color:: red"),
+        ),
     ]);
     let store = open(&root);
     let app_data = tempfile::tempdir().unwrap();

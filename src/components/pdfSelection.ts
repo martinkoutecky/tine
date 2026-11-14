@@ -11,7 +11,7 @@ export interface PdfTextSelection {
 }
 
 /** Convert a browser text selection to PDF page-space coordinates. Returns
- * null for empty, off-page, or dimensionless selections. Cost O(selected rects). */
+ * null for empty, off-page, or dimensionless selections. Cost O(text bytes + selected rects). */
 export function pdfTextSelection(
   target: EventTarget | null,
   anchor: { x: number; y: number } | undefined,
@@ -19,7 +19,9 @@ export function pdfTextSelection(
   scale: number,
 ): PdfTextSelection | null {
   const selection = selectionOf(target);
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) return null;
+  if (!selection || selection.isCollapsed) return null;
+  const text = selection.toString();
+  if (!text.trim()) return null;
   const range = selection.getRangeAt(0);
   const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
   if (!clientRects.length) return null;
@@ -46,8 +48,11 @@ export function pdfTextSelection(
   const right = Math.max(...rects.map((r) => r.left + r.width));
   const bottom = Math.max(...rects.map((r) => r.top + r.height));
   const last = clientRects[clientRects.length - 1];
+  // Logseq 0.10.9 pdf.utils/fix-selection-text-breakline, also used by its copy action.
+  const normalizedText = text.replace(/[\r\n]+/g, "|#|").replaceAll("-|#|", "")
+    .replace(/\|#\|([a-zA-Z_])/g, " $1").replaceAll("|#|", "");
   return { page, rects, bounding: {
     left, top, width: right - left, height: bottom - top,
     source_width: dims[page].w, source_height: dims[page].h,
-  }, text: selection.toString(), menu: { x: anchor?.x ?? last.right, y: anchor?.y ?? last.bottom } };
+  }, text: normalizedText, menu: { x: anchor?.x ?? last.right, y: anchor?.y ?? last.bottom } };
 }

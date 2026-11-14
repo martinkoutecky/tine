@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Adding PDF highlights preserves existing asset-link labels and joins wrapped selections like Logseq; annotation properties stay together so block references survive in Logseq (#953).
 - Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
 - Bullet threading keeps parent stubs and child connectors aligned at fractional display scaling, with clean branch junctions in All nested outlines (GH #129).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
