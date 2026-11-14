@@ -15,6 +15,9 @@ icon:: ⌨️
 	- A live export opens on the configured home page when it is exported, then **Welcome to Tine**, then the first exported page. Use `--home "Page name"` to choose explicitly; a home page that is not exported is refused.
 - ## Publish a query
 	- `tine export query GRAPH '((UUID))'` selects the query by its block's `id::` UUID. Quote the parentheses in your shell; a bare UUID also works. The block must hold exactly one query. Unknown IDs, ordinary blocks and blocks with more than one query are refused.
+	- Alternatively, use `tine export query GRAPH --query '(page-property tags gptpro)' --name gptpro`. Inline text is the argument of `{{query …}}`: a Logseq simple or advanced query, decided by the same parser as the app. Inline queries require `--name` and have no host page context.
+	- `tine export query GRAPH --page "Project queries"` selects the first query in document order: parent before nested children, siblings in authored order, first query within a block. It uses the parser, skips literal code and properties, and does not follow embeds. Names, aliases, capitalization and namespaces resolve as in `tine page show`. A page without a query is refused. The default name is the query's title, else `Query PAGE` using the resolved page name.
+	- Supply exactly one source: UUID, `--query`, or `--page`. Missing or conflicting sources are usage errors (exit 2).
 	- It exports the results' whole pages to `published-queries/<folder>/` inside the graph, using the same publisher and privacy rules as the query's **Export…** dialog. The query text is left out. Use `--name "Task review"` to name the output; otherwise it uses the BEGIN_QUERY title, or `Query UUID`.
 	- An existing output is refused unless you pass `--force`. Replacement keeps the previous export in recovery and prints its path. Sheets keep their plain row outlines in command-line exports; see [[Reference/Files, external edits, and backups]].
 - ## Check a graph

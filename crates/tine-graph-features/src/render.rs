@@ -900,45 +900,7 @@ fn body_blocks_with_queries(
     (blocks, queries)
 }
 
-/// Select the one parser-recognized query in a block. Literal code and metadata
-/// do not become executable queries; raw arguments retain commas and maps.
-pub(crate) fn query_for_export(
-    raw: &str,
-    org: bool,
-) -> Result<(String, QueryTextDialect, Option<String>), &'static str> {
-    if !tine_core::query::query_source_within_limit(raw) {
-        return Err("query block exceeds the query source limit");
-    }
-    let (blocks, queries) = body_blocks_with_queries(raw, org);
-    if let Some(begin) = inspect_begin_query(raw, &blocks) {
-        return match begin {
-            BeginQueryInspection::Supported(begin) => {
-                let argument = if begin.keeps_block_children {
-                    format!("{} {{:remove-block-children? false}}", begin.query)
-                } else {
-                    begin.query
-                };
-                Ok((argument, QueryTextDialect::MacroQuery, begin.title))
-            }
-            BeginQueryInspection::Unsupported => {
-                Err("query block contains an unsupported BEGIN_QUERY")
-            }
-        };
-    }
-    match queries.as_slice() {
-        [] => Err("block is not a query"),
-        [query] => Ok((
-            query.argument.clone(),
-            if query.name.eq_ignore_ascii_case("tine-query") {
-                QueryTextDialect::MacroTql
-            } else {
-                QueryTextDialect::MacroQuery
-            },
-            None,
-        )),
-        _ => Err("block contains more than one query; select a block with exactly one query"),
-    }
-}
+pub(crate) use render_query_source::query_for_export;
 
 struct BeginQuery {
     title: Option<String>,

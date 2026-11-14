@@ -4,6 +4,52 @@
 use std::collections::HashMap;
 use tine_core::lsdoc::ast::{Block, Inline, ListItem, Span};
 use tine_core::query::macro_text::{query_macro_extents, MacroExtent};
+use tine_core::query::wire_parse::QueryTextDialect;
+
+/// Select a parser-recognized query, excluding literal code and metadata.
+/// Page selection takes the earliest authored query; UUID selection requires
+/// exactly one. O(block bytes), with raw arguments preserved for publication.
+pub(crate) fn query_for_export(
+    raw: &str,
+    org: bool,
+    first: bool,
+) -> Result<(String, QueryTextDialect, Option<String>), &'static str> {
+    if !tine_core::query::query_source_within_limit(raw) {
+        return Err("query block exceeds the query source limit");
+    }
+    let (blocks, queries) = super::body_blocks_with_queries(raw, org);
+    if let Some(begin) = super::inspect_begin_query(raw, &blocks) {
+        return match begin {
+            super::BeginQueryInspection::Supported(begin) => {
+                let argument = if begin.keeps_block_children {
+                    format!("{} {{:remove-block-children? false}}", begin.query)
+                } else {
+                    begin.query
+                };
+                Ok((argument, QueryTextDialect::MacroQuery, begin.title))
+            }
+            super::BeginQueryInspection::Unsupported => {
+                Err("query block contains an unsupported BEGIN_QUERY")
+            }
+        };
+    }
+    if !first && queries.len() > 1 {
+        return Err("block contains more than one query; select a block with exactly one query");
+    }
+    let query = queries
+        .iter()
+        .min_by_key(|query| query.start)
+        .ok_or("block is not a query")?;
+    Ok((
+        query.argument.clone(),
+        if query.name.eq_ignore_ascii_case("tine-query") {
+            QueryTextDialect::MacroTql
+        } else {
+            QueryTextDialect::MacroQuery
+        },
+        None,
+    ))
+}
 
 pub(super) fn restore(blocks: &mut [Block], raw: &str) -> Vec<MacroExtent> {
     if !tine_core::query::query_source_within_limit(raw) {
