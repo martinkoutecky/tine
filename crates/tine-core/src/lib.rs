@@ -3,6 +3,7 @@
 //! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
+pub mod asset_path;
 pub mod asset_refs;
 pub mod block_id;
 pub use tine_outline::block_regions;
