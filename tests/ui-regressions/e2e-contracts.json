@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-gh944-journal-agenda.mjs": {
+      "contracts": [{"class":"flexible-presentation-heuristic","userOutcome":"Measure per-keystroke Scheduled & Deadline list movement, editor height, scroll position and row replacement while typing outside and inside a scheduled journal block (GH #944).","blocking":false}],
+      "acceptableVariations": ["All geometry and mutation counts are diagnostic; the scenario passes whether jitter reproduces or not."],
+      "nonRequirements": ["No production fix, reporter data, fold/unfold diagnosis or exact pixel assertion. Hosted Windows execution is dispatched separately."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-conflict-invalidinput.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A routed page's scalar property conflict explains the needed choice while preserving both files. Keep sync copy applies that side's blocks and page properties, retires the conflict and keeps the copy recoverable.","blocking":false,"authority":"UI-CONFLICT-INVALIDINPUT; Martin 2026-10-30"}],
       "acceptableVariations": ["Page geometry, latency, copy timestamp and recovery filename may vary."],

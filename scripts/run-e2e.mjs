@@ -139,6 +139,8 @@ const suites = {
     ["host-saves", "scripts/e2e-host-saves.mjs", {}],
   ],
   "windows-smoke": [
+    // GH #944: opt-in measurement, outside the workflow's default fan-out.
+    ["gh944-journal-agenda", "scripts/e2e-gh944-journal-agenda.mjs", {}],
     // GH #745 reopened: opt-in hosted WebView2 proof, outside the default fan-out.
     ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", { GH745_STRICT: "1" }],
     // og-parity-references is a HARD gate on Linux (linux-release + og-parity-pilot
