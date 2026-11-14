@@ -12,6 +12,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { readOr } from "../resourceRead";
 import { openPageInSidebar } from "../ui";
 import { createGraphResource } from "../graphResource";
+import { ToolbarActionIcon } from "./ToolbarActionIcon";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -22,7 +23,7 @@ const DOW_BASE = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 // Topbar calendar button → a month-grid popup to jump to any date's journal.
 // Custom popup (not a native date input) so it closes on outside-click and
 // honours :start-of-week, matching the scheduled/deadline picker.
-export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; triggerClass?: string } = {}): JSX.Element {
+export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; triggerClass?: string; triggerStyle?: JSX.CSSProperties } = {}): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const transientId = `calendar-jump-${createUniqueId()}`;
   let trigger: HTMLButtonElement | undefined;
@@ -105,13 +106,8 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
 
   return (
     <>
-      <button ref={trigger} class={`icon-btn ${props.triggerClass ?? ""}`} title={t("calendar-jump-go-to-date")} onClick={(event) => event.shiftKey ? pickDate(appNow(), event) : toggle()}>
-        <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-          <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
-          <line x1="8.5" y1="3" x2="8.5" y2="7" stroke="currentColor" stroke-width="1.7" />
-          <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
-        </svg>
+      <button ref={trigger} data-toolbar-action={props.triggerStyle ? "calendar" : undefined} style={props.triggerStyle} class={`icon-btn ${props.triggerClass ?? ""}`} title={t("calendar-jump-go-to-date")} onClick={(event) => event.shiftKey ? pickDate(appNow(), event) : toggle()}>
+        <ToolbarActionIcon id="calendar" />
       </button>
       <Show when={open()}>
         <div ref={overlayRoot} class="dp-overlay" onClick={() => setOpen(false)}>

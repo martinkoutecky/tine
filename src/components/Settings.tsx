@@ -84,6 +84,7 @@ import { mediaEditorSetting, type SettingDescriptor } from "./settingsDescriptor
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
+import { ToolbarSettings } from "./ToolbarSettings";
 import { CustomCssSettings } from "./CustomCssSettings";
 import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { backend, isTauri, type BackupInfo } from "../backend";
@@ -200,7 +201,8 @@ export function Settings(): JSX.Element {
     const requested = settingsTabRequest();
     if (!requested) return;
     if (requested === "plugins" && settingsPlatform.loading) return;
-    setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
+    if (requested === "toolbar") openSearchResult(settings["toolbar-title"]);
+    else setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
     setRevealedQuery("");
     clearSettingsTabRequest();
   });
@@ -509,6 +511,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
     <>
       <ThemeSettings search={props.search} />
       <LanguageSetting />
+      <ToolbarSettings />
 
       <div class="settings-row" {...settingAttributes(settings["settings-ui-mode"])}>
         <span class="settings-label">{settingLabel(settings["settings-ui-mode"])}</span>
