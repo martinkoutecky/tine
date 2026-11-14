@@ -78,6 +78,7 @@ in-page-find-search-journals = 搜索所有日志
 in-page-find-references-linked = 未搜索链接引用
 in-page-find-references-unlinked = 未搜索未链接引用
 in-page-find-references-block = 未搜索块引用
+in-page-find-pending-hosts = 还有 { $count } 个嵌入或查询尚未搜索
 in-page-find-search-references-linked = 搜索链接引用
 in-page-find-search-references-unlinked = 搜索未链接引用
 

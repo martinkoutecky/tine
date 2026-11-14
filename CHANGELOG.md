@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Code line numbers stay readable with wrapping enabled, and the gutter grows to fit larger numbers in reading and both editors (GH #946).
 - In-block numbered lists show their stored numbers after editing (GH #947).
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
+- Find in page says how many embeds and queries are not searched yet, and updates matches as they load without retyping (#935).
 
 - Late page reads preserve newer saved text, and merges and conflict resolutions refresh pages already on screen (Hd-bI).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).
