@@ -400,6 +400,7 @@ pub struct Counts {
     pub stamps_by_path: u64,
     /// Non-graph-text (asset) files stamped by path (`watch::stamp_metadata`),
     /// which opens the file on Windows; the asset full walk uses the listing.
+    /// Like `asset_listing_stamps`, excludes the watcher's own cycles.
     pub asset_stamps_by_path: u64,
     /// Graph-text files a full stat walk stamped from its directory listing
     /// off the watcher thread (a `refresh`): a graph-sized term an
@@ -648,7 +649,9 @@ pub(crate) fn store_read() {
     STORE_READS.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn asset_stamp_by_path() {
-    ASSET_STAMPS_BY_PATH.fetch_add(1, Ordering::Relaxed);
+    if !on_watcher() {
+        ASSET_STAMPS_BY_PATH.fetch_add(1, Ordering::Relaxed);
+    }
 }
 pub(crate) fn listing_stamp() {
     if !on_watcher() {
