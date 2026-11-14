@@ -34,7 +34,15 @@ jobs:
           if ($LASTEXITCODE) { throw 'Rust targets failed' }
           npm ci
           if ($LASTEXITCODE) { throw 'npm ci failed' }
+      - run: npx playwright install chromium
+      - name: Verify the deployed quick share viewer before enabling the writer
+        id: viewer-ready
+        # As in release.yml, an unavailable viewer leaves the writer disabled.
+        continue-on-error: true
+        run: node scripts/check-release-readiness.mjs --quick-share-only
       - name: Build embedded release executables
+        env:
+          TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
         run: |
           npm run tauri build -- --target x86_64-pc-windows-msvc --features custom-protocol --no-bundle -- --locked
           if ($LASTEXITCODE) { throw 'x64 build failed' }
