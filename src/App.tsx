@@ -1264,10 +1264,8 @@ export function App(): JSX.Element {
                 <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary>
               </div>
             </Show>
-            <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>
-            </Show>
             <FailureBoundary region="The sidebar">
-              <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
+              <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} onClose={() => { if (!dismissDrawerAndRestore("explicit")) setLeftSidebarOpen(false); }} />
             </FailureBoundary>
           </div>
           {/* A fixed last row of the drawer, outside its scroll, so Settings is

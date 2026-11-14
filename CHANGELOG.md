@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
 - Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - Choose and reorder toolbar buttons in Settings → Appearance → Toolbar. Other buttons stay in the … menu, and Reset restores the default. The choice is saved on this device (#926).
 

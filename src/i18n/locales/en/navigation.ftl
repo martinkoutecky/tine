@@ -91,11 +91,11 @@ sidebar-tine = Tine
 
 sidebar-journals = Journals
 
-sidebar-favorites = FAVORITES
+sidebar-favorites = Favorites
 
-sidebar-recent = RECENT
+sidebar-recent = Recent
 
-sidebar-namespaces = NAMESPACES
+sidebar-namespaces = Namespaces
 
 sidebar-new-page = + New page
 
