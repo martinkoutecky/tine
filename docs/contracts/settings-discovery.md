@@ -25,6 +25,13 @@ scrolls to its stable ID, including controls that mount after an asynchronous
 read. Labels are never navigation keys. Keyboard shortcuts retain their own
 command/key filter.
 
+Themes is a separate category on every screen; static and package theme
+descriptors target it. On touch screens up to 480 CSS px wide, Settings fills
+the screen within the safe areas and opens a category list. A category or search
+result opens its pane; Back returns to the list, then dismisses Settings. The
+iOS edge swipe uses the same Back path. Desktop and tablet Settings keep the
+category navigation beside the pane. This navigation state is not persisted.
+
 `docs/SETTINGS-INVENTORY.md` is generated with
 `node scripts/generate-settings-inventory.mjs`; `--check` and
 `settingsInventory.test.ts` enforce generation. The inventory includes gated

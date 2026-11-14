@@ -376,6 +376,7 @@ function ShortcutRow(props: {
         </Show>
       </span>
       <span class="help-shortcut-tail">
+        <span class="help-shortcut-buttons">
         <Show when={bindingAlternatives(props.row.effective).length}><button class="help-reset" title={t("help-remove-this-keybinding")} onClick={() => props.onUnbind(props.row.id)}>{t("help-unbind")}</button>
         </Show>
         <Show when={props.row.overridden}>
@@ -385,7 +386,7 @@ function ShortcutRow(props: {
             onClick={() => props.onReset(props.row.id)}
           >{t("help-reset")}</button>
         </Show>
-        <span class="mono help-shortcut-id">{props.row.id}</span>
+        </span><span class="mono help-shortcut-id">{props.row.id}</span>
       </span>
     </div>
   );

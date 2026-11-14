@@ -79,6 +79,14 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
+- 2026-11-13, GH #926 (Martin: "926 yes to all", Q-S3): `settings.tabs`
+  10→11 for the explicitly approved first-level **Themes** category. Its eight
+  existing controls move out of Appearance: `settings.appearance.open` 31→23
+  and `settings.themes.open` = 8, with no net growth in setting controls.
+  A palette-only entry would not provide the approved category or keep the
+  dynamic theme gallery out of Appearance. The census derives its category
+  probes from the rendered navigation IDs. With the toolbar section below
+  (+22 controls, 31→53 before the move), Appearance is 23 + 22 = 45.
 - 2026-11-14, D-20261113-UI / #926 (926-LEFTPANEL, desktop sidebar and phone drawer):
   `sidebar.left.fixed` 5→6 and `sidebar.left.full` 8→9 for the close icon beside
   the graph picker. This keeps the explicitly requested close control in the

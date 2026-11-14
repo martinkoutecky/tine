@@ -37,9 +37,10 @@ it("diagnoses ignored unknown shortcut ids including retired carry presets", () 
   finally { stop(); }
 });
 
-it("starts Appearance with Themes and reveals rare controls through search", async () => {
+it("keeps Themes separate from Appearance and reveals rare controls through search", async () => {
   const root = mount(() => <Settings />); openSettings("appearance"); await tick();
-  expect(root.querySelector(".settings-pane-body")?.firstElementChild?.textContent).toBe("Themes");
+  expect(root.querySelector('[data-setting-id="settings-ui-mode"]')).not.toBeNull();
+  expect(root.querySelector('[data-setting-id="themes-style"]')).toBeNull();
   expect(root.textContent).not.toContain("Fine-tuning");
   for (const query of ["custom css", "global css", "developer tools", "embedded blocks", "standard page width"]) {
     const search = root.querySelector<HTMLInputElement>(".settings-search-input")!;

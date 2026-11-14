@@ -20,7 +20,6 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `settings-author-marks` | `settings-author-marks` | Show/Hide author marks | Basic |
 | `settings-show-workspaces` | `settings-show-workspaces` | Show Workspaces | Advanced |
 | `settings-show-help-button` | `settings-show-help-button` | Show the help button | Advanced |
-| `theme.gallery.default` | `themes-default` | Default | Basic |
 | `settings-ui-interface-size` | `settings-ui-interface-size` | Interface size | Basic |
 | `settings-mobile-navigation-label` | `settings-mobile-navigation-label` | Navigation buttons at the bottom | Basic |
 | `settings-ui-wide-mode` | `settings-ui-wide-mode` | Wide mode | Basic |
@@ -50,16 +49,24 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `settings-prose-start-minimized-to-tray` | `settings-prose-start-minimized-to-tray` | Start minimized to tray | Basic |
 | `settings-ui-mode` | `settings-ui-mode` | Mode | Basic |
 | `settings-ui-accent-color` | `settings-ui-accent-color` | Accent color | Basic |
-| `themes-style` | `themes-style` | Style | Basic |
-| `themes-typography` | `themes-typography` | Typography | Basic |
-| `themes-color-scheme` | `themes-color-scheme` | Color scheme | Basic |
-| `themes-install-a-token-theme` | `themes-install-a-token-theme` | Install a token theme | Basic |
 | `settings-language-label` | `settings-language-label` | Language | Basic |
 | `knob.embed-breadcrumbs` | `settings-embed-breadcrumbs` | Block embed breadcrumbs | Advanced |
 | `knob.embed-shading` | `settings-embedded-blocks` | Embedded blocks | Advanced |
 | `knob.guide-colors` | `settings-color-indent-guides-by-level` | Color indent guides by level | Advanced |
 | `knob.external-link-underline` | `settings-links-to-the-web-or-a-file` | Links to the web or a file | Advanced |
 | `knob.missing-page-color` | `settings-links-to-pages-that-do-not-exist` | Links to pages that do not exist yet | Advanced |
+
+<!-- tab:themes -->
+
+## themes
+
+| Setting ID | Catalog key / package label | Label | Level |
+|---|---|---|---|
+| `theme.gallery.default` | `themes-default` | Default | Basic |
+| `themes-style` | `themes-style` | Style | Basic |
+| `themes-typography` | `themes-typography` | Typography | Basic |
+| `themes-color-scheme` | `themes-color-scheme` | Color scheme | Basic |
+| `themes-install-a-token-theme` | `themes-install-a-token-theme` | Install a token theme | Basic |
 | `theme.gallery.nord` | `Nord` | Nord | Basic |
 | `theme.gallery.solarized` | `Solarized` | Solarized | Basic |
 | `theme.gallery.gruvbox` | `Gruvbox` | Gruvbox | Basic |
@@ -198,6 +205,6 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 
 ## Device and registry entries
 
-In addition to the rows above, search and Appearance use the same installed theme and signed community theme registries: each package contributes its name and description, with a distinct ID for its row. Built-in gallery cards use the gallery registry.
+In addition to the rows above, search and Themes use the same installed theme and signed community theme registries: each package contributes its name and description, with a distinct ID for its row. Built-in gallery cards use the gallery registry.
 
 Installed plugins contribute each manifest setting's label and description, plus the plugin name. Choosing a result opens that exact plugin version's settings form. Plugin and theme text is supplied by its author and stays verbatim in every interface language.

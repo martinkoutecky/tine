@@ -55,7 +55,7 @@ import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
 import { openJournalsFromClick } from "./journalsNavigation";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
@@ -709,13 +709,13 @@ export function App(): JSX.Element {
           hasDrawer: () => activeDrawer() !== null,
           canGoBack,
         }),
-        drawerOpenable: () => mobileDrawerMode() && activeDrawer() === null,
+        drawerOpenable: () => !settingsOpen() && mobileDrawerMode() && activeDrawer() === null,
         // The edge swipe never closes the app: iOS has no root rung.
         back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
         openDrawer: () => setLeftSidebarOpen(true),
         drawerProgress: dragOpeningMobileDrawer,
         drawerSettle: () => settleMobileDrawer("left"),
-        surface: () => mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
+        surface: () => mainWindow.document.querySelector<HTMLElement>(".settings-phone .settings-modal") ?? mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
       });
     })();
     onCleanup(() => { disposed = true; uninstall(); });
