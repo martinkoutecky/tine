@@ -184,8 +184,8 @@ it("names the ignore file and rule, explains removal, and discloses a failed set
   }));
   let view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added .syncthing.* to /graph/.gitignore"));
-  expect(view.root.textContent).toContain("You can remove either line and Tine won't add it again");
-  expect(view.root.textContent).toContain("conflict copies are committed unless your own rules ignore them");
+  expect(view.root.textContent).toContain("If you delete a line, Tine won't add it back on this device");
+  expect(view.root.textContent).toContain("Syncthing conflict copies are still committed unless your own rules ignore them");
   view.dispose(); document.body.innerHTML = "";
 
   status.mockResolvedValue(repo({
@@ -209,7 +209,7 @@ it("names the Tine line, alone or with the Syncthing line, in the same status li
   }));
   let view = mount();
   await vi.waitFor(() => expect(view.root.textContent).toContain("Tine added logseq/.tine-* to /graph/.gitignore"));
-  expect(view.root.textContent).toContain("removes already tracked device copies from git, not disk, in a separate commit");
+  expect(view.root.textContent).toContain("takes copies of those files out of git (not off the disk)");
   expect(Array.from(view.root.querySelectorAll("[role=status]"), el => el.textContent).join("")).not.toContain(".syncthing.*");
   view.dispose(); document.body.innerHTML = "";
 
