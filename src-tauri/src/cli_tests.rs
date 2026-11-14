@@ -2,6 +2,31 @@ use super::*;
 use clap::CommandFactory;
 
 #[test]
+fn gh930_no_author_is_shared_by_writing_commands() {
+    for form in [
+        vec!["tine", "add", "text", "--page", "P"],
+        vec!["tine", "edit", "P/1~abcdef", "text"],
+        vec!["tine", "prop", "set", "P/1~abcdef", "status", "done"],
+        vec!["tine", "prop", "remove", "P/1~abcdef", "status"],
+        vec!["tine", "move", "P/1~abcdef", "--after", "P/2~abcdef"],
+        vec!["tine", "delete", "P/1~abcdef"],
+        vec!["tine", "ref", "P/1~abcdef"],
+        vec!["tine", "embed", "P/1~abcdef"],
+        vec!["tine", "page", "create", "P"],
+        vec!["tine", "page", "delete", "P"],
+        vec!["tine", "run", "revert", "run-id"],
+    ] {
+        let mut args = form;
+        args.push("--no-author");
+        Cli::try_parse_from(&args).unwrap();
+        args.extend(["--author", "Ada"]);
+        let error = Cli::try_parse_from(&args).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert_eq!(error.exit_code(), 2);
+    }
+}
+
+#[test]
 fn comment_exclusion_is_an_explicit_cli_export_choice() {
     let Some(Command::Export {
         format: ExportFormat::Static(args),
