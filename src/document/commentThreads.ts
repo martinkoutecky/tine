@@ -19,11 +19,37 @@ export function isCommentId(id: string, format: Format = formatForBlock(id)): bo
  * ancestor (DESIGN §2: a quoted reply stays in its root's thread), or null for
  * an ordinary block. This is the one predicate for thread membership. O(depth). */
 export function threadRootOf(id: string, format: Format = formatForBlock(id)): string | null {
+  return readThreadRoot(id, format);
+}
+
+type ThreadBatch = { roots: Map<string, string | null>; path: string[] };
+
+function readThreadRoot(id: string, format: Format, batch?: ThreadBatch): string | null {
   let root: string | null = null;
   for (let at: string | null = id; at !== null; at = doc.byId[at]?.parent ?? null) {
+    const known = batch?.roots.get(at);
+    if (known !== undefined) { root = known ?? root; break; }
+    batch?.path.push(at);
     if (isCommentId(at, format)) root = at;
   }
+  if (batch) {
+    let inherited = root;
+    for (const at of batch.path) {
+      batch.roots.set(at, inherited);
+      if (at === inherited) inherited = null;
+    }
+    batch.path.length = 0;
+  }
   return root;
+}
+
+/** Thread membership for rows in any order, using each block's page format.
+ * Includes their source ancestors in the returned map. O(rows + distinct
+ * ancestors), no I/O; answers belong to this call and are not retained globally. */
+export function threadRootsOf(ids: readonly string[]): Map<string, string | null> {
+  const batch: ThreadBatch = { roots: new Map(), path: [] };
+  for (const id of ids) readThreadRoot(id, formatForBlock(id), batch);
+  return batch.roots;
 }
 
 /** A dated thread opts into message outlines. Presence, rather than validity of
