@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import { node, flushPage, selectBlock } from "../document";
 import { installKeybindings } from "../keybindings";
-import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { bindTestHost, mailPage, submittedPages } from "../document/host/wiring.test.support";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import { endEdit, startEditing } from "../editorController";
 import { editorIn, type EditorKind } from "../tests/editorDriver";
@@ -15,6 +15,8 @@ import { RightSidebar } from "./RightSidebar";
 import { applySidebarSession } from "../ui";
 import { AstBody } from "../render/body";
 import { parseBlock } from "../render/parse";
+import * as clipboard from "../clipboard";
+import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 
 installBlockEditorLifecycle();
 afterEach(() => { endEdit("page-navigation"); resetTabsToJournals(); resetPaneLayoutToSingle(); applySidebarSession({ right: false, items: [] }); vi.restoreAllMocks(); });
@@ -31,25 +33,31 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
     ["#+BEGIN_SRC js :results output", "#+END_SRC", "js"],
     ["#+begin_src\tjs :results output", "#+end_src", "js"],
     ["#+BEGIN_SRC ", "#+END_SRC", ""],
-  ].flatMap(([open, close, lang]) => [false, true].flatMap(mixed => [false, true].map(typing => ({ format, open, close, lang, mixed, typing })))))) (
-    "keeps the source block and language after label activation: %j", async ({ format, open, close, lang, mixed, typing }) => {
+  ].flatMap(([open, close, lang]) => [false, true].flatMap(mixed => ["leave", "typing", "paste", "programmatic paste", "IME", "drop", "replacement", "plain input"].map(entry => ({ format, open, close, lang, mixed, entry })))))) (
+    "keeps the source block and language after label activation: %j", async ({ format, open, close, lang, mixed, entry }) => {
       const raw = `${mixed ? "前 🐈\n" : ""}${open}\nx\n${close}${mixed ? "\nAfter" : ""}`;
       const parsed = parseBlock(raw, format === "org").find(block => block.kind === "src")!;
       expect(parsed).toMatchObject({ kind: "src", lang });
-      vi.spyOn(backend(), "getPage").mockResolvedValue({ id: `pages/Code.${format}`, name: "Code", title: "Code", kind: "page", pre_block: null,
-        blocks: [{ id: "code", raw, children: [], collapsed: false }] });
+      const dto = { id: `pages/Code.${format}`, name: "Code", title: "Code", kind: "page" as const, pre_block: null,
+        blocks: [{ id: "code", raw, children: [], collapsed: false }] };
+      vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
       mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Code", pageKind: "page" });
       const { root, dispose } = mount(() => <PageView />);
       try {
         await vi.waitFor(() => expect(root.querySelector("button.code-language")).not.toBeNull());
-        await bindTestHost();
+        const host = await bindTestHost();
+        vi.spyOn(backend(), "pageOpen").mockImplementation(async (_session, id) => {
+          queueMicrotask(() => host.deliver({ key: dto.id, page: mailPage(1, dto),
+            answer: { id, version: 1, took: false, outcome: { kind: "applied" } } }));
+          return { key: dto.id, baselineEntry: true };
+        });
         const submits = vi.spyOn(backend(), "pageSubmit");
         const reads = vi.mocked(backend().getPage).mock.calls.length;
         root.querySelector<HTMLButtonElement>("button.code-language")!.click();
         await vi.waitFor(() => expect(editorIn(root).value()).toBe(raw));
         expect(submits).not.toHaveBeenCalled();
         expect(vi.mocked(backend().getPage).mock.calls).toHaveLength(reads);
-        if (!typing) {
+        if (entry === "leave") {
           endEdit("page-navigation");
           expect(node("code").raw, "activation without typing preserves every byte").toBe(raw);
           expect(submits).not.toHaveBeenCalled();
@@ -57,7 +65,25 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
         }
         const editor = editorIn(root), [at] = editor.selection();
         editor.select(at, at + lang.length);
-        for (const ch of "rust") editorIn(root).type(ch);
+        const inserted = raw.slice(0, at) + "rust" + raw.slice(at + lang.length);
+        if (entry === "typing") for (const ch of "rust") editorIn(root).type(ch);
+        else if (entry === "paste") {
+          const paste = editor.paste({ text: "rust" });
+          // jsdom omits textarea's browser paste default; CM runs its native pipeline.
+          if (!paste.defaultPrevented) editor.input(inserted, at + 4, { inputType: "insertFromPaste", data: null });
+        } else if (entry === "programmatic paste") {
+          vi.spyOn(clipboard, "readClipboardText").mockResolvedValue("rust");
+          editor.focus();
+          expect(dispatchFocusedEditorCommand("editor/paste-plain")).toBe(true);
+          await vi.waitFor(() => expect(node("code").raw).not.toBe(raw));
+        } else if (entry === "IME") {
+          editor.compositionStart();
+          editor.input(inserted, at + 4, { inputType: "insertCompositionText", data: "rust", isComposing: true });
+          expect(node("code").raw, "preedit stays local").toBe(raw);
+          editor.compositionEnd("rust");
+          await Promise.resolve();
+        } else editor.input(inserted, at + 4, entry === "plain input" ? { eventKind: "plain" } :
+          { inputType: entry === "drop" ? "insertFromDrop" : "insertReplacementText", data: null });
         endEdit("page-navigation");
         await flushPage("Code");
         const saved = submittedPages(submits, "Code").at(-1)!.blocks[0].raw;

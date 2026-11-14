@@ -104,7 +104,7 @@ import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageInput, codeSourceCaret } from "../editor/codeFence";
+import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageChange, codeSourceCaret } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
@@ -581,6 +581,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return unchanged();
     const commitAsCalc = opts?.calc ?? isCalc();
+    if (!commitAsCalc && !codeShown()) text = codeLanguageChange(editorValue(), text, pageFmt())?.value ?? text;
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
     // a typing convenience) in the live buffer — OG keeps it while you edit and
@@ -1077,8 +1078,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const duplicate = compositionEndValue === ref.value;
     compositionEndValue = null;
     if (duplicate) return;
-    const language = !codeShown() && !isCalc() && e.inputType === "insertText" && ref.selectionStart === ref.selectionEnd && codeLanguageInput(ref.value, pageFmt(), ref.selectionStart, e.data ?? "");
-    if (language) { ref.value = language.value; ref.setSelectionRange(language.caret, language.caret); }
     // Single-key transforms (not paste/IME/delete) edit ref.value BEFORE commit.
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
       const ch = e.data; let handled = false;
@@ -1154,8 +1153,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const onCompositionEnd = () => {
     compositionActive = false;
     if (!applyFullWidthRefReplace(ref)) applyFullWidthCloserThrough(ref, autoPairing());
-    compositionEndValue = ref.value;
     commit(ref.value);
+    compositionEndValue = ref.value;
     endCompositionHold();
     autosize();
     refreshAutocompleteAfterInput();

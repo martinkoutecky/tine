@@ -32,15 +32,30 @@ function languageEntry(text: string, fence: LiteralContainer): { at: number; sep
 }
 
 /** Post-input language insertion, shared by both editors. Supply Org's separator
- * only when typing at its parser-owned language slot. O(block text), cached
- * parser regions; returns an edit for the existing guarded commit, never writes. */
-export function codeLanguageInput(text: string, format: "md" | "org", caret: number, inserted: string): { value: string; caret: number } | null {
+ * only when inserting at its parser-owned language slot. O(block text), cached
+ * parser regions; returns an edit for the existing guarded commit, never writes.
+ * Supply replaced text when an editor reports a whole-buffer replacement. */
+export function codeLanguageInput(text: string, format: "md" | "org", caret: number, inserted: string, replaced = ""): { value: string; caret: number; change: { from: number; insert: string } } | null {
+  let start = 0, oldEnd = replaced.length, end = inserted.length;
+  while (start < oldEnd && start < end && replaced[start] === inserted[start]) start++;
+  while (oldEnd > start && end > start && replaced[oldEnd - 1] === inserted[end - 1]) { oldEnd--; end--; }
+  caret -= inserted.length - end;
+  inserted = inserted.slice(start, end);
   if (!inserted || inserted.trimStart() !== inserted) return null;
   const from = caret - inserted.length;
   const before = text.slice(0, from) + text.slice(caret);
   const fence = codeFences(before, format).find(fence => fence.delimEnd === from);
   const entry = fence && languageEntry(before, fence);
-  return entry?.separator ? { value: text.slice(0, from) + entry.separator + text.slice(from), caret: caret + entry.separator.length } : null;
+  return entry?.separator ? { value: text.slice(0, from) + entry.separator + text.slice(from), caret: caret + entry.separator.length,
+    change: { from, insert: entry.separator } } : null;
+}
+
+/** Buffer-only insertion adapter for textarea commits and finalized IME drafts.
+ * Find the changed range in O(block text), then use the same language owner.
+ * Unchanged buffers and deletions never supply a separator. No writes. */
+export function codeLanguageChange(before: string, text: string, format: "md" | "org"): ReturnType<typeof codeLanguageInput> {
+  if (before === text) return null;
+  return codeLanguageInput(text, format, text.length, text, before);
 }
 
 /** Map a rendered fence's parser source byte to its language caret in this

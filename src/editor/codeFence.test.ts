@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageInput } from "./codeFence";
+import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageChange, codeLanguageInput } from "./codeFence";
 
 describe("codeFenceOnly", () => {
   it("detects a whole-block markdown fence with a language", () => {
@@ -238,7 +238,7 @@ describe("codeLanguageInput", () => {
     const raw = `前 🐈${eol}${indent}#+BEGIN_SRC${eol}x${eol}#+END_SRC`;
     const at = codeLanguageCaret(raw, format);
     const edit = codeLanguageInput(raw.slice(0, at) + inserted + raw.slice(at), format, at + inserted.length, inserted)!;
-    expect(edit).toEqual({ value: raw.slice(0, at) + " " + inserted + raw.slice(at), caret: at + inserted.length + 1 });
+    expect(edit).toEqual({ value: raw.slice(0, at) + " " + inserted + raw.slice(at), caret: at + inserted.length + 1, change: { from: at, insert: " " } });
     expect(codeLanguageInput(raw, format, at, "")).toBeNull();
     expect(codeLanguageInput(raw.slice(0, at) + " " + raw.slice(at), format, at + 1, " ")).toBeNull();
   });
@@ -246,5 +246,23 @@ describe("codeLanguageInput", () => {
     const raw = `${open}\nx\n${open.startsWith("#+") ? "#+END_SRC" : open}`;
     const at = codeLanguageCaret(raw, "md");
     expect(codeLanguageInput(raw.slice(0, at) + "rust" + raw.slice(at), "md", at + 4, "rust")).toBeNull();
+  });
+});
+
+describe("codeLanguageChange", () => {
+  it.each((["md", "org"] as const).flatMap(format => ["\n", "\r\n"].map(eol => ({ format, eol }))))(
+    "normalizes a buffer-only insertion and preserves untouched bytes: %j", ({ format, eol }) => {
+      const before = `前 🐈${eol}  #+BEGIN_SRC${eol}body${eol}  #+END_SRC${eol}after`;
+      const at = codeLanguageCaret(before, format);
+      const text = before.slice(0, at) + "rust" + before.slice(at);
+      expect(codeLanguageChange(before, text, format)).toEqual({ value: before.slice(0, at) + " rust" + before.slice(at), caret: at + 5, change: { from: at, insert: " " } });
+      expect(codeLanguageChange(before, before, format)).toBeNull();
+      expect(codeLanguageChange(text, before, format)).toBeNull();
+    });
+  it("leaves deletion of the separator, body edits, and whole-source replacement literal", () => {
+    const before = "#+BEGIN_SRC rust\nbody\n#+END_SRC";
+    expect(codeLanguageChange(before, before.replace(" rust", "rust"), "org")).toBeNull();
+    expect(codeLanguageChange(before, before.replace("body", "edited"), "org")).toBeNull();
+    expect(codeLanguageChange("", before.replace(" rust", "rust"), "org")).toBeNull();
   });
 });

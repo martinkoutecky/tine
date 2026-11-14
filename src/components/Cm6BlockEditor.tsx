@@ -206,7 +206,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (calc !== null || p) showText(view, shown(), caret - (calc !== null ? text.indexOf("\n") + 1 : p!.open.length));
     },
   });
-  const typing = cm6Typing({ id: props.id, format, current, view: () => view, commit,
+  const typing = cm6Typing({ id: props.id, format, current, view: () => view, commit, projection,
     literal, scaffold: completion.scaffold, refresh: completion.refresh, pauseCompletion: completion.pause });
   const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
     owner: cell && editsLikeOutline(cell) ? cellOwner(cell) : null,
