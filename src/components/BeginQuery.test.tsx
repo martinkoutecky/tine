@@ -8,7 +8,7 @@ import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { setDoc } from "../document/model";
 import type { BlockDto, RefGroup } from "../types";
 import { Block } from "./Block";
-import { inspectBeginQuery, wholeBeginQueryPayload } from "./BeginQuery";
+import { inspectBeginQuery, wholeBeginQueryPayload } from "../render/beginQuery";
 import containerGolden from "../../tests/fixtures/i12-begin-query-container-golden.json";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { RefBlocks } from "./RefBlocks";
