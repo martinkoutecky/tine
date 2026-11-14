@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
 - Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
 - Bullet threading keeps parent stubs and child connectors aligned at fractional display scaling, with clean branch junctions in All nested outlines (GH #129).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).

@@ -384,7 +384,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const answerQuery = { ...query.query, source: source.kind === "advanced"
       ? { kind: source.kind, original: source.original } : { kind: source.kind } };
     const { view: _presentation, columns: _columns, group_by: _group, aggregates: _aggregates, ...answerView } = query.view;
-    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, collapsed(), both]);
+    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, both]);
     // A collapsed count is never acted on: neither saves nor epochs rerun it.
     // The answer day reruns a day-relative query, collapsed or not, once the
     // date has moved past the shown answer's (card hB3Lv8); like a save, it
