@@ -224,3 +224,7 @@ journey (`scripts/e2e-*.mjs`), not here.
 - 2026-10-30, D-20261030-PE (GH #418, Ellis): `menu.page.header.nested` 2→3 and `mobile.menu.page.header.nested` 2→3:
   **Copy as ▸ → Copy page embed** (`{{embed [[Page]]}}`) joins Copy page ref and Copy link. OG's page menu has no such row;
   approved by Martin 2026-10-30 ("Mk21 yes").
+- 2026-11-14, GH #928 (CENSUS-928, card Hj9BM; veto window passed without objection): `commands.registry` 155→157
+  and `commands.palette` 95→96 for the requested remappable **Open current page in right sidebar** and **Open
+  today's journal in right sidebar** (no default keys). The first is offered in the palette only while a page is
+  shown, so the default palette count grows by one. No menu, topbar or Settings control is added.

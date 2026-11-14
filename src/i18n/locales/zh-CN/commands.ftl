@@ -311,3 +311,5 @@ command-comment-next = 下一条评论
 command-comment-previous = 上一条评论
 command-comment-review = 查看此页面上未解决的评论
 command-comment-review-graph = 查看整个图谱中未解决的评论
+command-sidebar-open-today = 在右侧边栏打开今天的日记
+command-sidebar-open-current-page = 在右侧边栏打开当前页面
