@@ -3,13 +3,17 @@ import { formatForBlock, node, onPageRawChanged } from "./document";
 import { parseBody } from "./render/facets";
 import { isQuarantined, parserReady } from "./render/parse";
 import { isQueryMacroName } from "./editor/queryMacro";
+import { inspectBeginQuery } from "./components/BeginQuery";
 import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./render/queryMacroRender";
 import type { Block, Format, Inline, ListItem } from "./render/ast";
 
 /** Parser-owned macro membership, including hosts whose outline window has
  * never mounted. O(block bytes), using the shared body parse cache. */
 export function countFindHosts(raw: string, format: Format): number {
-  if (!raw.includes("{{") || !parserReady()) return 0;
+  if (!parserReady()) return 0;
+  // A whole-block BEGIN_QUERY container renders as one query host (render/body.tsx renderBody).
+  if (inspectBeginQuery(raw, format)?.kind === "supported") return 1;
+  if (!raw.includes("{{")) return 0;
   const ast = parseBody(raw, format);
   if (isQuarantined(ast)) return 0;
   let count = 0;

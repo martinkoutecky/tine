@@ -28,7 +28,7 @@ ordinary outline windows and model-based reveal/navigation scope.
 In-outline embeds and queries belong to Find's page scope. Find counts their
 loaded rendered content and discloses the number of hosts not searched yet,
 including parser-identified hosts in unvisited outline windows. Each embed or
-query macro counts once; queries are not run to count their groups. An embed
+query macro, and each whole-block `#+BEGIN_QUERY` container, counts once; queries are not run to count their groups. An embed
 leaves that number when its source is mounted; a query leaves when it has
 answered and all content it renders is mounted (including an empty answer).
 The match count may grow while the note is visible. Mounts update matches and

@@ -62,7 +62,7 @@ function beginQueryOptions(match: { keeps_block_children?: boolean; listOptions?
 /** Read-only BEGIN_QUERY presentation. OG presents the authored title and query
  * result table in its normal custom-query shell (og/src/main/frontend/components/query.cljs:184-247).
  * Tine reuses QueryMacro so execution retains the existing native result bounds. */
-export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string; hideWhenEmpty?: boolean }): JSX.Element {
+export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string; hideWhenEmpty?: boolean; findHost?: string }): JSX.Element {
   if (props.match.kind === "unsupported") {
     return (
       <div class="query-unsupported begin-query-unsupported" role="alert">{t("begin-query-unsupported", { reason: props.match.reason })}
@@ -74,6 +74,7 @@ export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string
       body={`query ${props.match.query} ${beginQueryOptions(props.match)}`}
       title={props.match.title}
       currentPage={props.currentPage}
+      findHost={props.findHost}
       hideWhenEmpty={props.hideWhenEmpty}
       strictAdvanced
       unsupportedLabel="Unsupported BEGIN_QUERY"

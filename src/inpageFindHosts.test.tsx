@@ -17,6 +17,8 @@ it.each(["md", "org"] as const)("counts parser hosts, including inline queries, 
   expect(countFindHosts("`{{embed [[Literal]]}}`", format)).toBe(0);
   expect(countFindHosts(format === "md" ? "```\n{{query (task TODO)}}\n```" : "#+BEGIN_SRC\n{{query (task TODO)}}\n#+END_SRC", format)).toBe(0);
   expect(countFindHosts("ordinary content", format)).toBe(0);
+  // Review HOLD on f471f00d0: a whole-block BEGIN_QUERY container renders as a query host too.
+  expect(countFindHosts("#+BEGIN_QUERY\n{:query (task TODO) :table-view? false}\n#+END_QUERY", format)).toBe(1);
 });
 
 it("patches mount deltas and serves repeated counts without rewalking or parsing the outline", () => {

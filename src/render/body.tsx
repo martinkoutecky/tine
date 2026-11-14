@@ -427,7 +427,7 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   // A hover preview never mounts a live query (GH #735; same rule as inline query macros).
   const beginQuery = inPeek ? null : inspectBeginQuery(raw, format, blocks);
   return beginQuery
-    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} findHost={blockId} />
     : <CheckboxSourceContext.Provider value={raw}>
         {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
       </CheckboxSourceContext.Provider>;

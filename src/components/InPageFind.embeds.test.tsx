@@ -153,3 +153,41 @@ it.each([
     }
   } finally { disclosure.disconnect(); dispose(); }
 });
+
+// Review HOLD on f471f00d0: an offscreen BEGIN_QUERY container showed no pending note, then silently added matches.
+it("counts a BEGIN_QUERY container as a pending host until its results are searched (GH #935)", async () => {
+  vi.stubGlobal("IntersectionObserver", Viewport);
+  Range.prototype.getClientRects = vi.fn(() => [] as unknown as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  const queried = block("query-hit", "TODO needle queried");
+  const pages = new Map([
+    ["Host", page("Host", [block("body", "needle own content"),
+      block("query-host", "#+BEGIN_QUERY\n{:query (task TODO) :table-view? false}\n#+END_QUERY")])],
+    ["Tasks", page("Tasks", [queried])],
+  ]);
+  vi.spyOn(backend(), "getPage").mockImplementation(async name => pages.get(name) ?? null);
+  vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+  vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+  vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => [...pages.values()].find(page => page.id === path) ?? null);
+  backendReadsQueries({ "(task TODO) {:table-view? false}": { form: "(task TODO)", opts: "{:table-view? false}" } });
+  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult([{ page: "Tasks", kind: "page", blocks: [queried] }]));
+  mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Host", pageKind: "page" });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <><div data-pane-id="main"><PageView /></div><InPageFind /></>, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector('[data-block-id="body"]')).not.toBeNull());
+    openInPageFind(); setInPageFindQuery("needle");
+    expect(run).not.toHaveBeenCalled();
+    expect(inPageFindMatches()).toHaveLength(1);
+    expect(host.querySelector('.inpage-find-bar [role="status"]')?.textContent).toContain("1 embed or query not searched yet");
+    Viewport.approach(".outline-window,.ast-deferred");
+    await vi.waitFor(() => expect(host.querySelector('.query-block[data-find-answered="true"]')).not.toBeNull());
+    await vi.waitFor(() => expect(host.querySelector(".query-group")).not.toBeNull());
+    Viewport.approach(".query-group,.live-ref-group,.ast-deferred");
+    await vi.waitFor(() => expect(host.querySelector('[data-block-id="query-hit"]')).not.toBeNull());
+    await vi.waitFor(() => expect(host.querySelector('.query-group .live-ref-group[data-find-source-mounted="true"]')).not.toBeNull());
+    Viewport.approach(".ast-deferred");
+    await vi.waitFor(() => expect(inPageFindMatches()).toHaveLength(2));
+    await vi.waitFor(() => expect(host.querySelector(".inpage-find-bar")?.textContent).not.toContain("embed or query not searched yet"));
+  } finally { dispose(); }
+});
