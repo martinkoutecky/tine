@@ -1,8 +1,11 @@
 /** Read and synchronously install a working-set answer only while both its
- * caller and every returned page generation still apply. A stale answer gets
- * one reread while wanted, then returns stale; it never installs older text.
+ * caller and every returned page generation still apply. A superseded answer
+ * gets one reread per observed invalidation while wanted; it never installs
+ * older text. Owner retirement or a cancelled commit returns stale.
  * Optional scheduling checks at the actual commit, after the queue wait.
- * Cost: one read normally, at most two; O(returned page names), no graph walk.
+ * Cost: at most N+1 sequential reads for N relevant invalidations during the
+ * admission; coalesced changes need only one reread. O(returned page names)
+ * per comparison, O(1) retained retry state, no polling or graph walk.
  * Owned read/install failures reject. Generations are released on every exit. */
 import { readOwned, type Owned, type Owner } from "../owned";
 import { pageIdentityKey } from "../pageIdentity";
@@ -40,7 +43,8 @@ function capturePageRead() {
 
 export async function admitRead<T, R>(owner: Owner, read: () => Promise<T>, names: (value: T) => readonly string[], install: (value: T) => R & (R extends PromiseLike<unknown> ? never : unknown),
   schedule?: (commit: () => Owned<R>) => Promise<Owned<R> | undefined>): Promise<Owned<R>> {
-  for (let attempt = 0; attempt < 2 && owner(); attempt++) {
+  const started = clock;
+  for (let attempt = 0; attempt <= clock - started && owner(); attempt++) {
     if (!untrack(parserReady)) {
       const initialized = await readOwned(owner, initParser());
       if (initialized.kind === "stale" || !owner()) return { kind: "stale" };
@@ -57,6 +61,8 @@ export async function admitRead<T, R>(owner: Owner, read: () => Promise<T>, name
       };
       const admitted = schedule ? await schedule(commit) ?? { kind: "stale" as const } : commit();
       if (!superseded) return admitted;
+      // Only a newer relevant generation can spend another read. Successful
+      // reads must not exhaust a fixed retry cap and masquerade as retirement.
     } finally { generation.release(); }
   }
   return { kind: "stale" };
