@@ -20,6 +20,7 @@ import { previewDtoSubtree } from "./previewProjection";
 import { pageIdentityKey } from "./pageIdentity";
 import { blockRegions, initParser } from "./render/parse";
 import { blockRefsInText } from "./render/pageRefs";
+import { isCommentBlock } from "./comments";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
@@ -335,15 +336,33 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     }
     return groups;
   };
-  const findBlock = (snapshot: PublishedSnapshot, uuid: string): { page: PublishedPage; block: BlockDto } | null => {
+  /** Returns the block's root-first source path as well, so a detached
+   * preview can carry thread membership like native preview hydration. */
+  const findBlock = (snapshot: PublishedSnapshot, uuid: string): { page: PublishedPage; block: BlockDto; path: BlockDto[] } | null => {
     for (const page of snapshot.pages) {
-      let found: BlockDto | null = null;
-      walk(page.blocks, (block) => {
-        if (!found && ((blockRegions(block.raw, page.format ?? "md").id?.value.trim() ?? block.id) === uuid)) found = block;
-      });
-      if (found) return { page, block: found };
+      const path: BlockDto[] = [];
+      const search = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if ((blockRegions(block.raw, page.format ?? "md").id?.value.trim() ?? block.id) === uuid) return block;
+          path.push(block);
+          const found = search(block.children);
+          if (found) return found;
+          path.pop();
+        }
+        return null;
+      };
+      const found = search(page.blocks);
+      if (found) return { page, block: found, path };
     }
     return null;
+  };
+  /** The comment discriminator (`isCommentBlock`, Rust `comment_quote` via
+   * wasm) on the found path only: O(depth) property reads. */
+  const inCommentThread = (found: { page: PublishedPage; block: BlockDto; path: BlockDto[] }): boolean => {
+    const format = found.page.format ?? "md";
+    const quoted = (block: BlockDto) => isCommentBlock(
+      blockRegions(block.raw, format).properties.filter(p => p.primary).map(p => [p.key, p.value] as const), true);
+    return found.path.length > 0 && (quoted(found.block) || found.path.slice(1).some(quoted));
   };
   const staticQueryRefusal = async () => Object.assign(new Error(PUBLISHED_QUERY_MESSAGE), { reasonCode: PUBLISHED_QUERY_REASON });
   const readOnlyRefusal = async () => new Error(PUBLISHED_READ_ONLY_MESSAGE);
@@ -560,6 +579,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const found = findBlock(snapshot, uuid);
       if (!found) return null;
       const { blocks, truncated } = previewDtoSubtree(found.block, maxNodes, "owned");
+      if (inCommentThread(found)) blocks[0].comment = true;
       return {
         group: { page: found.page.name, kind: found.page.kind, path: found.page.path, blocks },
         truncated,

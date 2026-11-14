@@ -224,6 +224,18 @@ fn result_dto(block: &DocBlock) -> BlockDto {
     block_to_shallow_dto(block)
 }
 
+/// A shallow reference row with its breadcrumb and source thread membership,
+/// so Copy/Export labels or omits a comment row like hydrated export roots.
+fn reference_result_dto(block: &DocBlock, ancestors: &[&DocBlock]) -> BlockDto {
+    let mut dto = result_dto(block);
+    dto.breadcrumb = ancestors
+        .iter()
+        .map(|ancestor| crumb_line(ancestor))
+        .collect();
+    dto.comment = export_hydration::path_in_comment_thread(ancestors, block);
+    dto
+}
+
 #[cfg(test)]
 thread_local! {
     static RESULT_DTO_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -324,12 +336,7 @@ fn collect_bounded(
                     {
                         return None;
                     }
-                    let mut dto = result_dto(block);
-                    dto.breadcrumb = ancestors
-                        .iter()
-                        .map(|ancestor| crumb_line(ancestor))
-                        .collect();
-                    Some(dto)
+                    Some(reference_result_dto(block, ancestors))
                 },
                 &mut matched,
             );
@@ -1073,12 +1080,7 @@ fn collect_reference_occurrences_bounded(
                         return None;
                     }
                     construction_closed.set(budget.closed());
-                    let mut dto = result_dto(block);
-                    dto.breadcrumb = ancestors
-                        .iter()
-                        .map(|ancestor| crumb_line(ancestor))
-                        .collect();
-                    Some((dto, hit))
+                    Some((reference_result_dto(block, ancestors), hit))
                 },
                 &mut found,
             );

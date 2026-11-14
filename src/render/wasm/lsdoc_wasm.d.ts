@@ -7,6 +7,11 @@
 export function absent_link_is_journal(name: string, file_format: string, title_format: string): boolean;
 
 /**
+ * Assets-relative link target; O(URL bytes), no parse or filesystem I/O.
+ */
+export function asset_rel_path(url: string): string | undefined;
+
+/**
  * Parser-boundary negative-only prefilter; true still needs drawer ownership.
  */
 export function block_may_have_logbook(raw: string): boolean;
@@ -248,6 +253,11 @@ export function parse_inline_json(raw: string, is_org: boolean): string;
 export function parse_journal_format_json(text: string, pattern: string): string;
 
 /**
+ * PDF reader/writer asset identity. O(path bytes), no parse or filesystem I/O.
+ */
+export function pdf_asset_file(path: string): string;
+
+/**
  * PDF identity with the existing preview/native suffix policy. O(filename bytes).
  */
 export function pdf_asset_key(filename: string, preview: boolean): string;
@@ -365,6 +375,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly absent_link_is_journal: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly asset_rel_path: (a: number, b: number) => [number, number];
     readonly block_may_have_logbook: (a: number, b: number) => number;
     readonly block_reference_names: (a: number, b: number, c: number) => [number, number];
     readonly canonical_group_field: (a: number, b: number) => [number, number];
@@ -410,6 +421,7 @@ export interface InitOutput {
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly pdf_asset_file: (a: number, b: number) => [number, number];
     readonly pdf_asset_key: (a: number, b: number, c: number) => [number, number];
     readonly property_line_json: (a: number, b: number) => [number, number];
     readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
@@ -432,8 +444,8 @@ export interface InitOutput {
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }

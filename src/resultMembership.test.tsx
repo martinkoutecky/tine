@@ -35,6 +35,42 @@ function deferred<T>() {
 }
 const turn = () => new Promise((done) => setTimeout(done, 0));
 
+it.each([true, false])("GH #944: a deferred replacement keeps the previous answer (expanded: %s)", async expanded => {
+  const { installResultsPendingGate, resultTicket, resultsTicketCurrent } = await import("./queryResultsEpoch");
+  let publishing = false;
+  installResultsPendingGate(() => publishing, "own-work");
+  const [revision, setRevision] = createSignal(0);
+  const pending = deferred<string[] | undefined>();
+  const load = vi.fn<(source: string) => Promise<string[] | undefined>>()
+    .mockResolvedValueOnce(["task"]).mockReturnValueOnce(pending.promise).mockResolvedValue([]);
+  let answer!: ReturnType<typeof createMembershipResource<string, string[] | undefined>>[0];
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    [answer] = createMembershipResource(() => `Target:${revision()}`, () => "Target", load,
+      () => false, () => expanded, true, revision);
+    return <div>{answer()?.join(",")}</div>;
+  }, root));
+  try {
+    await turn();
+    const original = answer()!;
+    expect(root.textContent).toBe("task");
+    setRevision(1); await turn();
+    // Expanded reads lose adoption permission while publication is pending;
+    // collapsed reads can instead be deferred by the subscription's ready().
+    publishing = true;
+    pending.resolve(expanded ? [] : undefined); await turn();
+    expect(root.textContent).toBe("task");
+    expect(answer()).toBe(original);
+    expect(resultsTicketCurrent(resultTicket(original))).toBe(false);
+    expect(load).toHaveBeenCalledTimes(2);
+    publishing = false;
+    setRevision(2);
+    await turn();
+    expect(root.textContent).toBe("");
+    expect(load).toHaveBeenCalledTimes(3);
+  } finally { publishing = false; }
+});
+
 it("I-20 / GH #659: a read started before editing cannot remove or move the editor", async () => {
   const pending = deferred<string[]>();
   const load = vi.fn().mockResolvedValueOnce(["first", "task", "last"]).mockReturnValueOnce(pending.promise).mockResolvedValue([]);

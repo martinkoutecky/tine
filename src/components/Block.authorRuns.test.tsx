@@ -13,6 +13,8 @@ import { editorIn } from "../tests/editorDriver";
 import { backend } from "../backend";
 import type { BlockDto } from "../types";
 import * as runs from "./authorRuns";
+import { setAuthorMarksHidden } from "../authorMarksPref";
+import { readFileSync } from "node:fs";
 
 let dispose: (() => void) | undefined;
 beforeAll(() => initParser());
@@ -39,17 +41,41 @@ function mount(blocks: BlockDto[], second = false, format: "md" | "org" = "md", 
 const chipNames = (root: ParentNode) => [...root.querySelectorAll(".author-chip")].map(e => e.textContent);
 const row = (root: ParentNode, id: string) => root.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!;
 
-it("same-author siblings share a chip, while each gutter exposes its own author", () => {
+const tinted = (root: ParentNode, id: string) => row(root, id).classList.contains("author-tinted");
+const wrapperOf = (root: ParentNode, id: string) => row(root, id).querySelector<HTMLElement>(":scope > .block-main > .block-content-wrapper")!;
+
+it("same-author siblings share a chip, while each tinted row names its own author", () => {
   const root = mount([b("a"), b("b"), b("c"), b("own", null), b("d"), b("e", "Bo")]);
   expect(chipNames(root)).toEqual(["Ada", "Ada", "Bo"]);
   for (const id of ["a", "b", "c", "d", "e"]) {
-    const gutter = row(root, id).querySelector<HTMLElement>(".author-mark")!;
-    expect(gutter).not.toBeNull();
-    expect(gutter.getAttribute("aria-label")).toContain(id === "e" ? "Bo" : "Ada");
-    gutter.focus(); expect(document.activeElement).toBe(gutter);
-    expect(gutter.textContent).toContain(id === "e" ? "Bo" : "Ada");
+    expect(tinted(root, id)).toBe(true);
+    expect(wrapperOf(root, id).getAttribute("title")).toContain(id === "e" ? "Bo" : "Ada");
+    expect(row(root, id).querySelector(".author-mark")).toBeNull();   // GH #893: no gutter line element exists
   }
-  expect(row(root, "own").querySelector(".author-mark")).toBeNull();
+  expect(tinted(root, "own")).toBe(false);
+  expect(wrapperOf(root, "own").getAttribute("title")).toBeNull();
+  // A run is one card: its members carry the join classes the tint's corners and overlap follow.
+  expect([...row(root, "b").classList].filter(name => name.startsWith("author-run-"))).toEqual(["author-run-continued", "author-run-continues"]);
+});
+
+it("the Show/Hide author marks switch turns the tint off and leaves the chips and the file alone", () => {
+  const root = mount([b("a"), b("b"), b("own", null)]);
+  const raw = doc.byId.a.raw;
+  try {
+    expect(tinted(root, "a")).toBe(true);
+    setAuthorMarksHidden(true);
+    expect(tinted(root, "a") || tinted(root, "b")).toBe(false);
+    expect(wrapperOf(root, "a").getAttribute("title")).toBeNull();
+    expect(chipNames(root)).toEqual(["Ada"]);
+    expect(doc.byId.a.raw).toBe(raw);
+  } finally { setAuthorMarksHidden(false); }
+  expect(tinted(root, "a")).toBe(true);
+});
+
+it("GH #893: no gutter-line rule or element survives in the stylesheet or the components", () => {
+  const css = readFileSync("src/styles/comments.css", "utf8");
+  expect(css).not.toMatch(/\.author-mark\b/);
+  expect(css).toMatch(/\.ls-block\.author-tinted > \.block-main > \.block-content-wrapper \{[^}]*padding-inline: var\(--author-tint-bleed\);[^}]*margin-inline: calc\(-1 \* var\(--author-tint-bleed\)\)/);
 });
 
 it("child outlines, comment threads and embeds bound runs; no inheritance", () => {
@@ -63,14 +89,14 @@ it("child outlines, comment threads and embeds bound runs; no inheritance", () =
   for (const id of ["parent", "kid2", "commented"])
     expect(row(root, id).querySelector(":scope > .block-main .author-chip")).toBeNull();
   openCommentThread(row(root, "commented"));
-  expect(row(document.body, "thread").querySelector(".author-mark")).toBeNull();
-  expect(row(root, "embed").querySelector(".author-mark")).not.toBeNull();
-  expect(row(root, "owner").querySelector(".author-mark, .author-chip")).toBeNull();
+  expect(tinted(document.body, "thread")).toBe(false);
+  expect(tinted(root, "embed")).toBe(true);
+  expect(tinted(root, "owner") || row(root, "owner").querySelector(".author-chip") !== null).toBe(false);
 });
 
-it("a bulletless whole-block embed host does not draw its own mark", () => {
+it("a bulletless whole-block embed host does not tint itself", () => {
   const root = mount([b("a"), b("embed", "Ada", [], "{{embed ((12345678-1234-4000-8000-123456789abc))}}"), b("after")]);
-  expect(row(root, "embed").querySelector(":scope > .block-main > .block-content-wrapper > .author-mark")).toBeNull();
+  expect(tinted(root, "embed")).toBe(false);
   expect(row(root, "after").querySelector(".author-chip")?.textContent).toBe("Ada");
 });
 
@@ -91,11 +117,12 @@ it("inline embeds bound runs; literal macro examples do not", () => {
   for (const id of ["code", "literal", "last"]) expect(row(root, id).querySelector(".author-chip")).toBeNull();
 });
 
-it("both editors keep continuation marks and original author bytes as runs change live", () => {
+it("both editors keep the tint and original author bytes as runs change live", () => {
   const root = mount([b("a"), b("b"), b("c")]);
   const raw = doc.byId.b.raw;
   startEditing("b", 0);
-  expect(row(root, "b").querySelector(".author-mark")).not.toBeNull();
+  expect(tinted(root, "b")).toBe(true);
+  expect(wrapperOf(root, "b").getAttribute("title")).toBeNull();   // no tooltip over the editor
   expect(editorIn(row(root, "b")).value()).toBe("b");
   editorIn(row(root, "b")).input("edited"); endEdit("page-navigation");
   expect(doc.byId.b.raw).toBe(raw.replace("b\n", "edited\n"));

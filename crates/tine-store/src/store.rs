@@ -2054,13 +2054,13 @@ impl Store {
         Ok(read)
     }
 
-    /// Resolve a page name (or alias) and read its current file: the one
-    /// page-by-name door (GH #623). Cost O(index lookup + page bytes).
-    ///
-    /// Before the graph is ready, a name some file claims opens from that
-    /// file without waiting for the index (the file-name listing below):
-    /// claimant order ranks a file named for the page above any `title::`
-    /// claimant: the page the index would pick. An alias or an unclaimed page waits
+    /// Resolve a page name (or alias) and read its file: the one page-by-name door (GH #623).
+    /// Once ready, cost O(index lookup + page bytes). Before ready or after a failed parse,
+    /// a title-only or uncached lookup can build an O(P) file/preamble index (P graph files),
+    /// reused until invalidation. Before ready, a file claiming the name opens without
+    /// waiting for the graph index (the file-name listing below): claimant order ranks a
+    /// file named for the page above any `title::` claimant, as the index would.
+    /// An alias or an unclaimed page waits
     /// for the graph, never absent early; an unclaimed journal day does not (no aliases)
     /// unless a launch checkpoint is served (`first_view_pending`).
     /// Once ready, the published index resolves the name; an alias reads its

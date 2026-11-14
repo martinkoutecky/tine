@@ -62,7 +62,10 @@ comment threads as annotations alongside it.
 
 The comment discriminator remains `comment_quote`; `output_comments` carries
 thread membership through publication planning, and the frontend export projection
-uses the same discriminator through wasm. O(exported blocks), no added filesystem
+uses the same discriminator through wasm. Shallow reference rows (linked, unlinked,
+block referrers) and published-reader embed previews carry the same thread
+membership on their detached root, so reference-panel Copy/Export and reader
+exports label and omit comments like page exports (Iif8k). O(exported blocks), no added filesystem
 reads, stats or IPC, no per-edit work. Search-hit presentation is a separate task;
 reference counts and Find remain unchanged.
 
