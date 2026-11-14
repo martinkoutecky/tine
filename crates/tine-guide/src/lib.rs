@@ -924,6 +924,7 @@ mod rename_guide_tests {
         assert!(tips.contains("**Code blocks**: type ``` "));
         assert!(tips.contains("only the code itself is in the text box"));
         assert!(tips.contains("clicking a code region edits only that region"));
+        assert!(tips.contains("Click or tap the language label"));
         assert!(tips.contains("edit the whole bullet as source; surrounding text stays intact"));
         assert!(
             tips.contains("**Drag a bullet onto another bullet and move a little to the right**")
@@ -2436,6 +2437,8 @@ mod og_20d_guide_tests {
             vec!["handle", "printed name", "title::", "file you read"],
             vec!["1 mib", "tine edit", "frame-too-large", "before changing"],
             vec!["tine.author::", "agent", "--author", "tine_author"],
+            vec!["by default", "every block", "tine.author::"],
+            vec!["tine edit", "tine_author", "commits", "--author"],
             vec![
                 "--no-author",
                 "personal script",

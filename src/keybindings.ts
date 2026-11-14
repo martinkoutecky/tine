@@ -1103,6 +1103,11 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     if (isTauri() && isWebviewReloadChord(e)) e.preventDefault();
     // Ignore bare modifier presses (incl. Super/Windows).
     if (isModifierKey(e)) return;
+    // Native buttons own activation even when a block selection is still present (GH #879).
+    if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.target as HTMLElement | null)?.tagName === "BUTTON") {
+      resetSeq(); return;
+    }
 
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
