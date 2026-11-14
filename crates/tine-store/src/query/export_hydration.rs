@@ -13,19 +13,28 @@ pub(super) fn blocks_with_comment_context(
             stack.pop();
             continue;
         };
-        let comment = *thread
-            || (*has_parent
-                && tine_core::editor_text::comment_quote(
-                    block
-                        .projection()
-                        .properties()
-                        .iter()
-                        .map(|(k, v)| (k.as_str(), v.as_str())),
-                )
-                .is_some());
+        let comment = *thread || (*has_parent && quotes(block));
         if !block.children.is_empty() {
             stack.push((block.children.iter(), comment, true));
         }
         return Some((block, comment));
     })
+}
+
+/// Thread membership of a shallow result reached through its root-first
+/// `ancestors`: the walk above's discriminator, applied to the path only.
+/// O(depth) property scans; no I/O, allocation or index.
+pub(super) fn path_in_comment_thread(ancestors: &[&DocBlock], block: &DocBlock) -> bool {
+    !ancestors.is_empty() && (quotes(block) || ancestors.iter().skip(1).any(|a| quotes(a)))
+}
+
+fn quotes(block: &DocBlock) -> bool {
+    tine_core::editor_text::comment_quote(
+        block
+            .projection()
+            .properties()
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str())),
+    )
+    .is_some()
 }
