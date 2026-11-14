@@ -160,12 +160,6 @@ pub(crate) fn is_popup_of(label: &str, opener: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The native label of `opener`'s popup number `n`.
-#[cfg(any(desktop, test))]
-pub(crate) fn popup_label(opener: &str, n: u64) -> String {
-    format!("ws-{opener}-{n}")
-}
-
 /// The opener label of a workspace popup label.
 pub(crate) fn opener_of(label: &str) -> Option<&str> {
     let rest = label.strip_prefix("ws-")?;
@@ -240,7 +234,7 @@ fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<
             "at most {MAX_WORKSPACE_WINDOWS} workspace windows can be open"
         ));
     }
-    let label = popup_label(&opener, trace.sequence);
+    let label = format!("ws-{opener}-{}", trace.sequence);
     let (areas, scales) = monitor_areas(&window);
     let placement = place(geometry, &areas);
     // Without a requested position the OS chooses the monitor. Do not call

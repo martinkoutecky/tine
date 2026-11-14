@@ -120,6 +120,7 @@ jobs:
       - name: Run Windows WebView2 smoke
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+          GH809_ROOT_CAUSE: "1"
         run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
       - name: Upload Windows E2E evidence
         if: always()

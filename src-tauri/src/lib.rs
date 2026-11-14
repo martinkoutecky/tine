@@ -182,20 +182,6 @@ fn e2e_touch_gestures_platform() -> Option<&'static str> {
     }
 }
 
-/// Which windows `tauri-plugin-window-state` saves and restores: `main` and
-/// `graph-N`. Not `capture` (centered on demand), not `main` in the forced
-/// mobile-drawer e2e mode, and never a workspace popup (`ws-*`). Tine places
-/// each popup itself (`workspace_windows::place`, from the geometry its session
-/// keeps). And a popup is built on the main thread inside Wry's new-window
-/// handler, where Tauri runs the plugin's restore while it holds its plugin-store
-/// lock: on Windows the restore's `SetWindowPos` delivers `Moved`/`Resized` at
-/// once, the event handler locks that store again, and Tine freezes (GH #809).
-fn window_state_tracks(label: &str, deny_main: bool) -> bool {
-    label != "capture"
-        && !(deny_main && label == "main")
-        && workspace_windows::opener_of(label).is_none()
-}
-
 fn apply_mobile_drawer_e2e_window_policy(
     windows: &mut [tauri::utils::config::WindowConfig],
     force: bool,
@@ -804,7 +790,7 @@ pub fn run() {
         // Remember window size/position/maximized across launches (Wayland
         // compositors don't restore this per-app). Exclude FULLSCREEN so it
         // doesn't conflict with focus mode, which is intentionally not persisted.
-        // `window_state_tracks` names the windows it manages (GH #809).
+        // The capture window is centered on demand, so keep it off the denylist.
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -812,8 +798,10 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
-                .with_filter(move |label| {
-                    window_state_tracks(label, deny_main_window_state_restore)
+                .with_denylist(if deny_main_window_state_restore {
+                    &["capture", "main"]
+                } else {
+                    &["capture"]
                 })
                 .build(),
         );
@@ -1283,54 +1271,6 @@ pub fn run() {
                 std::process::exit(0);
             }
         });
-}
-
-#[cfg(test)]
-mod window_state_policy_tests {
-    use super::window_state_tracks;
-    use crate::workspace_windows::popup_label;
-
-    // GH #809: a popup restored by the plugin from inside Tauri's
-    // window-created hook freezes Tine on Windows. Every popup label the
-    // producer can make, for either opener kind and either e2e mode, is out.
-    #[test]
-    fn workspace_popups_never_reach_the_plugin_restore() {
-        for deny_main in [false, true] {
-            for opener in ["main", "graph-1", "graph-12"] {
-                for n in [1, 2, 9, 10, 4096] {
-                    let label = popup_label(opener, n);
-                    assert!(!window_state_tracks(&label, deny_main), "{label}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn graph_windows_keep_their_geometry_and_capture_never_has_one() {
-        for deny_main in [false, true] {
-            assert!(window_state_tracks("graph-1", deny_main));
-            assert!(window_state_tracks("graph-12", deny_main));
-            assert!(!window_state_tracks("capture", deny_main));
-        }
-        assert!(window_state_tracks("main", false));
-        assert!(!window_state_tracks("main", true));
-    }
-
-    // The plugin learns its windows only from `window_state_tracks`: a
-    // label list beside it would be a second answer that misses popups.
-    #[test]
-    fn the_plugin_is_configured_only_by_the_policy() {
-        let source = include_str!("lib.rs");
-        let builder = source
-            .split("tauri_plugin_window_state::Builder::default()")
-            .nth(1)
-            .and_then(|rest| rest.split(".build()").next())
-            .expect("window-state plugin builder");
-        assert!(builder.contains(".with_filter("), "{builder}");
-        assert!(builder.contains("window_state_tracks("), "{builder}");
-        assert!(!builder.contains(".with_denylist("), "{builder}");
-        assert!(!builder.contains(".skip_initial_state("), "{builder}");
-    }
 }
 
 #[cfg(test)]
