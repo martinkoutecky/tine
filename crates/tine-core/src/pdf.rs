@@ -590,6 +590,24 @@ fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> St
     }
 }
 
+fn markdown_annotation(body: &str, metadata: &str) -> String {
+    // Logseq's property writer puts properties before a quote-leading body.
+    let start = body.trim_start();
+    let parsed = tine_outline::lsdoc_block_parse::parse_text_bounded(start, "md");
+    let quote =
+        |block: Option<&lsdoc::ast::Block>| matches!(block, Some(lsdoc::ast::Block::Quote { .. }));
+    if parsed.as_ref().is_some_and(|p| quote(p.blocks.first())) {
+        format!("{metadata}\n{body}")
+    } else {
+        // A trailing quote must end before the metadata, including lazy continuations.
+        let needs_blank = parsed.as_ref().is_some_and(|p| quote(p.blocks.last()))
+            && !body.ends_with("\n\n")
+            && !body.ends_with("\r\n\r\n");
+        let separator = if needs_blank { "\n" } else { "" };
+        format!("{body}{separator}{metadata}")
+    }
+}
+
 /// Refresh an existing annotation block's `hl-color::` / `hl-page::` to match the
 /// (possibly recolored / re-paged) highlight, preserving everything else — the
 /// user's text body, any extra properties, and the note children.
@@ -648,7 +666,7 @@ fn refresh_annotation(
         )
         .expect("parsed annotation");
     let raw = if let Some(body) = body {
-        format!("{body}{raw}")
+        markdown_annotation(&body, &raw)
     } else {
         raw
     };
@@ -687,7 +705,12 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
         }
     }
     DocBlock {
-        raw: lines.join("\n"),
+        raw: if format == Format::Md {
+            lines[0].push('\n');
+            markdown_annotation(&lines[0], &lines[1..].join("\n"))
+        } else {
+            lines.join("\n")
+        },
         children: Vec::new(),
         uuid: Default::default(),
         is_org: format == Format::Org,
@@ -699,6 +722,72 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r3_quote_annotations_keep_identity_after_creation_and_refresh() {
+        let mut plain = sample();
+        plain.text = Some("plain\n".into());
+        let md = crate::doc::serialize(&hls_page_document("x.pdf", "x", &[plain]));
+        assert!(md.contains("- plain\n\n  hl-page:: 42"), "{md}");
+        let mut failures = Vec::new();
+        for quote in [
+            "> single",
+            "> first\n> second",
+            "> > nested",
+            "> first\nlazy continuation",
+        ] {
+            for prefix in ["", "intro\n\n"] {
+                for newline in ["\n", "\r\n"] {
+                    for refresh in [false, true] {
+                        let body = format!("{prefix}{quote}").replace('\n', newline);
+                        let mut h = sample();
+                        h.text = Some(body.clone());
+                        let existing = refresh.then(|| crate::doc::parse(&format!(
+                            "- hl-page:: 1{newline}  hl-color:: red{newline}  ls-type:: annotation{newline}  id:: {}{newline}  {newline}  {}{newline}",
+                            h.id, body.replace('\n', "\n  ")
+                        )));
+                        let mut doc = merge_hls_page(existing.as_ref(), "x.pdf", "x", &[h.clone()]);
+                        if prefix.is_empty() {
+                            let block = &doc.roots[0];
+                            let quote_at = block.raw().find('>').unwrap();
+                            assert!(
+                                block
+                                    .projection()
+                                    .regions
+                                    .property_regions
+                                    .iter()
+                                    .all(|range| range.1 <= quote_at),
+                                "body={body:?}, refresh={refresh}, raw={:?}, regions={:?}",
+                                block.raw(),
+                                block.projection().regions.property_regions
+                            );
+                        }
+                        for save in 0..2 {
+                            let serialized = crate::doc::serialize(&doc)
+                                .replace("\r\n", "\n")
+                                .replace('\n', newline);
+                            let parsed = crate::doc::parse(&serialized);
+                            let block = &parsed.roots[0];
+                            if parsed.roots.len() != 1
+                                || block.property("ls-type").as_deref() != Some("annotation")
+                                || block.property("id").as_deref() != Some(h.id.as_str())
+                                || block.property("hl-page").as_deref() != Some("42")
+                                || block.property("hl-color").as_deref() != Some("yellow")
+                            {
+                                failures.push(format!("body={body:?}, refresh={refresh}, save={save}, blocks={}, type={:?}", parsed.roots.len(), block.property("ls-type")));
+                            }
+                            assert!(block
+                                .raw()
+                                .replace("\r\n", "\n")
+                                .contains(&body.replace("\r\n", "\n")));
+                            doc = merge_hls_page(Some(&parsed), "x.pdf", "x", &[h.clone()]);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 
     #[test]
     fn multiline_highlight_keeps_one_property_group_after_refresh() {
