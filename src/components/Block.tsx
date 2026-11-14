@@ -137,7 +137,7 @@ import { CommentBelowChip } from "./CommentBelowChip";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
-import { AuthorGutter } from "./AuthorGutter";
+import { authorMarksHidden } from "../authorMarksPref";
 import type { AuthorNeighbors } from "./authorRuns";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { EditorGate } from "./EditorGate";
@@ -285,11 +285,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
+  // GH #893: the author mark is a faint tint behind the row's own text. Comments, replies and the
+  // bulletless host of a whole-block embed keep their own presentation; the source block tints itself.
+  const authorTinted = () => author() !== null && !bulletless() && !blockEmbedHost() && !authorMarksHidden();
   let mainEl: HTMLDivElement | undefined; const expandThread = () => { const surface = viewCollapseSurface(); if (surface) surface.setMany([props.id], false); else setCollapsedBlocks([props.id], false); };
   const commentPresentation = createMemo(() => hasCommentIdentity() ? {
     quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() || !bulletless() ? null : commentSelector()} />,
     header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} folded={collapsed()} toggleFold={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())} /></Show>,
-    gutter: <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />,
     composer: <Show when={commentClasses()["comment-card"]}><CommentMessages id={props.id} collapsed={collapsed()} expand={expandThread} /><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} collapsed={collapsed} expand={expandThread} /></Show>,
   } : null);
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
@@ -306,6 +308,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
             ...commentClasses(),
+            "author-tinted": authorTinted(),
             // The card of a thread with a message changed since the user last looked (DESIGN §12),
             // also while the thread is folded to "N replies" and its message rows are not drawn.
             "comment-seen-changed": !!commentClasses()["comment-card"] && seenThread(props.id),
@@ -374,6 +377,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div
           class="block-content-wrapper"
           classList={{ "read-only": readOnly() }}
+          title={authorTinted() && !editing() ? translate("comment-written-by", { author: author()! }) : undefined}
           onMouseDown={(e) => {
             // Mousedown anywhere in the row (not on a link/chip) arms the same
             // click-or-drag gesture as block content, with an end-of-block caret
@@ -383,7 +387,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
-          {commentPresentation()?.gutter}
           <Show
             when={editing() ? node() : undefined} keyed
             fallback={

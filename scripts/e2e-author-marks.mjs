@@ -1,4 +1,4 @@
-// GH #892/#893/#896: real WebKitGTK layout, sibling runs, both editors,
+// GH #892/#893/#896: real WebKitGTK layout, sibling run tint cards, both editors,
 // independent Settings/palette/rebound-key visibility and guarded removal.
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -65,14 +65,15 @@ async function snapshot(id) {
     const wrapper = row.querySelector(":scope > .block-main > .block-content-wrapper");
     const content = wrapper.querySelector(":scope > .block-content");
     const bullet = row.querySelector(":scope > .block-main > .block-controls .bullet-container");
-    const mark = wrapper.querySelector(":scope > .author-mark");
-    const wr = wrapper.getBoundingClientRect(), br = bullet?.getBoundingClientRect(), mr = mark?.getBoundingClientRect();
+    const wr = wrapper.getBoundingClientRect(), br = bullet?.getBoundingClientRect();
+    const background = getComputedStyle(wrapper).backgroundColor;
+    const tinted = row.classList.contains("author-tinted") && background !== "rgba(0, 0, 0, 0)" && background !== "transparent";
     const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
     let text; while ((text = walker.nextNode())) if (text.textContent.trim() && !text.parentElement.closest(".author-chip, .ref-count, .margin-marker")) break;
     const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 1);
     return { textX: range.getBoundingClientRect().left, wrapperX: wr.left,
-      bulletRight: br?.right, mark: mr ? { left: mr.left, right: mr.right, top: mr.top, bottom: mr.bottom } : null,
-      legacyShadow: getComputedStyle(wrapper).boxShadow,
+      bulletRight: br?.right, tint: tinted ? { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom } : null,
+      gutterLines: row.querySelectorAll(".author-mark").length, title: wrapper.getAttribute("title"),
       chip: wrapper.querySelector(".author-chip")?.textContent ?? null };
   }, id);
 }
@@ -98,38 +99,37 @@ try {
   const ids = {};
   for (const text of ["Run alpha", "Run beta", "Run gamma", "Parent outline", "Child first", "Child next", "After nesting", "With comment", "After thread", "After embed", "Source first", "Source next"])
     ids[text] = await blockId(text);
-  stage = "centred gutter geometry and one chip per run";
+  stage = "tint geometry and one chip per run";
   const alpha = await snapshot(ids["Run alpha"]), beta = await snapshot(ids["Run beta"]), gamma = await snapshot(ids["Run gamma"]);
   proof.steps.push({ stage, alpha, beta, gamma });
   await shot("01-reading-runs");
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
-  assert.ok(alpha.mark, `No centred gutter: existing edge shadow ${alpha.legacyShadow}, text x=${alpha.textX}, wrapper x=${alpha.wrapperX}`);
+  assert.ok(alpha.tint, `No author tint: text x=${alpha.textX}, wrapper x=${alpha.wrapperX}`);
+  assert.equal(alpha.gutterLines, 0, "The old gutter line element is still drawn");
   assert.equal(alpha.chip, "Ada"); assert.equal(beta.chip, null); assert.equal(gamma.chip, null);
-  assert.ok(Math.abs((alpha.mark.left + alpha.mark.right) / 2 - (alpha.bulletRight + alpha.textX) / 2) <= 0.75, "Mark is not centred between bullet ring and text");
+  // Text keeps the bullet-to-letter offset of an unauthored block (6px dot, 4px number).
+  assert.ok(Math.abs(alpha.textX - alpha.bulletRight - 6) <= 0.75, "Authored text moved from the plain bullet-to-text offset");
   const closed = await snapshot(await blockId("Closed parent"));
-  assert.ok(Math.abs(closed.mark.left - closed.bulletRight - (closed.textX - closed.mark.right)) <= 0.75, "Closed bullet ring and text have unequal clearance from the mark");
-  proof.steps.push({ outcome: "closed bullet ring and text have equal gutter clearance", closed });
+  assert.ok(closed.tint && Math.abs(closed.textX - closed.bulletRight - 6) <= 0.75, "Folded authored block lost its tint or moved its text");
+  proof.steps.push({ outcome: "folded authored block is tinted and its text has the plain offset", closed });
   const number = await snapshot(await blockId("Numbered block"));
   proof.steps.push({ stage: "numbered bullet geometry", number });
-  assert.ok(Math.abs(number.mark.left - number.bulletRight - (number.textX - number.mark.right)) <= 0.75, "Numbered bullet and text have unequal clearance from the mark");
+  assert.ok(number.tint && Math.abs(number.textX - number.bulletRight - 4) <= 0.75, "Numbered authored block lost its tint or moved its text");
   await browser.$(".block-embed-host .ls-block.authored").waitForExist({ timeout: 10000 });
-  assert.equal((await browser.$$(".block-embed-host > .block-main > .block-content-wrapper > .author-mark")).length, 0, "Bulletless embed host drew an author mark of its own");
+  assert.equal((await browser.$$(".block-embed-host.author-tinted")).length, 0, "Bulletless embed host tinted itself");
   assert.equal(await browser.$(".block-embed-host .ls-block > .block-main .author-chip").getText(), "Ada", "Block embed inherited its host's author instead of showing the source author");
-  assert.ok(Math.abs(alpha.mark.bottom - beta.mark.top) <= 0.5 && Math.abs(beta.mark.bottom - gamma.mark.top) <= 0.5, "Same-author sibling gutter has a gap");
+  assert.ok(Math.abs(alpha.tint.bottom - beta.tint.top) <= 0.5 && Math.abs(beta.tint.bottom - gamma.tint.top) <= 0.5, "Same-author sibling tint has a gap");
   for (const text of ["Parent outline", "Child first", "After nesting", "After thread", "After embed", "Source first"])
     assert.equal((await snapshot(ids[text])).chip, "Ada", `${text} must start a separate run`);
   for (const text of ["Child next", "With comment", "Source next"])
     assert.equal((await snapshot(ids[text])).chip, null, `${text} must continue its sibling run`);
-  // Focus is the keyboard disclosure path on a continuation with no chip.
-  await browser.execute(id => document.querySelector(`[data-block-id="${id}"] .author-mark`).focus(), ids["Run beta"]);
-  assert.equal(await browser.$(`${rowSelector(ids["Run beta"])} .author-mark-label`).isDisplayed(), true);
-  await shot("02-focused-individual-author");
-  await browser.$(`${rowSelector(ids["Run gamma"])} .block-content`).moveTo();
-  assert.equal(await browser.$(`${rowSelector(ids["Run gamma"])} .author-mark-label`).isDisplayed(), true);
+  // A continuation with no chip still names its author, in the row's tooltip.
+  for (const text of ["Run beta", "Run gamma"]) assert.match((await snapshot(ids[text])).title ?? "", /Ada/, `${text} does not name its author`);
+  await shot("02-continuation-names-its-author");
   assert.equal(fs.readFileSync(file, "utf8"), initial + extraFixture, "Reading/disclosing marks changed the graph");
 
   for (const editor of ["textarea", "cm6"]) {
-    stage = `${editor}: edit continuation with retained author and gutter`;
+    stage = `${editor}: edit continuation with retained author and tint`;
     await settings();
     await browser.$(".settings-search-input").setValue("CodeMirror");
     await browser.$(".settings-search-result").click();
@@ -139,7 +139,7 @@ try {
     await browser.$(`${rowSelector(ids["Run gamma"])} .block-content`).click();
     const input = await browser.$(editor === "cm6" ? '[data-block-editor="cm6"] .cm-content' : "textarea.block-editor");
     await input.waitForExist({ timeout: 10000 });
-    assert.equal(await browser.$(`${rowSelector(ids["Run gamma"])} .author-mark`).isDisplayed(), true);
+    assert.ok((await snapshot(ids["Run gamma"])).tint, `${editor}: the tint went away while editing`);
     assert.ok(!(editor === "cm6" ? await input.getText() : await input.getValue()).includes("tine.author"));
     await keys("Control", "End"); await browser.keys(` ${editor}`);
     await shot(`03-edit-${editor}`); await keys("Escape");
@@ -161,21 +161,21 @@ try {
   assert.equal(await commentsSwitch.getAttribute("aria-checked"), "true");
   await shot("04-settings-independent-switches"); await keys("Escape");
   const hidden = await snapshot(ids["Run alpha"]);
-  assert.equal(hidden.mark, null); assert.equal(hidden.textX, before.textX); assert.equal(hidden.chip, "Ada");
+  assert.equal(hidden.tint, null); assert.equal(hidden.textX, before.textX); assert.equal(hidden.chip, "Ada");
   assert.equal(await browser.$(".comment-card").isDisplayed(), true);
-  await shot("05-lines-hidden-text-stable");
+  await shot("05-tint-hidden-text-stable");
   await browser.refresh(); await ensureMainWindow(browser); await openPageByName(browser, pageName);
-  assert.equal((await snapshot(await blockId("Run alpha"))).mark, null, "Visibility preference was lost after reload");
+  assert.equal((await snapshot(await blockId("Run alpha"))).tint, null, "Visibility preference was lost after reload");
   stage = "palette and user-bound shortcut";
   await palette("Show/Hide author marks");
-  await browser.$(".author-mark").waitForExist({ timeout: 5000 });
+  await browser.$(".author-tinted").waitForExist({ timeout: 5000 });
   await settings(); await browser.$('.settings-nav-item=Keyboard shortcuts').click();
   const shortcut = '[data-shortcut-id="ui/toggle-author-marks"]';
   assert.equal(await browser.$(`${shortcut} .help-keycap-button`).getAttribute("class").then(value => value.includes("disabled")), true, "Author command unexpectedly has a default key");
   await browser.$(`${shortcut} button[title="Add keybinding"]`).click(); await keys("F8");
   await keys("Escape"); await keys("F8");
-  await browser.$(".author-mark").waitForExist({ timeout: 5000, reverse: true });
-  await keys("F8"); await browser.$(".author-mark").waitForExist({ timeout: 5000 });
+  await browser.$(".author-tinted").waitForExist({ timeout: 5000, reverse: true });
+  await keys("F8"); await browser.$(".author-tinted").waitForExist({ timeout: 5000 });
   proof.steps.push({ outcome: "independent persisted switch, palette and rebound F8; text coordinate unchanged", before, hidden });
   stage = "first chip removes author through the guarded save and undo restores it";
   const first = rowSelector(await blockId("Run alpha"));
@@ -190,10 +190,10 @@ try {
   assert.ok(fs.readFileSync(file, "utf8").includes("tine.author:: Quote Agent  \t"));
   await shot("06-completed"); proof.steps.push(stage);
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
-  console.log("PASS: centred continuous author runs, context boundaries, focus, both editors, independent persisted visibility, palette, rebound key, remove/undo");
+  console.log("PASS: tinted continuous author runs, context boundaries, names, both editors, independent persisted visibility, palette, rebound key, remove/undo");
 } catch (error) {
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
-  const failure = { testedCommit, journey: "author-marks", stage, expected: "centred sibling runs with independent visibility and retained authorship in both editors",
+  const failure = { testedCommit, journey: "author-marks", stage, expected: "tinted sibling runs with independent visibility and retained authorship in both editors",
     observed: String(error), classification: process.env.E2E_AUTHOR_BASELINE ? "product" : "ambiguous", screenshot: "failure.png" };
   fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify(failure, null, 2));
   try { await shot("failure"); } catch { /* Driver may have failed to launch. */ }

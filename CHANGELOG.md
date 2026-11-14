@@ -69,7 +69,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
 - Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
 - The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).
-- Author marks are centred in the bullet gap; same-author sibling runs share a continuous line and one leading chip, with each block's author available on hover or focus (GH #892, GH #893).
+- Another author's block is marked by a faint tint of that author's colour behind its text instead of a line against the bullet; same-author siblings share one card and one leading chip, each tinted block names its author on hover, text never moves, and a selected block shows only the selection colour (GH #892, GH #893).
 - Show/Hide author marks has its own Settings switch beside Show/Hide comments and a rebindable command with no default shortcut (GH #896).
 - Creating, deleting or renaming a page, or changing its `title::`, now refreshes only the views and queries that depend on that page. Before, every open query and reference panel recomputed (D-20261102-PERF row 3, REG-PERF-PAGE-LIFECYCLE-PRECISE-SUMMARY, UI-PERF-PAGE-LIFECYCLE-READERS).
 - Startup loads less JavaScript: the optional CodeMirror editor loads only when enabled. An edit started before it finishes loading uses the classic editor for that activation (internal: UI-LAZY-CM6; D-20261110-LZ).
