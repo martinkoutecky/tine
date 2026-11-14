@@ -203,7 +203,10 @@ fn opener_delim_end(opener: &str, marker_limit: usize) -> usize {
     let lead = opener.len() - t.len();
     let c = t.as_bytes().first().copied();
     lead + if matches!(c, Some(b'`' | b'~')) {
-        t.bytes().take_while(|&b| Some(b) == c).take(marker_limit).count()
+        t.bytes()
+            .take_while(|&b| Some(b) == c)
+            .take(marker_limit)
+            .count()
     } else {
         t.find(char::is_whitespace).unwrap_or(t.len())
     }

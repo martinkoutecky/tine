@@ -181,7 +181,10 @@ fn fence_language_starts_after_three_markers_in_both_formats() {
             let raw = format!("{marker}js\nx\n{marker}");
             let regions = parse(&raw, org);
             assert_eq!(regions.literal_blocks[0].delim_end, 3);
-            assert_eq!(regions.literal_blocks[0].lang, format!("{}js", &marker[3..]));
+            assert_eq!(
+                regions.literal_blocks[0].lang,
+                format!("{}js", &marker[3..])
+            );
         }
     }
 }
