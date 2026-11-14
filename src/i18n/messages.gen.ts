@@ -258,6 +258,8 @@ export interface MessageArgs {
   "command-seen-previous-change": {};
   "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
+  "command-sidebar-open-current-page": {};
+  "command-sidebar-open-today": {};
   "command-sidebar-shrink-width": {};
   "command-tab-activate-last": {};
   "command-tab-activate-n": { "index": string | number };
@@ -1773,6 +1775,7 @@ export interface MessageArgs {
   "query-display-aggregate-count": {};
   "query-display-aggregate-sum": {};
   "query-display-change": {};
+  "query-display-show-breadcrumbs": {};
   "query-display-view-board": {};
   "query-display-view-list": {};
   "query-display-view-search": {};

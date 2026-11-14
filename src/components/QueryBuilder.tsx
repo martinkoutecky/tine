@@ -536,6 +536,7 @@ export function QueryBuilder(props: {
   /** Display writes use the host's guarded query save. Workspace callers may
    * leave it absent until their route owns a display draft. */
   display?: { view: () => ViewSettings; apply: (view: ViewSettings) => void | Promise<boolean>;
+    breadcrumbs?: { shown: () => boolean; set: (shown: boolean) => void };
     defaultColumns?: () => readonly string[];
     formulas?: () => readonly string[] };
 }): JSX.Element {
@@ -887,6 +888,7 @@ export function QueryBuilder(props: {
       <Show when={props.display && (!props.inline || tab() === "display")}><QueryDisplay
         view={props.display!.view} apply={props.display!.apply} registry={registry} formulas={props.display!.formulas}
         defaultColumns={props.display!.defaultColumns}
+        breadcrumbs={props.display!.breadcrumbs}
         inline={props.inline}
         rowKind={() => session()?.query.anchor ?? "block"}
         parentTransientId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId} /></Show>
