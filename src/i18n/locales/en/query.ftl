@@ -451,6 +451,7 @@ query-query-display-block-display = Block display
 query-query-display-view = View
 
 query-query-display-query-view = Query view
+query-display-show-breadcrumbs = Show breadcrumbs
 
 query-query-display-group-by = Group by
 
