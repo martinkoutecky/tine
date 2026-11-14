@@ -40,10 +40,11 @@ describe("the sidebar Namespaces section", () => {
     const dispose = render(() => <Sidebar onActiveNavigationComplete={completion} />, root);
     try {
       const header = await vi.waitFor(() => {
-        const found = [...root.querySelectorAll<HTMLElement>(".nav-section-header")].find((el) => el.textContent?.includes("NAMESPACES"));
+        const found = [...root.querySelectorAll<HTMLElement>(".nav-section-header")].find((el) => el.textContent?.includes("Namespaces"));
         expect(found).toBeDefined();
         return found!;
       });
+      expect(header.classList.contains("nav-first-level")).toBe(true);
       // At rest: no extra control, no tree.
       expect(root.querySelector(".nav-namespaces-open")).toBeNull();
       header.click();

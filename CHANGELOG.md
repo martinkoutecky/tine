@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Selecting blocks on deeply nested pages is faster (Ifogg).
+- CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
+- The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
 - Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
 - Choose and reorder toolbar buttons in Settings → Appearance → Toolbar. Other buttons stay in the … menu, and Reset restores the default. The choice is saved on this device (#926).
 
@@ -16,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Code line numbers stay readable with wrapping enabled, and the gutter grows to fit larger numbers in reading and both editors (GH #946).
 - In-block numbered lists show their stored numbers after editing (GH #947).
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
+- Find in page says how many embeds and queries are not searched yet, and updates matches as they load without retyping (#935).
 
 - Late page reads preserve newer saved text, and merges and conflict resolutions refresh pages already on screen (Hd-bI).
 - Starting a block selection skips folded descendants when building its navigation index and releases the old index after an outline change (#941, Iacx8).

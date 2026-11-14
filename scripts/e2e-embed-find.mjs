@@ -105,6 +105,8 @@ try {
   });
   await browser.keys(["Control", "f", "NULL"]);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".inpage-find-input")?.value === "needle" && document.querySelector(".inpage-find-count")?.textContent.startsWith("1 /")), { timeout: 10000 });
+  // The sidebar's Host embed is folded above: its source is not searched.
+  await browser.waitUntil(() => browser.execute(() => /^1\b.*not searched yet/.test(document.querySelector('.inpage-find-bar [role="status"]')?.textContent.trim() ?? "")), { timeout: 10000, timeoutMsg: "Find must disclose the unsearched sidebar embed" });
   await browser.keys(["Escape"]);
   stage = "editor selection Find";
   await browser.$(".main-content .block-content").click();
@@ -120,7 +122,7 @@ try {
 } catch (error) {
   try { if (browser) await saveJourneyScreenshot(browser, path.join(RUN, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(RUN, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit}\nJourney: ${stage}\nExpected: outer fold saves only the host, inner fold saves its source host, deeper source stays unchanged, and selected text seeds Find with first match active.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
+  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit}\nJourney: ${stage}\nExpected: outer fold saves only the host, inner fold saves its source host, deeper source stays unchanged, selected text seeds Find with first match active, and Find names the unsearched sidebar embed.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

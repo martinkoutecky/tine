@@ -180,7 +180,7 @@ describe("GH #161 successful left-navigation boundary", () => {
 
       armLeft();
       before = completion.mock.calls.length;
-      dispatch(findText(root, ".nav-section-header", "NAMESPACES"));
+      dispatch(findText(root, ".nav-section-header", "Namespaces"));
       await expectNotCompleted(before);
       expect(sidebarOpen()).toBe(true);
       const namespace = await vi.waitFor(() => findText(root, ".ns-node-label", "Namespace"));
@@ -194,12 +194,12 @@ describe("GH #161 successful left-navigation boundary", () => {
       before = completion.mock.calls.length;
       dispatch(root.querySelector('[data-sidebar-section="favorites"]')!);
       dispatch(root.querySelector('[data-sidebar-section="recent"]')!);
-      dispatch(findText(root, ".nav-section-header", "NAMESPACES"));
+      dispatch(findText(root, ".nav-section-header", "Namespaces"));
       await expectNotCompleted(before);
       expect(sidebarOpen()).toBe(true);
 
       // Namespace disclosure remains independent of All pages navigation.
-      dispatch(findText(root, ".nav-section-header", "NAMESPACES"));
+      dispatch(findText(root, ".nav-section-header", "Namespaces"));
       const namespaceToggle = await vi.waitFor(() => root.querySelector<HTMLElement>(".ns-node-toggle")!);
       dispatch(namespaceToggle);
       await expectNotCompleted(before);

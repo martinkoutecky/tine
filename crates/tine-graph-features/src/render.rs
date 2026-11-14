@@ -2491,7 +2491,7 @@ mod tests {
     use super::*;
 
     /// I-12: `whole_begin_query_payload` and the frontend's `WHOLE_BEGIN_QUERY`
-    /// (components/BeginQuery.tsx, authoritative) read one golden of block raws.
+    /// (src/render/beginQuery.ts, authoritative) read one golden of block raws.
     #[test]
     fn begin_query_container_matches_the_shared_frontend_golden() {
         let golden: serde_json::Value = serde_json::from_str(include_str!(
