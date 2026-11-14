@@ -1852,6 +1852,8 @@ mod query_guide_tests {
             "nothing the builder wrote is labelled *advanced*",
             "follow every change you make, before you save",
             "Matches that share a parent show that parent's breadcrumb once",
+            "**⋯ → View → Show breadcrumbs**",
+            "`tine.breadcrumbs:: false`",
             "Search and List page results show the page title",
             "**Pages and blocks**",
             "`tine.result-kinds:: pages-and-blocks`",
