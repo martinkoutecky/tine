@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
 - Selecting blocks on deeply nested pages is faster (Ifogg).
