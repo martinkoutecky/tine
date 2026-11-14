@@ -41,7 +41,7 @@ impl BlockView {
     fn of(b: &DocBlock) -> Self {
         BlockView {
             uuid: b.property("id").unwrap_or_default(),
-            text: b.raw.clone(),
+            text: b.raw.to_string(),
             child_count: b.children.len(),
         }
     }
@@ -518,7 +518,7 @@ fn artifact_body(
     if *text == mine.raw || *text == theirs.raw {
         return None;
     }
-    merged_body_is_valid(text, mine.is_org).then(|| text.clone())
+    merged_body_is_valid(text, mine.is_org).then(|| text.to_string())
 }
 
 /// Whether a merged body still IS one block: serialized the way the page
@@ -555,7 +555,7 @@ fn merged_body_is_valid(merged: &str, is_org: bool) -> bool {
     reparsed.pre_block.is_none()
         && reparsed.roots.len() == 1
         && reparsed.roots[0].children.is_empty()
-        && reparsed.roots[0].raw == merged
+        && reparsed.roots[0].raw() == merged
 }
 
 fn normalize_pre(pre: Option<&str>) -> Option<String> {
@@ -1144,7 +1144,7 @@ fn refused(row: &str, reason: &'static str) -> MergeRefused {
 
 /// A block with `side`'s own body but the given (already-merged) children.
 fn rebuild(side: &DocBlock, children: Vec<DocBlock>) -> DocBlock {
-    rebuild_with_raw(side, side.raw.clone(), children)
+    rebuild_with_raw(side, side.raw.to_string(), children)
 }
 
 /// [`rebuild`] with an explicit body — the merged-decision shape. The format
@@ -1177,10 +1177,10 @@ fn strip_held_ids(b: &DocBlock, owned: &std::collections::HashSet<String>) -> Do
                     )
                     .expect("parsed copy")
             } else {
-                b.raw.clone()
+                b.raw.to_string()
             }
         }
-        None => b.raw.clone(),
+        None => b.raw.to_string(),
     };
     let mut nb = DocBlock::new(raw);
     nb.is_org = b.is_org;

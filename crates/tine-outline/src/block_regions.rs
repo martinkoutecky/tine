@@ -180,7 +180,7 @@ pub struct LiteralBlock {
     pub range: Range,
     pub open_end: usize,
     pub close_start: usize,
-    /// End of the opener's delimiter token (the backtick/tilde run, or
+    /// End of the opener's delimiter token (three backticks/tildes, or
     /// `#+BEGIN_X`); the info string / language follows it.
     pub delim_end: usize,
 }
@@ -198,12 +198,12 @@ pub struct OpenFence {
     pub delim_end: usize,
 }
 
-fn opener_delim_end(opener: &str) -> usize {
+fn opener_delim_end(opener: &str, limit: usize) -> usize {
     let t = opener.trim_start();
     let lead = opener.len() - t.len();
     let c = t.as_bytes().first().copied();
     lead + if matches!(c, Some(b'`' | b'~')) {
-        t.bytes().take_while(|&b| Some(b) == c).count()
+        t.bytes().take_while(|&b| Some(b) == c).count().min(limit)
     } else {
         t.find(char::is_whitespace).unwrap_or(t.len())
     }
@@ -215,7 +215,8 @@ impl LiteralBlock {
         let open_end = range.0 + text.find('\n').map_or(text.len(), |at| at + 1);
         let body = text.trim_end();
         let close_start = range.0 + body.rfind('\n').map_or(0, |at| at + 1);
-        let delim_end = range.0 + opener_delim_end(&raw[range.0..open_end]);
+        // lsdoc fence_marker: exactly three marker bytes; extras are language.
+        let delim_end = range.0 + opener_delim_end(&raw[range.0..open_end], 3);
         LiteralBlock {
             kind,
             lang: lang.to_owned(),
@@ -248,7 +249,7 @@ fn open_fence(raw: &str, literals: &[Range]) -> Option<OpenFence> {
                 .iter()
                 .any(|n| t.get(..n.len()).is_some_and(|h| h.eq_ignore_ascii_case(n)));
         if opens {
-            let delim_end = start + opener_delim_end(line);
+            let delim_end = start + opener_delim_end(line, usize::MAX);
             let fence_start = start + (line.len() - t.len());
             let info = raw[delim_end..start + line.trim_end().len()].trim();
             return Some(OpenFence {
@@ -319,12 +320,12 @@ pub struct BlockRegions {
     pub properties: Vec<Property>,
     pub planning: Vec<Planning>,
     pub drawers: Vec<Drawer>,
-    pub id: Option<Property>,
+    pub id: Option<Box<Property>>,
     pub quarantined: bool,
     /// Block-level literal containers in source order (see [`LiteralBlock`]).
     pub literal_blocks: Vec<LiteralBlock>,
     /// A fence being typed, when no accepted container closes it.
-    pub open_fence: Option<OpenFence>,
+    pub open_fence: Option<Box<OpenFence>>,
     /// Where lsdoc's headline (the block's title with its line terminator)
     /// ends, when that is not the end of the first line after the block's
     /// leading trim: an empty title before the rows lsdoc reads at the title
@@ -484,7 +485,7 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     result.literals = merged;
     result.literal_blocks.sort_by_key(|b| b.range.0);
     if !document {
-        result.open_fence = open_fence(raw, &result.literals);
+        result.open_fence = open_fence(raw, &result.literals).map(Box::new);
     }
     // Nested content under a literal Custom belongs to that container, even if
     // lsdoc emitted child Properties or timestamps there.
@@ -499,7 +500,8 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
         .properties
         .iter()
         .find(|p| p.primary && p.key.eq_ignore_ascii_case("id"))
-        .cloned();
+        .cloned()
+        .map(Box::new);
     result
 }
 

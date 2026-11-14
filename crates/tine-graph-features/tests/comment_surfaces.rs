@@ -46,7 +46,7 @@ fn detached_export_hydration_carries_comment_roots_and_replies() {
     }
     let body = whole.corpus(Some("Source"), true).pages[0].document.roots[0]
         .uuid
-        .clone();
+        .to_string();
     let preview = whole.preview_block(&body, 100).unwrap().unwrap();
     assert_ne!(
         serde_json::to_value(&preview.group.blocks[0]).unwrap()["comment"],

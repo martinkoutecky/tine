@@ -33,15 +33,16 @@ function page(raw: string): PageDto {
   return { name: "IME blur", kind: "page", title: "IME blur", pre_block: null, blocks: [block] };
 }
 
-function editorWithPreedit(preedit: string) {
-  loadSingle(page(""));
-  startEditing("ime-blur", 0);
+function editorWithPreedit(preedit: string, raw = "", caret = 0) {
+  loadSingle(page(raw));
+  startEditing("ime-blur", caret);
   const { root, dispose } = mount(() => (
     <For each={pageByName("IME blur")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ));
   const editor = maybeEditorIn(root) as EditorDriver;
   editor.compositionStart(new CompositionEvent("compositionstart", { bubbles: true }));
-  editor.input(preedit, preedit.length, { inputType: "insertCompositionText", data: preedit, isComposing: true });
+  const text = raw.slice(0, caret) + preedit + raw.slice(caret);
+  editor.input(text, caret + preedit.length, { inputType: "insertCompositionText", data: preedit, isComposing: true });
   return { editor, dispose };
 }
 
@@ -74,6 +75,21 @@ describe("a composition abandoned by blur", () => {
       editor.compositionEnd(new CompositionEvent("compositionend", { bubbles: true }));
       await Promise.resolve();
       expect(doc.byId["ime-blur"].raw).toBe("あか");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("ends a language typed at a bare Org opener with its separator when the blur also leaves the editor (#879)", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true); // focus went elsewhere in the window
+    const opener = "#+BEGIN_SRC";
+    const { dispose } = editorWithPreedit("rust", `${opener}\nx\n#+END_SRC`, opener.length);
+    const other = document.createElement("button");
+    document.body.append(other);
+    try {
+      other.focus(); // focus moves elsewhere without compositionend; the editor exits
+      await Promise.resolve();
+      expect(doc.byId["ime-blur"].raw).toBe("#+BEGIN_SRC rust\nx\n#+END_SRC");
     } finally {
       dispose();
     }

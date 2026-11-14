@@ -1278,7 +1278,7 @@ fn bracket_completion_reads_the_resident_table_not_every_page() {
         .1
         .roots[0]
         .uuid
-        .clone();
+        .to_string();
     crate::model::referenced_names::take_page_probes();
     for (k, typed) in ["Ty", "Typ", "Type"].into_iter().enumerate() {
         let hits = view.complete_page_names(
@@ -1650,7 +1650,7 @@ fn bracket_completion_offers_namespace_parents() {
         .1
         .roots[0]
         .uuid
-        .clone();
+        .to_string();
     assert_eq!(once(&rows("Draft", None), "Draft"), 1);
     assert_eq!(once(&rows("Draft", Some(("Editing", &id, ""))), "Draft"), 0);
     assert_eq!(
