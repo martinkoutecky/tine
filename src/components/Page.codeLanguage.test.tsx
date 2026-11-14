@@ -33,11 +33,13 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
     ["#+BEGIN_SRC js :results output", "#+END_SRC", "js"],
     ["#+begin_src\tjs :results output", "#+end_src", "js"],
     ["#+BEGIN_SRC ", "#+END_SRC", ""],
+    ["#+BEGIN_EXAMPLE", "#+END_EXAMPLE", ""], ["#+begin_example", "#+end_example", ""],
   ].flatMap(([open, close, lang]) => [false, true].flatMap(mixed => ["leave", "typing", "paste", "programmatic paste", "IME", "drop", "replacement", "plain input"].map(entry => ({ format, open, close, lang, mixed, entry })))))) (
     "keeps the source block and language after label activation: %j", async ({ format, open, close, lang, mixed, entry }) => {
       const raw = `${mixed ? "前 🐈\n" : ""}${open}\nx\n${close}${mixed ? "\nAfter" : ""}`;
-      const parsed = parseBlock(raw, format === "org").find(block => block.kind === "src")!;
-      expect(parsed).toMatchObject({ kind: "src", lang });
+      const literal = /begin_example/i.test(open) ? "example" : "src";
+      const parsed = parseBlock(raw, format === "org").find(block => block.kind === literal)!;
+      expect(parsed).toMatchObject(literal === "src" ? { kind: "src", lang } : { kind: "example" });
       const dto = { id: `pages/Code.${format}`, name: "Code", title: "Code", kind: "page" as const, pre_block: null,
         blocks: [{ id: "code", raw, children: [], collapsed: false }] };
       vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
@@ -87,9 +89,10 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
         endEdit("page-navigation");
         await flushPage("Code");
         const saved = submittedPages(submits, "Code").at(-1)!.blocks[0].raw;
-        const expected = raw.slice(0, at) + (open.trimStart().toLowerCase() === "#+begin_src" ? " " : "") + "rust" + raw.slice(at + lang.length);
+        const expected = raw.slice(0, at) + (["#+begin_src", "#+begin_example"].includes(open.trimStart().toLowerCase()) ? " " : "") + "rust" + raw.slice(at + lang.length);
         expect(saved).toBe(expected);
-        expect(parseBlock(saved, format === "org").find(block => block.kind === "src")).toMatchObject({ kind: "src", lang: "rust", code: (parsed as { code: string }).code });
+        expect(parseBlock(saved, format === "org").find(block => block.kind === literal)).toMatchObject(
+          literal === "src" ? { kind: "src", lang: "rust", code: (parsed as { code: string }).code } : { kind: "example", code: (parsed as { code: string }).code });
       } finally { dispose(); }
     });
   it.each(["before", "after"])("opens another fence %s the currently edited fence", async side => {

@@ -234,8 +234,8 @@ describe("codeLanguageCaret", () => {
 
 describe("codeLanguageInput", () => {
   it.each((["md", "org"] as const).flatMap(format => ["\n", "\r\n"].flatMap(eol =>
-    ["", "  "].flatMap(indent => ["r", "rust"].map(inserted => ({ format, eol, inserted, indent }))))))("supplies Org's first separator only during input: %j", ({ format, eol, inserted, indent }) => {
-    const raw = `前 🐈${eol}${indent}#+BEGIN_SRC${eol}x${eol}#+END_SRC`;
+    ["", "  "].flatMap(indent => ["SRC", "EXAMPLE"].flatMap(kind => ["r", "rust"].map(inserted => ({ format, eol, inserted, indent, kind })))))))("supplies Org's first separator only during input: %j", ({ format, eol, inserted, indent, kind }) => {
+    const raw = `前 🐈${eol}${indent}#+BEGIN_${kind}${eol}x${eol}#+END_${kind}`;
     const at = codeLanguageCaret(raw, format);
     const edit = codeLanguageInput(raw.slice(0, at) + inserted + raw.slice(at), format, at + inserted.length, inserted)!;
     expect(edit).toEqual({ value: raw.slice(0, at) + " " + inserted + raw.slice(at), caret: at + inserted.length + 1, change: { from: at, insert: " " } });

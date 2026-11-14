@@ -23,12 +23,12 @@ export function codeLanguageCaret(text: string, format: "md" | "org", bodyStart?
 
 /** On the info string's language: past the separator whitespace after the delimiter
  * (`#+BEGIN_SRC python`, "``` js"), so typing replaces or extends the language rather
- * than gluing text onto the delimiter. A bare Org source delimiter needs a space
- * when a language is typed, never just on activation. O(opener length). */
+ * than gluing text onto the delimiter. A bare Org source or example delimiter needs a
+ * space when a language is typed, never just on activation. O(opener length). */
 function languageEntry(text: string, fence: LiteralContainer): { at: number; separator: string } {
   let at = fence.delimEnd;
   while (text[at] === " " || text[at] === "\t") at++;
-  return { at, separator: fence.kind === "src" && text.slice(fence.start, fence.delimEnd).trimStart().startsWith("#") && at === fence.delimEnd ? " " : "" };
+  return { at, separator: (fence.kind === "src" || fence.kind === "example") && text.slice(fence.start, fence.delimEnd).trimStart().startsWith("#") && at === fence.delimEnd ? " " : "" };
 }
 
 /** Post-input language insertion, shared by both editors. Supply Org's separator
