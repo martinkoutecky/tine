@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
+it("the Guide explains one history step for each repeated mouse press (GH #948)", () => {
+  expect(readFileSync("crates/tine-core/src/templates/tips.md", "utf8")).toContain("Each press steps once, including repeated presses before the page finishes displaying, just like **Alt+Left** and **Alt+Right**");
+});
+
 it("onboards page/subtree folding and macOS mouse/keyboard history (GH #780, #785)", () => {
   const guide = readFileSync("crates/tine-core/src/templates/tips.md", "utf8");
   for (const text of ["**t o**", "Expand all blocks on current page", "Collapse all blocks on current page",

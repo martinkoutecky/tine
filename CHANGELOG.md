@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Mouse back and forward buttons no longer drop history steps when pressed repeatedly on Windows (#948).
 - After you leave a page, Backspace and Delete no longer remove blocks that were selected on that page.
 - A block moved between pages right after opening a graph now stays in its original page and shows a save error if the move cannot be saved, instead of appearing to move successfully (internal: REG-L2-14-TRANSFER-NO-HOST).
 
