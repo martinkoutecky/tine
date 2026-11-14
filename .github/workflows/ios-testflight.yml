@@ -58,6 +58,14 @@ jobs:
 
       - run: npm ci
 
+      - run: npx playwright install chromium
+
+      - name: Verify the deployed quick share viewer before enabling the writer
+        id: viewer-ready
+        # As in release.yml, an unavailable viewer leaves the writer disabled.
+        continue-on-error: true
+        run: node scripts/check-release-readiness.mjs --quick-share-only
+
       - name: Require iOS distribution secrets
         shell: bash
         env:
@@ -177,6 +185,8 @@ jobs:
         run: npm run ios:prepare-project
 
       - name: Build signed TestFlight IPA
+        env:
+          TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
         run: >-
           npx tauri ios build
           --export-method app-store-connect

@@ -276,13 +276,22 @@ generation-1 fixture corpus in a headless browser. Run
 `https://tine.page/s/1/viewer.json`, verifies the hashes of deployed files
 used by the reader, and decrypts and renders every frozen fixture. Only a
 successful check writes `artifacts/quick-share-viewer/writer-ready.env` and
-the release job's `quick_share_viewer_g1_ready` output. The native build
+the workflow step's `quick_share_viewer_g1_ready` output. The native build
 takes `TINE_QUICK_SHARE_VIEWER_G1_READY` from that check; the value must
 match a SHA-256 of this build's exact fixture files (names and bytes).
 The viewer manifest's `fixture_sha256` records its build corpus, not a
 compatibility requirement: a viewer built for another corpus passes only if
 it decrypts and renders this writer's entire corpus. The successful check
 attests this writer's fixture fingerprint, never the viewer's build fingerprint.
+Desktop and Android release builds consume the release preflight's output.
+The independently dispatched iOS TestFlight and Microsoft Store (MSIX x64
+and ARM64) workflows run the same check against their checked-out writer and
+pass its output to the native build. A failed check leaves the value empty;
+these workflows may still package with sharing disabled. The log line
+`Quick share viewer-first gate passed`, rather than a green workflow alone,
+proves the check succeeded. Flatpak's offline manifest has no attestation
+input yet, so Flatpak builds keep sharing disabled pending an offline
+attestation mechanism decision.
 A debug build and the old launch-time `TINE_QUICK_SHARE=1` switch cannot
 bypass this gate. Off: `quick_share_list` answers
 `enabled: false` (the share dialog's Link stays "coming soon", Settings has no
