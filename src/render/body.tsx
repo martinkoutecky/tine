@@ -358,10 +358,11 @@ function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: str
 // line through the item's own lsdoc source span, which is a position in THIS text;
 // `toggleAstCheckbox` refuses when it is not the block's current raw (a macro
 // expansion, or a render older than the text), so a click never edits a line the
-// renderer did not draw. Direct `renderBlocks` callers provide none: inert.
+// renderer did not draw. Fragment hosts can provide only the code action,
+// leaving checkboxes inert without a matching raw source.
 // Only code widgets read editability; prose must not observe page-host revisions.
 type CodeEditAction = Accessor<((sourceByte: number) => void) | undefined>;
-const BodySourceContext = createContext<{ raw: string; codeEditAction?: CodeEditAction }>();
+export const BodySourceContext = createContext<{ raw?: string; codeEditAction?: CodeEditAction }>();
 
 // An in-block list from the AST (`ListItem[]`).
 function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {

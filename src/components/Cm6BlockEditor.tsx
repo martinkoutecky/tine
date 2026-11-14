@@ -400,6 +400,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     };
     const structuralKeys = (event: KeyboardEvent) => {
       if (!view || !view.contentDOM.contains(event.target as Node) || !current()
+        || (event.target as Element | null)?.closest?.("button.code-language")
         || event.isComposing || event.keyCode === 229 || typing.active()) return;
       // Global capture (including transient/suspension ownership) runs first.
       // Tab and native reload chords are pre-cancelled there while their bound

@@ -51,10 +51,10 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
       expect(editorIn(root).selection()).toEqual([10, 10]);
     } finally { dispose(); }
   });
-  it.each([false, true].flatMap(mixed => ["js", ""].flatMap(lang => [false, true].flatMap(editing => ["click", "Enter", " "].map(activation => ({ mixed, lang, editing, activation }))))))(
+  it.each([false, true].flatMap(mixed => ["js", ""].flatMap(lang => [false, true, ...(kind === "cm6" && mixed ? ["prose"] : [])].flatMap(editing => ["click", "Enter", " "].map(activation => ({ mixed, lang, editing, activation }))))))(
     "opens the language on a routed page: %j", async ({ mixed, lang, editing, activation }) => {
-      const before = mixed ? "Intro 汉字\n" : "";
-      const raw = `${before}\`\`\`${lang}\nconst n = 1;\n\`\`\`${mixed ? "\nAfter" : ""}`;
+      let before = mixed ? "Intro 汉字\n" : "";
+      let raw = `${before}\`\`\`${lang}\nconst n = 1;\n\`\`\`${mixed ? "\nAfter" : ""}`;
       vi.spyOn(backend(), "getPage").mockResolvedValue({ id: "pages/Code.md", name: "Code", title: "Code", kind: "page", pre_block: null,
         blocks: [{ id: "code", raw, children: [], collapsed: false }] });
       mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Code", pageKind: "page" });
@@ -63,7 +63,12 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
       try {
         await vi.waitFor(() => expect(root.querySelector(".code-language")).not.toBeNull());
         await bindTestHost();
-        if (editing) startEditing("code", raw.indexOf("const"));
+        if (editing) startEditing("code", editing === "prose" ? 0 : raw.indexOf("const"));
+        if (editing === "prose") {
+          editorIn(root).type("Edited ");
+          before = "Edited " + before;
+          raw = "Edited " + raw;
+        }
         if (!editing && activation !== "click") selectBlock("code");
         const submits = vi.spyOn(backend(), "pageSubmit");
         const reads = vi.mocked(backend().getPage).mock.calls.length;
@@ -80,6 +85,7 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
           label!.dispatchEvent(event);
           expect(event.defaultPrevented, "native activation must remain available").toBe(false);
         }
+        if (activation === "click") label!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
         label!.click(); // jsdom omits keyboard default activation; Chromium exercises it natively.
         await vi.waitFor(() => expect(editorIn(root).value()).toBe(raw));
         expect(editorIn(root).selection()).toEqual([before.length + 3, before.length + 3]);
