@@ -21,6 +21,7 @@ export function QueryDisplay(props: {
   inline?: boolean;
   defaultColumns?: () => readonly string[];
   availableColumns?: () => readonly string[];
+  breadcrumbs?: { shown: () => boolean; set: (shown: boolean) => void };
 }): JSX.Element {
   const [open, setOpen] = createSignal(props.inline ?? false);
   createEffect(() => props.onOpenChange?.(open()));
@@ -119,7 +120,11 @@ export function QueryDisplay(props: {
         <For each={VIEW_KINDS}>{(kind) =>
           <button class="settings-btn" type="button" classList={{ active: (view().view ?? "list") === kind }}
             onClick={() => apply({ view: kind })}>{viewLabel(kind)}</button>}</For>
-      </div></section>
+      </div><Show when={props.breadcrumbs && props.rowKind() === "block" && (view().view ?? "list") === "list"}>
+        <label class="qd-row"><input type="checkbox" aria-label={t("query-display-show-breadcrumbs")}
+          checked={props.breadcrumbs!.shown()} onChange={event => props.breadcrumbs!.set(event.currentTarget.checked)} />
+          {t("query-display-show-breadcrumbs")}</label>
+      </Show></section>
       <section><h4>{t("query-query-display-group-by")}</h4><span>{view().group_by || t("query-query-display-no-grouping")}</span>
         <button class="settings-btn" type="button" onClick={() => apply({ group_by: "" })}>{t("query-query-display-none")}</button>
         {fieldPicker("group", t("query-display-change"))}

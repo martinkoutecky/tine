@@ -122,6 +122,13 @@ try {
     return { lineX: el.getBoundingClientRect().left + parseFloat(line.left) + parseFloat(line.borderLeftWidth) / 2, dotX: dot.left + dot.width / 2 };
   });
   if (Math.abs(mobilePath.lineX - mobilePath.dotX) > 1) throw new Error("Mobile path misses parent bullet");
+  const mobileJoins = await mobile.evaluate(() => ["parent", "middle", "focus"].map(id => {
+    const row = document.querySelector(`[data-block-id="${id}"] > .block-main`);
+    const parent = row.closest(".block-children-container").parentElement.querySelector(":scope > .block-main");
+    return { id, childX: row.getBoundingClientRect().left + parseFloat(getComputedStyle(row, "::before").left),
+      parentX: parent.getBoundingClientRect().left + parseFloat(getComputedStyle(parent, "::after").left) };
+  }));
+  for (const join of mobileJoins) if (Math.abs(join.childX - join.parentX) > .05) throw new Error(`Mobile ${join.id} rail jogs from parent stub`);
   await mobile.close();
   writeFileSync(`${out}/observations.json`, JSON.stringify(observations, null, 2) + "\n");
   console.log(`Passed ${observations.length} screenshot configurations`);

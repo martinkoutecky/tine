@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Derive the Flatpak build inputs for the identity this tree ships.
 //
-// The checked-in flatpak/ files carry the RELEASED identity (they are what a
-// Flathub submission would use). Every other identity is derived from them at
+// The checked-in flatpak/ files carry the RELEASED identity.
+// Every other identity is derived from them at
 // build time, so each fact (the build recipe, the permissions, the description)
 // has exactly one source of truth and only the identity-bearing facts differ:
 // application id, product name, and the release list.
@@ -13,7 +13,7 @@
 // `ship`); anything else is refused, because the packaged binary reads its
 // identity from that switch and a mismatched Flatpak id would give it the other
 // app's data directories. The released path is unchanged: it writes only the
-// CI manifest, byte-for-byte what flatpak.yml used to derive inline.
+// CI manifest with the build's viewer attestation and selected identity.
 //
 // Outputs (all untracked; docs/app-identity.md):
 //   flatpak/<id>.ci.yml                      manifest that builds THIS checkout
@@ -33,8 +33,9 @@ const RELEASED = "release";
  * Pure derivation. Returns { id, productName, manifestPath, files } where `files`
  * maps repo-relative output paths to their text. Throws on a mismatched identity
  * or when a stable source file no longer has the shape the derivation relies on.
+ * viewerReady carries the shared viewer check's output into the sandbox.
  */
-export function deriveFlatpak({ root = ROOT, identity, date, version }) {
+export function deriveFlatpak({ root = ROOT, identity, date, version, viewerReady = "" }) {
   const sw = readSwitch(root);
   if (!sw.identities[identity]) {
     throw new Error(`unknown identity "${identity}" (expected one of ${Object.keys(sw.identities).join(", ")})`);
@@ -60,14 +61,10 @@ export function deriveFlatpak({ root = ROOT, identity, date, version }) {
   const installDir = released ? "flatpak" : "flatpak/derived";
 
   let manifest = read(`${stableId}.yml`);
-  // Replace the Flathub git source (pinned to a released tag) with a local `dir`
-  // source so CI builds THIS commit. Every other source (the vendored cargo/node
-  // files and any archives) is kept as the recipe lists it.
-  const git = /^      - type: git\n(?:        .*\n)+/m;
-  if (!manifest.includes("    sources:") || !git.test(manifest)) {
-    throw new Error("manifest has no module `sources:` block with a git source to replace");
-  }
-  manifest = manifest.replace(git, "      - type: dir\n        path: ..\n");
+  // The sandbox gets the same attestation as other native builds. Embedding it
+  // in the manifest also invalidates the builder cache when readiness changes.
+  manifest = manifest.replace('TINE_QUICK_SHARE_VIEWER_G1_READY: ""',
+    `TINE_QUICK_SHARE_VIEWER_G1_READY: ${JSON.stringify(viewerReady)}`);
   if (!released) {
     manifest = manifest
       .replaceAll(`src-tauri/${stable.iconDirectory}/`, `src-tauri/${target.iconDirectory}/`)
@@ -157,7 +154,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (!args.identity) throw new Error("usage: derive-flatpak-identity.mjs --identity <release|experiment> [--date YYYY-MM-DD]");
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
     const date = resolveReleaseDate({ explicit: args.date });
-    const derived = deriveFlatpak({ identity: args.identity, date, version: conf.version });
+    const derived = deriveFlatpak({ identity: args.identity, date, version: conf.version,
+      viewerReady: process.env.TINE_QUICK_SHARE_VIEWER_G1_READY ?? "" });
     for (const [file, text] of Object.entries(derived.files)) {
       fs.mkdirSync(path.dirname(path.join(ROOT, file)), { recursive: true });
       fs.writeFileSync(path.join(ROOT, file), text);

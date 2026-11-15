@@ -160,6 +160,12 @@ pub(crate) fn is_popup_of(label: &str, opener: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// The native label of `opener`'s popup number `n`.
+#[cfg(any(desktop, test))]
+pub(crate) fn popup_label(opener: &str, n: u64) -> String {
+    format!("ws-{opener}-{n}")
+}
+
 /// The opener label of a workspace popup label.
 pub(crate) fn opener_of(label: &str) -> Option<&str> {
     let rest = label.strip_prefix("ws-")?;
@@ -234,7 +240,7 @@ fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<
             "at most {MAX_WORKSPACE_WINDOWS} workspace windows can be open"
         ));
     }
-    let label = format!("ws-{opener}-{}", trace.sequence);
+    let label = popup_label(&opener, trace.sequence);
     let (areas, scales) = monitor_areas(&window);
     let placement = place(geometry, &areas);
     // Without a requested position the OS chooses the monitor. Do not call
@@ -328,6 +334,7 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
             Some((x, y)) => builder.position(x, y),
             None => builder,
         };
+        let build_started = Instant::now();
         match builder.build() {
             Ok(window) => {
                 trace.stage("native.build-returned");
@@ -344,7 +351,14 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
             }
             Err(error) => {
                 trace.stage("native.build-failed");
-                crate::debug::diag_private("workspace-window-build-failed", error.to_string());
+                let error = error.to_string();
+                crate::flight::record_window_create_failed(
+                    "workspace",
+                    &error,
+                    app.webview_windows().len(),
+                    u64::try_from(build_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                );
+                crate::debug::diag_private("workspace-window-build-failed", error);
                 tauri::webview::NewWindowResponse::Deny
             }
         }

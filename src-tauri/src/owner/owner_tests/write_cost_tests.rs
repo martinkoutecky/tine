@@ -167,6 +167,16 @@ fn a_write_that_names_its_page_spends_its_lower_bound() {
     spent(&slot);
     add(&graph, json!({ "page": "a", "content": "- more" }));
     assert_eq!(spent(&slot), EXISTING, "add to an existing page");
+    add(
+        &graph,
+        json!({ "page": "a", "content": "- personal", "no_author": true }),
+    );
+    assert_eq!(spent(&slot), EXISTING, "no-author add to an existing page");
+    add(
+        &graph,
+        json!({ "page": "Personal", "content": "- personal", "no_author": true }),
+    );
+    assert_eq!(spent(&slot), CREATED, "no-author add creating its page");
     add(&graph, json!({ "page": "Brand new", "content": "- new" }));
     assert_eq!(spent(&slot), CREATED, "add creating its page");
     add(&graph, json!({ "page": "brand NEW", "content": "- again" }));

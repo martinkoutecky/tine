@@ -86,12 +86,10 @@ jobs:
           npm run build:wasm
           node scripts/check-wasm-pin.mjs
 
-      - name: Release and offline-source contract fixtures
+      - name: Release contract fixtures
         run: |
           node --test scripts/check-privileged-action-pins.test.mjs
           node scripts/check-privileged-action-pins.mjs
-          node scripts/check-flatpak-node-sources.mjs
-          node scripts/check-flatpak-cargo-sources.mjs
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
           node scripts/test-env-toolchain-fallback.mjs
@@ -155,12 +153,6 @@ jobs:
         run: |
           npm run build:wasm
           node scripts/check-wasm-pin.mjs
-
-      - name: Flatpak offline npm sources are current
-        run: node scripts/check-flatpak-node-sources.mjs
-
-      - name: Flatpak offline Cargo sources are current
-        run: node scripts/check-flatpak-cargo-sources.mjs
 
       - name: Release pipeline contract fixtures
         run: |

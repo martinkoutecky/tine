@@ -80,7 +80,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "page.show" => {
             let PageArgs { name } = parse(args)?;
             let graph = whole_graph(slot)?;
-            let id = resolve_page(&graph, &name)?;
+            let id = resolve_read_page(&graph, &name)?;
             let names = graph.inventory(InventoryScope::File(&id));
             page_answer(
                 slot,
@@ -102,7 +102,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             let max_nodes = max_nodes.unwrap_or(PREVIEW_NODES).clamp(1, PREVIEW_NODES);
             match graph.preview_block(&uuid, max_nodes) {
                 Ok(Some(preview)) => {
-                    let page = resolve_page(&graph, &preview.group.page)?;
+                    let page = resolve_read_page(&graph, &preview.group.page)?;
                     // One host read gives the content, positions and
                     // fingerprints together (review 6); the store preview is
                     // the fallback, positions only, when the page is busy.
@@ -440,10 +440,10 @@ pub(super) fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
 /// (contracted in docs/contracts/cli-output.md; in-scope threat: ambiguous
 /// input from an agent or script landing a write on a page it did not mean).
 /// Writes use [`resolve_write_page`] (CLI-DUPNAME: never choose among twins).
-pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
+pub(super) fn resolve_read_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     match graph.resolve(name, false) {
         Resolved::Existing { id, .. } => return Ok(id),
-        Resolved::Alias { mut owners } if owners.len() == 1 => return Ok(owners.remove(0)),
+        Resolved::Alias { mut owners } if owners.len() == 1 => return Ok(owners.swap_remove(0)),
         Resolved::Alias { owners } => {
             let mut body = ErrorBody::new(
                 "ambiguous",

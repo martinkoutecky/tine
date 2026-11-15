@@ -73,6 +73,14 @@ async delivery can interleave the two sides' events.
   Unknown or out-of-range facts are null. No screen position or monitor name
   enters the report. This adds events only; popup creation policy is unchanged.
 
+**Window creation failures (GH #713).** When a desktop window's webview
+cannot be built, `window.create_failed` records `window` (`graph`: a graph
+window, whose WebView2 environment is created for it; `workspace`: a popup
+sharing its opener's environment), `hresult` (`0x` and eight hex digits, parsed
+from the error; null when the error carries none), `openWindows` (webview
+windows still open) and `buildMs` (duration of the failed build). The error
+text itself never enters the report. One event per failed open; none otherwise.
+
 **Native main-loop liveness.** On Linux, Windows and macOS one sleeping worker
 posts an acknowledgement every 5 s, with at most one outstanding callback.
 That callback only sends an `Instant` through a one-slot channel and never

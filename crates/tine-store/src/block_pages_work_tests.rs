@@ -138,7 +138,7 @@ fn a_runtime_id_is_not_a_handle() {
         pages
             .iter()
             .find(|(entry, _)| entry.name == "Other")
-            .map(|(_, doc)| doc.roots[0].uuid.clone())
+            .map(|(_, doc)| doc.roots[0].uuid.to_string())
             .unwrap()
     });
     assert!(!runtime.is_empty());

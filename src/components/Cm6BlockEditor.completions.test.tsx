@@ -34,8 +34,8 @@ const page = (raw: string) => ({ name: "Completion", title: "Completion", kind: 
   // sends, including generated annotation metadata.
   blocks: [{ id: "completion", raw, collapsed: false, children: [],
     properties: blockRegions(raw, "md").properties.filter(p => p.primary).map((p): [string, string] => [p.key, p.value]) }] });
-function mount(raw = "") {
-  loadSingle(page(raw)); startEditing("completion", raw.length);
+function mount(raw = "", caret = raw.length) {
+  loadSingle(page(raw)); startEditing("completion", caret);
   const root = document.createElement("div"); document.body.append(root);
   dispose = render(() => <><Cm6BlockEditor id="completion" surface="main" scope={null} /><DatePicker /></>, root);
   return editorIn(root);
@@ -94,7 +94,8 @@ it("closes completion and the language picker before code Escape reveals source 
   expect(editingId()).toBeNull();
 });
 it.each(["js", "calc"])("keeps the own-numbered trigger literal inside a %s body", lang => {
-  const editor = mount("```" + lang + "\n\n```");
+  const raw = "```" + lang + "\n\n```";
+  const editor = mount(raw, raw.indexOf("\n") + 1);
   for (const ch of "1. ") editor.type(ch);
   expect(editor.value()).toBe("1. ");
   expect(node("completion").raw).toBe("```" + lang + "\n1. \n```");

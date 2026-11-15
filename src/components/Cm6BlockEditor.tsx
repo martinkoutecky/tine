@@ -41,7 +41,8 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { documentHasFocus, isNodeValue } from "../windowRealm";
 import { nearestScrollableY } from "./blockParts";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
+import { codeBodyProjection, codeLanguageCaret, codeSourceCaret } from "../editor/codeFence";
+import { CodeLanguage, blurToOwnCodeLanguage } from "../render/CodeLanguage";
 import { codeFences } from "../editor/fences";
 import { calcSource, evalCalc, serializeCalcExitCommit } from "../editor/calc";
 import { codeWrapping } from "../codeDisplay";
@@ -82,11 +83,11 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const visible = () => parts().visible;
   const [isCalc, setCalc] = createSignal(calcSource(visible()) !== null);
   const [pickingLanguage, setPickingLanguage] = createSignal(false);
-  const codeView = createCodeBodyEditor(visible, () => format, () => !cell && !isCalc() && !pickingLanguage(), source, true);
+  const codeView = createCodeBodyEditor(visible, () => format, () => !cell && !isCalc() && !pickingLanguage(), source);
   const code = codeView.shown;
   const literal = () => isCalc() || code() !== null;
   const shown = () => isCalc() ? calcSource(visible()) ?? visible() : code()?.body ?? visible();
-  const codeEditing = () => code() !== null || codeFenceOnly(visible(), format) !== null;
+  const codeEditing = () => code() !== null;
   const codeLines = createMemo(() => codeEditing() ? shown().split("\n") : []);
   const calcRows = createMemo(() => isCalc() ? evalCalc(shown()) : []);
   const mixedContext = createMemo(() => {
@@ -157,14 +158,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     if (text !== before) showText(view, text, offsetThroughRewrite(before, text, s.anchor), offsetThroughRewrite(before, text, s.head));
     view.contentDOM.classList.toggle("code-edit", codeEditing());
   };
-  const enterBody = () => {
-    if (!view || literal() || pickingLanguage()) return;
-    const s = view.state.selection.main;
-    if (!s.empty) return;
-    codeView.enter(s.head);
-    const p = code();
-    if (p) showText(view, p.body, s.anchor - p.open.length, s.head - p.open.length);
-  };
   const editMixedContext = (event: MouseEvent, side: "before" | "after") => {
     const context = mixedContext();
     if (!view || !context || event.button !== 0 || forbidsEditEntry(event)) return;
@@ -178,7 +171,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   };
   const embedExit = useContext(EmbedNavExitContext);
   const scope = cell && editsLikeOutline(cell) ? gridOutlineScope(cell) : props.scope;
-  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, stage, deleteSelection, embedExit, code: () => code() !== null, calc: isCalc,
+  const structure = cm6Structure({ ...props, scope, cell, format, current, commit, stage, deleteSelection, embedExit, code: () => code()?.open.length ?? null, calc: isCalc,
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     collapse: useContext(CollapseSurfaceContext),
     ...marginNavigation(props.id, scope, props.surface, () => format),
@@ -196,7 +189,17 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     stageDelete: (from, to) => deleteSelection(view!, from, to),
     annotation: () => annotationInfo(propertySession.facets(source(), format).properties) !== null,
     assets,
-    languagePicker: setPickingLanguage,
+    languagePicker: active => {
+      const closing = pickingLanguage() && !active, selection = view?.state.selection.main;
+      setPickingLanguage(active);
+      if (!closing || !view || !selection) return;
+      const scaffold = codeBodyProjection(visible(), format);
+      if (scaffold) codeView.enter(scaffold.open.length);
+      const body = code();
+      if (body) queueMicrotask(() => {
+        if (view && current() && code() === body) showText(view, body.body, selection.anchor - body.open.length, selection.head - body.open.length);
+      });
+    },
     completeRegion: (text, caret) => {
       if (!view) return;
       const calc = calcSource(text);
@@ -205,7 +208,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (calc !== null || p) showText(view, shown(), caret - (calc !== null ? text.indexOf("\n") + 1 : p!.open.length));
     },
   });
-  const typing = cm6Typing({ id: props.id, format, current, view: () => view, commit,
+  const typing = cm6Typing({ id: props.id, format, current, view: () => view, commit, projection,
     literal, scaffold: completion.scaffold, refresh: completion.refresh, pauseCompletion: completion.pause });
   const formatting = cm6Formatting({ ...props, format, current, commit, view: () => view,
     owner: cell && editsLikeOutline(cell) ? cellOwner(cell) : null,
@@ -283,7 +286,10 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
   const buildDecorations = (state: EditorState): DecorationSet => {
     if (!parserReady() || literal()) return Decoration.none;
     const raw = state.doc.toString();
-    const ranges = concealedSpans(previewSpans(raw, format), state.selection.ranges).map(span =>
+    const spans = previewSpans(raw, format);
+    // Explicit source mode keeps the entire fenced block raw, wherever the caret is.
+    if (spans.some(span => span.kind === "src" || span.kind === "example")) return Decoration.none;
+    const ranges = concealedSpans(spans, state.selection.ranges).map(span =>
       Decoration.replace({ widget: new PreviewWidget(span, raw, format, owner, props.id), block: !!span.block }).range(span.from, span.to));
     const level = headingLevel();
     const headerEnd = state.doc.line(1).to;
@@ -302,7 +308,6 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         updating = true;
         try { v.update(transactions); } finally { updating = false; }
         syncView();
-        if (transactions.some(tr => tr.isUserEvent("select"))) enterBody();
       },
       state: EditorState.create({ doc: shown(), extensions: [
         cm6CodeHighlight(state => {
@@ -336,14 +341,16 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
                 windowFocus.remember();
                 return;
               }
-              if (v.hasFocus) { commit(v.state.doc.toString()); return; }
+              if (v.hasFocus || blurToOwnCodeLanguage(event.relatedTarget, v.contentDOM)) { commit(v.state.doc.toString()); return; }
               const target = event.relatedTarget as HTMLElement | null;
               const handoff = target?.matches('[data-cm6-editor]')
                 && target.getAttribute("data-cm6-editor") === props.id ? target : null;
               exitEditOnBlur(v, handoff ?? undefined, intentIsCurrent);
             };
             // compositionend's pending DOM reconciliation owns its last flush.
-            // A blur during preedit still commits the live buffer before exit.
+            // A preedit abandoned by the blur finishes now (normalization included),
+            // before leave() commits and may unmount the editor.
+            if (abandoned) typing.finish();
             if (typing.settling()) queueMicrotask(leave);
             else leave();
             // An IME cancelled by blur may send no compositionend, and CM never clears its own composing flag
@@ -380,7 +387,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     completion.mount();
     formatting.mount();
     onCleanup(registerHistoryEditorTarget({ blockId: props.id, owner: editingOwner(), surface: props.surface,
-      selection: () => { const s = view!.state.selection.main, offset = codeView.mixed() ? code()!.open.length : 0; return { start: s.from + offset, end: s.to + offset }; },
+      selection: () => { const s = view!.state.selection.main; return codeView.selection(s.from, s.to); },
       viewport: () => ({ editor: view!.contentDOM, scroller: nearestScrollableY(view!.contentDOM) }),
       focused: () => !!view?.hasFocus }));
     // Keep application/CM commands out of native IME preedit. Ordinary history
@@ -399,6 +406,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     };
     const structuralKeys = (event: KeyboardEvent) => {
       if (!view || !view.contentDOM.contains(event.target as Node) || !current()
+        || (event.target as Element | null)?.closest?.("button.code-language")
         || event.isComposing || event.keyCode === 229 || typing.active()) return;
       // Global capture (including transient/suspension ownership) runs first.
       // Tab and native reload chords are pre-cancelled there while their bound
@@ -463,12 +471,12 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       if (!isCalc() && calcSource(visible()) !== null) setCalc(true);
       const want = again ? again.offset : takeCaretFor(props.id);
       const historySelection = again ? null : takeHistoryEditorSelectionFor(props.id, props.surface);
-      // Numeric targets use visible-source coordinates. History uses body
-      // coordinates for whole code and source coordinates for mixed occurrences.
-      if (!code() && !isCalc()) {
-        if (historySelection) codeView.enter(historySelection.start, historySelection.end);
+      // Numeric and history targets use visible-source coordinates; structural
+      // remounts carry their body start separately from editor coordinates.
+      if (!isCalc()) {
+        if (historySelection) codeView.enter(historySelection.codeBodyStart ?? 0); // range clamped below
         else if (typeof want === "number") codeView.enter(want);
-        else if (want && "start" in want) codeView.enter(want.start, want.end);
+        else codeView.enter(want && "start" in want ? want.codeBodyStart ?? 0 : 0);
         syncView();
       }
       let anchor = view.state.doc.length, head = anchor;
@@ -484,7 +492,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
         const end = view.moveToLineBoundary(EditorSelection.cursor(edge), true).head;
         anchor = head = Math.min(row + want.col, end);
       }
-      if (codeView.mixed() && (historySelection || want && typeof want === "object" && "start" in want)) {
+      if (code() && historySelection) {
         anchor -= code()!.open.length; head -= code()!.open.length;
       }
       view.dispatch({ selection: { anchor: Math.min(anchor, view.state.doc.length), head: Math.min(head, view.state.doc.length) }, scrollIntoView: true });
@@ -537,12 +545,17 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
     if (anchorFrame !== undefined) host.ownerDocument.defaultView!.cancelAnimationFrame(anchorFrame);
     alive = false; typing.dispose(); clipboard.dispose(); removeCommandBridge?.(); removeKeys?.(); view?.destroy();
   });
+  const revealCodeLanguage = (caret: number) => {
+    if (!view || !current()) return;
+    codeView.revealRaw(view.state.doc.toString(), commit);
+    showText(view, visible(), caret); view.focus();
+  };
   return <div class="cm6-block-editor editor-wrap" dir={blockDirAttr(source(), format)} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }} ref={host}>
-    <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} /></div>}</Show>
+    <Show when={mixedContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={format} headingLevel={effectiveHeadingLevel(propertySession.facets(source(), format), depthOf(props.id))} codeEditAction={() => !current() ? undefined : byte => { const caret = codeSourceCaret(before(), format, byte); if (caret !== null) revealCodeLanguage(caret); }} /></div>}</Show>
     <div class="code-editor-region" style={codeGutterStyle(codeLines().length)} dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedContext() }}>
       <Show when={codeEditing()}>
-        <span class="code-language">{(code() ?? codeFenceOnly(visible(), format))?.lang.toLowerCase()}</span>
-        <Show when={code() ?? codeBodyProjection(visible(), format)}>
+        <CodeLanguage lang={code()?.lang ?? ""} onEdit={!current() ? undefined : () => revealCodeLanguage(codeLanguageCaret(visible(), format, code()?.open.length))} />
+        <Show when={code()}>
           {body => <CopyButton text={body().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
         </Show>
         <LineGutter lines={codeLines()} code />
@@ -550,7 +563,7 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>
       <div ref={editorHost} />
     </div>
-    <Show when={mixedContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><AstBody raw={after()} format={format} /></div>}</Show>
+    <Show when={mixedContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><AstBody raw={after()} format={format} codeEditAction={() => !current() ? undefined : byte => { const caret = codeSourceCaret(after(), format, byte); if (caret !== null) revealCodeLanguage(visible().length - after().length + caret); }} /></div>}</Show>
     <Show when={isCalc()}><div class="calc-results"><For each={calcRows()}>{row =>
       <div class="calc-out" classList={{ "calc-error": !!row.error }}>{row.output ?? ""}
         <Show when={row.output !== null && !row.error}><CopyButton text={row.output!} title={translate("editor-block-copy-result")} class="calc-copy" /></Show>

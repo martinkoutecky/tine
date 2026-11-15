@@ -5,37 +5,7 @@ use std::collections::HashSet;
 
 use crate::doc::{DocBlock, Document};
 
-/// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
-/// invalid or truncated escape is left literal rather than dropped.
-pub fn percent_decode(s: &str) -> String {
-    if !s.contains('%') {
-        return s.to_string();
-    }
-    let b = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (hex_nibble(b[i + 1]), hex_nibble(b[i + 2])) {
-                out.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_nibble(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
+pub use crate::asset_path::percent_decode;
 
 /// Asset liveness combines parser-accepted targets with conservative plaintext
 /// mentions. The latter may retain extra files (including literal code), but

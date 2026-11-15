@@ -2078,6 +2078,8 @@ pub(crate) fn page_list_reads() -> usize {
 }
 
 mod block_index;
+#[cfg(test)]
+use block_index::BlockKey;
 use block_index::SnapshotBlockIndex;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -2148,146 +2150,10 @@ impl SnapshotPageDerivedIndex {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct SnapshotExplicitIndex {
-    shards: Vec<Arc<SharedMap<String, Arc<SharedMap<PathBuf, ()>>>>>,
-}
-
-fn names_absent_from<'a, T: Eq + std::hash::Hash>(
-    names: &'a [T],
-    other: &'a [T],
-) -> impl Iterator<Item = &'a T> {
-    // Borrow keys once instead of rescanning the opposite vector for each name.
-    // Filter the original input so duplicate absent names keep their semantics.
-    let other: HashSet<_> = other.iter().collect();
-    names.iter().filter(move |name| !other.contains(name))
-}
-
-impl SnapshotExplicitIndex {
-    const SHARDS: usize = 64;
-
-    fn shard(name: &str) -> usize {
-        snapshot_index_shard(name.as_bytes())
-    }
-
-    fn update(&mut self, path: &Path, old: &[String], new: &[String]) {
-        for name in names_absent_from(old, new) {
-            let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
-            if let Some(paths) = shard.get_mut(name) {
-                Arc::make_mut(paths).remove(path);
-                if paths.is_empty() {
-                    shard.remove(name);
-                }
-            }
-        }
-        for name in names_absent_from(new, old) {
-            let shard = Arc::make_mut(&mut self.shards[Self::shard(name)]);
-            if !shard.contains_key(name) {
-                shard.insert(name.clone(), Arc::new(SharedMap::new()));
-            }
-            Arc::make_mut(shard.get_mut(name).unwrap()).insert(path.to_path_buf(), ());
-        }
-    }
-
-    fn candidates(&self, names: &[String]) -> std::collections::BTreeSet<PathBuf> {
-        let mut paths = std::collections::BTreeSet::new();
-        for name in names {
-            if let Some(postings) = self.shards[Self::shard(name)].get(name) {
-                paths.extend(postings.iter().map(|(path, _)| path.clone()));
-            }
-        }
-        paths
-    }
-
-    fn capture(
-        old: Option<(&Self, &Arc<Pages>)>,
-        pages: &Arc<Pages>,
-        changed_paths: &[String],
-        positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
-        config: &Config,
-    ) -> Self {
-        if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
-            !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
-        }) {
-            let mut index = previous.clone();
-            for rel_path in changed_paths {
-                let before = snapshot_page_by_rel(
-                    previous_pages,
-                    positions.map(|(before, _)| before),
-                    rel_path,
-                );
-                let after =
-                    snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path);
-                let old_names = before
-                    .map(|(entry, doc)| {
-                        crate::query::document_explicit_reference_names(entry, doc, config)
-                    })
-                    .unwrap_or_default();
-                let new_names = after
-                    .map(|(entry, doc)| {
-                        crate::query::document_explicit_reference_names(entry, doc, config)
-                    })
-                    .unwrap_or_default();
-                if let Some(path) = after.or(before).map(|(entry, _)| entry.path.as_path()) {
-                    index.update(path, &old_names, &new_names);
-                }
-            }
-            index
-        } else {
-            Self::build(pages, config)
-        }
-    }
-
-    /// The whole index from `pages`: each page's names on up to
-    /// `page_cache_worker_count()` workers, inserted under the name's shard
-    /// lock (64 shards, so the workers rarely meet). The same index as
-    /// `update` of each page in turn, with no transient copy: per-worker
-    /// posting lists measured +14 MB peak RSS on a 1M-block graph. Computing
-    /// the names builds every block projection, so this is also the initial
-    /// capture's parallel projection pass (GJ5 S1: the capture's index
-    /// threads used to wait on the same lazily built projections in page
-    /// order, so one core did them all; S4: this index was serial).
-    fn build(pages: &Pages, config: &Config) -> Self {
-        type Shard = SharedMap<String, Arc<SharedMap<PathBuf, ()>>>;
-        let shards: Vec<std::sync::Mutex<Shard>> = (0..Self::SHARDS)
-            .map(|_| std::sync::Mutex::new(SharedMap::new()))
-            .collect();
-        let insert = |chunk: &[&(PageEntry, Arc<Document>)]| {
-            for (entry, doc) in chunk {
-                for name in crate::query::document_explicit_reference_names(entry, doc, config) {
-                    let mut shard = shards[Self::shard(&name)].lock().unwrap();
-                    if let Some(paths) = shard.get_mut(&name) {
-                        Arc::make_mut(paths).insert(entry.path.clone(), ());
-                    } else {
-                        let mut paths = SharedMap::new();
-                        paths.insert(entry.path.clone(), ());
-                        shard.insert(name, Arc::new(paths));
-                    }
-                }
-            }
-        };
-        let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
-        #[cfg(test)]
-        index_probe::test_full_build_fault(rows.iter().map(|(entry, _)| entry.path.as_path()));
-        let workers = page_cache_worker_count();
-        if workers <= 1 || rows.len() < 64 {
-            insert(&rows);
-        } else {
-            let insert = &insert;
-            std::thread::scope(|scope| {
-                for chunk in rows.chunks(rows.len().div_ceil(workers)) {
-                    scope.spawn(move || insert(chunk));
-                }
-            });
-        }
-        Self {
-            shards: shards
-                .into_iter()
-                .map(|shard| Arc::new(shard.into_inner().unwrap()))
-                .collect(),
-        }
-    }
-}
+mod explicit_index;
+#[cfg(test)]
+use explicit_index::names_absent_from;
+use explicit_index::SnapshotExplicitIndex;
 
 pub(crate) struct ReferenceCandidatePages {
     pub pages: Vec<(PageEntry, Arc<Document>)>,
@@ -5305,11 +5171,16 @@ mod explicit_index_diff_tests {
         };
         let expected = new
             .iter()
-            .map(|name| (name.clone(), [path.to_path_buf()].into_iter().collect()))
+            .map(|name| {
+                (
+                    name.clone(),
+                    [Arc::<Path>::from(path)].into_iter().collect(),
+                )
+            })
             .chain(["shared", "other"].map(|name| {
                 (
                     name.to_string(),
-                    [other_path.to_path_buf()].into_iter().collect(),
+                    [Arc::<Path>::from(other_path)].into_iter().collect(),
                 )
             }))
             .collect::<std::collections::BTreeMap<_, _>>();
@@ -5573,7 +5444,7 @@ mod tests {
         assert_ne!(roots[0].uuid, "dup-1234");
         assert_ne!(roots[1].uuid, "dup-1234");
 
-        let first_ids = roots.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>();
+        let first_ids = roots.iter().map(|b| b.uuid.to_string()).collect::<Vec<_>>();
         let mut same = vec![
             DocBlock::new("first\nid:: dup-1234"),
             DocBlock::new("first\nid:: dup-1234"),
@@ -5581,7 +5452,7 @@ mod tests {
         assign_doc_runtime_ids(&mut same, "pages/client-a/Foo.md");
         assert_eq!(
             first_ids,
-            same.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>()
+            same.iter().map(|b| b.uuid.to_string()).collect::<Vec<_>>()
         );
 
         let mut other_owner = vec![DocBlock::new("first\nid:: dup-1234")];
@@ -6091,7 +5962,7 @@ mod tests {
                     .1
                     .roots[0]
                     .uuid
-                    .clone()
+                    .to_string()
             });
             save_model_page(&store, "Notes", |page| page.blocks[0].raw = after.into());
             let live = published_snapshot(&store);

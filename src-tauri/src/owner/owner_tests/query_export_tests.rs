@@ -41,7 +41,9 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
     let graph = query_graph();
     graph.store.stop_watcher_for_tests();
     let args = || super::super::query_export::Args {
-        uuid: QUERY_ID.into(),
+        source: super::super::query_export::Source::Uuid {
+            uuid: QUERY_ID.into(),
+        },
         name: Some("Review".into()),
         force: false,
         no_comments: false,
@@ -102,6 +104,71 @@ fn warm_owner_query_export_matches_shared_publisher_without_source_reopen() {
         )),
         "busy"
     );
+}
+
+#[test]
+fn query_export_source_bytes_match_dialog() {
+    let _guard = EXPORT_TEST.lock().unwrap();
+    let graph = query_graph();
+    graph.store.stop_watcher_for_tests();
+    // The dialog passes the parsed macro argument and its host context to
+    // this publisher; freeze its clock to compare every output byte.
+    let host_id = graph
+        .store
+        .whole_graph()
+        .unwrap()
+        .corpus(Some("Query"), true)
+        .pages[0]
+        .document
+        .roots[0]
+        .uuid
+        .to_string();
+    let request = tine_graph_features::publish_query::QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: tine_core::query::wire_parse::QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: Some("Query".into()),
+        host_block_id: Some(host_id),
+        name: "Review".into(),
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: false,
+        include_comments: None,
+    };
+    let plan = tine_graph_features::publish_query::plan_query(&graph.store, &request).unwrap();
+    let expected = tine_graph_features::publish_query::publish_query_at(
+        &graph.store,
+        &request,
+        &plan.fingerprint,
+        &crate::cli::bundle(),
+        0,
+    )
+    .unwrap();
+    let expected_files = output_files(Path::new(&expected.path));
+    let (_endpoint, _gate) = endpoint(&graph, Arc::new(graph.slot()));
+    let mut conn = graph.connect();
+    for mut source in [
+        json!({"uuid":QUERY_ID}),
+        json!({"query":"(task TODO)"}),
+        json!({"page":"qUeRy"}),
+    ] {
+        source["name"] = json!("Review");
+        source["force"] = json!(true);
+        source["epoch"] = json!(0);
+        tine_store::cost_counters::take_query_export_work(&graph.root);
+        let receipt = conn.call("query.export", source).unwrap();
+        assert_eq!(receipt["pages"], 1);
+        assert_eq!(
+            output_files(Path::new(receipt["path"].as_str().unwrap())),
+            expected_files
+        );
+        assert!(Path::new(receipt["retired"].as_str().unwrap()).is_dir());
+        assert_eq!(
+            tine_store::cost_counters::take_query_export_work(&graph.root).opens,
+            0
+        );
+    }
 }
 
 #[test]

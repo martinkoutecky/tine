@@ -14,6 +14,7 @@ const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--port
 let browser;
 const evidence = [];
 const failures = [];
+const zoom = Number(process.env.THREAD_ZOOM ?? 1);
 try {
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(`http://localhost:${port}/`)).ok) break; } catch {}
@@ -21,49 +22,66 @@ try {
     await delay(200);
   }
   browser = await chromium.launch({ args: ["--no-sandbox"] });
-  for (const dpr of [1, 1.25, 1.5, 1.75]) {
+  for (const dpr of process.env.THREAD_DPR ? [Number(process.env.THREAD_DPR)] : [1, 1.25, 1.5, 1.75, 2]) {
     const page = await browser.newPage({ viewport: { width: 800, height: 500 }, deviceScaleFactor: dpr });
     // Worktree node_modules may be a symlink outside Vite's serving allowlist.
     await page.route("**/InterVariable.woff2", route => route.fulfill({
       body: readFileSync("node_modules/inter-ui/variable/InterVariable.woff2"), contentType: "font/woff2",
     }));
     await page.goto(`http://localhost:${port}/scripts/fixtures/bullet-threading.html`);
+    await page.locator("main .ls-block").first().waitFor();
     if (process.env.THREAD_BASELINE_CSS) {
       await page.evaluate(css => {
         document.querySelector('style[data-vite-dev-id$="/src/styles/app.css"]').textContent = css;
       }, readFileSync(process.env.THREAD_BASELINE_CSS, "utf8"));
     }
-    await page.evaluate(() => {
+    await page.evaluate(zoom => {
       document.documentElement.dataset.theme = "light";
+      document.documentElement.style.zoom = String(zoom);
       // A 1 CSS px scroll/placement change moves a join onto a half device px
       // at 150%. Integer-origin rows can conceal the defect completely.
       document.querySelector("main").style.paddingTop = "41px";
-    });
+    }, zoom);
     await page.locator('[data-block-id="focus"] > .block-main .block-content').click();
     await page.locator("textarea.block-editor").waitFor();
     await page.evaluate(() => document.fonts.ready);
-    for (const color of ["#e05070", ""]) for (const display of ["active", "all"]) for (const thickness of Array.from({ length: 21 }, (_, i) => i / 2)) {
-      await page.evaluate(settings => window.setThreadSettings(settings), { display, thickness, color });
-      const name = `${dpr}-${display}-${thickness}${color ? "" : "-theme"}`;
-      const geometry = await page.evaluate(() => {
+    for (const color of ["#e05070", "", "levels"]) for (const display of ["active", "all"]) for (const thickness of Array.from({ length: 21 }, (_, i) => i / 2)) {
+      await page.evaluate(settings => window.setThreadSettings(settings), { display, thickness, color: color === "levels" ? "" : color, "color-by-level": color === "levels" });
+      const name = `${dpr}-${display}-${thickness}${color === "levels" ? "-levels" : color ? "" : "-theme"}`;
+      const geometry = await page.evaluate(zoom => {
         const rows = ["parent", "middle", "focus"].map(id => {
           const el = document.querySelector(`[data-block-id="${id}"] > .block-main`);
           const box = el.getBoundingClientRect();
           const style = getComputedStyle(el, "::before");
           const bullet = el.querySelector(".bullet").getBoundingClientRect();
-          return { id, joinY: box.top, x: box.left + parseFloat(style.left),
-            top: box.top + parseFloat(style.top), bottom: box.top + parseFloat(style.top) + parseFloat(style.height),
-            bulletY: bullet.top + bullet.height / 2, width: parseFloat(style.borderLeftWidth), display: style.display };
+          const parent = el.closest(".block-children-container").parentElement.querySelector(":scope > .block-main");
+          const stub = getComputedStyle(parent, "::after");
+          const continuation = getComputedStyle(el.parentElement, "::after");
+          const parentBullet = parent.querySelector(".bullet").getBoundingClientRect();
+          const previous = el.parentElement.previousElementSibling;
+          return { id, joinY: box.top, x: box.left + zoom * parseFloat(style.left),
+            parentX: parent.getBoundingClientRect().left + zoom * parseFloat(stub.left),
+            stubTop: parent.getBoundingClientRect().top + zoom * parseFloat(stub.top),
+            parentBulletY: parentBullet.top + parentBullet.height / 2,
+            sourceBottom: previous?.matches(".ls-block") ? previous.getBoundingClientRect().bottom : parent.getBoundingClientRect().bottom,
+            radius: parseFloat(style.borderBottomLeftRadius),
+            continuationVisible: continuation.display !== "none" && continuation.content !== "none",
+            top: box.top + zoom * parseFloat(style.top), bottom: box.top + zoom * (parseFloat(style.top) + parseFloat(style.height)),
+            bulletY: bullet.top + bullet.height / 2, width: zoom * parseFloat(style.borderLeftWidth), display: style.display };
         });
         return { dpr: devicePixelRatio, rows };
-      });
+      }, zoom);
       if (geometry.dpr !== dpr) throw new Error(`${name}: incorrect deviceScaleFactor`);
       for (const row of geometry.rows) {
         if (thickness === 0) {
           if (row.display !== "none") failures.push(`${name}/${row.id}: zero thickness is visible`);
         } else {
+          if (Math.abs(row.x - row.parentX) * dpr > .05) failures.push(`${name}/${row.id}: child rail jogs ${(row.x - row.parentX) * dpr} device px from parent stub`);
+          if (Math.abs(row.stubTop - row.parentBulletY) * dpr > .05) failures.push(`${name}/${row.id}: parent stub misses bullet`);
+          if (row.top > row.sourceBottom) failures.push(`${name}/${row.id}: gap after source segment`);
+          if (row.continuationVisible && row.radius > 0) failures.push(`${name}/${row.id}: straight continuation crosses rounded elbow`);
           if (row.top > row.joinY) failures.push(`${name}/${row.id}: gap in connector geometry`);
-          if (Math.abs(row.bottom - row.bulletY - thickness / 2) > .1) failures.push(`${name}/${row.id}: elbow misses bullet`);
+          if (Math.abs(row.bottom - row.bulletY - zoom * thickness / 2) > .1) failures.push(`${name}/${row.id}: elbow misses bullet`);
         }
       }
       const shot = await page.screenshot({ path: `${out}/${name}.png` });

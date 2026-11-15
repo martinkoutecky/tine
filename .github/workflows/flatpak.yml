@@ -1,12 +1,5 @@
-# Flatpak build test — validates the Flathub no-network manifest by actually
-# building it (offline vendored cargo + npm sources) in a privileged flatpak
-# container, and uploads an installable .flatpak bundle. This is the build-test we
-# can't run locally (the dev sandbox can't nest bwrap / mount proc).
-#
-# It does NOT submit to Flathub. It builds the CURRENTLY CHECKED-OUT tree by
-# deriving a `dir`-source manifest from the committed Flathub manifest, so
-# flatpak/page.tine.Tine.yml stays the single source of truth (its git source stays
-# pinned for the real Flathub submission). The committed files carry the released
+# Builds our installable .flatpak bundle from the checked-out tree.
+# The committed files carry the released
 # identity; for any other identity scripts/derive-flatpak-identity.mjs derives the
 # app id, name and release list at build time. The `identity` input must name the
 # identity the tree ships (src-tauri/app-identity.json); a mismatch is refused,
@@ -28,9 +21,8 @@ on:
         options: [release, experiment]
         default: release
 
-# The real offline build is expensive. Release calls it as a hard gate; focused
-# Flatpak work can dispatch it manually. Source-manifest drift is covered by the
-# lightweight PR/full-CI scripts, so master pushes do not start another build.
+# Release calls this expensive build as a hard gate; focused Flatpak work can
+# dispatch it manually.
 
 # One in-flight build per ref; a newer manual/called run cancels the older run.
 concurrency:
@@ -38,7 +30,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  viewer-ready:
+    runs-on: ubuntu-latest
+    outputs:
+      quick_share_viewer_g1_ready: ${{ steps.viewer-ready.outputs.quick_share_viewer_g1_ready }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the deployed quick share viewer before enabling the writer
+        id: viewer-ready
+        continue-on-error: true
+        run: node scripts/check-release-readiness.mjs --quick-share-only
+
   flatpak-builder:
+    needs: viewer-ready
     name: build (${{ matrix.arch }})
     runs-on: ubuntu-latest
     container:
@@ -61,6 +70,7 @@ jobs:
         id: derive
         env:
           FLATPAK_IDENTITY: ${{ inputs.identity }}
+          TINE_QUICK_SHARE_VIEWER_G1_READY: ${{ needs.viewer-ready.outputs.quick_share_viewer_g1_ready }}
         run: node scripts/derive-flatpak-identity.mjs --identity "$FLATPAK_IDENTITY"
 
       - name: Build

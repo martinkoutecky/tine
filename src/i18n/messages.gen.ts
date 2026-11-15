@@ -258,6 +258,8 @@ export interface MessageArgs {
   "command-seen-previous-change": {};
   "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
+  "command-sidebar-open-current-page": {};
+  "command-sidebar-open-today": {};
   "command-sidebar-shrink-width": {};
   "command-tab-activate-last": {};
   "command-tab-activate-n": { "index": string | number };
@@ -1773,6 +1775,7 @@ export interface MessageArgs {
   "query-display-aggregate-count": {};
   "query-display-aggregate-sum": {};
   "query-display-change": {};
+  "query-display-show-breadcrumbs": {};
   "query-display-view-board": {};
   "query-display-view-list": {};
   "query-display-view-search": {};
@@ -2404,6 +2407,7 @@ export interface MessageArgs {
   "render-asset-moved-to-trash": {};
   "render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more": {};
   "render-click-to-open-the-highlight-in-its-pdf-shift-click-sidebar-right-click-for-more": {};
+  "render-code-plain": {};
   "render-copied-to-clipboard": {};
   "render-copy-code": {};
   "render-copy-image": {};
@@ -2416,6 +2420,7 @@ export interface MessageArgs {
   "render-couldn-t-open-the-pdf-for-this-highlight": {};
   "render-couldn-t-save-this-block-so-the-image-file-was-not-moved-to-the-trash": {};
   "render-drag-to-resize": {};
+  "render-edit-code-language": {};
   "render-embed": {};
   "render-expand": {};
   "render-icon": { "name": string | number };
@@ -2525,6 +2530,7 @@ export interface MessageArgs {
   "settings-back-to-list": {};
   "settings-backup-load-failed": { "error": string | number };
   "settings-close": {};
+  "settings-cm6-description": {};
   "settings-cm6-label": {};
   "settings-color-indent-guides-by-level": {};
   "settings-color-indent-guides-by-level-hint": {};

@@ -470,6 +470,7 @@ query-query-display-block-display = 块显示方式
 query-query-display-view = 视图
 
 query-query-display-query-view = 查询视图
+query-display-show-breadcrumbs = 显示面包屑
 
 query-query-display-group-by = 分组依据
 

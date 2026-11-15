@@ -34,10 +34,10 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
   // GH #805 (0.10 lane brief): Quit Tine must be remappable in Shortcuts.
-  "commands.registry": { env: "desktop", budget: 155, // +2 open-comments review (this page / the graph), margin DESIGN §12 (D-20261108-MC4 family)
+  "commands.registry": { env: "desktop", budget: 157, // +2 open-comments review (this page / the graph), margin DESIGN §12 (D-20261108-MC4 family); +2 sidebar commands, GH #928
     what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 27, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 95, // +2 open-comments review commands, margin DESIGN §12
+  "commands.palette": { env: "desktop", budget: 96, // +2 open-comments review commands, margin DESIGN §12; +1 open today in sidebar, GH #928
     what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },
@@ -51,7 +51,8 @@ export const SURFACES = Object.freeze({
   "settings.themes.open": settingsOpen("themes", 8),
   // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
   "settings.editor.open": settingsOpen("editor", 10),
-  // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
+  // Original per-identity ceilings; the CM6-default lane reports the new
+// all-channel classic opt-out without raising either budget.
   // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting;
   // D-20261110-TT adds Logseq's preview on/off switch (`:ui/enable-tooltip?`) beside it.
   "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 12 : 11),
@@ -61,6 +62,7 @@ export const SURFACES = Object.freeze({
   "settings.files.advanced": settingsAdvanced("files", 3),
   "settings.backups.open": settingsOpen("backups", 3),
   "settings.graph.open": settingsOpen("graph", 8),
+  "settings.sharing.open": settingsOpen("sharing", 1),
   "settings.plugins.open": settingsOpen("plugins", 5),
   "settings.diagnostics.open": settingsOpen("diagnostics", 7), // D-20261111-QP2 / GH #926: the Help disclosure
   "settings.shortcuts.open": settingsOpen("shortcuts", 1, " (the rows are the commands budget)"),

@@ -1,4 +1,4 @@
-import { EditorState, StateEffect } from "@codemirror/state";
+import { EditorState, StateEffect, type AnnotationType, type ChangeSpec } from "@codemirror/state";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 import { makeOwnNumberedList, node, pinPageWhileDrafting } from "../document";
 import { autoPairing, typographyMode } from "../ui";
@@ -7,6 +7,7 @@ import { autoPairInsertOnInput } from "./autopair";
 import { rangeInLiteral } from "./inlineLiteral";
 import { calcSource } from "./calc";
 import { typoTypeReplace } from "../render/typography";
+import { codeLanguageChange, codeLanguageInput } from "./codeFence";
 
 const ownNumbered = StateEffect.define<null>();
 
@@ -17,6 +18,7 @@ export function cm6Typing(ctx: {
   current(): boolean; view(): EditorView | undefined;
   commit(text: string): void; refresh(): void; pauseCompletion(): void;
   literal(): boolean; scaffold(): void;
+  projection: AnnotationType<boolean>;
 }) {
   let composing = false;
   let ending = false;
@@ -24,10 +26,12 @@ export function cm6Typing(ctx: {
   let disposed = false;
   let generation = 0;
   let endValue: string | undefined;
+  let compositionBefore: string | undefined;
   let releaseHold: (() => void) | undefined;
   const begin = () => {
     if (!ctx.current()) return;
     composing = true;
+    compositionBefore ??= ctx.view()?.state.doc.toString();
     ending = false;
     ended = false;
     generation++;
@@ -37,13 +41,24 @@ export function cm6Typing(ctx: {
   };
   const active = () => composing || ending || !!ctx.view()?.compositionStarted;
   const filter = EditorState.transactionFilter.of(tr => {
-    if (!tr.docChanged) return tr;
+    if (!tr.docChanged || tr.annotation(ctx.projection)) return tr;
     if (!ctx.current()) return [];
-    if (composing || tr.isUserEvent("input.type.compose") || !tr.isUserEvent("input.type")) return tr;
+    if (composing || tr.isUserEvent("input.type.compose")) {
+      compositionBefore ??= tr.startState.doc.toString();
+      return tr;
+    }
+    const text = tr.newDoc.toString(), caret = tr.newSelection.main.head;
+    const separators: ChangeSpec[] = [];
+    if (!ctx.literal()) tr.changes.iterChanges((a, b, _from, to, insert) => {
+      const language = codeLanguageInput(text, ctx.format, to, insert.toString(), tr.startState.doc.sliceString(a, b));
+      if (language) separators.push(language.change);
+    });
+    if (separators.length) return [tr, { changes: separators, sequential: true }];
+    if (!tr.isUserEvent("input.type")) return tr;
     let typed = "", count = 0;
     tr.changes.iterChanges((_a, _b, _c, _d, insert) => { count++; typed = insert.toString(); });
-    if (count !== 1 || typed.length !== 1 || !tr.newSelection.main.empty) return tr;
-    const text = tr.newDoc.toString(), caret = tr.newSelection.main.head;
+    if (count !== 1 || !tr.newSelection.main.empty) return tr;
+    if (typed.length !== 1) return tr;
     if (!ctx.literal() && ctx.format === "md" && text === "```" && typed === "`" && caret === 3)
       return [tr, { changes: { from: 0, to: text.length, insert: "```\n\n```" }, selection: { anchor: 3 }, sequential: true }];
     let edit = typed === "【" || typed === "（" || typed === "〈" ? fullWidthRefReplace(text, caret)
@@ -95,11 +110,13 @@ export function cm6Typing(ctx: {
       return;
     }
     const text = view.state.doc.toString(), s = view.state.selection.main;
-    const edit = s.empty && (fullWidthRefReplace(text, s.head) ?? fullWidthCloserEdit(text, s.head, autoPairing()));
+    const edit = !ctx.literal() && codeLanguageChange(compositionBefore ?? text, text, ctx.format)
+      || s.empty && (fullWidthRefReplace(text, s.head) ?? fullWidthCloserEdit(text, s.head, autoPairing()));
     // Keep normalization and the final CM flush local until the single commit.
     if (edit) view.dispatch({ changes: { from: 0, to: text.length, insert: edit.value },
       selection: { anchor: edit.caret }, userEvent: "input.normalize" });
     composing = ending = false;
+    compositionBefore = undefined;
     ctx.commit(view.state.doc.toString());
     endValue = view.state.doc.toString();
     releaseHold?.(); releaseHold = undefined;
@@ -127,5 +144,5 @@ export function cm6Typing(ctx: {
   // editor command (desktop WebKit). Native confirming/229 keys never call this.
   const beforeKey = () => { if (ending && !ctx.view()?.compositionStarted) finish(); };
   const dispose = () => { disposed = true; releaseHold?.(); releaseHold = undefined; };
-  return { filter, changed, begin, end, input, active, settling: () => ending, beforeKey, dispose };
+  return { filter, changed, begin, end, finish, input, active, settling: () => ending, beforeKey, dispose };
 }

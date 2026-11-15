@@ -132,7 +132,7 @@ describe("outline Tab ownership (GH #157)", () => {
   it.each([
     ["hello world", "hello world", false],
     ["hello world", "hello world", true],
-    // An unmapped classic-editor block click enters raw source (GH #879); direct code clicks
+    // A block-edge click enters raw source in both editors (GH #879); direct code clicks
     // are mapped into payload coordinates in Block.codeCardClick.test.tsx.
     ["```js\nhello world\n```", "```js\nhello world\n```", false],
     ["```js\nhello world\n```", "```js\nhello world\n```", true],
@@ -152,16 +152,14 @@ describe("outline Tab ownership (GH #157)", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       const editor = activeEditor(root);
-      // CodeMirror retains develop's body-first entry policy in this merge.
-      const expected = editor.kind === "cm6" && raw.startsWith("```") ? "hello world" : visible;
-      expect(editor.value()).toBe(expected);
+      expect(editor.value()).toBe(visible);
       editor.select(2, 8, "backward");
       keydown(editor, "Tab", { shiftKey: outdent });
       await vi.waitFor(() => {
         const next = activeEditor(root);
         expect(document.activeElement).toBe(next.element);
         expect([next.selection()[0], next.selection()[1], next.direction()]).toEqual([2, 8, "backward"]);
-        expect(next.value()).toBe(expected);
+        expect(next.value()).toBe(visible);
         expect(doc.byId.current.parent).toBe(outdent ? null : "previous");
         expect(doc.byId.current.raw).toBe(raw);
       });

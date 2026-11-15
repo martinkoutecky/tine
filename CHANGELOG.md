@@ -8,12 +8,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Clicking code edits just the code; clicking elsewhere in its bullet opens source with the fences visible. Moving the caret keeps that source view, with or without surrounding text, in both editors (#879).
+- Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
+- Adding PDF highlights preserves existing asset-link labels and joins wrapped selections like Logseq; annotation properties stay together so block references survive in Logseq (#953).
+- Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
+- Bullet threading keeps parent stubs and child connectors aligned at fractional display scaling, with clean branch junctions in All nested outlines (GH #129).
+- `tine export query` accepts inline `--query` text or the first query on `--page`, with the same export and `--force` recovery as UUID selection (#588).
+- `tine export query --page` skips large prose and code blocks before the query while retaining the query size limit (#588).
+- Simple query lists offer **View → Show breadcrumbs** to hide ancestor trails and source page headings, saved with the query (#881).
+- CodeMirror is now the default editor on every platform. To switch back, enable **Settings → Editor → Advanced → Use classic editor** (DkyqG).
+
+- Comments copied or exported from Linked and Unlinked References, and comments embedded in a published reader's exports, are labelled as comments and follow **Include comments** (Iif8k).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).
 - Phone Settings fills the screen with a category list: tap a category to open it, and use Back or the iOS edge swipe to return. Themes has its own category on every screen, and narrow Keyboard Shortcuts rows put descriptions and Unbind together (#926).
+- Deleting blocks releases sparse owner-index allocations and reduces its tree height as the graph shrinks (BWvW0).
 - Selecting blocks on deeply nested pages is faster (Ifogg).
 - CLI writing commands accept `--no-author` for personal scripts: new blocks can be saved without an automatic `tine.author` property. The default remains `agent`, and empty `--author` values remain refused (#930).
 - The left panel uses consistent heading styles and child indentation, with a close icon beside the graph picker (#926).
 - Page links from `tine page current` name their graph, so saved links open the right graph when several are open. The first request creates the same small graph identity file as Copy Tine link ([discussion #925](https://github.com/martinkoutecky/tine/discussions/925)).
+- Code block language labels open the fence source for editing by mouse, touch or keyboard, in either editor. Code without a language shows a plain-text label (GH #879).
 - Choose and reorder toolbar buttons in Settings → Appearance → Toolbar. Other buttons stay in the … menu, and Reset restores the default. The choice is saved on this device (#926).
 
 - Printing and HTML exports cut recursive sibling embeds at one shared block expansion limit, avoiding repeated expansion work (I-22, IhtgY).
@@ -22,6 +35,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - In-block numbered lists show their stored numbers after editing (GH #947).
 - Mouse back and forward presses no longer compete between native and webview input handlers, preventing dropped history steps on Windows (#948).
 - Find in page says how many embeds and queries are not searched yet, and updates matches as they load without retyping (#935).
+- Skipping a new code block's language picker keeps the caret after typed or composed text, so typing `123` no longer produces `231` (#879).
+- On Windows, **Open in new window** no longer freezes Tine once a page window has been opened in an earlier session. The window-size memory no longer restores page windows from inside window creation, where it deadlocked; Tine's own session restore still places the windows it reopens (GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK).
 - Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).
 - iOS TestFlight and Microsoft Store builds now enable quick share when their deployed-viewer check passes (internal: REG-QS-ATTEST-STORES-09).
 
@@ -42,6 +57,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Open current page in right sidebar** and **Open today's journal in right sidebar** are command-palette commands with no default key; bind them in Settings → Keyboard shortcuts. The first does what the page menu's **Open in sidebar** does (it is offered while a page is shown); the second is Logseq's "open today in the sidebar" and works from any page, even before today's journal has a file (GH #928; UI-GH928-SIDEBAR-COMMANDS).
 - **Settings → Appearance → Advanced → Show the help button** hides the "?" button in the corner on this device. Help stays reachable: **Toggle help** in the command palette, **Shift+?**, and a new **Help** list in Settings → Help & diagnostics (#926).
 - Settings is never more than two taps away on a phone: the left drawer ends with a fixed **Settings** row; a Settings button moved off the toolbar is in the "…" menu (#926).
 - Comment messages can contain editable bullet outlines. Threads and message bodies can be folded, and **Collapse all comments on this block** folds a passage's threads in one undo step. Older undated threads keep their flat display (GH #891).
@@ -67,7 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Comment and reply editors use Enter for line breaks and Ctrl/Cmd+Enter to finish or send; reply drafts also offer Send (UI-MC010-KEYBOARD; GH #891).
 - Threads on the same passage share one quote and keep separate replies, with an explicit New thread action; collapsed blocks show an outlined count of open threads below (UI-MC010-GROUPS; UI-MC010-BELOW; GH #891).
 - The page actions menu offers Show comments and Hide comments on desktop and mobile (UI-MC010-VISIBILITY; GH #891).
-- Author marks are centred in the bullet gap; same-author sibling runs share a continuous line and one leading chip, with each block's author available on hover or focus (GH #892, GH #893).
+- Another author's block is marked by a faint tint of that author's colour behind its text instead of a line against the bullet; same-author siblings share one card and one leading chip, each tinted block names its author on hover, text never moves, and a selected block shows only the selection colour (GH #892, GH #893).
 - Show/Hide author marks has its own Settings switch beside Show/Hide comments and a rebindable command with no default shortcut (GH #896).
 - Creating, deleting or renaming a page, or changing its `title::`, now refreshes only the views and queries that depend on that page. Before, every open query and reference panel recomputed (D-20261102-PERF row 3, REG-PERF-PAGE-LIFECYCLE-PRECISE-SUMMARY, UI-PERF-PAGE-LIFECYCLE-READERS).
 - Startup loads less JavaScript: the optional CodeMirror editor loads only when enabled. An edit started before it finishes loading uses the classic editor for that activation (internal: UI-LAZY-CM6; D-20261110-LZ).
@@ -359,6 +375,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Queries under the journal (Journal sections) no longer disappear and reappear while you type when the sections page is re-read after a full refresh; unchanged sections stay mounted with their answers (#834).
 - `tine edit` keeps a block's properties, such as `status::`, `src::` and `author::`, instead of silently removing them. A property named in the new text replaces the old one, `tine prop remove` removes one, and `--author` on `edit` now sets `author::` (#840).
 - Large graphs retain less memory by storing immutable block projection lists compactly and releasing parser region buffer slack.
+- Large graphs retain about 22% less Rust heap (measured on generated graphs of 1,000 to 30,000 files) through smaller block and projection records, block IDs stored as 16 bytes when their spelling allows it, and a more compact block-owner index (D-20261101-MEM).
 - Plugin packaging now checks contribution IDs and entry paths with the same rules as the host, catching invalid packages before submission (PLUGIN-GRAMMAR).
 - Concord bounds optional ledger work during stalled app-data writes and falls back to two-way review when coverage is degraded (L7-02).
 - When another change holds page planning busy, Guide copies, journal migration, PDF and conflict changes, CLI writes and pull now report a consistent retry message instead of an internal planning error.

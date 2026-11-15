@@ -503,7 +503,7 @@ fn block_index_wire_keeps_runtime_ids_compact() {
     let decoded: BlockIndexState = postcard::from_bytes(&bytes).unwrap();
     let index = decoded.into_index(&pages).unwrap();
     for block in &pages[0].1.roots {
-        assert_eq!(index.first_owner(&block.uuid), Some(0));
+        assert_eq!(index.first_owner(&block.uuid.text()), Some(0));
     }
 }
 

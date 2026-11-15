@@ -159,3 +159,5 @@ command-comment-next = دیدگاه بعدی
 command-comment-previous = دیدگاه قبلی
 command-comment-review = مرور دیدگاه‌های باز این صفحه
 command-comment-review-graph = مرور دیدگاه‌های باز در کل گراف
+command-sidebar-open-today = باز کردن ژورنال امروز در نوار کناری راست
+command-sidebar-open-current-page = باز کردن صفحهٔ فعلی در نوار کناری راست

@@ -2,6 +2,21 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-gh944-journal-agenda.mjs": {
+      "setup":"Synthetic realistic graph with 1500 pages and 500 journals, dated tasks, scratch HOME/XDG and account-home shim; frozen custom-protocol binaries with embedded origin asserted, Linux native at 1920x1080.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"Scheduled & Deadline stays present while typing characters and creating blocks in today's journal, expanded and collapsed, in the feed and on a routed journal page.","blocking":false,"authority":"GH #944 comment 5"}],
+      "acceptableVariations":["Position changes caused by inserted lines, row text, geometry and refresh timing may vary."],
+      "nonRequirements":["No Windows runtime certification, release burn-in or unrelated folding scroll-clamp assertion."],
+      "stability":"quarantined",
+      "quarantineReason":"WebKitWebDriver screenshot GET times out on the individually routed journal after folding. Presence/input assertions remain intact; capture errors are rethrown after collecting all four semantic phases. See RECEIPT-fix-944-agenda.md."
+    },
+    "scripts/e2e-cli-query-export.mjs": {
+      "setup":"Synthetic graph and scratch HOME/XDG with account-home shim; native Linux app owns the graph.",
+      "contracts":[{"class":"stateful-ux","userOutcome":"UUID, inline and page query sources publish the selected page, refuse existing output and preserve previous output on force without changing source bytes.","blocking":false,"authority":"D-20261114-588; GH #588"}],
+      "acceptableVariations":["CLI prose and publication markup may vary while page membership, exit codes and recovery remain correct."],
+      "nonRequirements":["No network, release burn-in or other-platform certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-comment-output.mjs": {
       "setup":"Synthetic routed page, scratch HOME/XDG and account-home shim; no network.",
       "contracts":[{"class":"stateful-ux","userOutcome":"Copy/export includes marked comments by default; switching comments off removes whole threads and keeps body text. An embedded detached reply retains its source comment carrier in Markdown and is omitted with comments off. Folder publication remembers the choice in the definition and snapshot.","blocking":false,"authority":"H9TvA; D-20261113-CO/CO2"}],
@@ -225,7 +240,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-cm6-setting-restart.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"With the CodeMirror experiment switched on in Settings and the app quit and relaunched, the first block edit on a routed page and in the right sidebar mounts the CodeMirror editor, and a Quick Capture opened by the global-shortcut handoff shows the CodeMirror editor with the caret in it, with no off/on in Settings. The app is killed with SIGKILL before the relaunch, as after a crash. With a second window on another graph open, switching CodeMirror off in either window changes the next edit in the other window with no restart, and switching it back on does the same. A block opened while this window is still reading the stored choice (a slow reply) waits for it and gets the stored editor, not the default.","blocking":false,"authority":"Martin report 2026-11-02 (development build)"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"A fresh profile uses CodeMirror on its first routed-page edit. After exercising Use classic editor and returning to CodeMirror in Settings, killing and relaunching the app preserves CodeMirror for the first routed-page and sidebar edits and Quick Capture, with its caret focused. In two windows, turning Use classic editor on or off changes the next edit in the other window without restart. A pending stored-choice read delays activation until that choice lands. An explicit classic choice also survives another process restart.","blocking":false,"authority":"Martin report 2026-11-02; D-20261114-CM6D; UI-CM6-DEFAULT-1114"}],
       "acceptableVariations": ["Timing, window geometry and the exact CodeMirror markup may vary while the editor kind and the caret location agree."],
       "nonRequirements": ["No typing or saving in the editors, no platform other than Linux WebKitGTK, no burn-in."],
       "stability":"burn-in"
@@ -247,6 +262,13 @@
       "acceptableVariations": ["Exact geometry, settings navigation, font choice and timing may vary."],
       "nonRequirements": ["No pixel assertions, no enumeration of scripts or block kinds (scripts/shot-rtl-notes.mjs and component tests hold those), no CM6 run, no platform other than Linux WebKitGTK."],
       "stability":"burn-in"
+    },
+    "scripts/e2e-popup-relaunch-809.mjs": {
+      "setup": "Synthetic one-page graph, scratch HOME/XDG/APPDATA and per-launch WebView2 profiles, account-home shim on Linux; two launches on the same app data; no network.",
+      "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K > page result > right-click > Open in new window renders the page in a separate window, then Quit exits cleanly and the saved window state names main but no workspace popup (ws-*). With a saved, on-screen, non-default geometry added for the first popup labels (the state an earlier Tine could leave), a relaunch on the same app data reopens launch 1's popup from the session and then opens another the same way: each renders the page, every native build returns, and main answers with no unrecovered native main-thread stall. GH809_ROOT_CAUSE=1 lets a pre-fix build continue past the saved-state check.","blocking":false,"authority":"GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK"}],
+      "acceptableVariations": ["Window geometry, native decoration, which monitor the OS chooses, popup label numbers and timing may vary. The contextmenu event is dispatched to the visible result row."],
+      "nonRequirements": ["No private graph, exact pixels, popup position after relaunch, fixed timing or release burn-in. A Linux pass proves only the saved-state half: GTK delivers the restore's move later, so Linux never deadlocked; the deadlock half needs hosted Windows."],
+      "stability": "burn-in"
     },
     "scripts/e2e-workspace-flight-hang.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"After a test-only native UI-thread block during Ctrl+K result > Open in new window, a background flush retains open stages and native liveness stalls. Force-kill and relaunch on the same scratch profile exposes them in the diagnostics report's previous unclean session.","blocking":false,"authority":"GH #809; ADR 0058 workspace-window stages"}],
@@ -409,7 +431,7 @@
     "scripts/e2e-pdf-another-view.mjs": {
       "contracts": [
         { "class": "stateful-ux", "userOutcome": "Open another view opens the same PDF beside the first at its page and zoom; both views share created, recolored and deleted highlights while keeping their own page, zoom and scroll, and the surviving view can save and drain after its sibling closes.", "blocking": true },
-        { "class": "exact-safety-interoperability", "userOutcome": "Shared highlight edits persist once in the PDF sidecar and hls notes page through the guarded paired writer.", "blocking": true, "authority": "PDF tabs and splits design section 5; UI-PDF-ANOTHER-VIEW-SHARED-HIGHLIGHTS" }
+        { "class": "exact-safety-interoperability", "userOutcome": "Shared highlight edits persist once in the PDF sidecar and hls notes page through the guarded paired writer; wrapped selections join like Logseq and existing asset-link labels survive.", "blocking": true, "authority": "PDF tabs and splits design section 5; UI-PDF-ANOTHER-VIEW-SHARED-HIGHLIGHTS; GH #953" }
       ],
       "acceptableVariations": ["Pane sizes, palette values, rendering and save latency may vary while shared overlays and durable highlight identities agree."],
       "nonRequirements": ["Exact pixels, DOM nesting, incidental scroll offsets, or native certification outside Linux WebKitGTK; new-window and restored-tab entry paths retain component coverage."],
@@ -520,7 +542,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-code-wrap-toggle.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Palette, bound shortcut and Settings code wrapping preserve unobscured reading text in mounted main, split and sidebar scrollers in both directions with the classic and CodeMirror editor preferences, without changing note source.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Palette, bound shortcut and Settings code wrapping preserve unobscured reading text in mounted main, split and sidebar scrollers in both directions with the classic and CodeMirror editor preferences, without changing note source. Clicking the code language label opens the fence source in both editors; removing and restoring its language saves exact note bytes without the placeholder. In desktop and phone layouts, clicking code edits its body, while clicking prose or the block edge edits raw source; moving the caret keeps fences visible in Markdown and Org, with and without surrounding prose, without changing file bytes.", "blocking": true, "authority": "GH #453; GH #879 D-20261114-CS879" }],
       "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"

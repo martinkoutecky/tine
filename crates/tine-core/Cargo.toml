@@ -40,6 +40,7 @@ test-faults = []
 # The integration tests link the library without `cfg(test)`.
 tine-core = { path = ".", features = ["test-faults"] }
 libc = "0.2"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 pretty_assertions = "1"
 
 # Keep all integration cases in one linked executable.

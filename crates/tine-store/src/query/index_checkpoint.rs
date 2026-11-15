@@ -159,7 +159,11 @@ impl Serialize for IndexState {
                         f.pre_blocks
                             .iter()
                             .map(|block| {
-                                (block.raw().to_owned(), block.is_org(), block.uuid.clone())
+                                (
+                                    block.raw().to_owned(),
+                                    block.is_org(),
+                                    block.uuid.to_string(),
+                                )
                             })
                             .collect(),
                     )
@@ -206,7 +210,7 @@ impl<'de> Deserialize<'de> for IndexState {
                         let mut block = DocBlock::new(raw);
                         block.set_org(is_org);
                         block.set_property_ref_config(&parts.parse_config);
-                        block.uuid = uuid;
+                        block.uuid = uuid.into();
                         block
                     })
                     .collect();

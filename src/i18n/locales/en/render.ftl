@@ -2,6 +2,8 @@
 render-more-blocks = { $count }+ more blocks
 render-more-blocks-exact = { $count } more blocks
 render-copy-code = Copy code
+render-code-plain = plain
+render-edit-code-language = Edit code language
 render-copy-result = Copy result
 render-icon = { $name } icon
 render-this-block-couldn-t-be-parsed-and-is-shown-as-raw-text = This block couldn't be parsed and is shown as raw text

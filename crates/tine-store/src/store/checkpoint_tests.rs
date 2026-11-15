@@ -1948,7 +1948,7 @@ fn a_warm_launch_resolves_every_runtime_block_id_of_the_loaded_pages() {
                     out: &mut Vec<(String, String)>,
                 ) {
                     for block in blocks {
-                        out.push((block.uuid.clone(), page.to_owned()));
+                        out.push((block.uuid.to_string(), page.to_owned()));
                         if let Some(id) = block.property("id") {
                             out.push((id, page.to_owned()));
                         }

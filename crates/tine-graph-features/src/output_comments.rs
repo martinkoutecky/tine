@@ -2,7 +2,7 @@
 //! admitted blocks once, dropping a root's entire thread; page roots stay body
 //! blocks. No I/O or live-document mutations. The predicate is the editor's
 //! Rust discriminator, also used by the window through wasm.
-use tine_core::{doc::DocBlock, model::BlockDto, CorpusPage};
+use tine_core::{block_id::BlockId, doc::DocBlock, model::BlockDto, CorpusPage};
 
 #[cfg(test)]
 thread_local! { static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
@@ -28,18 +28,29 @@ pub(crate) fn close_result(result: &mut tine_core::query::ir::QueryResult, pages
         return;
     };
     let mut ids = std::collections::HashSet::new();
-    fn collect<'a>(blocks: &'a [DocBlock], ids: &mut std::collections::HashSet<&'a str>) {
+    let wanted: std::collections::HashSet<_> = groups
+        .iter()
+        .flat_map(|group| group.blocks.iter().map(|block| block.id.as_str()))
+        .collect();
+    fn collect(
+        blocks: &[DocBlock],
+        wanted: &std::collections::HashSet<&str>,
+        ids: &mut std::collections::HashSet<BlockId>,
+    ) {
         for block in blocks {
-            ids.insert(block.uuid.as_str());
-            collect(&block.children, ids);
+            if wanted.contains(&*block.uuid.text()) {
+                ids.insert(block.uuid.clone());
+            }
+            collect(&block.children, wanted, ids);
         }
     }
     for page in pages {
-        collect(&page.document.roots, &mut ids);
+        collect(&page.document.roots, &wanted, &mut ids);
     }
+    drop(wanted);
     for group in groups.iter_mut() {
         group.blocks.retain(|block| {
-            block.page_property || block.page_preamble || ids.contains(block.id.as_str())
+            block.page_property || block.page_preamble || ids.contains(&block.id.as_str().into())
         });
     }
     groups.retain(|group| !group.blocks.is_empty());
@@ -69,11 +80,11 @@ pub(crate) fn remap_result_ids(
         source: &'a [DocBlock],
         published: &'b [DocBlock],
         wanted: &std::collections::HashSet<&str>,
-        ids: &mut std::collections::HashMap<&'a str, &'b str>,
+        ids: &mut std::collections::HashMap<BlockId, BlockId>,
     ) {
         for (source, published) in source.iter().zip(published) {
-            if wanted.contains(source.uuid.as_str()) {
-                ids.insert(source.uuid.as_str(), published.uuid.as_str());
+            if wanted.contains(&*source.uuid.text()) {
+                ids.insert(source.uuid.clone(), published.uuid.clone());
             }
             align(&source.children, &published.children, wanted, ids);
         }
@@ -90,8 +101,11 @@ pub(crate) fn remap_result_ids(
     drop(wanted);
     for group in groups {
         for block in &mut group.blocks {
-            if let Some(id) = ids.get(block.id.as_str()).filter(|id| **id != block.id) {
-                block.id = (*id).to_owned();
+            if let Some(id) = ids
+                .get(&BlockId::from(block.id.as_str()))
+                .filter(|id| **id != block.id)
+            {
+                block.id = id.to_string();
             }
         }
     }
@@ -196,16 +210,16 @@ pub(crate) fn flat_text<N: OutlineNode>(root: &N) -> String {
     text
 }
 
-pub(crate) fn collect_wanted_doc_blocks<'a>(
+pub(crate) fn collect_wanted_doc_blocks<'a, 'w>(
     blocks: &'a [DocBlock],
-    wanted: &std::collections::HashSet<&str>,
-    found: &mut std::collections::HashMap<&'a str, (&'a DocBlock, bool)>,
+    wanted: &std::collections::HashSet<&'w str>,
+    found: &mut std::collections::HashMap<&'w str, (&'a DocBlock, bool)>,
 ) {
     let mut stack: Vec<_> = blocks.iter().rev().map(|b| (b, false, false)).collect();
     while let Some((block, thread, has_parent)) = stack.pop() {
         let comment = thread || crate::output_comments::is_comment(block, has_parent);
-        if wanted.contains(block.uuid.as_str()) {
-            found.insert(block.uuid.as_str(), (block, comment));
+        if let Some(id) = wanted.get(&*block.uuid.text()) {
+            found.insert(*id, (block, comment));
         }
         // OG can retain a matching descendant below a non-matching child of a
         // retained ancestor. Keep walking so both roots hydrate from source.

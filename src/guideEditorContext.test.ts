@@ -28,6 +28,10 @@ it("the code tour explains raw source entry on desktop and mobile", () => {
   expect(page).toContain("To edit the language or add text before or after the code");
   expect(page).toContain("the whole bullet opens as source, including its fences");
   expect(page).toContain("These paths work on desktop and mobile");
+  expect(page).toContain("skip the language list by tapping inside the code");
+  expect(page).toContain("Typing continues at your caret");
+  expect(page).toContain("click anywhere else in the bullet");
+  expect(page).toContain("Moving the caret keeps source visible until you leave the bullet");
 });
 
 it("the canonical context tour teaches pinned ancestor navigation and selecting an embed host", () => {

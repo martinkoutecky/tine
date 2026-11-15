@@ -111,7 +111,7 @@ Markdown and Org, desktop and touch layouts share this boundary; calculator
 blocks retain their specialized editor. OG reference: `og-1.0.0` at
 `680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content-or-editor`,
 `move-to-prev-block` and `extensions/code.cljs` `render!` (Escape).
-The experimental CodeMirror editor retains its existing standalone body-first
+The default CodeMirror editor retains its existing standalone body-first
 entry policy in this merge. Escape reveals its source; the other standalone
 source-entry paths remain a follow-up.
 

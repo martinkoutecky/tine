@@ -488,7 +488,8 @@ pub struct BlockDto {
     /// `page_property`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub page_preamble: bool,
-    /// Source thread membership for a detached preview/query export root.
+    /// Source thread membership for a detached root: preview/query export
+    /// hydration and shallow reference rows (linked, unlinked, block referrers).
     /// Descendants inherit it during export; ordinary page DTOs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub comment: bool,

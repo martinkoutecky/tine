@@ -23,7 +23,9 @@ fn the_block_oracle_includes_ids_absent_from_every_page() {
     );
     let slot = snapshot.pages.slots().next().unwrap().0;
     let mut index = snapshot.block_index.get().unwrap().clone();
-    index.edit("stale-key-held-by-no-page", |owners| owners.push(slot));
+    index.edit(BlockKey::of("stale-key-held-by-no-page"), |owners| {
+        owners.push(slot)
+    });
     let _ = snapshot.block_index.take();
     snapshot.block_index.set(index).ok().unwrap();
     assert!(snapshot_image(&snapshot, &[]).contains("block owners \"stale-key-held-by-no-page\""));
@@ -48,9 +50,9 @@ fn an_index_miss_checks_every_page_in_tests() {
         .find_map(|(_, doc)| doc.roots.first())
         .unwrap()
         .uuid
-        .clone();
+        .to_string();
     let mut index = snapshot.block_index.get().unwrap().clone();
-    index.edit(&id, Vec::clear);
+    index.edit(BlockKey::of(&id), Vec::clear);
     snapshot.block_index.take();
     snapshot.block_index.set(index).ok().unwrap();
     snapshot.block_owner_page(&id, true);

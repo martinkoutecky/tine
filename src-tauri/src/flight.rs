@@ -253,6 +253,49 @@ fn main_thread_stall_fields(
     fields
 }
 
+/// GH #713: a native window's webview could not be built. `window` names the
+/// creation path and so which WebView2 environment it used: `"graph"` builds a
+/// new environment (wry `create_environment`, no opener to share), `"workspace"`
+/// shares its opener's. The HRESULT is the only part of `error` kept.
+/// `openWindows` counts webview windows still open; `buildMs` is how long the
+/// failed build took. The recorder's `elapsedMs` is the process (and so the
+/// first environment's) age; a `frontend.health` heartbeat gap shows a sleep.
+pub(crate) fn record_window_create_failed(
+    window: &'static str,
+    error: &str,
+    open_windows: usize,
+    build_ms: u64,
+) {
+    record_fixed_event(
+        "window.create_failed",
+        window_create_failed_fields(window, error, open_windows, build_ms),
+    );
+}
+
+fn window_create_failed_fields(
+    window: &'static str,
+    error: &str,
+    open_windows: usize,
+    build_ms: u64,
+) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("window".into(), json!(window));
+    fields.insert(
+        "hresult".into(),
+        json!(hresult_in(error).map(|code| format!("0x{code:08X}"))),
+    );
+    fields.insert("openWindows".into(), json!(open_windows));
+    fields.insert("buildMs".into(), json!(build_ms));
+    fields
+}
+
+/// The HRESULT a WebView2 error's text carries (`HRESULT(0x80010108)`, as the
+/// `windows` crate prints it), or `None`. O(message length).
+fn hresult_in(error: &str) -> Option<u32> {
+    let digits = error.split_once("HRESULT(0x")?.1.get(..8)?;
+    u32::from_str_radix(digits, 16).ok()
+}
+
 /// Start the recorder's clock and record which build this run is: fixed tokens
 /// only, so a report can tell an x86 session from an x64 one (GH #594). Call
 /// once, first thing in `run()`.
@@ -1154,6 +1197,38 @@ mod tests {
             assert_eq!(value["delayMs"], 2100);
             assert_eq!(value["recovered"], recovered);
             assert_eq!(value["event"], "runtime.main_thread_stall");
+        }
+    }
+
+    #[test]
+    fn window_create_failure_keeps_the_hresult_and_nothing_else_of_the_error() {
+        // GH #713, the reporter's text verbatim (0.9.0-beta.12, Windows).
+        let reported = "runtime error: failed to create webview: WebView2 error: \
+            WindowsError(Error { code: HRESULT(0x80010108), message: \"The object \
+            invoked has disconnected from its clients.\" })";
+        let line = encode(
+            "window.create_failed",
+            window_create_failed_fields("graph", reported, 2, 3277),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value.as_object().unwrap().len(), 7);
+        assert_eq!(value["event"], "window.create_failed");
+        assert_eq!(value["window"], "graph");
+        assert_eq!(value["hresult"], "0x80010108");
+        assert_eq!(value["openWindows"], 2);
+        assert_eq!(value["buildMs"], 3277);
+        assert!(!line.contains("disconnected"));
+
+        // Another platform's (or a private) message keeps no text at all.
+        for error in [
+            "failed to create webview: /home/someone/Private Graph",
+            "WebView2 error: HRESULT(0x8001",
+            "HRESULT(0xZZZZZZZZ)",
+        ] {
+            let fields = window_create_failed_fields("workspace", error, 1, 5);
+            assert_eq!(fields["hresult"], Value::Null, "{error}");
+            assert!(!serde_json::to_string(&fields).unwrap().contains("Private"));
         }
     }
 

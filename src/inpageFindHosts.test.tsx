@@ -9,6 +9,60 @@ import * as facets from "./render/facets";
 beforeAll(initParser);
 afterEach(() => { resetStore(); vi.restoreAllMocks(); document.body.replaceChildren(); });
 
+// PC-3/PC-8: match bench's one warmup + minimum of eight runs, while keeping
+// the existing 500 ms interaction ceiling (selectionColdCost, MarginTiers).
+// Fixture construction and DOM rendering are outside these inventory budgets.
+it.each(["opening", "mounting"] as const)("pending-host timing budget: %s on a 10k-block outline", operation => {
+  const roots = Array.from({ length: 10_000 }, (_, i) => `budget-${i}`);
+  setDoc({ byId: Object.fromEntries(roots.map((id, i) => [id, {
+    id, raw: i < 200 ? `{{query (task TODO)}} result ${i}` : `ordinary outline block ${i}`,
+    children: [], parent: null, page: "Budget", collapsed: false,
+  }])) });
+  const scope = document.createElement("div");
+  const hosts = roots.slice(0, 200).map(id => {
+    const host = document.createElement("div");
+    host.dataset.findHost = id;
+    host.dataset.findAnswered = "true";
+    return host;
+  });
+  scope.append(...hosts);
+  document.body.append(scope);
+  const samples: number[] = [];
+  for (let run = 0; run < 9; run++) createRoot(dispose => {
+    try {
+      // 2,000 rendered query rows, delivered as individual child-list records
+      // in one observer batch, including nested result text and pending cells.
+      const records = operation === "opening" ? [] : Array.from({ length: 2_000 }, (_, i) => {
+        const row = document.createElement("div");
+        const cell = document.createElement("span");
+        cell.className = "sheet-cell-defer";
+        cell.textContent = `synthetic query result ${i}`;
+        row.append(cell);
+        const host = hosts[i % hosts.length];
+        return { target: host, addedNodes: [row], removedNodes: [] } as unknown as MutationRecord;
+      });
+      let started = performance.now();
+      const inventory = createPendingFindHosts(() => [{ roots, format: "md", element: scope }]);
+      const firstCount = inventory.count();
+      let elapsed = performance.now() - started;
+      expect(firstCount).toBe(0);
+      if (operation === "mounting") {
+        for (const record of records) record.target.appendChild(record.addedNodes[0]);
+        started = performance.now();
+        inventory.refresh(records);
+        const pending = inventory.count();
+        elapsed = performance.now() - started;
+        expect(pending).toBe(200);
+      }
+      if (run) samples.push(elapsed);
+      for (const host of hosts) host.replaceChildren();
+    } finally { dispose(); }
+  });
+  const minimum = Math.min(...samples);
+  console.info(`pending-host ${operation}: min=${minimum.toFixed(2)} ms samples=${samples.map(ms => ms.toFixed(2)).join(",")} budget=500 ms`);
+  expect(minimum, `${operation}: 10k blocks, 200 hosts, 2k result rows`).toBeLessThan(500);
+});
+
 it.each(["md", "org"] as const)("counts parser hosts, including inline queries, without counting literal macros (%s)", format => {
   expect(countFindHosts("{{embed [[Source]]}}", format)).toBe(1);
   expect(countFindHosts("inline {{EMBED [[Source]]}}", format)).toBe(1);

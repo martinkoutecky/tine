@@ -122,7 +122,7 @@ impl PageFacts {
             for block in roots {
                 let projection = block.projection();
                 for (ordinal, (key, value)) in projection.properties().iter().enumerate() {
-                    note(&block.uuid, ordinal, key, value, false);
+                    note(&block.uuid.text(), ordinal, key, value, false);
                 }
                 refs.extend(
                     projection
@@ -142,9 +142,9 @@ impl PageFacts {
             .flat_map(|pre| super::pre_blocks_with_config(entry, pre, config))
             .collect();
         for block in &pre_blocks {
-            if block.uuid.starts_with("page-preamble:") {
+            if block.uuid.text().starts_with("page-preamble:") {
                 for (ordinal, (key, value)) in block.projection().properties().iter().enumerate() {
-                    note(&block.uuid, ordinal, key, value, false);
+                    note(&block.uuid.text(), ordinal, key, value, false);
                 }
             }
             refs.extend(
@@ -746,7 +746,7 @@ fn owner_rows(
     for block in facts
         .pre_blocks()
         .iter()
-        .filter(|b| b.uuid.starts_with("page-preamble:"))
+        .filter(|b| b.uuid.text().starts_with("page-preamble:"))
     {
         walk(std::slice::from_ref(block), page_id, &mut push);
     }

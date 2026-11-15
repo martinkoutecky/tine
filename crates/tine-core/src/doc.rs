@@ -54,7 +54,7 @@ pub struct Document {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
-    pub(crate) raw: String,
+    pub(crate) raw: Box<str>,
     /// Child blocks in document order.
     pub children: Vec<DocBlock>,
     /// Runtime/store identity assigned from the document's physical owner and
@@ -64,7 +64,7 @@ pub struct DocBlock {
     /// string until a parse assigns runtime identities. It is not part of block content, so it is excluded
     /// from equality. Store write conflicts use raw-byte `FileRev` guards.
     #[serde(default, skip_serializing)]
-    pub uuid: String,
+    pub uuid: crate::block_id::BlockId,
     /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
     /// parse inline refs correctly (e.g. org `[[target][alias]]`). Page-level
     /// metadata, not content, so excluded from equality (like `uuid`); set at
@@ -80,39 +80,9 @@ pub struct DocBlock {
     pub(crate) proj: std::sync::OnceLock<BlockProjection>,
 }
 
-/// Parsed values derived from a block's current raw text.
-// Memoization avoids reparsing each block during whole-graph scans.
-//
-// Memory shape (GH #623): this slot is paid inline by every block, so it holds only what
-// every block has. Facets set on a minority of blocks live in one `Option<Box<..>>`, and
-// text that equals another stored text is not stored again: `visible` is `None` when it
-// equals the block's `raw`, `visible_lower` is `None` when it equals `visible`. Those
-// fallbacks need the block's `raw`, so the ONLY readers are `DocBlock::visible_text` and
-// `DocBlock::visible_folded`; the fields are private so no caller can re-implement the
-// fallback. Unrelated to behaviour: every accessor returns what the eager form returned.
-#[deny(missing_docs)]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BlockProjection {
-    /// Parser-owned raw byte regions from the same cached single-block AST.
-    /// Sparse edit data stays out of the inline block; empty regions are shared.
-    #[serde(deserialize_with = "deserialize_shared_regions")]
-    pub regions: std::sync::Arc<crate::block_regions::BlockRegions>,
-    /// Visible (non-property) text, original case — `raw` minus the byte ranges lsdoc
-    /// recognized as `Properties` blocks. `None` when identical to `raw`.
-    visible: Option<Box<str>>,
-    /// `visible` folded with accent-removing `canonical_fold`, independent of graph
-    /// policy. `None` when identical to the visible text.
-    visible_lower: Option<Box<str>>,
-    /// Lazy accent-sensitive fold, populated only when that graph policy is used;
-    /// the inner `None` means identical to the visible text. Checkpointed in
-    /// whatever state it is in (built or not), like every lazy answer.
-    #[serde(with = "once_cell_as_option")]
-    visible_literal: std::sync::OnceLock<Option<Box<str>>>,
-    /// Byte ranges of `raw` eligible for plain-text (unlinked) reference matching.
-    plain_ranges: Box<[std::ops::Range<usize>]>,
-    /// Facets set on a minority of blocks; `None` when the block has none of them.
-    extra: Option<Box<ProjectionExtra>>,
-}
+mod compact_projection;
+pub use compact_projection::BlockProjection;
+use compact_projection::{PlainRanges, VisibleTexts};
 
 /// The facets of a [`BlockProjection`] that most blocks do not have (g13k: 80% of blocks
 /// have none of them), kept behind one pointer so an ordinary block does not pay for them.
@@ -124,12 +94,12 @@ struct ProjectionExtra {
     refs_norm: Box<[String]>,
     refs_page: Box<[String]>,
     block_refs: Box<[String]>,
-    marker: Option<String>,
-    priority: Option<String>,
+    marker: Option<Box<str>>,
+    priority: Option<Box<str>>,
     heading_level: Option<u8>,
     properties: Box<[(String, String)]>,
-    scheduled: Option<String>,
-    deadline: Option<String>,
+    scheduled: Option<Box<str>>,
+    deadline: Option<Box<str>>,
     tags: Box<[String]>,
     explicit: Box<[crate::reference_evidence::ProjectedPageRef]>,
     withheld_ranges: Box<[std::ops::Range<usize>]>,
@@ -155,7 +125,10 @@ impl ProjectionExtra {
 impl BlockProjection {
     /// Visible text; `raw` must be the raw body this projection was built from.
     fn visible_text<'a>(&'a self, raw: &'a str) -> &'a str {
-        self.visible.as_deref().unwrap_or(raw)
+        self.texts
+            .as_ref()
+            .and_then(|texts| texts.visible.as_deref())
+            .unwrap_or(raw)
     }
 
     /// Visible text folded for the graph's search policy. The accent-sensitive
@@ -163,16 +136,29 @@ impl BlockProjection {
     fn visible_folded<'a>(&'a self, raw: &'a str, remove_accents: bool) -> &'a str {
         let visible = self.visible_text(raw);
         if remove_accents {
-            self.visible_lower.as_deref().unwrap_or(visible)
+            self.texts
+                .as_ref()
+                .and_then(|texts| texts.visible_lower.as_deref())
+                .unwrap_or(visible)
         } else {
             self.visible_literal
                 .get_or_init(|| {
                     let folded = crate::search_query::literal_fold(visible);
-                    (folded != visible).then(|| folded.into_boxed_str())
+                    (folded != visible).then(|| Box::new(folded.into_boxed_str()))
                 })
-                .as_deref()
-                .unwrap_or(visible)
+                .as_ref()
+                .map_or(visible, |folded| &***folded)
         }
+    }
+
+    #[cfg(test)]
+    fn stored_visible(&self) -> Option<&str> {
+        self.texts.as_ref().and_then(|t| t.visible.as_deref())
+    }
+
+    #[cfg(test)]
+    fn stored_lower(&self) -> Option<&str> {
+        self.texts.as_ref().and_then(|t| t.visible_lower.as_deref())
     }
 
     fn extra(&self) -> Option<&ProjectionExtra> {
@@ -261,7 +247,7 @@ impl BlockProjection {
         let extra = self.extra();
         crate::reference_evidence::ReferenceSource {
             explicit: extra.map_or(&[], |e| &e.explicit),
-            plain_ranges: &self.plain_ranges,
+            plain_ranges: self.plain_ranges.view(),
             withheld_ranges: extra.map_or(&[], |e| &e.withheld_ranges),
         }
     }
@@ -301,9 +287,9 @@ pub const TEST_PROJECTION_PANIC_SENTINEL: &str = "__TINE_TEST_PROJECTION_PANIC__
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
         DocBlock {
-            raw: raw.into(),
+            raw: raw.into().into_boxed_str(),
             children: Vec::new(),
-            uuid: String::new(),
+            uuid: Default::default(),
             is_org: false,
             property_ref_config: None,
             proj: std::sync::OnceLock::new(),
@@ -317,7 +303,7 @@ impl DocBlock {
 
     /// Replace the block body and invalidate its derived projection.
     pub fn set_raw(&mut self, raw: impl Into<String>) {
-        self.raw = raw.into();
+        self.raw = raw.into().into_boxed_str();
         self.proj = std::sync::OnceLock::new();
     }
 
@@ -415,29 +401,28 @@ impl DocBlock {
             // These lists never grow after publication. Boxed slices trim the
             // build's slack and avoid retaining a capacity word per list; serde
             // keeps the same sequence encoding, including in checkpoints.
-            let plain_ranges = reference_source.plain_ranges.into_boxed_slice();
+            let plain_ranges = PlainRanges::from(reference_source.plain_ranges);
             let extra = ProjectionExtra {
                 search: std::sync::OnceLock::new(),
                 refs_norm: refs_norm.into_boxed_slice(),
                 refs_page: refs_page.into_boxed_slice(),
                 block_refs: proj.refs.block.into_boxed_slice(),
-                marker,
-                priority,
+                marker: marker.map(String::into_boxed_str),
+                priority: priority.map(String::into_boxed_str),
                 heading_level,
                 properties: properties.into_boxed_slice(),
-                scheduled,
-                deadline,
+                scheduled: scheduled.map(String::into_boxed_str),
+                deadline: deadline.map(String::into_boxed_str),
                 tags: tags.into_boxed_slice(),
                 explicit: reference_source.explicit.into_boxed_slice(),
                 withheld_ranges: reference_source.withheld_ranges.into_boxed_slice(),
             };
             let extra = (!extra.is_empty()).then(|| Box::new(extra));
             let visible_lower = (visible_lower != visible).then(|| visible_lower.into_boxed_str());
-            let visible = (visible != self.raw).then(|| visible.into_boxed_str());
+            let visible = (*visible != *self.raw).then(|| visible.into_boxed_str());
             BlockProjection {
                 regions,
-                visible,
-                visible_lower,
+                texts: VisibleTexts::boxed(visible, visible_lower),
                 visible_literal: std::sync::OnceLock::new(),
                 plain_ranges,
                 extra,
@@ -1206,7 +1191,7 @@ mod org_container_outline_tests {
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "#+BEGIN_QUOTE\n- Today\n- Tomorrow\n#+END_QUOTE"
         );
     }
@@ -1218,7 +1203,7 @@ mod org_container_outline_tests {
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "#+BEGIN_EXAMPLE\n    - a\n       - b\n          - c\n          - d\n#+END_EXAMPLE"
         );
     }
@@ -1230,7 +1215,7 @@ mod org_container_outline_tests {
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "#+BEGIN_QUOTE\n- x\n#+END_QUOTE_EXTRA trailing"
         );
     }
@@ -1242,7 +1227,7 @@ mod org_container_outline_tests {
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "  #+begin_note options\n  - x\n#+eNd_NoTeSuffix trailing"
         );
     }
@@ -1254,7 +1239,7 @@ mod org_container_outline_tests {
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "#+BEGIN_QUOTE\n#+END\n- x\n#+END_\n- y\ntext #+END_QUOTE\n- z\n#+END_QUOTE"
         );
 
@@ -1262,8 +1247,8 @@ mod org_container_outline_tests {
         let doc = parse_round_trip(empty_name);
         assert_eq!(doc.roots.len(), 1);
         assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].raw, "#+BEGIN_ \nx\n#+END_");
-        assert_eq!(doc.roots[0].children[0].raw, "child");
+        assert_eq!(doc.roots[0].raw(), "#+BEGIN_ \nx\n#+END_");
+        assert_eq!(doc.roots[0].children[0].raw(), "child");
     }
 
     #[test]
@@ -1271,10 +1256,10 @@ mod org_container_outline_tests {
         let input = "- #+BEGIN_QUOTE\n  - a\n- sibling";
         let doc = parse_round_trip(input);
         assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].raw(), "#+BEGIN_QUOTE");
         assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "a");
-        assert_eq!(doc.roots[1].raw, "sibling");
+        assert_eq!(doc.roots[0].children[0].raw(), "a");
+        assert_eq!(doc.roots[1].raw(), "sibling");
     }
 
     #[test]
@@ -1285,7 +1270,7 @@ mod org_container_outline_tests {
         let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "parent\n#+BEGIN_QUOTE\n- sibling\n#+END_QUOTE"
         );
         assert!(doc.roots[0].children.is_empty());
@@ -1297,13 +1282,13 @@ mod org_container_outline_tests {
         let doc = parse_structural_round_trip(tabbed);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n- child\n #+END_QUOTE");
+        assert_eq!(doc.roots[0].raw(), "#+BEGIN_QUOTE\n- child\n #+END_QUOTE");
 
         let spaced = "- #+BEGIN_QUOTE\n  - child\n    #+END_QUOTE";
         let doc = parse_structural_round_trip(spaced);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n- child\n  #+END_QUOTE");
+        assert_eq!(doc.roots[0].raw(), "#+BEGIN_QUOTE\n- child\n  #+END_QUOTE");
     }
 
     #[test]
@@ -1312,7 +1297,7 @@ mod org_container_outline_tests {
         let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[0].raw, "\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
+        assert_eq!(doc.roots[0].raw(), "\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
     }
 
     #[test]
@@ -1321,7 +1306,7 @@ mod org_container_outline_tests {
         let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[0].raw, "p\n\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
+        assert_eq!(doc.roots[0].raw(), "p\n\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
     }
 
     #[test]
@@ -1329,9 +1314,9 @@ mod org_container_outline_tests {
         let input = "-    #+BEGIN_QUOTE\n  - x\n    \x1a#+END_QUOTE";
         let doc = parse_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].raw, "   #+BEGIN_QUOTE");
+        assert_eq!(doc.roots[0].raw(), "   #+BEGIN_QUOTE");
         assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "x\n\x1a#+END_QUOTE");
+        assert_eq!(doc.roots[0].children[0].raw(), "x\n\x1a#+END_QUOTE");
     }
 
     #[test]
@@ -1341,10 +1326,10 @@ mod org_container_outline_tests {
         assert_eq!(doc.roots.len(), 2);
         assert!(doc.roots[0].children.is_empty());
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "#+BEGIN_QUOTE\n#+BEGIN_QUOTE\n#+END_QUOTE"
         );
-        assert_eq!(doc.roots[1].raw, "outside\n#+END_QUOTE");
+        assert_eq!(doc.roots[1].raw(), "outside\n#+END_QUOTE");
     }
 
     #[test]
@@ -1352,9 +1337,9 @@ mod org_container_outline_tests {
         let input = "- #+BEGIN_QUOTE\n  ```\n  #+END_QUOTE\n  ```\n- sibling";
         let doc = parse_round_trip(input);
         assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n```\n#+END_QUOTE\n```");
+        assert_eq!(doc.roots[0].raw(), "#+BEGIN_QUOTE\n```\n#+END_QUOTE\n```");
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[1].raw, "sibling");
+        assert_eq!(doc.roots[1].raw(), "sibling");
     }
 
     #[test]
@@ -1363,11 +1348,11 @@ mod org_container_outline_tests {
         let doc = parse_round_trip(input);
         assert_eq!(doc.roots.len(), 2);
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "```\n#+BEGIN_QUERY\n- literal\n#+END_QUERY\n```"
         );
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[1].raw, "sibling");
+        assert_eq!(doc.roots[1].raw(), "sibling");
     }
 
     #[test]
@@ -1377,11 +1362,11 @@ mod org_container_outline_tests {
         let doc = parse_round_trip(input);
         assert_eq!(doc.roots.len(), 2);
         assert_eq!(
-            doc.roots[0].raw,
+            doc.roots[0].raw(),
             "#+BEGIN_SRC\n- x\n#+BEGIN_QUERY\n- y\n#+END_QUERY\n#+END_SRC"
         );
         assert!(doc.roots[0].children.is_empty());
-        assert_eq!(doc.roots[1].raw, "sibling");
+        assert_eq!(doc.roots[1].raw(), "sibling");
     }
 
     #[test]
@@ -1401,30 +1386,6 @@ mod org_container_outline_tests {
 
 #[cfg(test)]
 mod projection_tests;
-
-/// A `OnceLock` in the launch-checkpoint form: its value when built, else
-/// `None`; a `None` loads back unbuilt.
-mod once_cell_as_option {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::OnceLock;
-
-    pub(super) fn serialize<T: Serialize, S: Serializer>(
-        cell: &OnceLock<T>,
-        s: S,
-    ) -> Result<S::Ok, S::Error> {
-        cell.get().serialize(s)
-    }
-
-    pub(super) fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
-        d: D,
-    ) -> Result<OnceLock<T>, D::Error> {
-        let cell = OnceLock::new();
-        if let Some(value) = Option::<T>::deserialize(d)? {
-            let _ = cell.set(value);
-        }
-        Ok(cell)
-    }
-}
 
 fn deserialize_shared_regions<'de, D: serde::Deserializer<'de>>(
     d: D,
@@ -1474,9 +1435,9 @@ impl CheckpointBlock {
             let _ = proj.set(projection);
         }
         DocBlock {
-            raw,
+            raw: raw.into_boxed_str(),
             children: children.into_iter().map(Self::into_block).collect(),
-            uuid: String::new(),
+            uuid: Default::default(),
             is_org,
             property_ref_config: None,
             proj,
