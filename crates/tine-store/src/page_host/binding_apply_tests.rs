@@ -3,6 +3,65 @@
 use super::super::apply::{ApplyRefusal, Effect, Expected, HostOp};
 use super::*;
 
+#[test]
+fn gh964_owner_write_then_typing_on_the_previous_version_preserves_both_sides() {
+    let before = "- user\n- agent\n";
+    let cli = "- user\n- agent changed\n";
+    let typed = "- user typed\n- agent\n";
+    let live = Live::new(&[("pages/a.md", before)]);
+    let (key, opened) = live.open("pages/a.md");
+    let page = PageId::from(key.clone());
+    live.host.flush_input(&[page.clone()]).unwrap();
+    live.host
+        .apply(op(
+            vec![(
+                &key,
+                Effect::Write(bytes(cli)),
+                Expected::Bytes(bytes(before)),
+            )],
+            Input::Flush,
+        ))
+        .unwrap();
+    assert_eq!(live.disk(&key), cli);
+    // The window has not consumed the owner's push. Its next input still
+    // belongs to the version the successful flush left in that window.
+    let id = live.submit(&key, typed, opened.version, None).unwrap();
+    let mail = live.answer(&key, id);
+    assert!(mail.answer.as_ref().unwrap().took);
+    let state = mail.page.unwrap();
+    assert!(state.conflict);
+    let MailText::Unchanged { rev } = state.text else {
+        panic!("the taken input must remain the window's text");
+    };
+    assert_eq!(rev, Some(crate::FileRev::from_bytes(typed.as_bytes())));
+    assert_eq!(
+        live.host.flush_input(&[page.clone()]),
+        Err(ApplyRefusal::Unsaved(page))
+    );
+    assert_eq!(live.disk(&key), cli);
+    live.host.driver.shared.with_state_for_tests(|state| {
+        assert_eq!(state.progress.host.pages[&key].buf, text(typed));
+    });
+    live.host.stop();
+}
+
+#[test]
+fn gh964_large_page_typing_without_cli_publishes() {
+    let before: String = (0..10_900)
+        .map(|i| format!("- synthetic block {i:05} with ordinary note text here\n"))
+        .collect();
+    assert!(before.len() >= 548_000);
+    let live = Live::new(&[("pages/a.md", &before)]);
+    let (key, page) = live.open("pages/a.md");
+    let typed = before.replacen("synthetic block 00000", "typed block 00000", 1);
+    let id = live.submit(&key, &typed, page.version, None).unwrap();
+    let mail = live.answer(&key, id);
+    assert!(!mail.page.unwrap().conflict);
+    live.host.flush_input(&[PageId::from(key.clone())]).unwrap();
+    assert_eq!(live.disk(&key), typed);
+    live.host.stop();
+}
+
 /// Replacement for a_request_queued_before_a_spelling_move_applies_to_the_same_page_after_it:
 /// the driver refuses unsaved input rather than handing it to an external writer.
 #[test]
