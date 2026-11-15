@@ -13,6 +13,15 @@ A mismatch fails without modifying the corpus. To propose a deliberate output
 change, run with `TINE_REGENERATE_WRITE_TRANSCRIPTS=1`, then review the git diff.
 Never regenerate as part of CI or ordinary verification.
 
+The 64 discussion #960 move rows additionally compare against independently
+assembled expected file bytes in `move_indent_tests.rs`: depth 3 to 1/2 through
+all three placements, root moves through before/after, Markdown/Org,
+tabs/spaces and LF/CRLF, with multiline children, drawers and grandchildren.
+Two further rows pin an edit beside unchanged mixed space/tab prefixes, in LF
+and CRLF. Depth counts indentation steps, starting at zero. Run the same rows through
+literal CLI processes and a real `serve` owner with
+`node scripts/cli-move-indent-acceptance.mjs APP NEW_ARTIFACT_DIRECTORY`.
+
 The five `generated_*` tests each run 40 seeded pages per format. They vary
 root count, target, nested depth, properties, permanent ids, task markers and
 multiline text. An independently assembled expected page is parsed and compared

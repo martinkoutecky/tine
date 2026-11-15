@@ -8,10 +8,10 @@
 //! an old block's raw (matched by a pre-order LCS, then by equal text for moved
 //! blocks) reuses that block's physical lines; only new or changed blocks, and
 //! the page-property preamble when it changed, are rendered; a changed block
-//! still keeps the bytes of the continuation lines its edit did not touch. A reused block
-//! keeps its indentation unless the parse rule for its new position forbids it
-//! (it must be deeper than its parent and no deeper than its previous sibling);
-//! then its lines are re-based as a unit onto a valid prefix.
+//! still keeps the bytes of the continuation lines its edit did not touch.
+//! A block staying with its original parent retains its relative indentation.
+//! A block joining another parent takes its new siblings' prefix (or one indent
+//! step below its parent). Its original descendants carry that prefix change.
 //!
 //! Cost: borrows the caller's single old-source parse; one output parse (two,
 //! plus a full serialization, when the
@@ -154,6 +154,7 @@ pub(super) fn restore_org(
                 start: start - len,
                 len,
                 bulleted: true,
+                parent: None,
             }
         })
         .collect();
@@ -245,6 +246,9 @@ struct OldBlock<'a> {
     /// Written as `- …`; false for an unbulleted ATX heading (lsdoc), whose
     /// lines are its raw text verbatim.
     bulleted: bool,
+    /// Markdown parent's pre-order index, used to carry a rebased prefix only
+    /// into that parent's original children. Org only pairs line terminators.
+    parent: Option<usize>,
 }
 
 /// Locate every old block's physical lines. Blocks own the tail of the body,
@@ -272,7 +276,15 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
         return None;
     }
     let mut olds = Vec::with_capacity(flat.len());
+    let mut parents: Vec<(usize, usize)> = Vec::new();
     for block in flat {
+        while parents.last().is_some_and(|(_, left)| *left == 0) {
+            parents.pop();
+        }
+        let parent = parents.last_mut().map(|(index, left)| {
+            *left -= 1;
+            *index
+        });
         let raw = block.raw();
         let len = raw.split('\n').count();
         let head = lines[start].trim_start_matches(LAYOUT_WS);
@@ -284,11 +296,13 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
         if bulleted && dash != Some(first) {
             return None;
         }
+        parents.push((olds.len(), block.children.len()));
         olds.push(OldBlock {
             raw,
             start,
             len,
             bulleted,
+            parent,
         });
         start += len;
     }
@@ -501,9 +515,34 @@ impl Emitter<'_> {
         &line[..line.len() - line.trim_start_matches(LAYOUT_WS).len()]
     }
 
+    fn preferred_prefix(
+        &self,
+        old: usize,
+        parent: Option<(&str, Option<usize>)>,
+    ) -> Option<String> {
+        let own = self.old_prefix(old);
+        match (parent, self.olds[old].parent) {
+            (None, None) => Some(own.to_string()),
+            (Some((prefix, Some(was))), Some(old_parent)) if was == old_parent => {
+                let from = self.old_prefix(was);
+                Some(if prefix == from {
+                    own.to_string()
+                } else {
+                    format!("{prefix}{}", &own[from.len()..])
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Emit one sibling list. `parent` is the parent's chosen prefix; `index`
     /// is the pre-order index of the first sibling and advances past the list.
-    fn place(&mut self, blocks: &[DocBlock], parent: Option<&str>, index: &mut usize) {
+    fn place(
+        &mut self,
+        blocks: &[DocBlock],
+        parent: Option<(&str, Option<usize>)>,
+        index: &mut usize,
+    ) {
         let mut starts = Vec::with_capacity(blocks.len() + 1);
         starts.push(*index);
         for block in blocks {
@@ -515,21 +554,23 @@ impl Emitter<'_> {
             // The outline parser nests by column: a block must be deeper than
             // its parent and no deeper than its previous sibling.
             let valid = |p: &str| {
-                parent.is_none_or(|pp| p.len() > pp.len())
+                parent.is_none_or(|(pp, _)| p.len() > pp.len())
                     && prev.as_ref().is_none_or(|ps| p.len() <= ps.len())
             };
             let own = self.keep[i]
                 .or(self.hint[i])
-                .map(|o| self.old_prefix(o).to_string());
+                .and_then(|o| self.preferred_prefix(o, parent));
             let next = (j + 1 < blocks.len())
                 .then(|| self.keep[starts[j + 1]])
                 .flatten()
-                .map(|o| self.old_prefix(o).to_string());
+                .and_then(|o| self.preferred_prefix(o, parent));
             let prefix = own
                 .filter(|p| valid(p))
                 .or_else(|| prev.clone())
                 .or_else(|| next.filter(|p| valid(p)))
-                .unwrap_or_else(|| parent.map_or(String::new(), |pp| format!("{pp}{}", self.unit)));
+                .unwrap_or_else(|| {
+                    parent.map_or(String::new(), |(pp, _)| format!("{pp}{}", self.unit))
+                });
             match self.keep[i] {
                 // An unbulleted heading's indentation is part of its raw text,
                 // so it can only be reused where it stood.
@@ -540,7 +581,11 @@ impl Emitter<'_> {
                 None => self.render(block.raw(), &prefix, self.hint[i]),
             }
             *index = i + 1;
-            self.place(&block.children, Some(&prefix), index);
+            self.place(
+                &block.children,
+                Some((&prefix, self.keep[i].or(self.hint[i]))),
+                index,
+            );
             prev = Some(prefix);
         }
         *index = starts[blocks.len()];

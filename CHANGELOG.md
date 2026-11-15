@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Moving or reindenting a block carries its children's indentation with it, including multiline bodies and drawers ([discussion #960](https://github.com/martinkoutecky/tine/discussions/960)).
 - Typing in a zoomed block no longer rechecks unrelated descendant rows when its text changes (D-20261115-ZT).
 - Fixed PDF annotation saves changing unrelated sidecar layout, wrapped text and coordinate digits; new highlights use Logseq's multiline EDN layout (GH #954).
 - Clicking code edits just the code; clicking elsewhere in its bullet opens source with the fences visible. Moving the caret keeps that source view, with or without surrounding text, in both editors (#879).
