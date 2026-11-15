@@ -307,6 +307,7 @@ mod journal_guide_tests {
         assert!(context.contains("This preference belongs to this device"));
         for detail in [
             "## Open a page in its own window",
+            "New windows use the size of the last page window you resized",
             "**Open in new window**",
             "**Open current page in new window**",
             "It has no left or right sidebar.",

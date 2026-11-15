@@ -1279,6 +1279,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                workspace_windows::popup_size::flush(app);
                 youtube_identity::cleanup(app);
                 // Queued Concord base-ledger updates get one bounded drain
                 // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
