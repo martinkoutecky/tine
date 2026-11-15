@@ -11,6 +11,7 @@ import { allowsLocalDirtyBuild, buildInputState, normalizedBuildInputState } fro
 import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 import { privateSessionLaunch } from "./lib/e2e-session-bus.mjs";
 import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
+import { defaultClassicEditorProfile } from "./lib/e2e-classic-profile.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contractsPath = path.join(root, "tests/ui-regressions/e2e-contracts.json");
@@ -94,6 +95,70 @@ const suites = {
     ["sheets", "scripts/e2e-sheets.mjs", {}],
   ],
   "linux-release": [
+    // Feature journeys also run by name during the default-editor migration.
+    ["sw-preview-tabs", "scripts/e2e-sw-preview-tabs.mjs", {}, BY_NAME],
+    ["query-subscriptions", "scripts/e2e-query-subscriptions.mjs", {}, BY_NAME],
+    ["prop-hiding", "scripts/e2e-prop-hiding.mjs", {}, BY_NAME],
+    ["margin-polish", "scripts/e2e-margin-polish.mjs", {}, BY_NAME],
+    ["editor-bugs", "scripts/e2e-editor-bugs.mjs", { E2E_CLASSIC_PROFILE: "1" }, BY_NAME],
+    ["parity-09", "scripts/e2e-parity-09.mjs", {}, BY_NAME],
+    ["code-scrollbar", "scripts/e2e-code-scrollbar.mjs", {}, BY_NAME],
+    ["dup-id-row-resolve", "scripts/e2e-dup-id-row-resolve.mjs", {}, BY_NAME],
+    ["journal-fileless-days", "scripts/e2e-journal-fileless-days.mjs", {}, BY_NAME],
+    ["page-icons", "scripts/e2e-page-icons.mjs", {}, BY_NAME],
+    ["cm-ns-completion", "scripts/e2e-cm-ns-completion.mjs", {}, BY_NAME],
+    ["large-page", "scripts/e2e-large-page.mjs", {}, BY_NAME],
+    ["journal-sections", "scripts/e2e-journal-sections.mjs", {}, BY_NAME],
+    ["result-membership", "scripts/e2e-result-membership.mjs", {}, BY_NAME],
+    ["grid-edit-first", "scripts/e2e-grid-edit-first.mjs", {}, BY_NAME],
+    ["journal-keys", "scripts/e2e-journal-keys.mjs", {}, BY_NAME],
+    ["cm-file-names", "scripts/e2e-cm-file-names.mjs", {}, BY_NAME],
+    ["gh741-doing-clockin", "scripts/e2e-gh741-doing-clockin.mjs", {}, BY_NAME],
+    ["gh726-embeds", "scripts/e2e-gh726-embeds.mjs", {}, BY_NAME],
+    ["gh906-delete-rendered", "scripts/e2e-gh906-delete-rendered.mjs", {}, BY_NAME],
+    ["rn-cf-org-body", "scripts/e2e-rn-cf-org-body.mjs", {}, BY_NAME],
+    ["beta-conflict-875", "scripts/e2e-beta-conflict-875.mjs", {}, BY_NAME],
+    ["pinyin", "scripts/e2e-pinyin.mjs", {}, BY_NAME],
+    ["ref-body-bench", "scripts/e2e-ref-body-bench.mjs", {}, BY_NAME],
+    ["editor-context", "scripts/e2e-editor-context.mjs", { E2E_CLASSIC_PROFILE: "1" }, BY_NAME],
+    ["pdf-area-ref", "scripts/e2e-pdf-area-ref.mjs", {}, BY_NAME],
+    ["linux-inline-preedit", "scripts/e2e-linux-inline-preedit.mjs", { E2E_CLASSIC_PROFILE: "1" }, BY_NAME],
+    ["reference-keys", "scripts/e2e-reference-keys.mjs", {}, BY_NAME],
+    ["gh729-page-template", "scripts/e2e-gh729-page-template.mjs", {}, BY_NAME],
+    ["journals-today", "scripts/e2e-journals-today.mjs", {}, BY_NAME],
+    ["textarea-numbered-fence", "scripts/e2e-textarea-numbered-fence.mjs", {}, BY_NAME],
+    ["ref-embed-actions", "scripts/e2e-ref-embed-actions.mjs", {}, BY_NAME],
+    ["embed-find", "scripts/e2e-embed-find.mjs", {}, BY_NAME],
+    ["inline-checkbox", "scripts/e2e-inline-checkbox.mjs", {}, BY_NAME],
+    ["shift-click-selection", "scripts/e2e-shift-click-selection.mjs", {}, BY_NAME],
+    ["beta-page-paths", "scripts/e2e-beta-page-paths.mjs", {}, BY_NAME],
+    ["embed-look", "scripts/e2e-embed-look.mjs", {}, BY_NAME],
+    ["gh741-render-isolation", "scripts/e2e-gh741-render-isolation.mjs", {}, BY_NAME],
+    ["clipboard-roundtrip", "scripts/e2e-clipboard-roundtrip.mjs", {}, BY_NAME],
+    ["calm-query", "scripts/e2e-calm-query.mjs", {}, BY_NAME],
+    ["gh800-save-then-copy", "scripts/e2e-gh800-save-then-copy.mjs", {}, BY_NAME],
+    ["gh524-new-page-sidebar", "scripts/e2e-gh524-new-page-sidebar.mjs", {}, BY_NAME],
+    ["sw-r2-residue", "scripts/e2e-sw-r2-residue.mjs", {}, BY_NAME],
+    ["org-created-format", "scripts/e2e-org-created-format.mjs", {}, BY_NAME],
+    ["gh745-structural-edit-viewport", "scripts/e2e-gh745-structural-edit-viewport.mjs", {}, BY_NAME],
+    ["sweep-bugs", "scripts/e2e-sweep-bugs.mjs", {}, BY_NAME],
+    ["merge-sibling", "scripts/e2e-merge-sibling.mjs", {}, BY_NAME],
+    ["template-collapse", "scripts/e2e-template-collapse.mjs", {}, BY_NAME],
+    ["quit-signal", "scripts/e2e-quit-signal.mjs", {}, BY_NAME],
+    ["gh868-embed-outline", "scripts/e2e-gh868-embed-outline.mjs", {}, BY_NAME],
+    ["arrival-fresh-differential", "scripts/e2e-arrival-fresh-differential.mjs", {}, BY_NAME],
+    ["alias-autocomplete", "scripts/e2e-alias-autocomplete.mjs", {}, BY_NAME],
+    ["conflict-review-scroll", "scripts/e2e-conflict-review-scroll.mjs", {}, BY_NAME],
+    ["margin-comment", "scripts/e2e-margin-comment.mjs", {}, BY_NAME],
+    ["margin-column", "scripts/e2e-margin-column.mjs", {}, BY_NAME],
+    ["all-graphs", "scripts/e2e-all-graphs.mjs", {}, BY_NAME],
+    ["cm-query-alias", "scripts/e2e-cm-query-alias.mjs", {}, BY_NAME],
+    ["keyed-refresh", "scripts/e2e-keyed-refresh.mjs", {}, BY_NAME],
+    ["panes-keys", "scripts/e2e-panes-keys.mjs", {}, BY_NAME],
+    ["windows-core", "scripts/e2e-windows-smoke.mjs", {}, BY_NAME],
+    ["windows-portable", "scripts/e2e-windows-portable.mjs", {}, BY_NAME],
+    ["beta-win-863-809", "scripts/e2e-beta-win-863-809.mjs", {}, BY_NAME],
+    ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", {}, BY_NAME],
     ["empty-page-edit", "scripts/e2e-empty-page-edit.mjs", {}, BY_NAME],
     ["editor-content-height", "scripts/e2e-editor-content-height.mjs", {}, BY_NAME],
     ["cm6-setting-restart", "scripts/e2e-cm6-setting-restart.mjs", { E2E_CLASSIC_PROFILE: "0" }, BY_NAME],
@@ -120,7 +185,7 @@ const suites = {
     ["tray", "scripts/e2e-tray.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
     ["formula-builder", "scripts/probe-formula-builder.mjs", {}],
-    ["selection-wrap", "scripts/e2e-selectwrap.mjs", {}],
+    ["selection-wrap", "scripts/e2e-selectwrap.mjs", { E2E_CLASSIC_PROFILE: "1" }],
     ["tag-autocomplete", "scripts/e2e-tag-autocomplete.mjs", {}],
     ["structured-paste", "scripts/e2e-structured-paste.mjs", {}],
     ["media", "scripts/e2e-media.mjs", {}],
@@ -464,10 +529,10 @@ async function runScenario([id, script, extraEnv], contractEntry) {
     const previewPort = await freePort();
     const env = {
       ...baseProcessEnv,
-      // Unmigrated journeys exercise classic; engine-choice journeys can still
-      // choose in Settings or seed their own preference. Fresh-default proofs
-      // explicitly opt out, including on every restart in the same scenario.
-      E2E_CLASSIC_PROFILE: process.env.E2E_CLASSIC_PROFILE ?? "1",
+      // The shared driver's import marks a migrated default-editor journey.
+      // Unmigrated harnesses and explicit classic coverage retain their pin.
+      E2E_CLASSIC_PROFILE: process.env.E2E_CLASSIC_PROFILE
+        ?? defaultClassicEditorProfile(fs.readFileSync(path.join(root, script), "utf8")),
       ...extraEnv,
       TINE_APP: app,
       TINE_APP_BINARY: app,

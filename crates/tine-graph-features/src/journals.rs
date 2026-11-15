@@ -1039,12 +1039,7 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
     let (bytes, _) = store
         .read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
         .map_err(store_error)?;
-    String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "stream did not contain valid UTF-8",
-        )
-    })
+    String::from_utf8(bytes).map_err(|_| tine_store::not_utf8())
 }
 
 /// Trash one top-level journal with a revision guard, retrying an external

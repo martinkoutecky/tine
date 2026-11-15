@@ -8,6 +8,7 @@
 // press events the bug lived in.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { BLOCK_EDITOR } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -81,12 +82,12 @@ try {
       .move({ origin: el, x: 0, y: 0 }).down({ button: 0 }).up({ button: 0 }).perform();
     await sleep(350);
   };
-  const state = () => browser.execute(() => ({
+  const state = () => browser.execute(editor => ({
     sheet: !!document.querySelector(".qs-sheet"),
     chooser: document.querySelector(".qs-sheet .qs-add")?.getAttribute("aria-expanded") === "true",
-    editing: !!document.querySelector("textarea.block-editor"),
+    editing: !!document.querySelector(editor),
     rows: document.querySelectorAll(".qs-sheet .qs-row").length,
-  }));
+  }), BLOCK_EDITOR);
   const expectState = async (what, want) => {
     const got = await state();
     for (const [key, value] of Object.entries(want)) {

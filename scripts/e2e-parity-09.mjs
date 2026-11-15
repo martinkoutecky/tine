@@ -7,6 +7,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const out = path.resolve("artifacts/parity-09/native");
@@ -122,7 +123,7 @@ try {
     await browser.$(`${sourceRow} > .block-main .collapse-toggle`).click();
     const child = `.main-content .embed-block [data-block-ref="${C}"]`;
     await browser.$(`${child} > .block-main .block-content`).click();
-    await browser.$(`${child} textarea.block-editor`).waitForExist();
+    await browser.$(editorSelector(child)).waitForExist();
     await browser.keys(["Control", "a"]);
     await browser.keys(["Backspace"]);
     await browser.keys(["Backspace"]);

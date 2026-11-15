@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, editorText, withEditor, withEditors, selectEditor, blurEditor } from "./lib/e2e-block-editor.mjs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,14 +165,15 @@ async function nativeArrowDown() {
 }
 
 async function pageArrowDownCapsule(phase) {
-  return browser.execute((failurePhase) => {
-    const describeEditor = (element) => {
-      if (!(element instanceof HTMLTextAreaElement)) return null;
+  return withEditors(browser, ".page-blocks", (editors, failurePhase) => {
+    const describeEditor = (editor) => {
+      if (!editor) return null;
+      const element = editor.element;
       const block = element.closest("[data-block-id]");
       const surface = element.closest("[data-pane-id], [data-sidebar-surface], [data-surface-id]");
       return {
-        value: element.value,
-        selection: [element.selectionStart, element.selectionEnd],
+        value: editor.value,
+        selection: [editor.start, editor.end],
         blockId: block?.getAttribute("data-block-id") ?? null,
         surfaceId: surface?.getAttribute("data-pane-id")
           ?? surface?.getAttribute("data-sidebar-surface")
@@ -186,25 +188,21 @@ async function pageArrowDownCapsule(phase) {
       keyWitness: window.__tinePageArrowDownKeyWitness ?? null,
       active: {
         tag: active?.tagName ?? null,
-        editor: describeEditor(active),
+        editor: describeEditor(editors.find(editor => editor.focused)),
       },
-      editors: [...document.querySelectorAll(".page-blocks textarea")].map(describeEditor),
+      editors: editors.map(describeEditor),
     };
   }, phase);
 }
 
 async function preparePageHeaderArrowDown(expectedValue) {
-  return browser.execute((expected) => {
-    const header = document.querySelector(".page-blocks textarea.block-editor");
-    if (header instanceof HTMLTextAreaElement) {
-      header.focus();
-      header.setSelectionRange(header.value.length, header.value.length);
-    }
+  return withEditor(browser, ".page-blocks", (header, expected) => {
+    if (header) header.select(header.value.length);
     const active = document.activeElement;
     const preKey = {
-      isPageHeader: active === header,
-      value: active instanceof HTMLTextAreaElement ? active.value : null,
-      selection: active instanceof HTMLTextAreaElement ? [active.selectionStart, active.selectionEnd] : null,
+      isPageHeader: active === header?.element,
+      value: header?.focused ? header.value : null,
+      selection: header?.focused ? [header.start, header.end] : null,
       expectedValue: expected,
       expectedSelection: [expected.length, expected.length],
     };
@@ -212,7 +210,7 @@ async function preparePageHeaderArrowDown(expectedValue) {
     window.__tinePageArrowDownKeyWitness = null;
     document.addEventListener("keydown", (event) => {
       const target = event.target;
-      const textarea = target instanceof HTMLTextAreaElement ? target : null;
+      const textarea = target === header?.element ? target : null;
       const block = textarea?.closest("[data-block-id]");
       const surface = textarea?.closest("[data-pane-id], [data-sidebar-surface], [data-surface-id]");
       const witness = {
@@ -228,7 +226,7 @@ async function preparePageHeaderArrowDown(expectedValue) {
           cancelable: event.cancelable,
         },
         target: textarea ? {
-          value: textarea.value,
+          value: header.value,
           blockId: block?.getAttribute("data-block-id") ?? null,
           surfaceId: surface?.getAttribute("data-pane-id")
             ?? surface?.getAttribute("data-sidebar-surface")
@@ -245,31 +243,25 @@ async function preparePageHeaderArrowDown(expectedValue) {
 }
 
 async function replaceHeaderLikeUser(editor, replacement, selection = null) {
-  // WebdriverIO's setValue() first clears the textarea as a separate WebDriver
+  // WebdriverIO's setValue() first clears the editor as a separate WebDriver
   // command. Clearing an existing header and blurring is a real delete action,
   // so Tine correctly removes that transient editor before setValue() can issue
   // its second (send-keys) command. A user replaces text in one edit session:
   // select it, then type. Exercise that native sequence and prove there was no
   // artificial empty input between the two actions.
-  await browser.execute(() => {
+  await withEditor(browser, ".page-blocks", editor => {
     window.__tinePageHeaderInputTrace = [];
-    const textarea = document.querySelector(".page-blocks textarea.block-editor");
-    textarea?.addEventListener("input", (event) => {
+    editor?.element.addEventListener("input", (event) => {
       window.__tinePageHeaderInputTrace.push({
         inputType: event.inputType,
         data: event.data,
-        value: event.currentTarget.value,
+        value: editor.value,
       });
     }, { capture: true });
   });
   await editor.click();
   if (selection) {
-    await browser.execute(({ start, end }) => {
-      const textarea = document.querySelector(".page-blocks textarea.block-editor");
-      if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
-      textarea.focus();
-      textarea.setSelectionRange(start, end);
-    }, selection);
+    await selectEditor(browser, selection.start, selection.end, ".page-blocks");
   } else {
     await nativeSelectAll();
   }
@@ -290,14 +282,10 @@ async function deleteHeaderLikeUser(editor) {
   await editor.click();
   await nativeSelectAll();
   await browser.keys(["Backspace"]);
-  if (await editor.getValue() !== "") {
-    throw new Error(`native page-header deletion did not empty the editor: ${JSON.stringify(await editor.getValue())}`);
+  if (await editorText(browser, ".page-blocks") !== "") {
+    throw new Error(`native page-header deletion did not empty the editor: ${JSON.stringify(await editorText(browser, ".page-blocks"))}`);
   }
-  await browser.execute(() => {
-    const textarea = document.querySelector(".page-blocks textarea.block-editor");
-    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
-    textarea.blur();
-  });
+  await blurEditor(browser, ".page-blocks");
   await editor.waitForExist({ reverse: true, timeout: 5_000 });
 }
 
@@ -391,10 +379,10 @@ try {
   const filterKeys = await browser.$$(".page-properties .prop-key").map(async el => el.getText());
   if (JSON.stringify(filterKeys) !== JSON.stringify(["owner"])) throw new Error(`unexpected filter page keys: ${JSON.stringify(filterKeys)}`);
   await browser.$(".page-properties .prop-row").click();
-  const filterEditor = await browser.$(".page-blocks textarea.block-editor");
+  const filterEditor = await browser.$(editorSelector(".page-blocks"));
   await filterEditor.waitForExist({ timeout: 5_000 });
-  if (!(await filterEditor.getValue()).includes("filters:: {}")) throw new Error("raw header editor lost filters");
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  if (!(await editorText(browser, ".page-blocks")).includes("filters:: {}")) throw new Error("raw header editor lost filters");
+  await blurEditor(browser, ".page-blocks");
   const hierarchyTitle = await browser.$(".page-hierarchy button[aria-expanded]");
   await hierarchyTitle.waitForExist({ timeout: 5_000 });
   if (await hierarchyTitle.getAttribute("aria-expanded") !== "true") throw new Error("Hierarchy did not start expanded");
@@ -415,9 +403,9 @@ try {
     return true;
   });
   if (!customRow) throw new Error("missing rendered custom page property authoring target");
-  let headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  let headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
-  const originalHeader = await headerEditor.getValue();
+  const originalHeader = await editorText(browser, ".page-blocks");
   if (!originalHeader.includes("ai-prompt:: [[Prompt-Test]]") || !originalHeader.includes("\n\npage-level::")) {
     throw new Error(`page-header ordinary editor lost raw properties/separators: ${JSON.stringify(originalHeader)}`);
   }
@@ -427,8 +415,8 @@ try {
     start: oldPromptStart,
     end: oldPromptStart + "Prompt-Test".length,
   });
-  if ((await headerEditor.getValue()) !== editedHeader) {
-    throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await headerEditor.getValue() })}`);
+  if ((await editorText(browser, ".page-blocks")) !== editedHeader) {
+    throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await editorText(browser, ".page-blocks") })}`);
   }
   const arrowDownPreKey = await preparePageHeaderArrowDown(editedHeader);
   if (
@@ -441,33 +429,21 @@ try {
   }
   try {
     await nativeArrowDown();
-    await browser.waitUntil(() => browser.execute(() => {
-      const active = document.activeElement;
-      return active instanceof HTMLTextAreaElement
-        && active.closest(".page-blocks") !== null
-        && active.classList.contains("block-editor")
-        && active.value === "Example content block";
+    await browser.waitUntil(() => withEditor(browser, ".page-blocks", active => {
+      return active?.focused && active.value === "Example content block";
     }), {
       timeout: 5_000,
     });
   } catch {
     throw new Error(JSON.stringify(await pageArrowDownCapsule("post-key")));
   }
-  await browser.execute(() => {
-    const editor = document.querySelector(".page-blocks textarea.block-editor");
-    editor?.focus();
-    if (editor instanceof HTMLTextAreaElement) editor.setSelectionRange(2, 2);
-  });
+  await selectEditor(browser, 2, 2, ".page-blocks");
   await browser.keys(["ArrowUp"]);
-  await browser.waitUntil(async () => (await browser.$(".page-blocks textarea.block-editor").getValue()).includes("Prompt-Edited"), {
+  await browser.waitUntil(async () => (await editorText(browser, ".page-blocks")).includes("Prompt-Edited"), {
     timeout: 5_000,
     timeoutMsg: "Arrow Up did not cross from the first body block back into the page header",
   });
-  await browser.execute(() => {
-    const textarea = document.querySelector(".page-blocks textarea.block-editor");
-    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
-    textarea.blur();
-  });
+  await blurEditor(browser, ".page-blocks");
   const detailedAfter = await waitForFileText(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes("alias:: Test Record, Alternate") && text.includes("ai-prompt:: [[Prompt-Edited]]"),
@@ -514,17 +490,13 @@ try {
     return true;
   });
   if (!deleteTarget) throw new Error("missing rendered page-header deletion target");
-  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
   const selectAllTrace = await replaceHeaderLikeUser(headerEditor, "alias:: Delete Me Later");
-  if ((await headerEditor.getValue()) !== "alias:: Delete Me Later") {
-    throw new Error(`Ctrl+A page-header replacement did not preserve the intended value: ${JSON.stringify({ traceLength: selectAllTrace.length, actual: await headerEditor.getValue() })}`);
+  if ((await editorText(browser, ".page-blocks")) !== "alias:: Delete Me Later") {
+    throw new Error(`Ctrl+A page-header replacement did not preserve the intended value: ${JSON.stringify({ traceLength: selectAllTrace.length, actual: await editorText(browser, ".page-blocks") })}`);
   }
-  await browser.execute(() => {
-    const textarea = document.querySelector(".page-blocks textarea.block-editor");
-    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
-    textarea.blur();
-  });
+  await blurEditor(browser, ".page-blocks");
   const replacementAfter = await waitForFileText(
     `${GRAPH}/pages/Property deletion.md`,
     (text) => text.startsWith("alias:: Delete Me Later\n\n"),
@@ -542,7 +514,7 @@ try {
     return true;
   });
   if (!replacedTarget) throw new Error("missing replaced page-header deletion target");
-  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
   await deleteHeaderLikeUser(headerEditor);
   const deletionAfter = await waitForFileText(
@@ -571,12 +543,12 @@ try {
     throw new Error("the table block was shown as page properties");
   }
   if (!await openTableBlock()) throw new Error("missing rendered first-bullet table block");
-  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
-  const tableHeader = await headerEditor.getValue();
+  const tableHeader = await editorText(browser, ".page-blocks");
   const widthAt = tableHeader.indexOf("171");
   await replaceHeaderLikeUser(headerEditor, "200", { start: widthAt, end: widthAt + 3 });
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  await blurEditor(browser, ".page-blocks");
   const tableSaved = await waitForFileText(
     `${GRAPH}/pages/Property table.md`,
     (text) => text.includes("prop%3Atest=200"),
@@ -586,7 +558,7 @@ try {
     throw new Error(`the table block was rewritten as page properties: ${JSON.stringify(tableSaved)}`);
   }
   if (!await openTableBlock()) throw new Error("missing table block for the title edit");
-  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
   // The reporter typed the title on its own line above the config: text at
   // offset 0, then Shift+Enter (a newline inside the block, not a new block).
@@ -596,7 +568,7 @@ try {
   await browser.keys(["Control", "Home"]);
   await browser.keys("test table");
   await browser.keys(["Shift", "Enter"]);
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  await blurEditor(browser, ".page-blocks");
   const titled = await waitForFileText(
     `${GRAPH}/pages/Property table.md`,
     (text) => text.startsWith("- test table\n  tine.view:: table"),
@@ -623,19 +595,19 @@ try {
     return true;
   });
   if (!headTarget) throw new Error("missing rendered page-properties row on the head-enter page");
-  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  headerEditor = await browser.$(editorSelector(".page-blocks"));
   await headerEditor.waitForExist({ timeout: 5_000 });
   await headerEditor.click();
   await browser.keys(["Control", "Home"]);
   await browser.keys(["Enter"]);
-  const afterEnter = await browser.execute(() => ({
-    editors: [...document.querySelectorAll(".page-blocks textarea.block-editor")].map((t) => t.value),
+  const afterEnter = await withEditors(browser, ".page-blocks", editors => ({
+    editors: editors.map((t) => t.value),
     blocks: [...document.querySelectorAll(".page-blocks .ls-block")].length,
   }));
   if (afterEnter.editors.length !== 1 || afterEnter.editors[0] !== "\ntags:: reading\nicon:: 📚") {
     throw new Error(`Enter at the start of the page properties did not stay a newline in them: ${JSON.stringify(afterEnter)}`);
   }
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  await blurEditor(browser, ".page-blocks");
   // A later edit on the same page: the body block.
   const openBody = await browser.execute(() => {
     const block = [...document.querySelectorAll(".page-blocks .ls-block")]
@@ -646,11 +618,11 @@ try {
     return true;
   });
   if (!openBody) throw new Error("missing body block on the head-enter page");
-  const bodyEditor = await browser.$(".page-blocks textarea.block-editor");
+  const bodyEditor = await browser.$(editorSelector(".page-blocks"));
   await bodyEditor.waitForExist({ timeout: 5_000 });
   await browser.keys(["Control", "End"]);
   await browser.keys(" edited");
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  await blurEditor(browser, ".page-blocks");
   const headSaved = await waitForFileText(
     `${GRAPH}/pages/Property head enter.md`,
     (text) => text.includes("- Body block edited"),
@@ -684,8 +656,8 @@ try {
     return true;
   });
   if (!openedProps) throw new Error("missing rendered page-properties row on the move-above page");
-  await (await browser.$(".page-blocks textarea.block-editor")).waitForExist({ timeout: 5_000 });
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  await (await browser.$(editorSelector(".page-blocks"))).waitForExist({ timeout: 5_000 });
+  await blurEditor(browser, ".page-blocks");
   const openFirst = await browser.execute(() => {
     const block = [...document.querySelectorAll(".page-blocks .ls-block")]
       .find((element) => element.textContent?.includes("First block"));
@@ -695,7 +667,7 @@ try {
     return true;
   });
   if (!openFirst) throw new Error("missing first block on the move-above page");
-  const firstEditor = await browser.$(".page-blocks textarea.block-editor");
+  const firstEditor = await browser.$(editorSelector(".page-blocks"));
   await firstEditor.waitForExist({ timeout: 5_000 });
   await browser.releaseActions();
   await browser.performActions([{
@@ -737,7 +709,7 @@ try {
   });
   await browser.keys(["Control", "End"]);
   await browser.keys(" edited");
-  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  await blurEditor(browser, ".page-blocks");
   const moveSaved = await waitForFileText(
     `${GRAPH}/pages/Property move above.md`,
     (text) => text.includes("- First block edited"),

@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
@@ -89,41 +90,27 @@ try {
   await delay(1500);
 
   // Where (in px from the scroller's top) the row with this text sits; null when its shell is unmounted.
-  const rowTop = (needle) => browser.execute((n) => {
+  const rowTop = (needle) => withEditor(browser, "", (editor, n) => {
     const sc = document.querySelector(window.__SC);
-    const el = [...document.querySelectorAll(".block-content, textarea.block-editor")]
-      .find((e) => (e.value ?? e.textContent).includes(n));
+    const candidates = [...document.querySelectorAll(".block-content")];
+    if (editor) candidates.push(editor.element);
+    const el = candidates.find(e => (e === editor?.element ? editor.value : e.textContent).includes(n));
     return { scrollTop: sc.scrollTop, top: el ? Math.round(el.getBoundingClientRect().top - sc.getBoundingClientRect().top) : null,
       height: sc.clientHeight, scrollHeight: sc.scrollHeight };
   }, needle);
 
-  // Caret row (viewport px relative to the scroller) of the focused editor, via an off-screen mirror.
-  const caretProbe = () => browser.execute(() => {
+  // Caret row in viewport pixels relative to this surface's scroller.
+  const caretProbe = () => withEditor(browser, "", editor => {
     const sc = document.querySelector(window.__SC);
-    const ta = document.querySelector("textarea.block-editor");
-    if (!ta) return null;
-    const cs = getComputedStyle(ta);
-    const div = document.createElement("div");
-    for (const p of ["boxSizing","width","paddingTop","paddingRight","paddingBottom","paddingLeft","borderTopWidth","borderRightWidth","borderBottomWidth","borderLeftWidth","fontFamily","fontSize","fontWeight","fontStyle","letterSpacing","lineHeight","wordSpacing","tabSize","whiteSpace","wordBreak","overflowWrap"])
-      div.style[p] = cs[p];
-    div.style.position = "absolute"; div.style.left = "-9999px"; div.style.visibility = "hidden";
-    document.body.appendChild(div);
-    div.textContent = "M";
-    const pad = parseFloat(cs.paddingTop) || 0;
-    const lh = div.clientHeight - pad - (parseFloat(cs.paddingBottom) || 0);
-    const at = ta.selectionEnd;
-    div.textContent = "";
-    div.appendChild(document.createTextNode(ta.value.slice(0, at)));
-    const m = document.createElement("span"); m.textContent = ta.value.slice(at, at + 1) || "\u200b"; div.appendChild(m);
-    div.appendChild(document.createTextNode(ta.value.slice(at + 1)));
-    const row = Math.max(0, Math.round((m.offsetTop - pad) / lh));
-    div.remove();
+    if (!editor) return null;
+    const ta = editor.element;
+    const caret = editor.caretRect();
+    if (!caret) return null;
     const sr = sc.getBoundingClientRect(), tr = ta.getBoundingClientRect();
-    const top = tr.top + ta.clientTop + pad + row * lh - sr.top;
     // Bottom edge (scroller px) of the sticky parent pins shown over this editor's ancestors.
     const pinBottom = Math.max(0, ...[...document.querySelectorAll(".sticky-ancestor > button:not([hidden])")]
       .filter((b) => b.closest(".ls-block").contains(ta)).map((b) => Math.round(b.getBoundingClientRect().bottom - sr.top)));
-    return { pinBottom, scrollTop: sc.scrollTop, caretTop: Math.round(top), caretBottom: Math.round(top + lh), viewHeight: sc.clientHeight, editorTop: Math.round(tr.top - sr.top) };
+    return { pinBottom, scrollTop: sc.scrollTop, caretTop: Math.round(caret.top - sr.top), caretBottom: Math.round(caret.bottom - sr.top), viewHeight: sc.clientHeight, editorTop: Math.round(tr.top - sr.top) };
   });
   const visible = (p) => p && p.caretTop >= p.pinBottom - 1 && p.caretBottom <= p.viewHeight + 1;
 
@@ -186,13 +173,12 @@ try {
       const el = [...document.querySelectorAll(".block-content")].find((e) => e.textContent.includes(n));
       el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); el.click();
     }, needle);
-    await browser.waitUntil(() => browser.execute(() => !!document.querySelector("textarea.block-editor")), { timeout: 5000, timeoutMsg: "editor did not open" });
+    await browser.$(editorSelector()).waitForExist({ timeout: 5000, timeoutMsg: "editor did not open" });
     await delay(300);
-    await browser.execute((place) => {
-      const t = document.querySelector("textarea.block-editor");
-      t.focus({ preventScroll: true });
+    await withEditor(browser, "", (t, place) => {
+      t.element.focus({ preventScroll: true });
       const at = place === "start" ? 0 : place === "end" ? t.value.length : 8;
-      t.setSelectionRange(at, at);
+      t.select(at);
     }, v.place);
     await delay(200);
     const before = await caretProbe();
@@ -201,23 +187,22 @@ try {
     const steps = [];
     const stepKeys = v.paste ? ["paste"] : v.keys;
     for (const key of stepKeys) {
-      if (process.env.TRACE) await browser.execute(() => {
+      if (process.env.TRACE) await browser.execute(selector => {
         window.__frames = [];
         const sc = document.querySelector(window.__SC);
         const t0 = performance.now();
         const tick = () => {
-          const ed = document.querySelector("textarea.block-editor");
+          const ed = document.querySelector(selector);
           const edTop = ed ? Math.round(ed.getBoundingClientRect().top - sc.getBoundingClientRect().top) : null;
           window.__frames.push(`${Math.round(performance.now() - t0)}ms st${Math.round(sc.scrollTop)} sh${sc.scrollHeight} ed${edTop}`);
           if (window.__frames.length < 90) requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
-      });
+      }, editorSelector());
       if (key === "paste") {
-        await browser.execute((text) => {
-          const t = document.querySelector("textarea.block-editor");
+        await withEditor(browser, "", (t, text) => {
           const dt = new DataTransfer(); dt.setData("text/plain", text);
-          t.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+          t.element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
         }, v.paste);
       } else if (key === "Shift+Tab") await browser.keys(["Shift", "Tab"]);
       else await browser.keys(key);

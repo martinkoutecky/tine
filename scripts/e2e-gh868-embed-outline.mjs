@@ -4,6 +4,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { editorSelector, withEditors } from "./lib/e2e-block-editor.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
@@ -70,7 +71,7 @@ const evidence = [];
 let scope = ".main-content .embed-block";
 const pause = () => browser.pause(Number(process.env.E2E_CLICK_DELAY || 300));
 async function capture(label) {
-  const data = await browser.execute(selector => {
+  const data = await withEditors(browser, scope, (editors, selector) => {
     const embed = document.querySelector(selector);
     if (!embed) return null;
     // Reference panels can render further blocks inside a source row. Their
@@ -81,9 +82,10 @@ async function capture(label) {
       const ancestors = []; let p = row.parentElement?.closest(".ls-block");
       while (p && embed.contains(p)) { ancestors.push(p.dataset.blockId); p = p.parentElement?.closest(".ls-block"); }
       const main = row.querySelector(":scope > .block-main");
+      const editor = editors.find(editor => editor.element.closest(".ls-block") === row);
       return { id: row.dataset.blockId, ref: row.dataset.blockRef, depth: ancestors.length,
         collapsed: row.classList.contains("collapsed"), readOnly: row.classList.contains("ref-block"),
-        text: main?.querySelector(".block-content")?.textContent ?? main?.querySelector("textarea")?.value,
+        text: editor ? editor.value : main?.querySelector(".block-content")?.textContent,
         disclosure: !!main?.querySelector(".collapse-toggle.has-children") };
     }) };
   }, scope);
@@ -135,7 +137,7 @@ async function clickContent(id) {
     ] }]);
     await browser.releaseActions();
   });
-  await browser.$(`${scope} [data-block-id="${id}"] > .block-main textarea.block-editor`).waitForExist({ timeout: 10000 });
+  await browser.$(editorSelector(`${scope} [data-block-id="${id}"] > .block-main`)).waitForExist({ timeout: 10000 });
 }
 try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30000,

@@ -1,5 +1,6 @@
 // GH #243/#412/#494: native view, select-all and query-result drag boundaries.
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -58,14 +59,14 @@ try {
   console.log(`PASS ${stage}`);
   const codeSelection = async (body, card = 0) => {
     await (await browser.$$("pre.code-block code"))[card].click();
-    const editor = await browser.$("textarea.block-editor");
+    const editor = await browser.$(editorSelector());
     await editor.waitForExist({ timeout: 5000 });
     await browser.keys(["Control", "a"]);
-    const selection = await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); return { text: ta.value.slice(ta.selectionStart, ta.selectionEnd), focused: document.activeElement === ta }; });
+    const selection = await withEditor(browser, "", ta => ({ text: ta.value.slice(ta.start, ta.end), focused: ta.focused }));
     assert(selection.text === body && selection.focused, `native first Ctrl+A: ${JSON.stringify(selection)}`);
     await browser.keys(["Control", "a"]);
     await browser.keys(["Control", "c"]);
-    const blockSelection = await browser.execute(async () => ({ editing: !!document.querySelector("textarea.block-editor"), copied: await window.__TAURI_INTERNALS__.invoke("plugin:clipboard-manager|read_text") }));
+    const blockSelection = await withEditor(browser, "", async editor => ({ editing: !!editor, copied: await window.__TAURI_INTERNALS__.invoke("plugin:clipboard-manager|read_text") }));
     const fence = body === "echo org" ? "#+BEGIN_SRC" : body === "echo mixed" ? "```js" : "```sh";
     assert(!blockSelection.editing && blockSelection.copied.includes(body) && blockSelection.copied.includes(fence), `second Ctrl+A did not select the complete source: ${JSON.stringify(blockSelection)}`);
     if (body === "echo hello") assert(blockSelection.copied.includes("code child"), "second Ctrl+A omitted the code block's child");

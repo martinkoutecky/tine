@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { remote } from "webdriverio";
+import { BLOCK_EDITOR, editorSelector } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
@@ -152,23 +153,23 @@ for (let run = 0; run < runs; run++) {
       document.querySelector(".main-content").scrollTop = 0;
       document.querySelector(".main-content .ls-block .block-content-wrapper").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     });
-    await browser.$("textarea.block-editor").waitForExist();
-    await browser.execute(() => {
+    await browser.$(editorSelector()).waitForExist();
+    await browser.execute(selector => {
       const p = window.__typingBench = { start: performance.now(), frames: [], inputs: [], previous: 0, active: true };
-      p.input = e => { if (e.target.matches("textarea.block-editor")) p.inputs.push(performance.now()); };
+      p.input = e => { if (e.target.matches(selector)) p.inputs.push(performance.now()); };
       document.addEventListener("input", p.input, true);
       const tick = t => { if (!p.active) return; if (p.previous) p.frames.push(t - p.previous); p.previous = t; requestAnimationFrame(tick); };
       requestAnimationFrame(tick);
-    });
+    }, BLOCK_EDITOR);
     const actions = [];
     for (let i = 0; i < Math.ceil(seconds * 1000 / 33); i++) actions.push({ type: "keyDown", value: "x" }, { type: "keyUp", value: "x" }, { type: "pause", duration: 33 });
     await browser.performActions([{ type: "key", id: "typing", actions }]);
     await browser.releaseActions();
-    const typing = await browser.execute(() => {
+    const typing = await browser.execute(selector => {
       const p = window.__typingBench; p.active = false; document.removeEventListener("input", p.input, true);
       return { elapsed: performance.now() - p.start, frames: p.frames, inputs: p.inputs,
-        focused: document.activeElement?.matches("textarea.block-editor") };
-    });
+        focused: document.activeElement?.matches(selector) };
+    }, BLOCK_EDITOR);
     if (!typing.focused || typing.inputs.length < seconds * 10) throw new Error("Native typing lost focus or inputs");
     const blockingMsPerSecond = typing.frames.reduce((sum, gap) => sum + (gap > 50 ? gap - 1000 / 60 : 0), 0) / (typing.elapsed / 1000);
     await browser.saveScreenshot(path.join(dir, "panel.png"));

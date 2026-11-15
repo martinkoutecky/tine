@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
+import { editorSelector, editorText, selectEditor } from "./lib/e2e-block-editor.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { openJournals, openPageByName, currentPageTitle } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
@@ -124,18 +125,15 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
       host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
       host.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
     });
-    const editor = await browser.$(".main-content textarea.block-editor");
+    const editor = await browser.$(editorSelector(".main-content"));
     await editor.waitForExist({ timeout: 10_000 });
-    const original = await editor.getValue();
+    const original = await editorText(browser, ".main-content");
     check(original.includes("(task TODO)"), "entered the wrong block editor");
     await editor.click();
     // Select just the task atom; sending a multiline string through WebKit's
     // keys endpoint drops line breaks and would corrupt the fixture query.
-    await browser.execute(() => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
-      const start = editor.value.indexOf("(task TODO)") + "(task ".length;
-      editor.setSelectionRange(start, start + "TODO".length);
-    });
+    const start = original.indexOf("(task TODO)") + "(task ".length;
+    await selectEditor(browser, start, start + "TODO".length, ".main-content");
     await browser.keys("DOING");
     await browser.$("h1.page-title").click();
     await waitForFileText(file, text => text.includes("(task DOING)") && !text.includes("(task TODO)"));
@@ -201,14 +199,12 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
       cell.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
       return true;
     }), { timeout: 15_000, timeoutMsg: "the query result never became editable" });
-    const resultEditor = await browser.$(".main-content .today-sections textarea.block-editor");
+    const resultEditor = await browser.$(editorSelector(".main-content .today-sections"));
     await resultEditor.waitForExist({ timeout: 10_000 });
     await resultEditor.click();
-    await browser.execute(() => {
-      const input = document.querySelector(".main-content .today-sections textarea.block-editor");
-      const at = input.value.indexOf("High points sentinel") + "High points sentinel".length;
-      input.setSelectionRange(at, at);
-    });
+    const resultText = await editorText(browser, ".main-content .today-sections");
+    const at = resultText.indexOf("High points sentinel") + "High points sentinel".length;
+    await selectEditor(browser, at, at, ".main-content .today-sections");
     await browser.keys(" edited");
     await browser.$("h1.page-title").click();
     await waitForFileText(path.join(graph, `pages/Tasks.${format}`), text => text.includes("High points sentinel edited"));

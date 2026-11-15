@@ -28,6 +28,10 @@ use std::time::{Duration, Instant};
 
 use tauri::{Emitter, Manager};
 
+pub(crate) mod popup_size;
+#[cfg(test)]
+use popup_size::fresh_placement;
+
 /// Popups one opener may hold at a time (I-22). The frontend enforces the same
 /// bound (`MAX_WORKSPACE_WINDOWS` in src/windowRealm.ts; a doc-code test pins the two).
 pub(crate) const MAX_WORKSPACE_WINDOWS: usize = 8;
@@ -241,21 +245,30 @@ fn prepare_desktop(window: tauri::Window, geometry: Option<Geometry>) -> Result<
         ));
     }
     let label = popup_label(&opener, trace.sequence);
-    let (areas, scales) = monitor_areas(&window);
-    let placement = place(geometry, &areas);
-    // Without a requested position the OS chooses the monitor. Do not call
-    // the opener's monitor the target; the actual target is read after build.
-    let target_scale = placement.position.and_then(|(x, y)| {
-        areas.iter().zip(scales).find_map(|(area, scale)| {
-            (x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height)
-                .then_some(scale)
-        })
-    });
+    let (placement, monitor_count, target_scale) = match geometry {
+        Some(saved) => {
+            let (areas, scales) = monitor_areas(&window);
+            let placement = place(Some(saved), &areas);
+            let target_scale = placement.position.and_then(|(x, y)| {
+                areas.iter().zip(scales).find_map(|(area, scale)| {
+                    (x >= area.x
+                        && x < area.x + area.width
+                        && y >= area.y
+                        && y < area.y + area.height)
+                        .then_some(scale)
+                })
+            });
+            (placement, Some(areas.len()), target_scale)
+        }
+        // The OS chooses the position and actual target monitor. Fresh sizing
+        // needs only the opener's current work area, not every monitor.
+        None => (popup_size::placement(&window), None, None),
+    };
     trace.record(
         "native.prepared",
         crate::flight::workspace_display_fields(
             Some((placement.width, placement.height)),
-            Some(areas.len()),
+            monitor_count,
             target_scale,
             None,
         ),
@@ -319,7 +332,10 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
                 .window_features(features)
                 .title("Tine")
                 .decorations(true)
-                .min_inner_size(MIN_SIZE.0, MIN_SIZE.1)
+                .min_inner_size(
+                    MIN_SIZE.0.min(placement.width),
+                    MIN_SIZE.1.min(placement.height),
+                )
                 .inner_size(placement.width, placement.height)
                 .on_page_load(move |_webview, payload| {
                     trace.stage(match payload.event() {
@@ -338,6 +354,7 @@ pub(crate) fn attach<'a, R: tauri::Runtime, M: Manager<R>>(
         match builder.build() {
             Ok(window) => {
                 trace.stage("native.build-returned");
+                popup_size::track(&window, placement);
                 let scale = window.scale_factor().ok();
                 let size = window.inner_size().ok().map(|s| (s.width, s.height));
                 trace.record(
@@ -571,6 +588,41 @@ mod tests {
                 position: Some((100.0, 80.0))
             }
         );
+    }
+
+    #[test]
+    fn fresh_popups_share_only_the_last_size_and_fit_the_current_work_area() {
+        let placed = fresh_placement(Some([800.0, 600.0]), Some(SCREEN));
+        assert_eq!((placed.width, placed.height), (800.0, 600.0));
+        assert_eq!(placed.position, None);
+        let small = Area {
+            width: 700.0,
+            height: 500.0,
+            ..SCREEN
+        };
+        let placed = fresh_placement(Some([1200.0, 900.0]), Some(small));
+        assert_eq!((placed.width, placed.height), (700.0, 500.0));
+        let tiny = Area {
+            width: 300.0,
+            height: 240.0,
+            ..SCREEN
+        };
+        let placed = fresh_placement(None, Some(tiny));
+        assert_eq!((placed.width, placed.height), (300.0, 240.0));
+        let placed = fresh_placement(Some([800.0, 600.0]), None);
+        assert_eq!((placed.width, placed.height), (800.0, 600.0));
+        assert_eq!(placed.position, None);
+        for size in [
+            None,
+            Some([f64::NAN, 600.0]),
+            Some([800.0, f64::INFINITY]),
+            Some([0.0, 600.0]),
+            Some([1e9, 600.0]),
+        ] {
+            let placed = fresh_placement(size, Some(SCREEN));
+            assert_eq!((placed.width, placed.height), DEFAULT_SIZE);
+            assert_eq!(placed.position, None);
+        }
     }
 
     #[test]

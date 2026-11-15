@@ -1,4 +1,4 @@
-// GH #906: real textarea/selection/context-menu deletes and merges of a rule.
+// GH #906: real editor/selection/context-menu deletes and merges of a rule.
 // Fixtures, account HOME and XDG directories are disposable; writes under test
 // come only from normal editor actions and the application's guarded save path.
 import fs from "node:fs";
@@ -14,6 +14,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root, "target/artifacts/fix-beta-hr-delete-906"));
@@ -129,7 +130,7 @@ try {
           .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
         document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       }, ids.target);
-      await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 5000 });
+      await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 5000 });
       await browser.execute(id => document.querySelector(`[data-block-id="${id}"] > .block-main`)
         .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })), ids.target);
       await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".ctx-item")].some(el => el.textContent.trim() === "Delete block")), { timeout: 5000 });
@@ -141,7 +142,7 @@ try {
         target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
         document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       }, forward ? ids.before : ids.target);
-      const editor = await browser.$(".main-content textarea.block-editor");
+      const editor = await browser.$(editorSelector(".main-content"));
       await editor.waitForExist({ timeout: 5000 });
       await browser.waitUntil(() => browser.execute(id => document.activeElement?.closest("[data-block-id]")?.dataset.blockId === id,
         forward ? ids.before : ids.target), { timeout: 5000, timeoutMsg: `${stage}: the target editor did not acquire focus` });
@@ -154,7 +155,7 @@ try {
       }
       if (test.action.startsWith("selected") || test.action === "cut") {
         await browser.keys(["Escape"]);
-        await browser.waitUntil(() => browser.execute(id => !document.querySelector(".main-content textarea.block-editor")
+        await browser.waitUntil(() => withEditor(browser, ".main-content", (editor, id) => !editor
           && document.querySelector(`[data-block-id="${id}"] > .block-main`)?.classList.contains("selected"), ids.target),
         { timeout: 5000, timeoutMsg: `${stage}: Escape did not select the target block` });
         if (test.action === "cut") { await browser.keys(["Control", "x"]); await browser.keys(["Control"]); }
@@ -163,9 +164,8 @@ try {
         if (test.action === "clear-backspace") {
           await browser.keys(["Control", "a"]); await browser.keys(["Control"]); await browser.keys(["Backspace"]);
         }
-        await browser.execute(forward => {
-          const editor = document.querySelector(".main-content textarea.block-editor");
-          editor.focus(); editor.setSelectionRange(forward ? editor.value.length : 0, forward ? editor.value.length : 0);
+        await withEditor(browser, ".main-content", (editor, forward) => {
+          editor.select(forward ? editor.value.length : 0);
         }, forward);
         await browser.keys([forward ? "Delete" : "Backspace"]);
       }
@@ -189,7 +189,7 @@ try {
     if (test.position === 1 && !test.children && (test.action === "backspace-start" || test.surface === "journal" && test.action === "selected-delete")) {
       await browser.saveScreenshot(path.join(out, `${test.name}.png`));
     }
-    if (await browser.$(".main-content textarea.block-editor").isExisting()) await browser.keys(["Escape"]);
+    if (await browser.$(editorSelector(".main-content")).isExisting()) await browser.keys(["Escape"]);
     proof.passed.push(stage);
     fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2) + "\n");
   }

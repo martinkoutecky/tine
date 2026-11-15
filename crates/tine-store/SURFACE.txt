@@ -155,13 +155,17 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 19)
+## Reads (ceiling: 20)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
 fn store::Store::referenced_assets
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
+# One error for bytes that are not UTF-8, so a feature reader and the store word
+# and classify the refusal the same (the depth check above is a predicate and
+# cannot build it).
+fn model::not_utf8
 field store::PageRead.doc
 field store::PageRead.id
 field store::PageRead.read_only
@@ -610,7 +614,7 @@ use crate::tine_outline::edit_kind
 use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostInputs,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,SavedasHostSaved,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
-use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
+use crate::model::{not_utf8,parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 use crate::transaction::{Content,IoError,MoveRewrite,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}

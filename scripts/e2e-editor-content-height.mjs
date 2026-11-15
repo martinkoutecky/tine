@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -35,7 +36,7 @@ async function journey(surface, pane = ".main-content", command = "deadline", me
     return block.closest(".ls-block").getAttribute("data-block-id");
   }, pane);
   await browser.$(`${pane} [data-block-id="${id}"] .block-content [data-so]`).click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 10000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 10000 });
   await browser.keys(["Control", "Home"]);
   await browser.keys(["End"]);
   await browser.keys(` /${command}`);
@@ -57,10 +58,11 @@ async function journey(surface, pane = ".main-content", command = "deadline", me
   await browser.waitUntil(() => browser.execute(() => !document.querySelector(".date-picker")), { timeout: 5000 });
   // Await layout frames, without clicking away or allowing blur to hide the harm.
   await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(done)));
-  const observation = await browser.execute((scope) => {
-    const editor = document.querySelector(`${scope} textarea.block-editor`);
-    return editor ? { value: editor.value, scrollTop: editor.scrollTop, clientHeight: editor.clientHeight, scrollHeight: editor.scrollHeight, focused: document.activeElement === editor } : null;
-  }, pane);
+  const observation = await withEditor(browser, pane, editor => {
+    if (!editor) return null;
+    const surface = editor.scrollElement;
+    return { value: editor.value, scrollTop: surface.scrollTop, clientHeight: surface.clientHeight, scrollHeight: surface.scrollHeight, focused: editor.focused };
+  });
   proof.observations.push({ surface, command, method, ...observation });
   if (!observation?.value.startsWith("something") || !observation.value.includes(`\n${command.toUpperCase()}:`)) throw new Error(`${surface}: planning insertion lost the original text`);
   if (options && !observation.value.includes("10:00 +1w")) throw new Error(`${surface}: time/repeat draft was lost`);

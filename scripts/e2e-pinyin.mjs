@@ -2,6 +2,7 @@
 // All graph/settings fixtures and receipts stay under artifacts/pinyin.
 // Run after source scripts/env.sh, under dbus-run-session and xvfb-run.
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
@@ -53,12 +54,14 @@ try {
   };
   const completionLabels = () => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")].map(n => n.textContent.trim()));
   const complete = async (query, capture = false) => {
-    await browser.execute((q, cap) => {
-      const textarea = document.querySelector(cap ? ".capture-shell textarea" : "textarea.block-editor");
-      textarea.focus(); textarea.value = `[[${q}]]`;
-      textarea.setSelectionRange(q.length + 2, q.length + 2);
-      textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: q.at(-1) }));
-    }, query, capture);
+    // Quick Capture intentionally has no clipboard-write permission. Reuse
+    // native typing there and on the page; the editor supplies the closing pair.
+    const hadText = await withEditor(browser, capture ? ".capture-shell" : "", editor => {
+      editor.select(0, editor.length);
+      return editor.length > 0;
+    });
+    if (hadText) await browser.keys("Backspace");
+    await type(`[[${query}`);
   };
   const showCapture = async () => {
     const secondary = spawn(app, ["--capture"], { env, stdio: "ignore" });
@@ -70,7 +73,7 @@ try {
       }
       return false;
     }, { timeout: 10000 });
-    await browser.$(".capture-shell textarea").waitForExist({ timeout: 10000 });
+    await browser.$(editorSelector(".capture-shell")).waitForExist({ timeout: 10000 });
   };
   if (benchmark) {
     const measurements = [];
@@ -108,7 +111,7 @@ try {
   receipt.initialsActivation = true;
   receipt.step = "inline completion native substring priority";
   await browser.$(".ls-block .block-content").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   await complete("beijing");
   await browser.waitUntil(async () => (await completionLabels()).includes("北京"), { timeout: 10000 });
   receipt.inlineOrder = await completionLabels();

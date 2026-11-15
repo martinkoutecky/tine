@@ -3,6 +3,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector as blockEditorSelector, editorText, editorState, withEditors } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
@@ -72,11 +73,11 @@ async function session(run, journey) {
     await browser.saveScreenshot(`${out}/accepted-${run}.png`);
     await sleep(1500);
   } catch (error) {
-    const state = await browser?.execute(() => ({ text: document.body.innerText,
-      editors: [...document.querySelectorAll("textarea.block-editor, .cm-content")].map(editor => ({
-        block: editor.closest("[data-block-id]")?.getAttribute("data-block-id"),
-        text: editor instanceof HTMLTextAreaElement ? editor.value : editor.textContent,
-        focused: editor === document.activeElement,
+    const state = browser && await withEditors(browser, "", editors => ({ text: document.body.innerText,
+      editors: editors.map(editor => ({
+        block: editor.blockId,
+        text: editor.value,
+        focused: editor.focused,
       })),
       inputs: [...document.querySelectorAll(".qc-panel input")].map(input => {
         const rect = input.getBoundingClientRect();
@@ -179,19 +180,18 @@ await session(1, async browser => {
     await openPageByName(browser, "Preamble queries");
     await markQuery(browser, "Preamble results");
     await browser.$(`${row} .block-content`).click();
-    const editorSelector = `${active} textarea.block-editor, ${active} .cm-content`;
+    const editorSelector = blockEditorSelector(active);
     const editor = await browser.$(editorSelector);
     await editor.waitForExist({ timeout: 15_000 });
-    await browser.waitUntil(() => browser.execute((selector, expected) => {
-      const editor = document.querySelector(selector);
-      const text = editor instanceof HTMLTextAreaElement ? editor.value : editor?.textContent;
-      return document.activeElement === editor && text === expected;
-    }, editorSelector, `Prose ${ext} [[Preamble target]]`), { timeout: 15_000, timeoutMsg: "source prose editor was not focused" });
+    await browser.waitUntil(async () => {
+      const state = await editorState(browser, active);
+      return state?.focused && state.value === `Prose ${ext} [[Preamble target]]`;
+    }, { timeout: 15_000, timeoutMsg: "source prose editor was not focused" });
     // Replace the selection through native key entry. A separate element-clear
     // command can blur/finish the edit before replacement text is delivered.
     await browser.keys(["Control", "a"]);
     await editor.addValue(`Edited ${ext} [[Preamble target]]`);
-    assert.equal(await editor.getValue(), `Edited ${ext} [[Preamble target]]`);
+    assert.equal(await editorText(browser, active), `Edited ${ext} [[Preamble target]]`);
     await browser.keys("Escape");
     const file = `${graph}/pages/Preamble ${ext}.${ext}`;
     const marker = ext === "md" ? "-" : "*";

@@ -8,6 +8,7 @@ import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { editorSelector, editorText, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -47,12 +48,12 @@ const typeKeys = async (browser, text) => {
   // delimiters such as `[[` and `((` on WebKitGTK.
   for (const key of text) await browser.keys([key]);
 };
-const activeAutocomplete = async (browser) => browser.execute(() => {
+const activeAutocomplete = async (browser) => withEditor(browser, "", editor => {
   const active = document.querySelector(".autocomplete .ac-item.active");
   return {
     active: active?.querySelector(".ac-label")?.textContent?.trim() ?? "",
     labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
-    editor: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null,
+    editor: editor?.focused ? editor.value : null,
   };
 });
 const waitForActiveAutocomplete = async (browser, expected, timeoutMsg) => {
@@ -65,15 +66,14 @@ const waitForActiveAutocomplete = async (browser, expected, timeoutMsg) => {
   }
   throw new Error(`${timeoutMsg}; last=${JSON.stringify(last)}`);
 };
-const editorState = (browser) => browser.execute(() => {
-  const active = document.activeElement;
-  return active instanceof HTMLTextAreaElement
+const editorState = (browser) => withEditor(browser, "", active => {
+  return active?.focused
     ? {
         value: active.value,
-        start: active.selectionStart,
-        end: active.selectionEnd,
-        blockId: active.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null,
-        blockRef: active.closest("[data-block-ref]")?.getAttribute("data-block-ref") ?? null,
+        start: active.start,
+        end: active.end,
+        blockId: active.blockId,
+        blockRef: active.element.closest("[data-block-ref]")?.getAttribute("data-block-ref") ?? null,
       }
     : { value: null, start: null, end: null, blockId: null, blockRef: null };
 });
@@ -81,7 +81,7 @@ const focusBlockEditor = async (browser, id) => {
   const content = await browser.$(`[data-block-ref="${id}"] .block-content`);
   await content.waitForExist({ timeout: 5000 });
   await content.click();
-  const editor = await browser.$(`[data-block-ref="${id}"] textarea.block-editor`);
+  const editor = await browser.$(editorSelector(`[data-block-ref="${id}"]`));
   await editor.waitForExist({ timeout: 5000 });
   await browser.waitUntil(async () => (await editorState(browser)).blockRef === id, {
     timeout: 5000,
@@ -312,7 +312,7 @@ try {
 
   const content = await browser.$(`[data-block-ref="${EDITOR}"] .block-content`);
   await content.click();
-  const editor = await browser.$(`[data-block-ref="${EDITOR}"] textarea.block-editor`);
+  const editor = await browser.$(editorSelector(`[data-block-ref="${EDITOR}"]`));
   await editor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "((test");
 
@@ -336,12 +336,7 @@ try {
     timeout: 5000,
     timeoutMsg: "block autocomplete did not close after Enter",
   });
-  receipt.observations.edit = await browser.execute(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLTextAreaElement
-      ? { value: active.value, start: active.selectionStart, end: active.selectionEnd }
-      : { value: null, start: null, end: null };
-  });
+  receipt.observations.edit = await editorState(browser);
   const acceptedPrefix = `((${TARGET}))`;
   const acceptedValue = receipt.observations.edit.value;
   if (![acceptedPrefix, `${acceptedPrefix} `].includes(acceptedValue)
@@ -373,21 +368,18 @@ try {
   // row-free blank page lifecycle, then use ordinary adaptive page completion.
   const slashContent = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] .block-content`);
   await slashContent.click();
-  const slashEditor = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] textarea.block-editor`);
+  const slashEditor = await browser.$(editorSelector(`[data-block-ref="${SLASH_EDITOR}"]`));
   await slashEditor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "/");
   await waitForActiveAutocomplete(browser, "Page reference", "bare slash did not activate Page reference");
   await browser.keys(["Enter"]);
-  await browser.waitUntil(async () => (await slashEditor.getValue()) === "[[]]", {
+  await browser.waitUntil(async () => (await editorText(browser)) === "[[]]", {
     timeout: 5000,
     timeoutMsg: "Page reference did not leave the caret in an empty pair",
   });
   const blankPopupRows = await browser.execute(() => document.querySelectorAll(".autocomplete .ac-item").length);
   if (blankPopupRows !== 0) throw new Error(`blank page lifecycle rendered ${blankPopupRows} rows`);
-  receipt.observations.bareSlash = await browser.execute(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLTextAreaElement ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
-  });
+  receipt.observations.bareSlash = await editorState(browser);
   if (receipt.observations.bareSlash?.start !== 2 || receipt.observations.bareSlash?.end !== 2) {
     throw new Error(`Page reference caret was not inside [[]]: ${JSON.stringify(receipt.observations.bareSlash)}`);
   }
@@ -484,24 +476,21 @@ try {
   // text and leaves the collapsed caret in the Markdown URL field.
   const linkContent = await browser.$(`[data-block-ref="${LINK_EDITOR}"] .block-content`);
   await linkContent.click();
-  const linkEditor = await browser.$(`[data-block-ref="${LINK_EDITOR}"] textarea.block-editor`);
+  const linkEditor = await browser.$(editorSelector(`[data-block-ref="${LINK_EDITOR}"]`));
   await linkEditor.waitForExist({ timeout: 5000 });
   await browser.execute(() => {
     window.__ogParityModL = [];
     window.addEventListener("keydown", (event) => {
-      if (event.ctrlKey && event.key.toLowerCase() === "l") window.__ogParityModL.push(event.defaultPrevented);
-    });
+      if (event.ctrlKey && event.key.toLowerCase() === "l") setTimeout(() => window.__ogParityModL.push(event.defaultPrevented), 0);
+    }, { capture: true });
   });
   await browser.keys(["Control", "a"]);
   await browser.keys(["Control", "l"]);
-  await browser.waitUntil(async () => (await linkEditor.getValue()) === "[Parity label]()", {
+  await browser.waitUntil(async () => (await editorText(browser)) === "[Parity label]()", {
     timeout: 5000,
     timeoutMsg: "Mod-L did not insert the selected Markdown link",
   });
-  receipt.observations.modL = await browser.execute(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLTextAreaElement ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
-  });
+  receipt.observations.modL = await editorState(browser);
   if (receipt.observations.modL?.start !== 15 || receipt.observations.modL?.end !== 15) {
     throw new Error(`Mod-L caret was not inside (): ${JSON.stringify(receipt.observations.modL)}`);
   }
@@ -614,7 +603,7 @@ try {
   await ensureParityPage(browser);
   const restartedSlashContent = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] .block-content`);
   await restartedSlashContent.click();
-  const restartedSlashEditor = await browser.$(`[data-block-ref="${SLASH_EDITOR}"] textarea.block-editor`);
+  const restartedSlashEditor = await browser.$(editorSelector(`[data-block-ref="${SLASH_EDITOR}"]`));
   await restartedSlashEditor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "[[FEx");
   await waitForActiveAutocomplete(browser, 'Create "FEx"', "typed policy did not survive a same-XDG restart");
@@ -646,7 +635,7 @@ try {
   if (!splitPane) throw new Error(`could not identify duplicate split pane: ${JSON.stringify(paneIds)}`);
   const splitContent = await browser.$(`[data-pane-id="${splitPane}"] [data-block-ref="${SLASH_EDITOR}"] .block-content`);
   await splitContent.click();
-  const splitEditor = await browser.$(`[data-pane-id="${splitPane}"] [data-block-ref="${SLASH_EDITOR}"] textarea.block-editor`);
+  const splitEditor = await browser.$(editorSelector(`[data-pane-id="${splitPane}"] [data-block-ref="${SLASH_EDITOR}"]`));
   await splitEditor.waitForExist({ timeout: 5000 });
   await typeKeys(browser, "[[Fzy");
   await waitForActiveAutocomplete(browser, "Fuzzy Existing", "split editor did not consume main-WebView existing-first policy");
@@ -668,8 +657,8 @@ try {
     timeout: 10_000,
     timeoutMsg: "split acceptance did not commit through the guarded save path",
   }).catch(async (error) => {
-    const state = await browser.execute(() => ({
-      editor: document.querySelector('[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"] textarea.block-editor')?.value,
+    const state = await withEditor(browser, '[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"]', editor => ({
+      editor: editor?.value,
       toasts: [...document.querySelectorAll('.toast')].map((el) => el.textContent),
       block: document.querySelector('[data-pane-id]:not([data-pane-id="main"]) [data-block-ref="33333333-3333-4333-8333-333333333333"] .block-content')?.textContent,
     }));

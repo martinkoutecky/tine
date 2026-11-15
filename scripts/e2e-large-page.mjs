@@ -8,6 +8,7 @@ import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tine-large-page-"));
 const graph = `${tmp}/graph`;
@@ -55,7 +56,7 @@ try {
   const id = await browser.execute(() => [...document.querySelectorAll(".block-content")]
     .find((e) => e.textContent.includes("Row 1800 native")).closest(".ls-block").dataset.blockId);
   await browser.$(`[data-block-id="${id}"] .block-content`).click();
-  const editor = await browser.$("textarea.block-editor");
+  const editor = await browser.$(editorSelector());
   await editor.waitForExist();
   console.log("editor focused");
   await browser.keys(["Control", "a"]);

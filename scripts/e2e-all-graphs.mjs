@@ -8,6 +8,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const artifacts = path.join(root, "artifacts/og-shortcuts-758-757");
@@ -41,7 +42,7 @@ try {
   await openPageByName(browser, "Notes");
   stage = "edit in alpha";
   await browser.$(".block-content").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   await browser.keys(["End"]);
   await browser.keys(" saved in alpha");
   await browser.keys(["Escape"]);

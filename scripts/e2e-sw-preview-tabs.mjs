@@ -7,6 +7,7 @@ import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -129,7 +130,7 @@ try {
   const editRow = await browser.$("//div[contains(@class,'peek-popup')]//div[contains(@class,'block-content') and contains(.,'Edit me')]");
   await editRow.waitForDisplayed({ timeout: 10000 });
   await editRow.click();
-  const previewEditor = await browser.$(".peek-popup textarea.block-editor");
+  const previewEditor = await browser.$(editorSelector(".peek-popup"));
   await previewEditor.waitForDisplayed({ timeout: 10000, timeoutMsg: `${stage}: no editor in the preview` });
   await browser.keys(["End"]);
   await browser.keys(" now");
@@ -137,7 +138,7 @@ try {
   await sleep(1000); // well past the hover grace period
   if (!(await browser.$(".peek-popup").isDisplayed())) throw new Error("preview closed while its editor held the caret");
   await browser.keys(["Escape"]);
-  await browser.waitUntil(async () => !(await browser.$(".peek-popup textarea.block-editor").isExisting()), { timeout: 5000, timeoutMsg: `${stage}: Escape did not end the edit` });
+  await browser.waitUntil(async () => !(await browser.$(editorSelector(".peek-popup")).isExisting()), { timeout: 5000, timeoutMsg: `${stage}: Escape did not end the edit` });
   if (!(await browser.$(".peek-popup").isExisting())) throw new Error("the first Escape closed the preview instead of ending the edit");
   await waitForFileText(path.join(graph, "pages/Preview Edit.md"), text => text === "- Edit me now\n- Second row\n");
   await browser.keys(["Escape"]);

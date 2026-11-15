@@ -7,6 +7,8 @@ export const FORBID_EDIT_SELECTOR = [
   "button",
   "input",
   "textarea",
+  // A mounted live editor owns presses within a query or reference host too.
+  '[data-block-editor="cm6"]',
   "select",
   "video",
   "audio",

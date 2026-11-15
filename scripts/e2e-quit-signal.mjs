@@ -17,6 +17,7 @@ import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -74,7 +75,7 @@ async function run(signal, text, how = "app") {
     if (!pid) throw new Error(`${signal}: could not find the app process`);
     await openPageByName(browser, "Signal page");
     await browser.$(".main-content [data-block-id] .block-content-wrapper").click();
-    await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 10_000 });
+    await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 10_000 });
     await browser.keys("End");
     await browser.keys(text);
     // Within the save debounce: only the quit flush can save it.

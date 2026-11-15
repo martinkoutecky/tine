@@ -3,6 +3,7 @@
 // below are waits/assertions only and never substitute for activation.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -284,13 +285,8 @@ try {
   if (duplicateSlotCount !== 1) throw new Error(`same-name duplicate created ${duplicateSlotCount} sidebar slots`);
 
   await browser.$(`${duplicateSurface} .block-content`).click();
-  await browser.$(`${duplicateSurface} textarea.block-editor`).waitForExist({ timeout: 5000 });
-  await browser.execute((selector, value) => {
-    const input = document.querySelector(selector);
-    input.focus();
-    input.value = value;
-    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
-  }, `${duplicateSurface} textarea.block-editor`, NONCANONICAL_EDIT);
+  await browser.$(editorSelector(duplicateSurface)).waitForExist({ timeout: 5000 });
+  await pasteEditorText(browser, NONCANONICAL_EDIT);
   await browser.$(`${duplicateSurface} [data-right-sidebar-item-toggle]`).click();
   await waitForFileText(NONCANONICAL_DUPLICATE_FILE, (text) => text.includes(NONCANONICAL_EDIT), { timeoutMs: 10_000 });
   const canonicalAfterEdit = fs.readFileSync(CANONICAL_DUPLICATE_FILE, "utf8");

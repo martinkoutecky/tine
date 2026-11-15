@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -46,7 +47,7 @@ async function clickBlock(text) {
   }, text);
   if (!id) throw new Error(`no block reading ${JSON.stringify(text)}`);
   await browser.$(`.main-content [data-block-id="${id}"] .block-content-wrapper`).click();
-  await browser.$(".main-content textarea.block-editor, .main-content [data-block-editor=\"cm6\"]").waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 10_000 });
 }
 
 async function runPaletteCommand(label) {

@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -80,12 +81,11 @@ try {
   });
   await browser.$('[data-block-ref="shared-id"] .block-content').waitForExist({ timeout: 20_000 });
   await browser.$('[data-block-ref="shared-id"] .block-content').click();
-  await browser.$('[data-block-ref="shared-id"] textarea.block-editor').waitForExist({ timeout: 5_000 });
+  await browser.$(editorSelector('[data-block-ref="shared-id"]')).waitForExist({ timeout: 5_000 });
 
-  const raced = await browser.execute(async (graphB) => {
-    const editor = document.querySelector('[data-block-ref="shared-id"] textarea.block-editor');
-    if (!(editor instanceof HTMLTextAreaElement)) return "missing-editor";
-    editor.dispatchEvent(new KeyboardEvent("keydown", {
+  const raced = await withEditor(browser, '[data-block-ref="shared-id"]', async (editor, graphB) => {
+    if (!editor) return "missing-editor";
+    editor.element.dispatchEvent(new KeyboardEvent("keydown", {
       key: "g", code: "KeyG", ctrlKey: true, altKey: true, bubbles: true, cancelable: true,
     }));
     document.querySelector(".graph-switch-btn")?.click();
@@ -108,9 +108,9 @@ try {
   if (!staleUi.includes("same raw")) throw new Error(`graph B routed state changed: ${staleUi}`);
 
   await browser.$('[data-block-ref="shared-id"] .block-content').click();
-  await browser.$('[data-block-ref="shared-id"] textarea.block-editor').waitForExist({ timeout: 5_000 });
-  await browser.execute(() => {
-    document.querySelector('[data-block-ref="shared-id"] textarea.block-editor')?.dispatchEvent(new KeyboardEvent("keydown", {
+  await browser.$(editorSelector('[data-block-ref="shared-id"]')).waitForExist({ timeout: 5_000 });
+  await withEditor(browser, '[data-block-ref="shared-id"]', editor => {
+    editor?.element.dispatchEvent(new KeyboardEvent("keydown", {
       key: "g", code: "KeyG", ctrlKey: true, altKey: true, bubbles: true, cancelable: true,
     }));
   });

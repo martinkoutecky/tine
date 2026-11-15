@@ -2,6 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { APP_ID } from "./app-identity.mjs";
 
+/** Journeys using the shared editor driver exercise the fresh product default.
+ * Keep the unmigrated fallback until the remaining older harnesses migrate.
+ * Pure, O(script length); the runner supplies one bounded source read. */
+export function defaultClassicEditorProfile(scriptSource) {
+  return /^import\s+[^;]+\sfrom\s+["']\.\/lib\/e2e-block-editor\.mjs["'];/m.test(scriptSource) ? "0" : "1";
+}
+
 /** Seed the runner's scratch device preference before native startup, preserving
  * explicit choices and other settings. One bounded JSON read, at most one write;
  * no graph IO. Errors abort launch rather than falling back to account storage. */

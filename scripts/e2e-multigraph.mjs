@@ -8,6 +8,7 @@
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
@@ -151,7 +152,7 @@ try {
   const alphaBlock = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' block-content ') and normalize-space(.) = 'Alpha Page body']");
   await alphaBlock.waitForExist({ timeout: 10_000 });
   await alphaBlock.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   await browser.keys(["End"]);
   await browser.keys(` ${LATE}`);
   // Switch while the edit is still unsaved (no Escape, no wait for the save).
@@ -171,10 +172,10 @@ try {
   const leakedFiles = graphContains(B, LATE);
   if (leakedFiles.length) throw new Error(`the alpha edit landed in beta: ${JSON.stringify(leakedFiles)}`);
   if (fs.existsSync(`${B}/pages/Alpha Page.md`)) throw new Error("the switch created an Alpha Page in beta");
-  const settled = await browser.execute(() => ({
+  const settled = await withEditor(browser, "", editor => ({
     name: document.querySelector(".graph-switch-name")?.textContent?.trim() ?? "",
     text: document.body.innerText,
-    editing: Boolean(document.querySelector("textarea.block-editor")),
+    editing: Boolean(editor),
   }));
   if (settled.name !== "beta") throw new Error(`the switched window names graph ${JSON.stringify(settled.name)}`);
   for (const alphaText of [LATE, "Alpha Page body", "ALPHA_SENTINEL"]) {
@@ -318,11 +319,11 @@ try {
   }, null, 2));
 } catch (error) {
   try {
-    console.error("state:", JSON.stringify(await browser.execute(() => ({
+    console.error("state:", JSON.stringify(await withEditor(browser, "", editor => ({
       graph: document.querySelector(".graph-switch-name")?.textContent?.trim() ?? null,
       title: document.querySelector("h1.page-title")?.textContent ?? null,
       rows: [...document.querySelectorAll(".graph-switch-row")].map((row) => row.getAttribute("title")),
-      editing: document.querySelector("textarea.block-editor")?.value ?? null,
+      editing: editor?.value ?? null,
       toasts: [...document.querySelectorAll(".toast")].map((node) => node.textContent),
       body: document.body.innerText.slice(0, 600),
     }))));

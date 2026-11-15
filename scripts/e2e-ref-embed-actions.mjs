@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { remote } from "webdriverio";
+import { editorSelector, editorState } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
@@ -75,13 +76,13 @@ async function embedActions(scope, label) {
   await hoverEmbed(scope);
   await shot(`hover-${label}.png`);
   await (await browser.$(`${scope} .embed-block > .embed-actions .embed-action-edit`)).click();
-  await browser.waitUntil(() => browser.execute((s, want) => {
-    const ed = document.querySelector(`${s} textarea.block-editor`);
-    return !!ed && ed.value.slice(ed.selectionStart, ed.selectionEnd) === want;
-  }, scope, EMBED), { timeout: 8000, timeoutMsg: `${stage}: the host editor did not open in this surface with the embed selected` });
-  assert.equal(await browser.execute(() => document.querySelectorAll("textarea.block-editor").length), 1, `${stage}: more than one editor opened`);
+  await browser.waitUntil(async () => {
+    const ed = await editorState(browser, scope);
+    return !!ed && ed.value.slice(ed.start, ed.end) === EMBED;
+  }, { timeout: 8000, timeoutMsg: `${stage}: the host editor did not open in this surface with the embed selected` });
+  assert.equal((await browser.$$(editorSelector())).length, 1, `${stage}: more than one editor opened`);
   await browser.keys(["Escape"]);
-  await browser.waitUntil(() => browser.execute(() => !document.querySelector("textarea.block-editor")), { timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ reverse: true, timeout: 5000 });
   assert.equal(read(hostPath), host, `${stage}: Edit link changed the file`);
 
   stage = `${label}: embed Remove + Undo`;

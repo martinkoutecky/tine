@@ -14,6 +14,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector, editorText } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const artifacts = process.env.E2E_ARTIFACT_DIR || path.join(root, "target/artifacts/fix-741-f1f2");
@@ -95,9 +96,9 @@ try {
   assert.deepEqual(await browser.execute(() => window.__gh741Faults), ["block"]);
   await browser.saveScreenshot(path.join(out, "block-failure.png"));
   await browser.$(".main-content .block-render-raw").click();
-  const editor = await browser.$(".main-content textarea.block-editor");
+  const editor = await browser.$(editorSelector(".main-content"));
   await editor.waitForExist({ timeout: 5000 });
-  assert.equal(await editor.getValue(), "Native failing block");
+  assert.equal(await editorText(browser, ".main-content"), "Native failing block");
   await browser.keys(["Control", "a"]); await browser.keys(["Control"]);
   for (const ch of "Repaired block") await browser.keys([ch]);
   await browser.keys(["Escape"]);

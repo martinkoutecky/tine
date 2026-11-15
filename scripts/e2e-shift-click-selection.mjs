@@ -8,6 +8,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { currentPageTitle, openPageByLink, openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { BLOCK_EDITOR, editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "target/artifacts/fix-924"));
@@ -73,18 +74,18 @@ try {
       .find(el => el.textContent.startsWith(`Block ${letter} `)).closest("[data-block-id]").dataset.blockId), root);
     const row = id => `${root} [data-block-id="${id}"] > .block-main`;
     await browser.$(`${row(ids[0])} .block-content`).click();
-    await browser.$(`${row(ids[0])} textarea.block-editor`).waitForDisplayed({ timeout: 10000 });
+    await browser.$(editorSelector(row(ids[0]))).waitForDisplayed({ timeout: 10000 });
     // Interior caret, then a literal shifted pointer click on another block.
     await browser.keys(["Home", "ArrowRight", "ArrowRight"]);
     const destination = await browser.$(`${row(ids[1])} .block-content`);
     const size = await destination.getSize();
     await shiftedClick(destination, { x: Math.round(20 - size.width / 2), y: 0 });
-    const observed = await browser.execute(root => ({
+    const observed = await browser.execute((root, editor) => ({
       selected: [...document.querySelectorAll(`${root} .block-main.selected`)].map(el => el.querySelector(".block-content")?.textContent.trim()),
-      editors: document.querySelectorAll(`${root} textarea.block-editor`).length,
+      editors: document.querySelectorAll(`${root} ${editor}`).length,
       nativeSelection: document.getSelection()?.toString(),
       presses: window.__gh924Presses,
-    }), root);
+    }), root, BLOCK_EDITOR);
     evidence.push({ surface, ...observed });
     screenshot(surface);
     assert.deepEqual(observed.presses.at(-1), { shift: true, id: ids[1] }, "the native press must reach D with Shift held");
@@ -115,7 +116,7 @@ try {
     }
     const sourceBlock = await browser.$(".main-content .block-content");
     await sourceBlock.click();
-    await browser.$(".main-content textarea.block-editor").waitForDisplayed();
+    await browser.$(editorSelector(".main-content")).waitForDisplayed();
     await browser.keys(["Escape"]);
     await browser.$(".main-content .block-main.selected").waitForExist();
     const beforeDeparture = fs.readFileSync(pageFile, "utf8");

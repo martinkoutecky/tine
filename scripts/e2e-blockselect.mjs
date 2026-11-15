@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { remote, Key } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { withEditor, withEditors } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -115,12 +116,11 @@ const lines = [];
 const log = (line) => { console.log(line); lines.push(line); };
 
 const probe = async (tag) => {
-  const s = await browser.execute(() => {
+  const s = await withEditors(browser, "", editors => {
     const ae = document.activeElement;
     const blocks = [...document.querySelectorAll(".ls-block")];
     const selectedMains = [...document.querySelectorAll(".block-main.selected")];
     const editingMains = [...document.querySelectorAll(".block-main.editing")];
-    const editors = [...document.querySelectorAll("textarea.block-editor")];
     const idxOfMain = (m) => { const b = m.closest(".ls-block"); return b ? blocks.indexOf(b) : -1; };
     const textOf = (b) => (b.textContent || "").replace(/\s+/g, " ").trim().slice(0, 24);
     return {
@@ -135,7 +135,7 @@ const probe = async (tag) => {
       nEditing: editingMains.length,
       editingIdx: editingMains.map(idxOfMain),
       nEditors: editors.length,
-      activeEditorConnected: editors.map((e) => e === ae),
+      activeEditorConnected: editors.map((e) => e.focused),
       nblocks: blocks.length,
     };
   });
@@ -156,11 +156,10 @@ const clickBlock = async (blockIdx, selStart) => {
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
   }, blockIdx);
   await sleep(500);
-  await browser.execute((s) => {
-    const ae = document.activeElement;
-    if (!(ae instanceof HTMLTextAreaElement)) return;
-    const pos = s === "end" ? ae.value.length : Number(s);
-    ae.setSelectionRange(pos, pos);
+  await withEditor(browser, "", (editor, s) => {
+    if (!editor?.focused) return;
+    const pos = s === "end" ? editor.value.length : Number(s);
+    editor.select(pos);
   }, selStart === "end" ? "end" : String(selStart));
   await sleep(150);
 };
@@ -213,12 +212,10 @@ try {
   // that container-query boundary.
   await browser.setWindowSize(320, 800);
   await clickBlock(1, "end");
-  const selectedBefore = await browser.execute(() => {
-    const editor = document.activeElement;
-    if (!(editor instanceof HTMLTextAreaElement)) return null;
-    editor.setSelectionRange(0, Math.min(5, editor.value.length), "forward");
-    editor.dispatchEvent(new Event("select", { bubbles: true }));
-    return { value: editor.value, start: editor.selectionStart, end: editor.selectionEnd };
+  const selectedBefore = await withEditor(browser, "", editor => {
+    if (!editor?.focused) return null;
+    editor.select(0, Math.min(5, editor.value.length));
+    return { value: editor.value, start: editor.start, end: editor.end };
   });
   if (!selectedBefore || selectedBefore.start === selectedBefore.end) {
     throw new Error(`could not prepare selection-overflow proof: ${JSON.stringify(selectedBefore)}`);
@@ -226,10 +223,9 @@ try {
   // The native window has a desktop minimum width, so WebDriver cannot make
   // this named container as narrow as a phone/tablet split can. Constrain the
   // live editor container itself to exercise the production container query.
-  await browser.execute(() => {
-    const editor = document.activeElement;
-    if (!(editor instanceof HTMLTextAreaElement)) return false;
-    const wrap = editor.closest(".editor-wrap");
+  await withEditor(browser, "", editor => {
+    if (!editor?.focused) return false;
+    const wrap = editor.element.closest(".editor-wrap");
     if (!(wrap instanceof HTMLElement)) return false;
     wrap.style.width = "240px";
     return true;
@@ -240,13 +236,12 @@ try {
   await browser.$(".sel-toolbar-overflow").waitForExist({ timeout: 5_000 });
   await browser.keys([Key.Escape]);
   await browser.$(".sel-toolbar-overflow").waitForExist({ reverse: true, timeout: 5_000 });
-  const selectedAfter = await browser.execute(() => {
-    const editor = document.activeElement;
-    return editor instanceof HTMLTextAreaElement ? {
+  const selectedAfter = await withEditor(browser, "", editor => {
+    return editor?.focused ? {
       value: editor.value,
-      start: editor.selectionStart,
-      end: editor.selectionEnd,
-      editing: !!editor.closest(".block-main.editing"),
+      start: editor.start,
+      end: editor.end,
+      editing: !!editor.element.closest(".block-main.editing"),
     } : null;
   });
   if (!selectedAfter || !selectedAfter.editing || selectedAfter.value !== selectedBefore.value

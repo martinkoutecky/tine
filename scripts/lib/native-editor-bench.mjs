@@ -1,6 +1,7 @@
 // Shared native WebDriver instrumentation. No application/test-only editor API.
 import fs from "node:fs";
 import path from "node:path";
+export { editorText } from "./e2e-block-editor.mjs";
 const identity = JSON.parse(fs.readFileSync(new URL("../../src-tauri/app-identity.json", import.meta.url), "utf8"));
 
 export const editorKind = process.env.BENCH_EDITOR || "cm6";
@@ -56,13 +57,6 @@ export async function stopTyping(browser) {
       focused: document.activeElement?.matches(p.selector) };
   });
   return { ...samples, hostAfter: process.platform === "linux" ? { load: fs.readFileSync("/proc/loadavg", "utf8").trim(), cpuPressure: fs.readFileSync("/proc/pressure/cpu", "utf8").trim() } : undefined };
-}
-
-export async function editorText(browser, scope = "") {
-  return browser.execute(selector => {
-    const editor = document.querySelector(selector);
-    return editor instanceof HTMLTextAreaElement ? editor.value : [...editor.querySelectorAll(".cm-line")].map(line => line.textContent).join("\n");
-  }, `${scope} ${editorSelector}`.trim());
 }
 
 export async function nativeCalibration(browser) {

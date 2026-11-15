@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,13 +49,12 @@ await sleep(2500);
 
 let browser;
 async function setComposedValue(value, data) {
-  const applied = await browser.execute((next, committed) => {
-    const editor = document.querySelector("textarea.block-editor");
-    if (!(editor instanceof HTMLTextAreaElement)) return false;
-    editor.focus();
-    editor.value = next;
-    editor.setSelectionRange(next.length, next.length);
+  await browser.keys(["Control", "a"]);
+  const applied = await withEditor(browser, "", (driver, next, committed) => {
+    if (!driver) return false;
+    const editor = driver.element;
     editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+    const inserted = document.execCommand("insertText", false, next);
     editor.dispatchEvent(new InputEvent("input", {
       bubbles: true,
       inputType: "insertCompositionText",
@@ -62,7 +62,7 @@ async function setComposedValue(value, data) {
       isComposing: true,
     }));
     editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: committed }));
-    return true;
+    return inserted;
   }, value, data);
   if (!applied) throw new Error("block editor was not available for composition input");
 }
@@ -88,7 +88,7 @@ try {
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
   await browser.$(".ls-block .block-content-wrapper").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
 
   await setComposedValue("#倘", "倘");
   await browser.waitUntil(async () => (await autocompleteLabels()).includes("#倘若"), {
@@ -96,17 +96,8 @@ try {
     timeoutMsg: "CJK IME hashtag input did not show the existing #倘若 choice",
   });
 
-  const punctuationClosed = await browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor");
-    if (!(editor instanceof HTMLTextAreaElement)) return false;
-    editor.value = "#倘,";
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-    editor.dispatchEvent(new InputEvent("input", {
-      bubbles: true, inputType: "insertText", data: ",", isComposing: false,
-    }));
-    return true;
-  });
-  if (!punctuationClosed) throw new Error("block editor disappeared before hard-stop coverage");
+  if (!await browser.$(editorSelector()).isExisting()) throw new Error("block editor disappeared before hard-stop coverage");
+  await browser.keys(",");
   await browser.waitUntil(async () => (await autocompleteLabels()).length === 0, {
     timeout: 3000,
     timeoutMsg: "hard-stop punctuation did not close hashtag autocomplete",
