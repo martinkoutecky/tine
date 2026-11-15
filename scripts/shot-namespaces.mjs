@@ -68,7 +68,7 @@ try {
         await page.locator('button[title^="Toggle sidebar"]').first().click();
         await sleep(300);
       }
-      await page.locator(".nav-section-header", { hasText: "NAMESPACES" }).first().click();
+      await page.locator(".nav-first-level.nav-section-toggle:not([data-sidebar-section])").click();
       await page.waitForSelector(".nav-namespaces-open", { timeout: 4000 });
       check(await page.locator(".ns-tree").count() === 1, `${tag}: the sidebar keeps its inline tree`);
       await page.locator(".nav-namespaces-open").first().click();

@@ -10,6 +10,7 @@ import { remote } from "webdriverio";
 import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { editorState } from "./lib/e2e-block-editor.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { shotOwnerProtection } from "./shot-owner-protection.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
@@ -71,13 +72,15 @@ try {
   assert.equal(await browser.$(".page .ls-block .block-content-wrapper").isDisplayed(),true);
   shotOwnerProtection(path.join(run,"details.png"),env);
   await browser.$(`${notice} summary`).click();
-  await browser.waitUntil(()=>browser.execute(()=>{
+  await browser.waitUntil(async()=>{
+    await browser.execute(()=>{
     const content=document.querySelector(".page .ls-block .block-content-wrapper");
     if(!(content instanceof HTMLElement)) return false;
     content.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true,button:0}));
     content.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,cancelable:true,button:0}));content.click();
-    return document.activeElement instanceof HTMLTextAreaElement;
-  }),{timeout:10000});
+    });
+    return (await editorState(browser,".page"))?.focused;
+  },{timeout:10000});
   await browser.keys(["End"]); for(const key of " without lease") await browser.keys([key]);
   await browser.keys(["Escape"]);
   await waitForFileText(file,text=>text==="- editable without lease\n");

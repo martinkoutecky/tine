@@ -112,7 +112,7 @@ const entrySource = String.raw`
           <MobileDrawerPanel open={sidebarOpen()} side="left" label="Navigation sidebar" class="left-sidebar" style={leftStyle()}>
             <div class="left-sidebar-scroll">
               <Show when={mobileDrawerMode()}>
-                <button class="mobile-drawer-close e1-left-close" onClick={() => dismissDrawerAndRestore("explicit")}>Close navigation sidebar</button>
+                <button class="sidebar-close e1-left-close" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>×</button>
               </Show>
               <button class="e1-left-action">Left drawer action</button>
             </div>

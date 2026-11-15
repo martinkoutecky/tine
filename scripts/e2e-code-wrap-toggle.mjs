@@ -142,7 +142,7 @@ try {
       for (const fixture of modeFiles) {
         await openPageByName(browser, `Code modes ${fixture.format}`);
         if (layout === "phone") {
-          for (const selector of ['.right-sidebar > .right-sidebar-header .rs-close', '.mobile-drawer-close', '.sidebar-close']) {
+          for (const selector of ['.right-sidebar > .right-sidebar-header .rs-close', '.sidebar-close']) {
             const close = await browser.$(selector);
             if (await close.isDisplayed()) await close.click();
           }

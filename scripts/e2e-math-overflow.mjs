@@ -175,7 +175,7 @@ try {
   // The existing mobile-drawer fixture permits a real 390px native WebView.
   await browser.setWindowSize(390, 1000);
   await browser.waitUntil(() => browser.execute(() => window.innerWidth <= 400), { timeout: 10000 });
-  const closeNavigation = await browser.$(".mobile-drawer-close");
+  const closeNavigation = await browser.$(".sidebar-close");
   if (await closeNavigation.isDisplayed()) await closeNavigation.click();
   await check('[data-pane-id="main"] .page-blocks', "phone-main");
   assert.ok(proof.outcomes.every(item => item.rows.length === 6 && item.rows.every(row => row.startReachable && row.endReachable)),
