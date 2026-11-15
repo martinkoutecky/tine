@@ -38,8 +38,7 @@ try {
       "tauri:options": { application: process.env.TINE_APP } }, connectionRetryCount: 0 });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
   await openPageByName(browser, "Example/Namespace");
-  await browser.execute(() => [...document.querySelectorAll(".nav-section-header")]
-    .find((e) => e.textContent.includes("NAMESPACES"))?.click());
+  await browser.$(".nav-first-level.nav-section-toggle:not([data-sidebar-section])").click();
   await browser.waitUntil(async () => browser.execute(() =>
     [...document.querySelectorAll(".ns-node-label")].some((e) => e.textContent.trim() === "Example")),
     { timeout: 8_000, timeoutMsg: "seed namespace was not visible" });

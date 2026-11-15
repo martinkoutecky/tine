@@ -66,9 +66,6 @@ async function complete(text, ready) {
   return current;
 }
 async function allPagesTitles() {
-  if (!await browser.$(".nav-all-pages-open").isExisting()) {
-    await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find((header) => header.textContent?.includes("ALL PAGES"))?.click());
-  }
   await browser.$(".nav-all-pages-open").waitForExist({ timeout: 15_000 });
   await browser.$(".nav-all-pages-open").click();
   await browser.$(".all-pages-row").waitForExist({ timeout: 15_000 });
@@ -108,12 +105,12 @@ try {
   assert.ok(!fs.existsSync(path.join(graph, "pages/Work.md")), "offering a parent writes no file");
 
   stage = "the sidebar tree nests Work/Plan and lists no relative or URL name";
-  const clickText = (selector, text) => browser.execute((sel, label) => {
-    const el = [...document.querySelectorAll(sel)].find((node) => node.textContent?.includes(label));
+  const clickNamespaces = () => browser.execute(() => {
+    const el = document.querySelector(".nav-first-level.nav-section-toggle:not([data-sidebar-section])");
     el?.click();
     return !!el;
-  }, selector, text);
-  await browser.waitUntil(() => clickText(".nav-section-header", "NAMESPACES"), { timeout: 20_000, interval: 300 });
+  });
+  await browser.waitUntil(clickNamespaces, { timeout: 20_000, interval: 300 });
   await browser.$(".ns-tree").waitForExist({ timeout: 10_000 });
   const tree = await browser.execute(() => [...document.querySelectorAll(".ns-tree .ns-node-label")].map((el) => el.textContent?.trim() ?? ""));
   assert.deepEqual(tree, ["Work", "Plan"], `sidebar tree: ${JSON.stringify(tree)}`);
