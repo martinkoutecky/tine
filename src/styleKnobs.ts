@@ -267,7 +267,7 @@ export function setKnob(knob: StyleKnob, value: KnobValue | undefined): void {
   if (isActive(knob, checked)) next[knob.id] = checked;
   else delete next[knob.id];
   writePreference(values, applyKnobValues, next,
-    (written) => backend().setAppString(STYLE_KNOBS_KEY, JSON.stringify(written)), "style settings");
+    (written) => backend().setAppString(STYLE_KNOBS_KEY, JSON.stringify(written)), msg("toast-save-style-failed"));
 }
 
 /** Load the stored values at startup and paint. A read failure toasts and

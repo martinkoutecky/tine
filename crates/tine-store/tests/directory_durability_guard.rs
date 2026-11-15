@@ -64,8 +64,7 @@ fn directory_sync_has_one_owner_and_no_discarded_result() {
 fn directory_sync_tolerates_filesystems_without_directory_sync() {
     let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::PermissionsExt;
-    let base = std::env::temp_dir().join(format!("tine-dir-sync-errno-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&base);
+    let base = crate::test_support::fresh_dir("tine-dir-sync-errno-");
     fs::create_dir_all(&base).unwrap();
 
     let missing = base.join("gone");

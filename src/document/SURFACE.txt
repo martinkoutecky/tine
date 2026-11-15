@@ -14,6 +14,7 @@ PendingEdit  # why: a text edit staged by an editor and written only once the ke
 PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
+admitRead  # why: all asynchronous working-set admissions compare captured local generations; each retry requires a newer relevant generation; batch-feed-admission-1114
 appendFeed
 appendQueryBlock  # why: the share dialog appends a definition block to the exports page through the single capture writer; batch-share-dialog-ui
 appendToJournalDay  # why: the share inbox appends into the exact day it recorded and records its recovery state inside the admitted read (ADR 0073); batchNativeIntegrations
@@ -21,6 +22,7 @@ appendToTodayJournal
 applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
 applyLiveResolution  # why: conflict dock applies a live-buffer resolution through the page host; batch-og-s3b
+authoredBlockId  # why: `tine page current` links only a block whose text carries an authored id::, never the runtime key (CURRENT-PAGE-LINKS, discussion 925); batch-og-page-current-links
 beginPageHeaderEdit
 bindHost  # why: graph open binds the page host client; explicit L9-01 draft adoption can refresh loaded pages from relaunched host custody without requiring publication; batch-og-s3b
 blockExternalId
@@ -138,11 +140,13 @@ orderedListMarker
 outdentBlock
 outdentSelection
 outlineFits  # why: one placement cap shared by editor paste and structural sheet paste; batch15b-followup
+ownSelectionSurface  # why: rendered surfaces retire only their own block selection on route change or unmount; batch-route-selection-1113
 pageAliasNames  # why: the page header alias list is the store answer through wasm (census Q7); batch-cm-keys
 pageByName
 pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup
 pageInstanceGeneration  # why: shown query results stay live while their source page instance is unchanged; batch-query-epoch-flicker
 pageLoadRefusalMessage  # why: a surface shows why its page did not load inline; batchJ1
+pageReadOnly  # why: graph config and intrinsic Org restrictions share one reactive presentation check; batch-config-unreadable-1113
 pageRoots
 pageVisibleOrder
 pasteClipboardPayload
@@ -162,7 +166,6 @@ redo
 refuseConflictedMove  # why: carry conflict preflight before mutation; batch03
 registerPaneRouteProvider
 rekeyPageIdentityByPath  # why: watcher and own save adopt a changed effective title by physical path; batch11e
-reloadHlsIfLoaded
 removeOwnNumberedList
 renamePageOnDisk
 replaceChildOrders
@@ -212,6 +215,7 @@ toggleCollapse
 toggleListItemAtIndex
 toggleOwnNumberedList
 toggleUndoRedoMode
+topSelected  # why: expose the selection owner's roots for editing subtree units without re-deriving them; batch-sel-941
 trackAssetWrite
 tryFreezeGraphRewrite  # why: graph switch freezes all input before its last flush (STEP3 6 step 1); batch-og-s3b
 undo

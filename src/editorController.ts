@@ -4,8 +4,10 @@ import { batch, createComputed, createRoot, createSignal, untrack } from "solid-
 import { ChangeKeyRegistry } from "./changeKeyRegistry";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
-import { requestFrame } from "./windowRealm";
+import { activeWindow, isElementTag, requestFrame } from "./windowRealm";
 import { clearOnBindingInvalidated } from "./binding";
+import { recordDiagnostic } from "./debug";
+import type { EditorFocusGuard, EditorFocusMissed } from "./backendTypes";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -119,6 +121,8 @@ export interface HistoryEditorContext {
   blockId: string;
   selectionStart: number;
   selectionEnd: number;
+  /** Visible-source body start when code editing was chosen; absent for source. */
+  codeBodyStart?: number;
   owner: string | null;
   surface: string;
 }
@@ -127,7 +131,7 @@ export interface HistoryEditorTarget {
   blockId: string;
   owner: string | null;
   surface: string;
-  selection: () => { start: number; end: number };
+  selection: () => { start: number; end: number; codeBodyStart?: number };
   focused?: () => boolean;
   viewport?: () => { editor: HTMLElement; scroller: HTMLElement | null };
 }
@@ -185,11 +189,13 @@ export function captureHistoryEditorContext(): HistoryEditorContext | null {
   ) ?? candidates.find((candidate) => !surface || candidate.surface === surface) ?? candidates[0];
   let start = 0;
   let end = 0;
+  let codeBodyStart: number | undefined;
   if (target) {
     try {
       const selection = target.selection();
       start = Math.max(0, Math.trunc(selection.start));
       end = Math.max(start, Math.trunc(selection.end));
+      codeBodyStart = selection.codeBodyStart;
     } catch {
       // A target can unmount between the edit signal read and selection read.
     }
@@ -199,16 +205,18 @@ export function captureHistoryEditorContext(): HistoryEditorContext | null {
   }
   const targetSurface = target?.surface ?? editingSurface() ?? surface;
   if (!targetSurface) return null;
-  return {
+  const context: HistoryEditorContext = {
     blockId,
     selectionStart: start,
     selectionEnd: end,
     owner: target?.owner ?? owner,
     surface: targetSurface,
   };
+  if (codeBodyStart !== undefined) context.codeBodyStart = codeBodyStart;
+  return context;
 }
 
-/** Queue a surface-scoped editor reopen after data replay. The store validates
+/** Queue a surface-scoped editor reopen after data replay or navigation. The caller validates
  * block existence and supplies the restored text length; this controller clamps
  * the request before any textarea sees it. */
 export function restoreHistoryEditorContext(
@@ -231,11 +239,11 @@ export function restoreHistoryEditorContext(
 export function takeHistoryEditorSelectionFor(
   blockId: string,
   surface: string,
-): { start: number; end: number } | null {
+): { start: number; end: number; codeBodyStart?: number } | null {
   const pending = pendingHistoryEditorRestore();
   if (!pending || pending.blockId !== blockId || pending.surface !== surface) return null;
   setPendingHistoryEditorRestore(null);
-  return { start: pending.selectionStart, end: pending.selectionEnd };
+  return { start: pending.selectionStart, end: pending.selectionEnd, codeBodyStart: pending.codeBodyStart };
 }
 
 export { activeSurface, editingId, editingOwner, editingSurface };
@@ -267,17 +275,78 @@ export function noteSurfaceFocused(surfaceKey: string) {
   setActiveSurface(surfaceKey);
 }
 
+/** GH #939: at most one `editor_focus_missed` record per this many ms. A
+ * stuck state misses on every edit request until it clears; one record per
+ * episode tells the causes apart, and the bound keeps a repeating miss from
+ * evicting older events out of the recorder's shared 1 MiB ring. */
+export const EDITOR_FOCUS_MISS_INTERVAL_MS = 5 * 60_000;
+let editorFocusMissAt = -Infinity;
+// Counts edit requests only: `endEdit` (e.g. a blur after a focus thief) must
+// not cancel the pending check the way it bumps `editIntentRevision`.
+let editRequest = 0;
+
+const FOCUS_TAGS = new Set<string>(["textarea", "input", "button", "select", "iframe", "a", "div", "span", "body"]);
+
+/** The block whose editor `el` is (a textarea editor or a CodeMirror one), else null. */
+function blockEditorId(el: Element | null): string | null {
+  if (isElementTag(el, "textarea") && el.classList.contains("block-editor")) {
+    return el.closest("[data-block-id]")?.getAttribute("data-block-id") ?? "";
+  }
+  return el?.getAttribute("data-cm6-editor") ?? null;
+}
+
+/** GH #939: one frame after an edit request, record (content-free) why no
+ * editor of `id` holds focus. A newer request supersedes this check. Cost on
+ * the normal path: one frame callback and one look at the focused element;
+ * the mounted editors are scanned only on a miss. */
+function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: EditorFocusGuard) {
+  const request = ++editRequest;
+  if (performance.now() - editorFocusMissAt < EDITOR_FOCUS_MISS_INTERVAL_MS) return;
+  const win = activeWindow();
+  const doc = win.document;
+  // Node unit tests run without a DOM, or with a stub document.
+  if (typeof doc?.hasFocus !== "function") return;
+  requestFrame(win, () => {
+    if (request !== editRequest) return;
+    const documentHasFocus = doc.hasFocus();
+    const active = doc.activeElement;
+    const activeBlock = blockEditorId(active);
+    if (guard === "none" && documentHasFocus && activeBlock === id) return;
+    let targetMounted = false;
+    let targetFocused = false;
+    for (const target of historyEditorTargets) {
+      if (target.blockId !== id) continue;
+      targetMounted = true;
+      if (target.focused?.()) targetFocused = true;
+    }
+    if (guard === "none" && documentHasFocus && targetFocused) return;
+    editorFocusMissAt = performance.now();
+    const tag = active?.localName ?? "none";
+    void recordDiagnostic("editor_focus_missed", { editorFocus: {
+      entry,
+      documentHasFocus,
+      guard,
+      targetMounted,
+      activeTag: tag === "none" || FOCUS_TAGS.has(tag) ? tag as EditorFocusMissed["activeTag"] : "other",
+      activeIsBlockEditor: activeBlock !== null,
+    } });
+  });
+}
+
 export function startEditing(
   id: string,
   offset: CaretPos = 0,
   owner: string | null = null,
   surface: string | null = null,
   preserveHistoryRestore = false,
+  entry: EditorFocusMissed["entry"] = "other",
 ) {
   // Even a refused newer request supersedes pending async navigation.
   editIntentRevision++;
   // Resolve a refused commit first, then commit a property input's draft.
-  if (!canExitEdit() || !prepareEditEntry()) return;
+  if (!canExitEdit()) return checkEditorFocus(id, entry, "exit-guard");
+  if (!prepareEditEntry()) return checkEditorFocus(id, entry, "entry-guard");
+  checkEditorFocus(id, entry, "none");
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);

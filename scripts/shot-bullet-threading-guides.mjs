@@ -38,7 +38,8 @@ try {
       }, { theme, display });
       const facts = await page.evaluate(() => {
         const row = id => document.querySelector(`[data-block-id="${id}"]`);
-        const guide = getComputedStyle(row("last").querySelector(":scope > .block-children-container > .block-children"));
+        const guideStyle = el => parseFloat(getComputedStyle(el).borderLeftWidth) > 0 ? getComputedStyle(el) : getComputedStyle(el, "::before");
+        const guide = guideStyle(row("last").querySelector(":scope > .block-children-container > .block-children"));
         const probe = document.createElement("span");
         probe.style.color = "var(--guide-color)";
         row("last").append(probe);
@@ -53,19 +54,23 @@ try {
         const elbow = last.querySelector(":scope > .block-main");
         const curve = getComputedStyle(elbow, "::before");
         return { dpr: devicePixelRatio, guide: guide.borderLeftColor, ordinary, colors,
-          ancestryGuide: getComputedStyle(row("root").querySelector(":scope > .block-children-container > .block-children")).borderLeftColor,
+          guideWidth: parseFloat(guide.borderLeftWidth),
+          parentsDrawn: [...document.querySelectorAll(".plugin-thread-lines:not(.collapsed) > .block-main")].every(el => getComputedStyle(el, "::after").display !== "none"),
+          ancestryGuide: guideStyle(row("root").querySelector(":scope > .block-children-container > .block-children")).borderLeftColor,
           straightVisible: line.display !== "none" && line.content !== "none" && line.borderLeftColor !== "rgba(0, 0, 0, 0)",
           straightBottom: box.bottom - parseFloat(line.bottom), elbowBottom: elbow.getBoundingClientRect().top + parseFloat(curve.top) + parseFloat(curve.height) };
       });
       await page.screenshot({ path: `${out}/${name}.png` });
       if (facts.dpr !== dpr) failures.push(`${name}: incorrect DPR`);
       if (display === "active" && facts.guide !== facts.ordinary) failures.push(`${name}: unrelated ordinary guide hidden (${facts.guide}, expected ${facts.ordinary})`);
+      if (display === "active" && facts.guideWidth === 0) failures.push(`${name}: ordinary guide has no painted width`);
       if (display === "active" && facts.ancestryGuide !== facts.ordinary) failures.push(`${name}: ordinary ancestry guide hidden below active path`);
       if (display === "all" && facts.straightVisible && facts.straightBottom > facts.elbowBottom + 1) failures.push(`${name}: straight guide continues beneath last elbow`);
+      if (display === "all" && !facts.parentsDrawn) failures.push(`${name}: expanded parent loses its downward line`);
       if (new Set(facts.colors.slice(0, 4)).size !== 4 || facts.colors[0] !== facts.colors[4]) failures.push(`${name}: hierarchy palette does not cycle four depths`);
       if (display === "all") {
         await page.locator('[data-block-id="root"] > .block-children-container > .block-children-left-border').hover();
-        const hoveredGuide = await page.locator('[data-block-id="root"] > .block-children-container > .block-children').evaluate(el => getComputedStyle(el).borderLeftColor);
+        const hoveredGuide = await page.locator('[data-block-id="root"] > .block-children-container > .block-children').evaluate(el => (parseFloat(getComputedStyle(el).borderLeftWidth) > 0 ? getComputedStyle(el) : getComputedStyle(el, "::before")).borderLeftColor);
         if (hoveredGuide !== "rgba(0, 0, 0, 0)") failures.push(`${name}: hover duplicates the threaded guide`);
         await page.mouse.move(950, 650);
       }

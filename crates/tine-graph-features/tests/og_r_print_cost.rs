@@ -8,12 +8,7 @@ use tine_store::cost_counters;
 use tine_store::Store;
 
 fn graph(pages: &[(String, String)]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "tine-ogr-cost-{}-{}",
-        std::process::id(),
-        pages.len()
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-ogr-cost-");
     for sub in ["pages", "journals", "logseq"] {
         fs::create_dir_all(dir.join(sub)).unwrap();
     }

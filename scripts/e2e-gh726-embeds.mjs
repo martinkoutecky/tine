@@ -11,6 +11,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -93,7 +94,7 @@ async function pasteAtDestination() {
   const content = await browser.$(".main-content .block-content");
   await content.waitForExist();
   await content.click();
-  await browser.$("textarea.block-editor").waitForExist();
+  await browser.$(editorSelector()).waitForExist();
   await browser.keys(["Control", "End"]);
   await browser.keys(["Control", "v"]);
 }

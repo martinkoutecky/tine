@@ -16,7 +16,7 @@ describe("late conflict lists (I-20)", () => {
   it("explains a migration refused because config.edn is unreadable in the catalog's words (card HVgII)", () => {
     expect(journalMigrationSkipMessage({ migrated: 0, skipped: [
       { file: "Jun 20th, 2026.md", reason: "config-unreadable: invalid utf-8 sequence of 1 bytes from index 35" },
-    ] })).toBe("1 journal file skipped during migration: Jun 20th, 2026.md (Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.)");
+    ] })).toBe("1 journal file skipped during migration: Jun 20th, 2026.md (Couldn't read config.edn. The graph is read-only; repair the config to resume editing.)");
   });
   it("discards a duplicate-journal list and notification from the old graph", async () => {
     setJournalConflicts([]);

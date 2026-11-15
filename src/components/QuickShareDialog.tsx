@@ -17,6 +17,7 @@ import {
   type QuickShareListing, type QuickSharePrepared,
 } from "../quickShare/commands";
 import { trapTab } from "./focusableElements";
+import { saveExportComments } from "../exportComments";
 
 /** How often the connect screen asks the native device flow for its state (a local call; Rust polls GitHub). */
 export const QUICK_SHARE_STATUS_POLL_MS = 1000;
@@ -113,6 +114,8 @@ export function QuickShareDialog(props: { request: Accessor<QueryPublicationRequ
 }
 
 function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
+  const [includeComments, setIncludeComments] = createSignal(props.request.includeComments);
+  let commentsChanged = false;
   const scope = {};
   const [listing, setListing] = createSignal<QuickShareListing | null>(null);
   const [preview, setPreview] = createSignal<QuickSharePrepared["preview"] | null>(null);
@@ -177,7 +180,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     const owner = latestOwner(scope, "prepare", graphOwner(() => alive));
     try {
       // A preview nobody shows any more is discarded at once, not left to expire.
-      const answer = await readOwnedResource(owner, backend().quickSharePrepare(props.request, updateId()), (stale) => discard(stale.prepareId));
+      const answer = await readOwnedResource(owner, backend().quickSharePrepare({ ...props.request, includeComments: includeComments() }, updateId()), (stale) => discard(stale.prepareId));
       if (answer.kind === "stale") return;
       setPreview(answer.value.preview);
       setMembership(answer.value.membership);
@@ -224,13 +227,18 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     // it, a graph switch cancels it (R4 / I-20).
     const owner = bindingOwner();
     const definition = quickShareDefinition(props.request);
+    const definitionHost = definition?.hostBlockId ?? props.request.hostBlockId;
+    const commentsIncluded = preview()?.includeComments ?? includeComments() ?? true;
     const { prepareId: id, shareId } = current;
     markedOn = null;
     if (definition && !updateId()) {
       // The marker is saved before anything is uploaded (D-20261018-QS3): without it a share confirmed later could
       // not find its block. If it cannot be saved, nothing is uploaded and the preview stays for another try.
       try {
-        markedOn = await markSharePending(definition, shareId, owner);
+        const choice = commentsChanged || definition.commentsChanged;
+        markedOn = await markSharePending(choice || !commentsIncluded
+          ? { ...definition, includeComments: commentsIncluded, ...(choice ? { commentsChanged: true } : {}) }
+          : definition, shareId, owner);
       } catch (failure) {
         const reason = failure instanceof Error ? failure.message : String(failure);
         if (reason !== GRAPH_CHANGED && alive) setError(t("quick-share-pending-failed", { error: reason }));
@@ -249,6 +257,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     try {
       const answer = await writeOwned(owner, backend().quickShareCreate(id));
       if (answer.kind === "stale") return;
+      if (updateId() && definitionHost && (commentsChanged || definition?.commentsChanged)) await saveExportComments(definitionHost, commentsIncluded, owner);
       if (alive) {
         setCreated(answer.value);
         setCopied(answer.value.copied);
@@ -326,6 +335,9 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             <button type="button" class="icon-btn" aria-label={t("share-dialog-close")} onClick={closeQuickShare}>✕</button>
           </div>
           <div class="settings-pane-body">
+            <label class="query-export-ack"><input type="checkbox" checked={includeComments() ?? preview()?.includeComments ?? true}
+              disabled={!!busy() || !!created() || !!pending()}
+              onChange={event => { commentsChanged = true; setIncludeComments(event.currentTarget.checked); void prepare(); }} />{t("export-include-comments")}</label>
             <Show when={busy() === "list"}><div class="query-export-note">{t("quick-share-loading")}</div></Show>
             <Show when={needsConnect()}>
               <div class="settings-section">{t("quick-share-connect-title")}</div>

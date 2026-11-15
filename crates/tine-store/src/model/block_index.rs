@@ -1,6 +1,29 @@
 //! The snapshot block index, including exact and case-insensitive candidates.
 use super::*;
 
+/// One key of [`SnapshotBlockIndex`]: binary when its text is a canonical UUID.
+#[derive(Clone, Copy)]
+pub(super) enum BlockKey<'a> {
+    Uuid(u128),
+    Text(&'a str),
+}
+
+impl<'a> BlockKey<'a> {
+    pub(super) fn of(id: &'a str) -> Self {
+        SnapshotBlockIndex::compact_uuid(id).map_or(Self::Text(id), Self::Uuid)
+    }
+}
+
+impl PartialEq<&str> for BlockKey<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        match (self, BlockKey::of(other)) {
+            (Self::Uuid(a), BlockKey::Uuid(b)) => *a == b,
+            (Self::Text(a), BlockKey::Text(b)) => *a == b,
+            _ => false,
+        }
+    }
+}
+
 /// Block id (runtime uuid or persisted `id::`) → the pages that hold it.
 /// Exact for the pages it was captured against: a full build walks every
 /// page, and each publication swaps a changed path's previous ids for its
@@ -32,14 +55,16 @@ impl SnapshotBlockIndex {
             .filter(|id| !id.is_empty())
     }
 
-    pub(super) fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(&'a str)) {
-        pub(super) fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(&'a str)) {
+    pub(super) fn for_each_block_id<'a>(doc: &'a Document, mut visit: impl FnMut(BlockKey<'a>)) {
+        pub(super) fn walk<'a>(blocks: &'a [DocBlock], visit: &mut dyn FnMut(BlockKey<'a>)) {
             for block in blocks {
-                if !block.uuid.is_empty() {
-                    visit(&block.uuid);
+                if let Some(id) = block.uuid.as_uuid() {
+                    visit(BlockKey::Uuid(id.as_u128()));
+                } else if let Some(id) = block.uuid.unpacked_text() {
+                    visit(BlockKey::of(id));
                 }
                 if let Some(id) = SnapshotBlockIndex::authored_id(block) {
-                    visit(id);
+                    visit(BlockKey::of(id));
                 }
                 walk(&block.children, visit);
             }
@@ -51,7 +76,10 @@ impl SnapshotBlockIndex {
     pub(super) fn block_ids(doc: &Document) -> std::collections::HashSet<String> {
         let mut ids = std::collections::HashSet::new();
         Self::for_each_block_id(doc, |id| {
-            ids.insert(id.to_string());
+            ids.insert(match id {
+                BlockKey::Uuid(id) => uuid::Uuid::from_u128(id).to_string(),
+                BlockKey::Text(id) => id.to_owned(),
+            });
         });
         ids
     }
@@ -98,31 +126,38 @@ impl SnapshotBlockIndex {
     }
 
     pub(super) fn owners(&self, id: &str) -> Option<&BlockOwners> {
-        if let Some(id) = Self::compact_uuid(id) {
-            return match self.uuid_overlay.get(&id) {
+        self.owners_of(BlockKey::of(id))
+    }
+
+    fn owners_of(&self, id: BlockKey<'_>) -> Option<&BlockOwners> {
+        match id {
+            BlockKey::Uuid(id) => match self.uuid_overlay.get(&id) {
                 Some(changed) => changed.as_ref(),
                 None => self.uuids.get(&id),
-            };
-        }
-        let key = (id.trim().to_ascii_lowercase(), id.to_owned());
-        match self.overlay.get(&key) {
-            Some(changed) => changed.as_ref(),
-            None => self.base.get(&key),
+            },
+            BlockKey::Text(id) => {
+                let key = (id.trim().to_ascii_lowercase(), id.to_owned());
+                match self.overlay.get(&key) {
+                    Some(changed) => changed.as_ref(),
+                    None => self.base.get(&key),
+                }
+            }
         }
     }
 
     /// Apply `change` to `id`'s ascending owner slots, recording only a change.
-    pub(super) fn edit(&mut self, id: &str, change: impl FnOnce(&mut Vec<usize>)) {
-        let prior = self.owners(id);
+    pub(super) fn edit(&mut self, id: BlockKey<'_>, change: impl FnOnce(&mut Vec<usize>)) {
+        let prior = self.owners_of(id);
         let mut slots = prior.map_or_else(Vec::new, |owners| owners.slots().to_vec());
         change(&mut slots);
         let next = BlockOwners::from_slots(slots);
         if next.as_ref() != prior {
-            if let Some(id) = Self::compact_uuid(id) {
-                self.uuid_overlay.insert(id, next);
-            } else {
-                Arc::make_mut(&mut self.overlay)
-                    .insert((id.trim().to_ascii_lowercase(), id.to_owned()), next);
+            match id {
+                BlockKey::Uuid(id) => self.uuid_overlay.insert(id, next),
+                BlockKey::Text(id) => {
+                    Arc::make_mut(&mut self.overlay)
+                        .insert((id.trim().to_ascii_lowercase(), id.to_owned()), next);
+                }
             }
         }
     }
@@ -184,17 +219,14 @@ impl SnapshotBlockIndex {
     }
 
     /// Borrow ids until sorting/deduplication is complete, then allocate each
-    /// distinct key once and consume the sorted rows in one AVL build.
+    /// distinct key once and consume the sorted rows in one B+tree build.
     pub(super) fn build(pages: &Pages) -> Self {
         let mut uuids = Vec::new();
         let mut strings = Vec::new();
         for (slot, (_, doc)) in pages.slots() {
-            Self::for_each_block_id(doc, |id| {
-                if let Some(id) = Self::compact_uuid(id) {
-                    uuids.push((id, slot));
-                } else {
-                    strings.push((id, slot));
-                }
+            Self::for_each_block_id(doc, |id| match id {
+                BlockKey::Uuid(id) => uuids.push((id, slot)),
+                BlockKey::Text(id) => strings.push((id, slot)),
             });
         }
         Self::from_rows(uuids, strings)

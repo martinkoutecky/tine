@@ -1,5 +1,5 @@
 import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model";
-import { createRoot, createMemo } from "solid-js";
+import { createRoot, createMemo, createComputed, createSignal, mapArray, untrack } from "solid-js";
 import { isEditorEmpty, BUILTIN_HIDE } from "../editor/properties";
 import { outlineMaxDepth } from "../editor/outline";
 import { visibleChildren } from "./commentOrder";
@@ -16,6 +16,17 @@ export function rootsOf(id: string): string[] {
   return p ? p.roots : [];
 }
 
+/** Whether the block's children are hidden in the view `scope` describes: folded (the
+ * scope's fold override, a zoom's force-expanded root, else the durable flag) or shown
+ * as an opaque Sheet view (grid/table/board) instead of as rows. The one answer visible
+ * traversals share. O(1); the Sheet answer is read only for an unfolded parent. */
+export function hidesChildrenInView(id: string, scope?: OutlineScope | null): boolean {
+  const node = doc.byId[id];
+  if (!node?.children.length) return false;
+  const folded = id !== scope?.forceExpandedRoot && (scope?.collapsed?.(id, node.collapsed) ?? node.collapsed);
+  return folded || blockIsOpaqueSheetView(id);
+}
+
 /** Page-local preorder without DTO copies. Scopes omit missing nodes and can
  * override collapse; ordinary page/feed order retains missing root ids. O(visible nodes). */
 function visitVisible(ids: readonly string[], visit: (id: string) => void, scope?: OutlineScope): void {
@@ -24,30 +35,45 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
     if (!node && scope) continue;
     visit(id);
     if (!node) continue;
-    const collapsed = scope?.collapsed?.(id, node.collapsed) ?? node.collapsed;
-    if ((!collapsed || id === scope?.forceExpandedRoot) && node.children.length && !blockIsOpaqueSheetView(id)) {
+    if (node.children.length && !hidesChildrenInView(id, scope)) {
       // Comments show under their block, before its other children (commentOrder.ts).
       visitVisible(visibleChildren(node.children), visit, scope);
     }
   }
 }
 
-/** Visible blocks in the MAIN view, in display order (drives editor arrow-nav),
- *  plus an id→index map. Memoized: it's recomputed only when the feed, a
- *  collapsed/children state, or a block's opaque-sheet answer changes — plain
- *  typing reruns only that block's node-scoped sheet memo, never this walk
- *  (`visibleOrderCost.test.ts`). Shared across the many callers in one tick.
- *  Scoped to the feed so navigation stays within the main content area, not
- *  satellite pages loaded for the sidebar/queries. */
-export const visibleData = createRoot(() =>
-  createMemo(() => {
-    const order: string[] = [];
-    const index = new Map<string, number>();
-    const append = (id: string) => { index.set(id, order.length); order.push(id); };
-    for (const p of mainPages()) visitVisible(p.roots, append);
-    return { order, index };
-  })
-);
+/** Main-view navigation order and id→index map; no I/O. Each feed page owns its
+ * visible traversal, so a node replacement/fold walks only that page. Plain
+ * typing observes only the node's opaque-sheet answer. Page owners are disposed
+ * on feed departure; satellite pages never participate.
+ * The flat O(visible feed blocks) answer is materialized only on request after
+ * an order/membership change, and shared until the next such change. Delivery
+ * with no navigation reader never assembles the unchanged pages' rows. */
+export const visibleData = createRoot(() => {
+  let cached: { order: string[]; index: Map<string, number> } | undefined;
+  const [revision, setRevision] = createSignal(0);
+  const invalidate = () => { cached = undefined; setRevision(v => v + 1); };
+  const pages = mapArray(mainPages, page => {
+    const order = createMemo((previous: string[] | undefined) => {
+      const next: string[] = [];
+      visitVisible(page.roots, id => next.push(id));
+      return previous && previous.length === next.length && previous.every((id, i) => id === next[i]) ? previous : next;
+    });
+    createComputed(() => { order(); invalidate(); });
+    return order;
+  });
+  createComputed(() => { pages(); invalidate(); });
+  return () => {
+    revision();
+    return cached ??= untrack(() => {
+      const order: string[] = [], index = new Map<string, number>();
+      for (const page of pages()) for (const id of page()) {
+        index.set(id, order.length); order.push(id);
+      }
+      return { order, index };
+    });
+  };
+});
 export function visibleOrder(): string[] {
   return visibleData().order;
 }
@@ -92,6 +118,8 @@ export interface OutlineScope {
    * mirrors what is rendered rather than the durable `node.collapsed` flags. */
   collapsed?: (id: string, stored: boolean) => boolean;
   navOnly?: boolean;
+  /** O(1) result-root membership for child splits (OG editor.cljs outliner-insert-block!); head placement stays kernel-owned. */
+  splitAsChild?: (id: string) => boolean;
 }
 
 export function scopedVisibleOrder(scope: OutlineScope): string[] {
@@ -155,13 +183,32 @@ export function nextVisible(id: string, scope: OutlineScope | null = null): stri
 }
 
 export function depthOf(id: string): number {
-  let d = 0;
-  let p = doc.byId[id]?.parent ?? null;
-  while (p !== null) {
+  return readDepth(id);
+}
+
+type DepthBatch = { depths: Map<string, number>; path: string[] };
+
+function readDepth(id: string, batch?: DepthBatch): number {
+  let d = -1;
+  for (let at: string | null = id; at !== null; at = doc.byId[at]?.parent ?? null) {
+    const known = batch?.depths.get(at);
+    if (known !== undefined) { d += known + 1; break; }
+    batch?.path.push(at);
     d++;
-    p = doc.byId[p].parent;
+  }
+  if (batch) {
+    let depth = d;
+    for (const at of batch.path) batch.depths.set(at, depth--);
+    batch.path.length = 0;
   }
   return d;
+}
+
+/** Source depths aligned with rows in any order. O(rows + distinct ancestors),
+ * no I/O; the temporary parent answers are discarded when the call returns. */
+export function depthsOf(ids: readonly string[]): number[] {
+  const batch: DepthBatch = { depths: new Map(), path: [] };
+  return ids.map(id => readDepth(id, batch));
 }
 
 /** Check the deepest descendant after reparenting an existing subtree. */

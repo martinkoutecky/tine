@@ -6,6 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, editorState, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -407,19 +408,19 @@ await withApp(0, true, async (browser) => {
   await waitDrawer(browser, "right");
   const contentSelector = `.right-sidebar [data-block-ref='${EDIT_ID}'] .block-content`;
   await browser.$(contentSelector).click();
-  const editor = await browser.$(`.right-sidebar [data-block-ref='${EDIT_ID}'] textarea.block-editor`);
+  const editor = await browser.$(editorSelector(`.right-sidebar [data-block-ref='${EDIT_ID}']`));
   await editor.waitForExist({ timeout: 5_000 });
   await replaceEditorText(browser, editor, "Native plain [[Comp");
   await browser.$(".autocomplete .ac-item").waitForExist({ timeout: 10_000 });
   await browser.keys(["Escape"]);
   await browser.$(".autocomplete").waitForExist({ timeout: 5_000, reverse: true });
   const completionEscaped = await snapshot(browser);
-  assert(completionEscaped.activeDrawer === "right" && completionEscaped.active?.tag === "TEXTAREA" && completionEscaped.active?.inRight,
+  assert(completionEscaped.activeDrawer === "right" && (await editorState(browser, ".right-sidebar"))?.focused && completionEscaped.active?.inRight,
     "completion Escape also closed the editor/drawer", completionEscaped);
   await replaceEditorText(browser, editor, SAVED_TEXT);
-  const composition = await browser.execute(() => {
-    const textarea = document.activeElement;
-    if (!(textarea instanceof HTMLTextAreaElement)) return { dispatched: false };
+  const composition = await withEditor(browser, ".right-sidebar", driver => {
+    if (!driver?.focused) return { dispatched: false };
+    const textarea = driver.element;
     textarea.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
     const event = new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true, composed: true });
     Object.defineProperty(event, "isComposing", { configurable: true, value: true });

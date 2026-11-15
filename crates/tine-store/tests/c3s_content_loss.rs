@@ -2,20 +2,13 @@
 //! `Store` entry points a user action reaches.
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::test_host_writer::{HostWriter, SaveRefused};
 use crate::{FileRev, PageId, SaveBase, Store};
 use std::sync::Arc;
 
 fn scratch(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-c3s-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-c3s-{label}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("logseq")).unwrap();

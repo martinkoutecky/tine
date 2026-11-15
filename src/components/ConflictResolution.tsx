@@ -20,7 +20,7 @@ import { msg, t, type Msg } from "../i18n";
 // through `resolve_sync_conflict` / `resolve_vcs_marker_conflict`: one tine-store
 // transaction guarded by the diff's `base_rev`, which stages the replaced bytes
 // (the copy, or the marker file) in the recoverable trash in the same commit.
-import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { Show, For, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned } from "../owned";
@@ -28,7 +28,7 @@ import { pushToast } from "../toasts";
 import { conflictQueue, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, settleArtifactConflict } from "../ui";
 import { openFile } from "../router";
 import { ConflictFileRow } from "./JournalConflictFileRow";
-import { applyGraphChange, applyLiveResolution, conflictReason, flushPage, isConflicted, isDirty, isSaving, liveConflictDraft, node } from "../document";
+import { applyLiveResolution, conflictReason, flushPage, isConflicted, isDirty, isSaving, liveConflictDraft, node } from "../document";
 import { editingId } from "../editorController";
 import { readOr } from "../resourceRead";
 import {
@@ -45,6 +45,7 @@ import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from ".
 import { listen, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
 import { claimConflictReview, conflictReviewRequest, pageConflictToResolve } from "../liveConflicts";
 import { conflictForPage } from "../conflictQueue";
+import { createGraphResource } from "../graphResource";
 
 function errorDetail(error: unknown): string {
   // Tauri rejects a `Result<T, String>` with the bare string; keep its text.
@@ -220,7 +221,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
 
   // A live conflict re-reviews when a newer refused save observed another disk
   // revision; every source re-reviews after a refused Apply.
-  const [readResource, { refetch }] = createResource(
+  const [readResource, { refetch }] = createGraphResource(
     () => `${conflict().id}\0${conflict().source === "live-save" ? conflictReason(conflict().page_name)?.observedRev ?? "" : ""}`,
     () => readDiff(conflict(), () => mounted),
   );
@@ -308,7 +309,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     // Plain snapshots only: resolving retires the queue object, which disposes
     // the <Show> that owns `props.conflict`.
     const c = conflict();
-    const { source, id, page_name: pageName, page_path: pagePath, kind } = c;
+    const { source, id, page_name: pageName, page_path: pagePath } = c;
     const copy = c.sides.find((s) => s.role === "theirs")?.path ?? null;
     const live = c.live;
     const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
@@ -373,10 +374,6 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       void refreshSyncConflicts();
       // A day with three files still has one to reconcile after this fold.
       if (source === "duplicate-journal") void refreshJournalConflicts();
-      // Own-origin writes raise no watcher event, so the open page reloads here
-      // through the ordinary external-change rule: a clean page takes the merged
-      // file; one edited meanwhile keeps the edit and is marked conflicted.
-      await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
       if (!owner()) return;
       pushToast(msg("conflict-resolution-applied", { source, page: pageName }), "success");
     } catch (e) {

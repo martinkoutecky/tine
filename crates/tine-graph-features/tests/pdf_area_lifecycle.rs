@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::pdf::{Highlight, Position, Rect};
 use tine_graph_features::pdf;
@@ -11,12 +10,7 @@ fn store(root: &Path) -> std::sync::Arc<Store> {
 }
 
 fn scratch(label: &str) -> PathBuf {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let path = std::env::temp_dir().join(format!(
-        "tine-pdf-area-lifecycle-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let path = crate::test_support::fresh_dir(&format!("tine-pdf-area-lifecycle-{label}-"));
     fs::create_dir_all(path.join("pages")).unwrap();
     path
 }

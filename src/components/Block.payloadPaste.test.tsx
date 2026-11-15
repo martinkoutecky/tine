@@ -4,7 +4,6 @@ import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { clearClipboardPayload, copyBlockOutline, peekClipboardPayload } from "../clipboard";
-import { setCopyIncludeSubtree } from "../copySettings";
 import { startEditing } from "../editorController";
 import { initParser } from "../render/parse";
 import { AstBody } from "../render/body";
@@ -25,7 +24,6 @@ afterEach(() => {
   clearClipboardPayload();
   resetStore();
   setGraphMeta(null);
-  setCopyIncludeSubtree(true);
   vi.restoreAllMocks();
   document.body.innerHTML = "";
   setToasts([]);
@@ -164,11 +162,10 @@ describe("private block payload paste necessity", () => {
     }
   });
 
-  it("replays the private full subtree for foreign equal text when subtree text-copy is disabled", async () => {
+  it("replays the private full subtree for foreign equal text", async () => {
     const host = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     seedHost(host);
     setGraphMeta({ root: "/graph" } as any);
-    setCopyIncludeSubtree(false);
     vi.spyOn(backend(), "writeRich").mockResolvedValue();
     await copyBlockOutline("copy", "- parent", {
       blocks: [{

@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import {
   closeInPageFind,
   inPageFindActiveIndex,
@@ -7,6 +7,8 @@ import {
   inPageFindMatches,
   inPageFindOpen,
   inPageFindQuery,
+  inPageFindReferencePanels,
+  inPageFindPendingHosts,
   inPageFindRetiredDays,
   inPageFindPaneScopeId,
   refreshInPageFindHighlights,
@@ -24,6 +26,7 @@ import {
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { onEachWindow } from "../windowRealm";
 import { paneRouter } from "../panes";
+import { requestReferenceSearch } from "../referenceSectionState";
 
 const FIND_QUERY_DEBOUNCE_MS = 110;
 
@@ -194,6 +197,27 @@ export function InPageFind(): JSX.Element {
             router.openQueryInNewTab(query, "search", true);
           }}>{t("in-page-find-search-journals")}</button>
         </div>}</Show>
+        {/* GH #935: reference panels load groups as you scroll, so Find leaves them out
+            of its count and says so; their own search covers every group. */}
+        <Show when={inPageFindPendingHosts() > 0 || inPageFindReferencePanels().length > 0}>
+        <div class="inpage-find-retired" role="status">
+        <Show when={inPageFindPendingHosts() > 0}>
+          {t("in-page-find-pending-hosts", { count: inPageFindPendingHosts() })}
+        </Show>
+        <For each={inPageFindReferencePanels()}>{(panel, index) => <>
+          <Show when={inPageFindPendingHosts() > 0 || index() > 0}>{" · "}</Show>
+          {t(`in-page-find-references-${panel.kind}`)}
+          <Show when={panel.kind !== "block"}>{" — "}
+            <button type="button" class="inpage-replace-btn" onClick={() => {
+              commitQuery();
+              const query = draftQuery();
+              closeFind();
+              requestReferenceSearch({ section: panel.kind as "linked" | "unlinked", pages: panel.pages, query });
+            }}>{t(`in-page-find-search-references-${panel.kind as "linked" | "unlinked"}`)}</button>
+          </Show>
+        </>}</For>
+        </div>
+        </Show>
         <Show when={inPageReplaceOpen()}>
           <div class="inpage-find-row inpage-replace-row">
             <input

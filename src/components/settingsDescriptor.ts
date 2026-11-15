@@ -34,16 +34,16 @@ export function mediaEditorSetting(editor: MediaEditor): SettingDescriptor {
 }
 
 export function installedThemeSetting(theme: InstalledTheme): SettingDescriptor {
-  return { id: `theme.installed.${theme.key}`, tab: "appearance", label: theme.manifest.name,
+  return { id: `theme.installed.${theme.key}`, tab: "themes", label: theme.manifest.name,
     description: theme.manifest.description };
 }
 
 export function communityThemeSetting(theme: RegistryTheme): SettingDescriptor {
-  return { id: `theme.community.${theme.id}`, tab: "appearance", label: theme.name, description: theme.description };
+  return { id: `theme.community.${theme.id}`, tab: "themes", label: theme.name, description: theme.description };
 }
 
 export function galleryThemeSetting(theme: Pick<GalleryTheme, "id" | "name" | "author">): SettingDescriptor {
-  return { id: `theme.gallery.${theme.id}`, tab: "appearance", label: theme.name, description: theme.author };
+  return { id: `theme.gallery.${theme.id}`, tab: "themes", label: theme.name, description: theme.author };
 }
 
 export function pluginSetting(plugin: ManagedPlugin, definition: NonNullable<ManagedPlugin["manifest"]["settings"]>[number]): SettingDescriptor {

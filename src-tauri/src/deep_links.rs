@@ -190,7 +190,7 @@ fn target_in_view(
 ) -> Result<Option<LinkTarget>, String> {
     let mut target = LinkTarget {
         root: root.into(),
-        display_root: tine_core::graph_paths::normalize_graph_path(root),
+        display_root: tine_core::graph_paths::display_graph_path(root),
         graph_id: None,
         name: None,
         page_kind: None,
@@ -310,7 +310,7 @@ fn resolve_link_candidates(
     let mut errors = Vec::new();
     let mut ruled_out = Vec::new();
     let marker = |root_text: &str, id: String, error: Option<String>| LinkTarget {
-        display_root: tine_core::graph_paths::normalize_graph_path(root_text),
+        display_root: tine_core::graph_paths::display_graph_path(root_text),
         root: root_text.into(),
         graph_id: Some(id),
         name: request.page.clone(),
@@ -334,7 +334,7 @@ fn resolve_link_candidates(
         let root_text = root.display().to_string();
         if request.page.is_none() && request.block.is_none() {
             candidates.push(LinkTarget {
-                display_root: tine_core::graph_paths::normalize_graph_path(&root_text),
+                display_root: tine_core::graph_paths::display_graph_path(&root_text),
                 root: root_text,
                 graph_id: identity.ok().flatten(),
                 name: None,

@@ -332,10 +332,15 @@ impl Live {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let mail = self
-                .mail
-                .recv_timeout(left)
-                .unwrap_or_else(|_| panic!("no mail: {what}"));
+            let mail = self.mail.recv_timeout(left).unwrap_or_else(|_| {
+                let state = self.host.driver.shared.state_for_tests();
+                panic!(
+                    "no mail: {what}; page={:?}; job={:?}; saves={}",
+                    state.progress.host.pages.get(key),
+                    state.progress.host.job,
+                    state.progress.host.storage_diag.snapshot(),
+                )
+            });
             assert_eq!(
                 mail.session,
                 self.host.session(),
@@ -1159,7 +1164,20 @@ fn v3_an_external_return_to_the_pre_save_observation_updates_the_index() {
     let writer = live.store.writer.lock().unwrap();
     let id = live.submit(&key, "- p\n", page.version, None).unwrap();
     let saved = live.answer(&key, id).page.unwrap().version;
-    live.until_disk(&key, "- p\n");
+    // A visible rename can still fail the directory-sync publication check.
+    // Wait for the host's completed save while the writer keeps its index
+    // publication (and the watcher's observation of P) blocked.
+    let shared = &live.host.driver.shared;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !shared.state_for_tests().progress.host.pages[&key].clean() {
+        assert!(Instant::now() < deadline, "the save never completed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        shared.state_for_tests().progress.host.pages[&key].obs,
+        Some(text("- a\n")),
+        "the watcher has not observed the saved bytes"
+    );
     live.rewrite_externally(&key, "- a\n");
     drop(writer);
     live.wait(&key, "the adopted return", |mail| {

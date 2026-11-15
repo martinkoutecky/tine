@@ -198,12 +198,15 @@ async function waitDrawer(browser, side) {
 async function waitNoDrawer(browser) {
   await browser.waitUntil(async () => (await activeDrawer(browser)) === null, { timeout: 8_000, timeoutMsg: "drawer did not close" });
 }
+// By class, not by label text, so a casing or translation change cannot break it (#926 renamed the left one).
+const drawerClose = (side) => side === "left" ? ".sidebar-close" : ".rs-close";
 // A fresh forced-phone launch may start with the left drawer showing (the
 // existing mobile-drawers journey closes it the same way); the gestures under
 // test start from a closed drawer.
 async function closeStartupDrawer(browser) {
-  if ((await activeDrawer(browser)) !== null) {
-    await browser.$(".mobile-drawer-close, .rs-close").click();
+  const side = await activeDrawer(browser);
+  if (side !== null) {
+    await browser.$(drawerClose(side)).click();
     await waitNoDrawer(browser);
   }
 }
@@ -516,14 +519,14 @@ await withApp(4, "ios", async (browser) => {
   assert(await browser.execute(() => matchMedia("(prefers-reduced-motion: reduce)").matches), "GTK Reduce Motion fixture did not reach WebKit");
   for (const side of ["left", "right"]) {
     if (side === "right") await browser.$("[data-topbar-overflow-trigger]").click();
-    const sample = await browser.execute((side, toggle) => {
+    const sample = await browser.execute((side, toggle, close) => {
       document.querySelector(toggle).click();
       const panel = document.querySelector(`[data-mobile-drawer-panel="${side}"]`);
       const scrim = document.querySelector("[data-mobile-drawer-scrim]");
       const opened = { exists: !!panel, animations: panel?.getAnimations().length, transform: panel && getComputedStyle(panel).transform, opacity: scrim && getComputedStyle(scrim).opacity, scrimAnimations: scrim?.getAnimations().length };
-      document.querySelector(side === "left" ? ".mobile-drawer-close" : ".rs-close").click();
+      document.querySelector(close).click();
       return { side, opened, closed: !document.querySelector(`[data-mobile-drawer-panel="${side}"]`) && !document.querySelector("[data-mobile-drawer-scrim]") };
-    }, side, drawerToggle(side));
+    }, side, drawerToggle(side), drawerClose(side));
     proof.motion.push({ reduced: true, ...sample });
     assert(sample.opened.exists && sample.opened.animations === 0 && sample.opened.scrimAnimations === 0 && sample.opened.transform === "none" && sample.opened.opacity === "1" && sample.closed, "Reduce Motion did not make drawer and shade instant", sample);
   }

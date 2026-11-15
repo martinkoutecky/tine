@@ -7,9 +7,10 @@ import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
+import { CodeLanguage, blurToOwnCodeLanguage } from "../render/CodeLanguage";
 import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
-import { LineGutter } from "../render/LineGutter";
+import { codeGutterStyle, LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { editorCompletions, propertyNameInputCaret } from "../editor/editorCompletions";
 import { reportUiFailure } from "../uiFailure";
@@ -27,7 +28,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection, keepCaretThroughRewrite, syncTextareaToStore } from "../editor/restoreMovedSelection";
 import { navigateJournalDown } from "../editor/journalNavigation";
 import { focusMountedEditor } from "../editor/surfaceFocus";
-import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, blockWritable, setRaw, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, setCollapsed, beginPageHeaderEdit, finishPageHeaderEdit, exitMultilineBlock, insertOutlineAfter, insertSiblingAfterSubtree, insertEditorOutline, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, isSelected, isBlockMoving, withBlockMoving, orderedListMarker, depthOf, blockExternalId, pinPageWhileDrafting, blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody, storedFold, type OutlineScope, node as docNode } from "../document";
 import { pasteAsLinkEdit } from "../blockRefActions";
 import { BlockBullet } from "./BlockBullet";
 import {
@@ -103,7 +104,7 @@ import { editorCommitRecovery } from "../editor/commitRecovery";
 import { commitBlockEditorExit, editorMarkerBaseline } from "../editor/commitExit";
 import { editorWindowFocus } from "../editor/windowFocus";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
-import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
+import { codeBodyExitTrim, codeBodyProjection, codeLanguageCaret, codeLanguageChange, codeSourceCaret } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
@@ -136,7 +137,7 @@ import { CommentBelowChip } from "./CommentBelowChip";
 import { AuthorChip, CommentComposer, CommentHeader, CommentQuoteHeader, MarginMarker, QuoteHighlightProvider } from "./CommentParts";
 import { commentEditorHide, commentFacts, marginNavigation, marginOutline } from "./blockComments";
 import { BlockRefCountBadge } from "./BlockRefCountBadge";
-import { AuthorGutter } from "./AuthorGutter";
+import { authorMarksHidden } from "../authorMarksPref";
 import type { AuthorNeighbors } from "./authorRuns";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, requestFrame, viewportOf } from "../windowRealm";
 import { EditorGate } from "./EditorGate";
@@ -144,6 +145,7 @@ import { cm6EditorEnabled } from "../editor/cm6Setting";
 import { noteLayoutDirAttr } from "../noteLayoutSetting";
 import { arrowLeave, blockDirAttr } from "../render/textDirection";
 import { editsLikeOutline, gridBlocksCommand, gridEditKey, gridNestedBlock, gridOutlineScope, openGridTarget, runGridOutline } from "../sheet/gridEditMove";
+import { splitBlockInView } from "../editor/splitBlockInView";
 import { sheetFaceGridId, sheetOutlineNeighbor } from "../sheet/outlineNavigation";
 import { gridEntry } from "../sheet/gridNeighbour";
 export { applySheetViewSlashAction } from "./block/sheetViewSlash";
@@ -180,7 +182,7 @@ export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 // block preceding the embed on the host page (OG leaves the embed upward instead
 // of trapping the caret).
 // D-20261030-EMB: `rowHost` names the host a whole-block embed's one root row stands for.
-export const EmbedNavExitContext = createContext<{ hostBlockId: string; firstRoot: () => string | undefined; rowHost: (id: string) => RowHost | null } | null>(null);
+export const EmbedNavExitContext = createContext<{ hostBlockId: string; hostSurface: string; firstRoot: () => string | undefined; rowHost: (id: string) => RowHost | null } | null>(null);
 /** A plain bullet click opens the block here instead of zooming the pane (a
  *  hover preview opens it in a new tab, D-20261023-VQ). */
 export const BulletOpenContext = createContext<((id: string) => void) | null>(null);
@@ -283,11 +285,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
+  // GH #893: the author mark is a faint tint behind the row's own text. Comments, replies and the
+  // bulletless host of a whole-block embed keep their own presentation; the source block tints itself.
+  const authorTinted = () => author() !== null && !bulletless() && !blockEmbedHost() && !authorMarksHidden();
   let mainEl: HTMLDivElement | undefined; const expandThread = () => { const surface = viewCollapseSurface(); if (surface) surface.setMany([props.id], false); else setCollapsedBlocks([props.id], false); };
   const commentPresentation = createMemo(() => hasCommentIdentity() ? {
     quote: <CommentQuoteHeader parentId={node().parent} selector={groupedQuote() || !bulletless() ? null : commentSelector()} />,
     header: <Show when={bulletless()}><CommentHeader id={props.id} author={author()} folded={collapsed()} toggleFold={() => toggleViewFold(props.id, viewCollapseSurface(), collapsed())} /></Show>,
-    gutter: <AuthorGutter author={bulletless() || blockEmbedHost() ? null : author()} />,
     composer: <Show when={commentClasses()["comment-card"]}><CommentMessages id={props.id} collapsed={collapsed()} expand={expandThread} /><CommentComposer id={props.id} surface={surfaceKey} card={() => mainEl?.parentElement} collapsed={collapsed} expand={expandThread} /></Show>,
   } : null);
   const stickyParent = () => stickyParents() && !bulletless() && (props.forceExpanded || !collapsed()) && (macro() ? blockHasPageEmbed(props.id) && !editing() : hasChildren());
@@ -304,6 +308,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
             ...commentClasses(),
+            "author-tinted": authorTinted(),
             // The card of a thread with a message changed since the user last looked (DESIGN §12),
             // also while the thread is folded to "N replies" and its message rows are not drawn.
             "comment-seen-changed": !!commentClasses()["comment-card"] && seenThread(props.id),
@@ -312,7 +317,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id} data-author={storedAuthor() ?? undefined}
-      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope }); }}
+      ref={(el) => { if (embedRow) bindRowHost(el, rowHost); bindRowPosition(el, () => rowHost() ?? { id: props.id, scope: outlineScope, surface: surfaceKey }); }}
       data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
@@ -326,7 +331,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           // GH #501: touch swipes on the row while a touch input exists, following
           // it if it appears or goes away (src/blockSwipe.ts).
           followBlockSwipe(el, { get id() { return rowHost()?.id ?? props.id; }, get scope() { return rowHost() ? rowHost()!.scope : outlineScope; },
-            editorId: props.id, editing, readOnly: () => blockPageReadOnly(rowHost()?.id ?? props.id) });
+            editorId: props.id, surface: rowHost()?.surface ?? surfaceKey, editing, readOnly: () => blockPageReadOnly(rowHost()?.id ?? props.id) });
         }}
         classList={{
           // Heading level on the row so the bullet column can match the (taller)
@@ -372,6 +377,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div
           class="block-content-wrapper"
           classList={{ "read-only": readOnly() }}
+          title={authorTinted() && !editing() ? translate("comment-written-by", { author: author()! }) : undefined}
           onMouseDown={(e) => {
             // Mousedown anywhere in the row (not on a link/chip) arms the same
             // click-or-drag gesture as block content, with an end-of-block caret
@@ -381,7 +387,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               beginEditGesture(e, props.id, docNode(props.id).raw.length, instanceId, outlineScope);
           }}
         >
-          {commentPresentation()?.gutter}
           <Show
             when={editing() ? node() : undefined} keyed
             fallback={
@@ -491,18 +496,16 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const inResults = useContext(ResultWriteTargetContext);
   const resultTarget = (id: string) => inResults(id) ? liveWriteTarget(id) : undefined;
   const collapseSurface = useContext(CollapseSurfaceContext);
-  // Ref/query arrow navigation stays in the rendered result surface (master
-  // GH #341), while structural edits still target the source outline: a
-  // split/merge destination need not remain a query or backlink result. Embeds
-  // are true transclusions, so both navigation and structural destinations stay
-  // there.
+  // Ref/query navigation and Enter's child stay in the rendered occurrence.
+  // Other structural destinations may leave the results and use the source
+  // outline (GH #341). Embeds keep both in their transclusion.
   const navigationSurface = () =>
     surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:") ? surfaceKey : null;
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   // A navOnly display-list scope must never act as a merge/structural topology.
   const structuralScope = outlineScope?.navOnly ? null : outlineScope;
   // Where this row sits: a whole-block embed's root row stands for its host (D-20261030-EMB).
-  const position = (): RowHost => embedNavExit?.rowHost(props.id) ?? { id: props.id, scope: outlineScope };
+  const position = (): RowHost => embedNavExit?.rowHost(props.id) ?? { id: props.id, scope: outlineScope, surface: surfaceKey };
   const setOccurrenceCollapsed = (value: boolean) => {
     if (!collapseSurface) { setCollapsed(props.id, value); return; }
     const n = docNode(props.id);
@@ -581,6 +584,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return unchanged();
     const commitAsCalc = opts?.calc ?? isCalc();
+    if (!commitAsCalc && !codeShown()) text = codeLanguageChange(editorValue(), text, pageFmt())?.value ?? text;
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
     // a typing convenience) in the live buffer — OG keeps it while you edit and
@@ -597,7 +601,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
     const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : text;
-    const next = commitRecovery.join(() => (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt()), text);
+    const next = commitRecovery.join(() => (!commitAsCalc ? codeView.join(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt()), text);
     if (next === node().raw) return unchanged();
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     const settled = rawToWrite(props.id, next, { ...setRawOpts, markerBaseline: markerBaseline(node().raw) });
@@ -682,10 +686,14 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       const scaffold = scaffoldLanguagePicker ? codeBodyProjection(editorValue(), pageFmt()) : null;
       scaffoldLanguagePicker = false;
       if (scaffold) {
+        // Map the source selection into the body: input may already be committed there (GH #879).
+        const at = (pos: number) => Math.max(0, Math.min(scaffold.body.length, pos - scaffold.open.length));
+        const start = at(ref.selectionStart), end = at(ref.selectionEnd), direction = ref.selectionDirection;
         codeView.enter(scaffold.open.length);
+        if (!codeShown()) return;
         queueMicrotask(() => {
           ref.value = scaffold.body;
-          ref.setSelectionRange(0, 0);
+          ref.setSelectionRange(start, end, direction);
           autosize();
         });
       }
@@ -713,20 +721,13 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const fence = codeFences(raw, pageFmt()).find(f => f.openEnd === p.open.length);
     return fence ? { before: raw.slice(0, fence.start), after: raw.slice(fence.end) } : null;
   });
-  const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
-  const codeWrapCommit = codeView.join;
-  // One door to the fence language picker: `/Code block` and the hand-typed ```
-  // scaffold both come here (GH #507). While open `codeShown` keeps the raw
-  // view so the opener line stays visible; choosing a language, or Escape,
-  // then drops into the body-only view.
+  const codeEditing = createMemo(() => codeShown() !== null);
+  const codeLines = createMemo(() => codeEditing() ? (codeShown()?.body ?? editorValue()).split("\n") : []);
   let scaffoldLanguagePicker = false;
   const openFenceLanguagePicker = (raw: string, fenceEnd: number) =>
     completion.openLanguagePicker(raw, fenceEnd);
   let acListRef: HTMLDivElement | undefined;
-  // The autocomplete popup is rendered through a Portal (fixed-positioned), so a
-  // clipping ancestor — the right sidebar's `overflow:auto`, a modal — can't cut
-  // it off. We anchor it to the textarea's viewport rect and recompute while it's
-  // open (the editor grows as you type) and on scroll/resize.
+  // Anchor the autocomplete Portal to the caret, outside clipping ancestors.
   const [acRect, setAcRect] = createSignal<{ left: number; top: number; bottom: number } | null>(null);
   // The popup hangs against the CARET'S line (OG's caret-aware placement), not the
   // bottom of a tall editor: a page-properties block with many rows would
@@ -802,7 +803,6 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const selToolbar = selectionToolbarPlacement(() => ref, () => !touchPrimary() && hasSel());
   const updateSel = () => {
     if (!editorMounted || !ref.isConnected || !liveNode()) return;
-    codeView.syncSelection(ref);
     const selected = ref.selectionStart !== ref.selectionEnd;
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
@@ -852,7 +852,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     queueMicrotask(updateSel);
   };
 
-  // A completed raw region maps back into its body-only code/calc projection.
+  // A completed scaffold maps into its body; existing source stays raw.
   const replaceCompletion = (raw: string, caret: number, close: () => void) => {
     // Let a calculator completion enter calc mode in the mounted editor (GH #57).
     const enteredCalc = !editingCalc() ? calcSource(raw) : null;
@@ -863,12 +863,13 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     commit(raw);
     if (enteredCalc !== null) setEditingCalc(true);
     close();
-    if (codeWrap) codeView.enter(codeWrap.open.length);
+    if (codeWrap && !codeShown()) codeView.enter(codeWrap.open.length);
+    const projected = codeShown();
     queueMicrotask(() => {
-      const shown = enteredCalc ?? codeWrap?.body ?? raw;
+      const shown = enteredCalc ?? projected?.body ?? raw;
       const openingEnd =
-        enteredCalc !== null ? raw.indexOf("\n") + 1 : codeWrap ? codeWrap.open.length : 0;
-      const shownCaret = enteredCalc !== null || codeWrap
+        enteredCalc !== null ? raw.indexOf("\n") + 1 : projected ? projected.open.length : 0;
+      const shownCaret = enteredCalc !== null || projected
         ? Math.max(0, Math.min(shown.length, caret - openingEnd))
         : caret;
       ref.value = shown;
@@ -944,8 +945,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       + (renderedClickOffset(event.currentTarget as HTMLElement, raw, pageFmt(), event) ?? raw.length);
     event.preventDefault();
     event.stopPropagation();
-    // The same parser-owned entry boundary handles another code card, or
-    // returns to raw source for prose. No content is rewritten on a click.
+    // Parser-owned entry selects another code body or the surrounding source.
     codeView.enter(offset);
     ref.value = textareaValue();
     const caret = Math.max(0, Math.min(ref.value.length, offset - (codeShown()?.open.length ?? 0)));
@@ -966,10 +966,10 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     if (!editingCalc() && calcSource(editorValue()) !== null) setEditingCalc(true);
     const historySelection = again ? null : takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = again ? again.offset : takeCaretFor(props.id);
-    const rawCaret = historySelection ? historySelection.start
+    const rawCaret = historySelection ? historySelection.codeBodyStart ?? null
       : want !== null && typeof want === "object" && "start" in want ? want.codeBodyStart ?? null
       : typeof want === "number" ? want : null;
-    if (rawCaret !== null) codeView.enter(rawCaret, historySelection?.end ?? rawCaret);
+    codeView.enter(rawCaret ?? 0); // a restored range may outrun a shorter body; it is clamped below
     ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
     ref.focus({ preventScroll: true }); // the engine's own focus scroll differs; revealCaretSettled (onMount) owns it (GH #745)
     const v = ref.value;
@@ -1021,7 +1021,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       blockId: props.id,
       owner: editingOwner(),
       surface: surfaceKey,
-      selection: () => codeView.selection(ref),
+      selection: () => codeView.selection(ref.selectionStart, ref.selectionEnd),
       viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
       focused: () => !!ref && documentOf(ref).activeElement === ref,
     });
@@ -1084,11 +1084,9 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     const duplicate = compositionEndValue === ref.value;
     compositionEndValue = null;
     if (duplicate) return;
-    // Editor keystroke post-processing on a single inserted char (not paste/IME/
-    // delete). All branches edit ref.value BEFORE commit so the store sees it.
+    // Single-key transforms (not paste/IME/delete) edit ref.value BEFORE commit.
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
-      const ch = e.data;
-      let handled = false;
+      const ch = e.data; let handled = false;
       // OG parity: typing `::` at the beginning of a property line places the
       // caret before the delimiter. Subsequent property-name characters are
       // authored as `name|::`, not the malformed `::name` that caused GH #306.
@@ -1161,8 +1159,8 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
   const onCompositionEnd = () => {
     compositionActive = false;
     if (!applyFullWidthRefReplace(ref)) applyFullWidthCloserThrough(ref, autoPairing());
-    compositionEndValue = ref.value;
     commit(ref.value);
+    compositionEndValue = ref.value;
     endCompositionHold();
     autosize();
     refreshAutocompleteAfterInput();
@@ -1216,8 +1214,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     if (!atEdge) return false;
     e.preventDefault();
     commit(raw);
-    selectBlock(position().id, position().scope);
-    moveSelection(dir, true);
+    const selected = position(); selectBlock(selected.id, selected.scope, selected.surface);
     return true;
   };
   const cycleTodoCmd = () => {
@@ -1303,7 +1300,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       // The source's outline scope belongs to the embed. Selection belongs to
       // its containing outline instead (including a nested embed's host).
       const host = ref.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
-      selectBlock(embedNavExit.hostBlockId);
+      selectBlock(embedNavExit.hostBlockId, null, embedNavExit.hostSurface);
       host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
       return true;
     },
@@ -1332,7 +1329,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (!fullySelected) return false;
       e.preventDefault();
       commit(ref.value);
-      selectBlockSubtree(position().id, position().scope);
+      const selected = position(); selectBlockSubtree(selected.id, selected.scope, selected.surface);
       return true;
     },
     "editor/cycle-todo": (e) => { e.preventDefault(); cycleTodoCmd(); return true; },
@@ -1798,8 +1795,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         const newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
         if (newId) startEditing(newId, 0, null, editSurface());
       } else {
-        const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
-        splitBlock(props.id, start, zoomRoot, zoomRoot, editSurface(), hideFn(), replacement);
+        splitBlockInView(props.id, start, outlineScope, navigationSurface(), hideFn(), replacement, collapseSurface);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
@@ -1960,7 +1956,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       if (revealed !== null) {
         ref.value = revealed; ref.setSelectionRange(revealed.length, revealed.length);
         ref.focus(); autosize();
-      } else selectBlock(position().id, position().scope); // exit raw editing into block selection
+      } else { const selected = position(); selectBlock(selected.id, selected.scope, selected.surface); } // exit raw editing into block selection
     }
   };
 
@@ -2012,6 +2008,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
       return;
     }
     const target = e.relatedTarget;
+    if (blurToOwnCodeLanguage(target, ref)) { commit(ref.value); return; }
     const sameBlockEditor = isElementTag(target, "textarea")
       && target.classList.contains("block-editor")
       && target.closest("[data-block-id]")?.getAttribute("data-block-id") === props.id;
@@ -2213,20 +2210,23 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
     if (prepared instanceof Promise) void prepared.then(insert);
     else insert(prepared);
   }
+  const revealCodeLanguage = (caret: number) => {
+    if (!blockWritable(props.id)) return;
+    codeView.revealRaw(ref.value, commit);
+    ref.value = editorValue(); ref.focus(); ref.setSelectionRange(caret, caret); autosize();
+  };
   return (
     <div class="editor-wrap" dir={blockDirAttr(docNode(props.id)?.raw ?? "", pageFmt())} classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
-      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></BlockRenderBoundary></div>}</Show>
-      <div class="code-editor-region" dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
+      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><BlockRenderBoundary raw={before()}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} codeEditAction={() => !blockWritable(props.id) ? undefined : byte => { const caret = codeSourceCaret(before(), pageFmt(), byte); if (caret !== null) revealCodeLanguage(caret); }} /></BlockRenderBoundary></div>}</Show>
+      <div class="code-editor-region" style={codeGutterStyle(codeLines().length)} dir={codeEditing() || isCalc() ? "ltr" : undefined} classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
-        <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
-        <Show when={codeShown() ?? codeBodyProjection(editorValue(), pageFmt())}>
+        <CodeLanguage lang={codeShown()?.lang ?? ""} onEdit={!blockWritable(props.id) ? undefined : () => revealCodeLanguage(codeLanguageCaret(editorValue(), pageFmt(), codeShown()?.open.length))} />
+        <Show when={codeShown()}>
           {code => <CopyButton text={code().body} title={translate("render-copy-code")} class="code-copy" preserveFocus />}
         </Show>
-        <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
+        <LineGutter lines={codeLines()} code />
       </Show>
-      <Show when={isCalc()}>
-        <LineGutter lines={calcRows().map(row => row.input)} />
-      </Show>
+      <Show when={isCalc()}><LineGutter lines={calcRows().map(row => row.input)} /></Show>
       <textarea
         ref={ref}
         class="block-editor"
@@ -2257,7 +2257,7 @@ function EditorEngine(props: { id: string; propertySession?: ReturnType<typeof p
         rows={1}
       />
       </div>
-      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><BlockRenderBoundary raw={after()}><AstBody raw={after()} format={pageFmt()} /></BlockRenderBoundary></div>}</Show>
+      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><BlockRenderBoundary raw={after()}><AstBody raw={after()} format={pageFmt()} codeEditAction={() => !blockWritable(props.id) ? undefined : byte => { const caret = codeSourceCaret(after(), pageFmt(), byte); if (caret !== null) revealCodeLanguage(editorValue().length - after().length + caret); }} /></BlockRenderBoundary></div>}</Show>
       <Show when={isCalc()}>
         <div class="calc-results">
           <For each={calcRows()}>

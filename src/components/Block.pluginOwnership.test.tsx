@@ -20,7 +20,7 @@ function meta(root: string): GraphMeta {
     root, journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
     shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2, default_journal_template: null,
     favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
-    preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
+    preferred_format: "md", macros: {}, enable_tooltip: true, file_name_format: "legacy", doc_mode_enter_for_new_block: false, logical_outdenting: false, enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
     logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
   };
 }

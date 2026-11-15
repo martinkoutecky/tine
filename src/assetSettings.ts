@@ -35,7 +35,7 @@ export const assetNameFormat = fmt;
  * value and toasts; return does not confirm persistence. O(1) plus write. */
 export function setAssetNameFormat(s: string): void {
   const v = s.trim() || DEFAULT_ASSET_NAME_FORMAT;
-  writePreference(fmt, setFmtSig, v, (next) => backend().setAppString(KEY, next), "asset filename format");
+  writePreference(fmt, setFmtSig, v, (next) => backend().setAppString(KEY, next), msg("toast-save-asset-format-failed"));
 }
 
 /** Load the device template at startup (default = plain name); read failure

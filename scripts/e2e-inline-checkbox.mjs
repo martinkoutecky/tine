@@ -9,6 +9,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
 import { setTimeout as delay } from "node:timers/promises";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 ensurePrivateSessionBus();
 
@@ -62,7 +63,7 @@ try {
     });
     if (geometry.listStep < geometry.outlineStep * 0.75) throw new Error(`${f.ext}: nested hierarchy nearly flush ${JSON.stringify(geometry)}`);
     await boxes[1].click();
-    if ((await browser.$$("textarea.block-editor")).length) throw new Error("Checkbox entered edit mode");
+    if ((await browser.$$(editorSelector())).length) throw new Error("Checkbox entered edit mode");
     await browser.waitUntil(async () => (await browser.$$('.main-content .block-checkbox[aria-checked="true"]')).length === 1,
       { timeout: 5000, timeoutMsg: "Selected checkbox did not visibly tick" });
     const token = f.raw.lastIndexOf("[ ]");

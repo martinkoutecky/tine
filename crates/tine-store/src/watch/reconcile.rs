@@ -1476,7 +1476,7 @@ mod tests {
             .unwrap()
             .unreadable_files()
             .iter()
-            .any(|(id, reason)| id.as_str() == "pages/P0.md" && reason.contains("utf-8")));
+            .any(|(id, reason)| id.as_str() == "pages/P0.md" && reason.contains("UTF-8")));
         fs::write(&path, "- complete 🐈\n").unwrap();
         core.reconcile(None, false, false, DiffTrigger::Test)
             .unwrap();

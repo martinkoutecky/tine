@@ -3,6 +3,14 @@ import { render } from "solid-js/web";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 
 describe("SearchResultRow (GH #98)", () => {
+  it.each(["comment root", "reply", "body"])("identifies a %s hit without inspecting its text", (kind) => {
+    const root = document.createElement("div");
+    const dispose = render(() => <SearchResultRow page="Notes" breadcrumb={["Host"]}
+      text={kind} spans={[]} {...{ isComment: kind !== "body" }} />, root);
+    expect(root.querySelector(".switcher-kind")?.textContent).toBe(kind === "body" ? "block" : "comment");
+    expect(root.textContent).toContain("Notes › Host");
+    dispose();
+  });
   it("keeps several distant matches visible within a fixed excerpt budget", () => {
     const text = `prefix ${"x".repeat(180)} alpha ${"y".repeat(220)} beta ${"z".repeat(500)}`;
     const alpha = text.indexOf("alpha");

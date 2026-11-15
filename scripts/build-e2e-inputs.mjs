@@ -3,6 +3,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+/** Local ordinary runs may explicitly test uncommitted candidates. This only
+ * answers the clean-tree policy; exact source/binary validation still applies.
+ * O(1), no IO. CI and release acceptance always require clean inputs. */
+export function allowsLocalDirtyBuild(mode, env = process.env) {
+  return mode === "ordinary" && !env.CI && env.TINE_E2E_ALLOW_DIRTY_BUILD === "1";
+}
+
 function git(root, args, encoding = "utf8") {
   const result = spawnSync("git", args, { cwd: root, encoding, maxBuffer: 32 * 1024 * 1024 });
   if (result.status !== 0) {

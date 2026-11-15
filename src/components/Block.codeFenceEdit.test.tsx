@@ -10,17 +10,8 @@ import { Block } from "./Block";
 import { installBlockEditorLifecycle, mount, blk, page } from "../tests/blockEditorTestkit";
 import { Editor } from "./Block";
 
-// GH #357: rendered fenced code blocks are a mono, no-wrap, padded card
-// (.code-block). The editor used to be the ordinary proportional wrapped
-// textarea, so clicking a code block changed every line's layout. While the
-// block IS code-shaped, the editor now presents as the same code card; mixed
-// blocks keep ordinary editing presentation.
-//
-// GH #412/#413 follow-up (the Martin-authorized body-only code editor
-// contract): entering INSIDE a complete wrapper shows only the payload
-// between the wrapper lines and preserves the wrapper bytes on commit. The
-// earlier "raw text, fences editable" assertion below is intentionally
-// replaced by that contract; the card presentation (mono, no-wrap) is not.
+// GH #357/#412/#413: body editing retains the code card and exact wrapper
+// bytes. D-20261114-CS879: raw source always uses ordinary block presentation.
 
 installBlockEditorLifecycle();
 
@@ -48,12 +39,10 @@ describe("code-fence editor presentation", () => {
       expect(writeClipboardText).toHaveBeenLastCalledWith("const fresh = '文😀';");
       expect(document.activeElement).toBe(editor.element);
       expect(editor.selection()).toEqual([6, 6]);
-      // Revealing the fences keeps Copy code bound to the payload, not source.
+      // Raw source drops the code-only chrome along with card presentation.
       editor.keydown({ key: "Escape" });
       expect(editorIn(root).value()).toBe(`${open}const fresh = '文😀';${close}`);
-      root.querySelector<HTMLButtonElement>(".code-copy")!.click();
-      await Promise.resolve();
-      expect(writeClipboardText).toHaveBeenLastCalledWith("const fresh = '文😀';");
+      expect(root.querySelector(".code-copy")).toBeNull();
     } finally { dispose(); }
   });
 
@@ -132,29 +121,27 @@ describe("code-fence editor presentation", () => {
     }
   });
 
-  it("live transitions update the presentation when the block's code shape changes", async () => {
+  it("raw source keeps ordinary presentation when surrounding prose changes", async () => {
     const fenced = "```js\nconst x = 1;\n```";
     loadSingle(page("Live", [blk("c5", fenced)]));
     const id = pageByName("Live")!.roots[0];
-    startEditing(id, "```js\n".length);
+    startEditing(id, 0);
     const { root, dispose } = mount(() => (
       <For each={pageByName("Live")?.roots ?? []}>{(bid) => <Editor id={bid} />}</For>
     ));
     try {
       const ta = maybeEditorIn(root)!;
-      expect(ta.element.classList.contains("code-edit")).toBe(true);
-      expect(ta.value()).toBe("const x = 1;");
-      // The code-only shape breaks (text after the fence): the class drops
-      // live and the editor returns to the honest raw text.
+      expect(ta.element.classList.contains("code-edit")).toBe(false);
+      expect(ta.value()).toBe(fenced);
       setRaw(id, "```js\nconst x = 1;\n```\nplain note");
       await Promise.resolve();
       expect(ta.element.classList.contains("code-edit")).toBe(false);
       expect(ta.value()).toBe("```js\nconst x = 1;\n```\nplain note");
-      // …and back: the body-only code view flips in again.
+      // Removing unrelated prose cannot turn source into a code card.
       setRaw(id, fenced);
       await Promise.resolve();
-      expect(ta.element.classList.contains("code-edit")).toBe(true);
-      expect(ta.value()).toBe("const x = 1;");
+      expect(ta.element.classList.contains("code-edit")).toBe(false);
+      expect(ta.value()).toBe(fenced);
     } finally {
       dispose();
     }

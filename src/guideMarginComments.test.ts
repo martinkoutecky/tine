@@ -24,14 +24,15 @@ it("the Guide explains unique context, ambiguous quotes, flat replies and touch 
   const tips = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
   expect(tips).toContain("with `tine.quote-prefix::` and `tine.quote-suffix::`, a few words on either side");
   for (const text of ["grows until the occurrence is unique", "quoted text ambiguous", "at one level in file order", "direct children of the thread root", "select words in rendered text", "**Show/Hide comments**"]) expect(tips).toContain(text);
-  for (const text of ["does not inherit from a parent", "stays hidden while editing", "author mark and chip stay visible", "**Remove author**", "original author property bytes", "**How should your comments be signed?**", "both see each other's unsigned comments as **you**"]) expect(tips).toContain(text);
+  for (const text of ["does not inherit from a parent", "stays hidden while editing", "author tint and chip stay visible", "**Remove author**", "original author property bytes", "**How should your comments be signed?**", "both see each other's unsigned comments as **you**"]) expect(tips).toContain(text);
   for (const text of ["each day's page owning its margin column", "split panes also use their own available width", "Comment and reply editors hide every `tine.*` property on all platforms", "original property bytes stay in the file"]) expect(tips).toContain(text);
 });
 
 it("the Guide explains sibling author runs and their independent visibility command (GH #892, #893, #896)", () => {
   const tips = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
-  for (const fact of ["centred in the bullet-to-text gap", "chip only on the first block", "Hover or focus an individual mark", "**Show/Hide author marks**", "no default key", "shown by default", "Names stay available when the lines are hidden", "child outlines, embeds and comment threads break runs"])
+  for (const fact of ["faint background in the author's colour", "never moves the text", "share one card", "chip only on the first block", "Hover a tinted block to see its author's name", "**Show/Hide author marks**", "no default key", "shown by default", "Author chips stay when the tints are hidden", "child outlines, embeds and comment threads break runs"])
     expect(tips).toContain(fact);
+  for (const gone of ["gutter lines", "centred in the bullet-to-text gap", "continuous line"]) expect(tips).not.toContain(gone);
 });
 
 it("the Guide explains that body structure skips whole annotation threads (GH #891, #110)", () => {

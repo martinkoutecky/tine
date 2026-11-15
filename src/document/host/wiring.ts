@@ -5,7 +5,7 @@
 // module that issues `page_*` commands (guard: boundary.guard.test.ts); every
 // page write is the host's (the audited save path).
 
-import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
+import { createComputed, createEffect, createRoot, createSignal, on, untrack } from "solid-js";
 import { backend } from "../../backend";
 import { captureTransferRollback } from "../history";
 import { benchEvent } from "../../benchEvents";
@@ -30,9 +30,10 @@ import { isBlockMoving } from "../edits/moves";
 import { adoptFoldedPageHeader, pageWritable, reportInvalidPageHeaderOnExit } from "../edits/properties";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pageInstanceGeneration, rekeyPageInstance } from "../instance";
-import { doc, pageByName, setPageId } from "../model";
+import { doc, pageByName, pageReadOnly, setPageId } from "../model";
 import { ownerPath } from "../../pageIndex";
 import { draftPinned, ensurePageLoaded, forgetPage, installPageContent, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
+import { admitRead, invalidatePageRead } from "../readAdmission";
 import { applyOwnerPageRename } from "../graphRewrite";
 import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, type HostCutSource } from "./client";
 import { runSequence } from "./planner";
@@ -149,7 +150,8 @@ const documentPort: DocumentPort = {
     return true;
   },
   tombstoned: (name) => deletedPages.has(name),
-  took: (name, rev) => { baseRev.set(name, rev); },
+  took: (name, rev) => { invalidatePageRead(name); baseRev.set(name, rev); },
+  released: invalidatePageRead,
 };
 
 /** The document port for one binding's client: a client the binding has
@@ -162,6 +164,7 @@ function portFor(current: () => boolean): DocumentPort {
     install: (name, content) => { if (current()) documentPort.install(name, content); },
     holdsPush: (name) => current() && documentPort.holdsPush(name),
     took: (name, rev) => { if (current()) documentPort.took(name, rev); },
+    released: name => { if (current()) documentPort.released(name); },
   };
 }
 
@@ -217,7 +220,7 @@ export async function bindHost(options: { refreshLoaded?: boolean } = {}): Promi
  * Input was flushed and frozen before the native saved-stop/relaunch. Cost is
  * one Open/Close per loaded graph page, only on this explicit recovery action. */
 async function refreshLoadedHostPages(c: HostClient): Promise<void> {
-  const names = doc.pages.filter(page => !page.guide && !page.readOnly).map(page => page.name);
+  const names = doc.pages.filter(page => !page.guide && !pageReadOnly(page)).map(page => page.name);
   const releases = names.map(name => c.acquire(name));
   try { await c.drain(names); }
   finally { for (const release of releases) release(); }
@@ -538,7 +541,7 @@ function reportProblems(c: HostClient | null, names: string[]): void {
 /** The dirty funnel: every programmatic page mutation, with its edit kinds. */
 export function markDirty(name: string, kinds: EditKind | EditKinds): void {
   const page = pageByName(name);
-  if (!page || page.readOnly || page.guide || deletedPages.has(name)) return;
+  if (!page || pageReadOnly(page) || page.guide || deletedPages.has(name)) return;
   noteQueryInput();
   const c = host();
   if (!c) {
@@ -624,10 +627,34 @@ export function transferInProgress(): boolean {
   return transferPages.size > 0;
 }
 
-/** A page whose input is frozen for a transition (a delete, transfer or freeze). */
+const frozenPageReads = new WeakMap<object, { name: string; value: () => boolean }>();
+/** A page whose input is frozen for a transition (a delete, transfer or freeze).
+ * Loaded pages share one boolean derivation: save-status changes cannot wake
+ * every row's write gate. O(1); the page's removal/replacement disposes it. */
 export function pageFrozen(name: string): boolean {
-  hostRevision();
-  return deletedPages.has(name) || transferPages.has(name) || !!client?.isFrozen(name);
+  const read = () => {
+    hostRevision();
+    return deletedPages.has(name) || transferPages.has(name) || !!client?.isFrozen(name);
+  };
+  const page = pageByName(name);
+  if (!page) return read();
+  let frozen = frozenPageReads.get(page);
+  if (!frozen || frozen.name !== name) {
+    const entry = { name, value: () => false };
+    entry.value = createRoot(dispose => {
+      const [value, publish] = createSignal(false);
+      createComputed(() => {
+        if (pageByName(name) !== page) {
+          if (frozenPageReads.get(page) === entry) frozenPageReads.delete(page);
+          dispose(); return;
+        }
+        publish(read());
+      });
+      return () => { publish(untrack(read)); return value(); };
+    }, null);
+    frozenPageReads.set(page, frozen = entry);
+  }
+  return frozen.value();
 }
 
 export function refuseConflictedMove(pages: Iterable<string>): boolean {
@@ -909,7 +936,11 @@ export function capturePages(names: Iterable<string>): Map<string, PageDto> {
  * transfer are ordinary edits; transfer endpoints run as a planned sequence of
  * host moves (freeze, drain, plan, run), the display showing the edit while the
  * host's text is held apart. A refusal stops it: completed steps stand and each
- * endpoint shows the host's latest text (its undo is dropped). */
+ * endpoint shows the host's latest text (its undo is dropped). `true` means the
+ * host Applied every planned transfer step under its operation draft (crash-safe
+ * custody); with no transfer endpoints, ordinary edits have only been marked
+ * dirty. It does not mean page-published: callers needing publication use
+ * `HostClient.published(needs)`. */
 export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: EditKind | EditKinds,
   edges: readonly TransferEdge[] = []): Promise<boolean> {
   const seen = new Set<string>();
@@ -1010,7 +1041,12 @@ function queueAliasLanding(name: string, owners: string[]): void {
 async function landAliasDraft(c: HostClient, name: string, ownerPath: string): Promise<void> {
   const generation = pageInstanceGeneration(name);
   let owned;
-  try { owned = await readOwned(bindingOwner(), backend().getPageByPath(ownerPath)); }
+  try { owned = await admitRead(bindingOwner(() => host() === c), () => backend().getPageByPath(ownerPath), dto => [name, ...(dto ? [dto.name] : [])], dto => {
+    if (!dto || dto.read_only || dto.guide) return null;
+    const refused = ensurePageLoaded(dto);
+    if (refused) { reportPageLoadRefusal(refused); return null; }
+    return dto;
+  }); }
   catch {
     // The draft stays in the editor, unsaved and listed; say why it did not move.
     pushToast(msg("document-wiring-couldn-t-read-the-page-is-an-alias-of-its", { value1: ownerPath, value2: name }), "error");
@@ -1018,8 +1054,6 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
   }
   const read = owned.kind === "current" ? owned.value : null;
   if (!read || read.read_only || read.guide || host() !== c) return;
-  const refused = ensurePageLoaded(read);
-  if (refused) { reportPageLoadRefusal(refused); return; }
   const owner = read.name;
   const release = c.acquire(owner, { pin: true });
   try {

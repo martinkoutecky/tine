@@ -18,7 +18,7 @@ describe("in-app stylesheet editor", () => {
   it.each([false, true])("background flush preserves a recoverable %s global draft with its original revision", async (global) => {
     const storage = new Map<string, string>();
     vi.spyOn(backend(), "getAppString").mockImplementation(async key => storage.get(key) ?? "");
-    vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { storage.set(key, value); });
+    vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { if (value === null) storage.delete(key); else storage.set(key, value); });
     const read = vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "before", revision: "base" });
     const save = vi.spyOn(backend(), "saveCssFile").mockRejectedValue(new Error("conflict"));
     await openCssEditor(global);
@@ -92,7 +92,7 @@ describe("CSS editor action placement (D-20261018-UI2b)", () => {
   async function mount(text = "before") {
     const storage = new Map<string, string>();
     vi.spyOn(backend(), "getAppString").mockImplementation(async key => storage.get(key) ?? "");
-    vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { storage.set(key, value); });
+    vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { if (value === null) storage.delete(key); else storage.set(key, value); });
     vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text, revision: "base" });
     const save = vi.spyOn(backend(), "saveCssFile").mockResolvedValue("next");
     await openCssEditor(false);

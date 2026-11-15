@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -43,17 +44,9 @@ try {
   const target = await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'insert here']");
   await target.waitForDisplayed({ timeout: 10_000 });
   await target.click();
-  const editor = await browser.$("textarea.block-editor");
+  const editor = await browser.$(editorSelector());
   await editor.waitForExist({ timeout: 10_000 });
-  // Set text and dispatch its input atomically: WebDriver clearValue blurs this
-  // controlled textarea before its subsequent elementSendKeys call on WebKit.
-  await browser.execute(() => {
-    const textarea = document.querySelector("textarea.block-editor");
-    textarea.value = "/collapse-demo";
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "/collapse-demo" }));
-    textarea.focus();
-  });
+  await pasteEditorText(browser, "/collapse-demo");
   await browser.$(".autocomplete .ac-label").waitForExist({ timeout: 10_000 });
   await browser.keys(["Enter"]);
   await browser.keys(["Escape"]);

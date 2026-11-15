@@ -185,6 +185,7 @@ export class FakeDoc implements DocumentPort {
   /** Took answers' revisions, in order. */
   readonly tookRevs: [string, string][] = [];
   took(name: string, rev: string): void { this.tookRevs.push([name, rev]); }
+  released(_name: string): void {}
 }
 
 export class FakeAssets implements AssetWrites {

@@ -4,17 +4,68 @@
 use std::collections::HashMap;
 use tine_core::lsdoc::ast::{Block, Inline, ListItem, Span};
 use tine_core::query::macro_text::{query_macro_extents, MacroExtent};
+use tine_core::query::wire_parse::QueryTextDialect;
 
-pub(super) fn restore(blocks: &mut [Block], raw: &str) -> Vec<MacroExtent> {
-    if !tine_core::query::query_source_within_limit(raw) {
-        return Vec::new();
+pub(super) type QuerySources = Result<Vec<MacroExtent>, &'static str>;
+
+/// Select a parser-recognized query, excluding literal code and metadata.
+/// Page selection takes the earliest authored query; UUID selection requires
+/// exactly one. O(block bytes), with raw arguments preserved for publication.
+pub(crate) fn query_for_export(
+    raw: &str,
+    org: bool,
+    first: bool,
+) -> Result<(String, QueryTextDialect, Option<String>), &'static str> {
+    let (blocks, queries) = super::body_blocks_with_queries(raw, org);
+    let queries = queries?;
+    if !tine_core::query::query_source_within_limit(raw)
+        && super::whole_begin_query_payload(raw).is_some()
+    {
+        return Err("query block exceeds the query source limit");
     }
-    let extents: HashMap<_, _> = query_macro_extents(raw)
+    if let Some(begin) = super::inspect_begin_query(raw, &blocks) {
+        return match begin {
+            super::BeginQueryInspection::Supported(begin) => {
+                let argument = if begin.keeps_block_children {
+                    format!("{} {{:remove-block-children? false}}", begin.query)
+                } else {
+                    begin.query
+                };
+                Ok((argument, QueryTextDialect::MacroQuery, begin.title))
+            }
+            super::BeginQueryInspection::Unsupported => {
+                Err("query block contains an unsupported BEGIN_QUERY")
+            }
+        };
+    }
+    if !first && queries.len() > 1 {
+        return Err("block contains more than one query; select a block with exactly one query");
+    }
+    let query = queries
+        .iter()
+        .min_by_key(|query| query.start)
+        .ok_or("block is not a query")?;
+    Ok((
+        query.argument.clone(),
+        if query.name.eq_ignore_ascii_case("tine-query") {
+            QueryTextDialect::MacroTql
+        } else {
+            QueryTextDialect::MacroQuery
+        },
+        None,
+    ))
+}
+
+pub(super) fn restore(blocks: &mut [Block], raw: &str) -> QuerySources {
+    let within_limit = tine_core::query::query_source_within_limit(raw);
+    let extents: HashMap<_, _> = within_limit
+        .then(|| query_macro_extents(raw))
+        .unwrap_or_default()
         .into_iter()
         .map(|extent| (extent.start, extent))
         .collect();
-    if extents.is_empty() {
-        return Vec::new();
+    if within_limit && extents.is_empty() {
+        return Ok(Vec::new());
     }
     let mut recognized = Vec::new();
     // parse_block prepends two bytes to raw.trim_start() in both formats.
@@ -49,6 +100,14 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> Vec<MacroExtent> {
                 todo.extend(item.items.iter_mut().map(Node::Item));
             }
             Node::Inlines(inlines) => {
+                if !within_limit
+                    && inlines.iter().any(|inline| {
+                        matches!(inline, Inline::Macro { name, .. }
+                            if tine_core::query::macro_text::is_query_macro_name(name))
+                    })
+                {
+                    return Err("query block exceeds the query source limit");
+                }
                 restore_arguments(inlines, &extents, lead, &mut recognized);
                 for inline in inlines {
                     match inline {
@@ -63,7 +122,7 @@ pub(super) fn restore(blocks: &mut [Block], raw: &str) -> Vec<MacroExtent> {
             }
         }
     }
-    recognized
+    Ok(recognized)
 }
 
 fn restore_arguments(

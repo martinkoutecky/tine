@@ -1,6 +1,5 @@
 use std::fs;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_store::Store;
 
 #[test]
@@ -24,12 +23,8 @@ fn a_killed_external_export_reopens_without_a_partial_site() {
         );
         unreachable!();
     }
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let base = std::env::temp_dir().join(format!(
-        "tine-export-kill-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+
+    let base = crate::test_support::fresh_dir("tine-export-kill-");
     fs::create_dir_all(base.join("graph/pages")).unwrap();
     fs::create_dir_all(base.join("graph/journals")).unwrap();
     fs::create_dir_all(base.join("out")).unwrap();

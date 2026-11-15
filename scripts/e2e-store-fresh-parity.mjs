@@ -53,6 +53,9 @@ try {
   await ensureMainWindow(browser);
   await browser.setWindowSize(1100, 900);
   await browser.$(".app-container").waitForExist({ timeout: 30_000 });
+  // The app shell mounts before its startup load_graph call. Navigate only
+  // after that frontend-owned load, before reading the window's binding.
+  await openPageByName(browser, "a");
   // Reading this window's existing binding is the native harness's standard
   // lease acquisition; it does not switch or reopen the graph.
   const binding = await browser.executeAsync((root, done) => {
@@ -61,7 +64,6 @@ try {
   }, graph);
   assert(binding.kind === "already_current", `unexpected graph binding: ${JSON.stringify(binding)}`);
   bindingGeneration = binding.binding_generation;
-  await openPageByName(browser, "a");
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".reference-group")]
     .some(node => node.textContent.includes("canonical journal reference"))), { timeout: 20_000 });
 

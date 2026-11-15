@@ -73,7 +73,7 @@ describe("OG-P11B one parser door", () => {
   it("I-12: BEGIN_QUERY payloads use query_edn::inspect_begin_query via native and wasm adapters", () => {
     const native = readFileSync("crates/tine-graph-features/src/render.rs", "utf8");
     const wasm = readFileSync("crates/lsdoc-wasm/src/lib.rs", "utf8");
-    const live = readFileSync("src/components/BeginQuery.tsx", "utf8");
+    const live = readFileSync("src/render/beginQuery.ts", "utf8");
     expect(native).toContain("tine_core::query_edn::inspect_begin_query(payload)");
     expect(wasm).toContain("query_edn::inspect_begin_query(source)");
     expect(live).toContain('query_edn_json(container[1], "begin_query", "")');

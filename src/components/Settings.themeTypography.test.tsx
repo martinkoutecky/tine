@@ -27,11 +27,11 @@ const installTypography = () => installThemePackage({
 });
 const installPlain = () => installThemePackage({ ...base, id: "page.tine.theme.settings-plain", name: "Plain colors", apiVersion: "0.2" });
 
-async function mountAppearance() {
+async function mountThemes() {
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);
-  openSettings("appearance");
+  openSettings("themes");
   await tick();
   return { root, dispose };
 }
@@ -50,11 +50,11 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-describe("Settings → Appearance theme typography (GH #760)", () => {
+describe("Settings → Themes: typography (GH #760)", () => {
   it("offers Use typography only for a package that declares typography, separately from Use colors", async () => {
     const typo = await installTypography();
     await installPlain();
-    const { root, dispose } = await mountAppearance();
+    const { root, dispose } = await mountThemes();
     expect(button(rowFor(root, "Plain colors"), "Use typography")).toBeUndefined();
     const use = button(rowFor(root, "Plex type"), "Use typography");
     expect(use).toBeDefined();
@@ -69,13 +69,13 @@ describe("Settings → Appearance theme typography (GH #760)", () => {
 
   it("the Typography selector returns to Tine's own fonts and is absent without a typography package", async () => {
     await installPlain();
-    let mounted = await mountAppearance();
+    let mounted = await mountThemes();
     expect(mounted.root.querySelector('select[aria-label="Typography"]')).toBeNull();
     mounted.dispose();
     document.body.innerHTML = "";
 
     const typo = await installTypography();
-    mounted = await mountAppearance();
+    mounted = await mountThemes();
     const select = mounted.root.querySelector<HTMLSelectElement>('select[aria-label="Typography"]');
     expect([...select!.options].map((option) => option.value)).toEqual(["", typo.key]);
     select!.value = typo.key;
@@ -90,7 +90,7 @@ describe("Settings → Appearance theme typography (GH #760)", () => {
   it("shows a non-blocking hint naming a first font that is not installed, and installation is unaffected", async () => {
     presence.missing.add("IBM Plex Sans");
     await installTypography();
-    const { root, dispose } = await mountAppearance();
+    const { root, dispose } = await mountThemes();
     const hints = [...rowFor(root, "Plex type").querySelectorAll(".installed-theme-font-hint")].map((el) => el.textContent);
     expect(hints).toEqual(["IBM Plex Sans is not installed on this device; using the fallback fonts."]);
     expect(button(rowFor(root, "Plex type"), "Use typography")?.disabled).toBe(false);
@@ -99,7 +99,7 @@ describe("Settings → Appearance theme typography (GH #760)", () => {
 
   it("shows no hint when the fonts are installed", async () => {
     await installTypography();
-    const { root, dispose } = await mountAppearance();
+    const { root, dispose } = await mountThemes();
     expect(root.querySelector(".installed-theme-font-hint")).toBeNull();
     dispose();
   });

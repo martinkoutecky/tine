@@ -30,17 +30,17 @@ describe("Flatpak identity derivation", () => {
   it("the released identity derives exactly the manifest the workflow always built", () => {
     const root = scratch("release");
     try {
+      // Preserve additional module sources as well as the checkout source.
+      const stable = read(`flatpak/${RELEASED}.yml`) +
+        "      - type: archive\n        url: https://example.invalid/fixture.tar.gz\n        sha256: " + "a".repeat(64) + "\n";
+      fs.writeFileSync(path.join(root, "flatpak", `${RELEASED}.yml`), stable);
       const derived = deriveFlatpak({ root, identity: "release", date: "2026-01-01", version: "1.2.3" });
-      const stable = read(`flatpak/${RELEASED}.yml`);
-      const expected = stable.replace(/^      - type: git\n(?:        .*\n)+/m, "      - type: dir\n        path: ..\n");
+      const expected = stable;
       expect(Object.keys(derived.files)).toEqual([`flatpak/${RELEASED}.ci.yml`]);
       expect(derived.files[`flatpak/${RELEASED}.ci.yml`]).toBe(expected);
-      // Only the app source changes: every other source the recipe lists (the
-      // vendored cargo/node files and any archives) reaches the CI build.
-      // The 0.9.0-beta.1 release Flatpak failed when the derivation dropped
-      // archives required by that release's PDF decoder build.
+      // Identity derivation must preserve every source the recipe lists.
       const sources = (text: string) => text.slice(text.indexOf("    sources:")).split("\n").filter((line) => /^      - /.test(line));
-      expect(sources(expected)).toEqual(sources(stable).map((line) => (line === "      - type: git" ? "      - type: dir" : line)));
+      expect(sources(expected)).toEqual(sources(stable));
       expect(expected).not.toContain("type: git");
       expect(derived.id).toBe(RELEASED);
     } finally {
@@ -112,6 +112,26 @@ describe("Flatpak identity derivation", () => {
 });
 
 describe("Flatpak workflows", () => {
+  it("builds the checkout with locked dependencies and carries readiness into the sandbox", () => {
+    const manifest = read(`flatpak/${RELEASED}.yml`);
+    expect(manifest).toContain("- type: dir\n        path: ..");
+    expect(manifest).toContain("build-args:\n        - --share=network");
+    expect(manifest).toContain("- npm ci\n");
+    expect(manifest).toContain("cargo build --release --locked");
+    expect(manifest).not.toMatch(/--offline|sources\.json|NET_OFFLINE/);
+    const root = scratch("release");
+    try {
+      for (const viewerReady of ["", "a".repeat(64)]) {
+        const derived = deriveFlatpak({ root, identity: "release", date: "2026-01-01", version: "1.2.3", viewerReady });
+        expect(derived.files[`flatpak/${RELEASED}.ci.yml`]).toContain(
+          `TINE_QUICK_SHARE_VIEWER_G1_READY: ${JSON.stringify(viewerReady)}`,
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("flatpak.yml derives through the identity-aware script and takes the identity as input", () => {
     const wf = read(".github/workflows/flatpak.yml");
     expect(wf).toMatch(/workflow_call:\n {4}inputs:\n {6}identity:/);

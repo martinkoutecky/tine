@@ -9,14 +9,7 @@ use tine_graph_features::graph_verification::{verify_graph_bytes, Cancelled, Man
 use tine_store::{OpenOptions, Store};
 
 fn graph(name: &str) -> (PathBuf, Store) {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "tine-verify-{name}-{}-{unique}",
-        std::process::id()
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-verify-{name}-"));
     fs::create_dir_all(root.join("pages/nested")).unwrap();
     fs::create_dir_all(root.join("archive/deep")).unwrap();
     fs::write(

@@ -4,7 +4,6 @@
 //! written through the store's page serializer (a page plan, the same
 //! transaction serializer the page host's submit uses).
 use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::PageDto;
 use tine_store::{EditKind, PageId, SaveBase, Store};
@@ -12,12 +11,8 @@ use tine_store::{EditKind, PageId, SaveBase, Store};
 #[test]
 fn favorites_arrangement_page_bytes() {
     let _integration_guard = crate::integration_lock();
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-fav-bytes-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+
+    let root = crate::test_support::fresh_dir("tine-fav-bytes-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
@@ -58,8 +53,7 @@ fn favorites_arrangement_page_in_an_org_preferred_graph() {
     // (favoritesArrangementPage with format "org"): the store puts a new page
     // at pages/Favorites.org, so the marker is an Org file property and
     // collapse an Org drawer; both must read back as such.
-    let root = std::env::temp_dir().join(format!("tine-fav-org-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-fav-org-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("logseq")).unwrap();
     fs::write(

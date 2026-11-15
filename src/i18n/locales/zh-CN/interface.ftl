@@ -75,6 +75,12 @@ graph-publish-choose-a-destination-outside-the-graph-the-export = 请选择图�
 in-page-find-find-in-page = 在页面中查找
 in-page-find-retired-days = 未搜索 { $count } 个较早日期
 in-page-find-search-journals = 搜索所有日志
+in-page-find-references-linked = 未搜索链接引用
+in-page-find-references-unlinked = 未搜索未链接引用
+in-page-find-references-block = 未搜索块引用
+in-page-find-pending-hosts = 还有 { $count } 个嵌入或查询尚未搜索
+in-page-find-search-references-linked = 搜索链接引用
+in-page-find-search-references-unlinked = 搜索未链接引用
 
 in-page-find-find-and-replace = 查找和替换
 

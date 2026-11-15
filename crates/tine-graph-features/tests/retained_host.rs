@@ -7,7 +7,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
@@ -44,13 +43,7 @@ fn an_unusable_journal_trash_names_the_recovery_location() {
 }
 
 fn scratch(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-retained-host-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir(&format!("tine-retained-host-{label}-"));
     dir
 }
 
@@ -420,7 +413,21 @@ fn other_census_writers_with_a_host_write_their_changes() {
             (
                 "assets/paper.edn",
                 Some(
-                    "{:highlights [{:id \"h1\" :page 1 :position {:page 1 :bounding {:top 1 :left 1 :width 2 :height 2} :rects ({:top 1 :left 1 :width 2 :height 2})} :content {:text \"quoted\"} :properties {:color \"yellow\"}}] :extra {}}\n",
+                    r#"{:highlights [{:id "h1",
+               :page 1,
+               :position {:bounding {:top 1,
+                                     :left 1,
+                                     :width 2,
+                                     :height 2},
+                          :rects ({:top 1,
+                                   :left 1,
+                                   :width 2,
+                                   :height 2}),
+                          :page 1},
+               :content {:text "quoted"},
+               :properties {:color "yellow"}}],
+ :extra {}}
+"#,
                 ),
             ),
             (

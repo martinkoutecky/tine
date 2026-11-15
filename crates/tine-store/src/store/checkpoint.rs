@@ -119,7 +119,7 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 pub(crate) const FORMAT: u32 = 32;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.10";
+pub(crate) const PARSER: &str = "lsdoc v0.5.11";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
@@ -655,9 +655,8 @@ impl ChangeFeed {
             unparsed: std::sync::OnceLock::new(),
         };
         // The first publication carries every answer, as a cold one does.
-        let (inventory, delta, counts, moved) = snapshot.answer_changes(None, &[], true);
-        let summary =
-            snapshot.change_summary(None, &[], true, inventory, &moved, None, None, &[], &[]);
+        let (inventory, delta, counts, _) = snapshot.answer_changes(None, &[], true);
+        let summary = snapshot.change_summary(None, &[], true, inventory, None, None, &[], &[]);
         let metrics = snapshot.metric_changes(None, &[], &[]);
         snapshot.answers = (inventory, counts, summary, delta, metrics);
         let change = Change {

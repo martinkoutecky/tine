@@ -8,6 +8,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
@@ -54,7 +55,7 @@ async function edit(scope, name, text, absent = true) {
   const bullet = await browser.$(`${scope} .ls-block .block-content-wrapper`);
   await bullet.waitForExist({ timeout: 5000 });
   await bullet.click();
-  await browser.$(`${scope} textarea.block-editor`).waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector(scope)).waitForExist({ timeout: 5000 });
   await browser.keys(text);
   await browser.keys("Escape");
   await waitForFileText(file(name), body => body.includes(text));
@@ -103,7 +104,7 @@ try {
       return source.closest("[data-block-id]").getAttribute("data-block-id");
     });
     await browser.$(`.main-content [data-block-id="${sourceId}"] .block-content-wrapper`).click();
-    await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 5000 });
+    await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 5000 });
     await browser.keys("Escape");
     await link("New drop page");
     await browser.$(`${sidebar} .ls-block`).waitForExist({ timeout: 5000 });

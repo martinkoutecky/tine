@@ -1,7 +1,6 @@
 // GH #793, the reporter's goal: "select and copy all the linked references"
-// without opening each by hand. With `:ref/default-open-blocks-level` high, every
-// reference row is open and visible, so a block selection over the references
-// reaches all of them and copy takes their whole text.
+// without opening each by hand. `:ref/default-open-blocks-level` controls what
+// is shown; GH #941 selections carry the whole subtree at either open level.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -89,11 +88,13 @@ describe("linked references at a high default open level (GH #793)", () => {
     } finally { endEdit("page-navigation"); dispose(); }
   });
 
-  it("at OG's default 2 the rows below the first child are neither shown nor selected", async () => {
+  it("at OG's default 2 deeper rows stay hidden while selecting their parent carries them (GH #941)", async () => {
     const { root, dispose } = await mountReferences(undefined);
     try {
       expect(shownIds(root).sort()).toEqual(["a-c1", "a-hit", "b-c1", "b-hit"]);
-      expect(await selectWholeGroup(root, "a-hit")).toEqual(["a-hit", "a-c1"]);
+      const ids = await selectWholeGroup(root, "a-hit");
+      expect(ids).toEqual(["a-hit", "a-c1", "a-g1", "a-d1"]);
+      for (const line of ["a hit", "a child one", "a grandchild", "a deep"]) expect(copied(ids), line).toContain(line);
       expect(doc.byId["a-c1"].collapsed).toBe(false); // folded in the view only
     } finally { endEdit("page-navigation"); dispose(); }
   });

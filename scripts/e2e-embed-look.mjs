@@ -16,6 +16,7 @@ import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities,
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -90,7 +91,7 @@ async function toggle(rowSelector) {
 }
 async function editRoot() {
   await browser.$(`${ROW} > .block-main .block-content`).click();
-  await browser.$(`${ROW} textarea.block-editor`).waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector(ROW)).waitForExist({ timeout: 5000 });
 }
 
 try {

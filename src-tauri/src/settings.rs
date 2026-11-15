@@ -26,7 +26,7 @@ pub(crate) struct DisplayKnownGraph {
 impl From<KnownGraph> for DisplayKnownGraph {
     fn from(graph: KnownGraph) -> Self {
         Self {
-            display_path: tine_core::graph_paths::normalize_graph_path(&graph.path),
+            display_path: tine_core::graph_paths::display_graph_path(&graph.path),
             path: graph.path,
             name: graph.name,
         }
@@ -565,12 +565,15 @@ pub(crate) fn get_app_string(key: String, default: String, app: tauri::AppHandle
 #[tauri::command]
 pub(crate) async fn set_app_string(
     key: String,
-    value: String,
+    value: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     crate::state::off_ui(move || {
-        update_settings(&app, |json| {
-            json[&key] = serde_json::Value::String(value.clone());
+        update_settings(&app, |json| match &value {
+            Some(value) => json[&key] = serde_json::Value::String(value.clone()),
+            None => {
+                json.as_object_mut().expect("settings object").remove(&key);
+            }
         })
     })
     .await

@@ -75,7 +75,7 @@ export function installBlockSelectionDrag(): () => void {
     const over = start && startRow?.contains(overRow) ? start.id : rowHostOf(overRow)?.id ?? overId;
     if (!converting) {
       converting = true;
-      selectBlock(start?.id ?? startId, start?.scope ?? null); // exits editing (commits via blur), anchor = focus = start
+      selectBlock(start?.id ?? startId, start?.scope ?? null, start?.surface); // exits editing (commits via blur), anchor = focus = start
     }
     extendSelectionTo(over);
     doc.getSelection()?.removeAllRanges(); // drop the half-formed text highlight

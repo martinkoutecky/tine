@@ -145,6 +145,9 @@ pub enum QueryHit {
         /// Authored properties of a physical page, when available for display columns.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         row: Option<crate::query::ir::PageRow>,
+        /// Whether the matched content excerpt belongs to a margin-comment thread.
+        #[serde(default)]
+        is_comment: bool,
         /// Text displayed for this hit.
         display_text: String,
         /// Predicates that matched.
@@ -168,6 +171,9 @@ pub enum QueryHit {
         path: PageId,
         /// Matched block.
         block: BlockDto,
+        /// Margin-comment thread membership, including unquoted replies.
+        #[serde(default)]
+        is_comment: bool,
         /// Exact lsdoc-projected visible text indexed by `evidence.spans`.
         display_text: String,
         /// Predicates that matched.

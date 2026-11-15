@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { remote } from "webdriverio";
+import { editorSelector, selectEditor } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
@@ -46,7 +47,7 @@ try {
     row.querySelector(".block-content").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   });
-  await browser.$("textarea.block-editor").waitForExist();
+  await browser.$(editorSelector()).waitForExist();
   await browser.keys(["Control", "ArrowUp", "NULL"]);
   await browser.keys(["Escape"]);
   await browser.waitUntil(() => browser.execute(() => {
@@ -60,7 +61,7 @@ try {
     row.querySelector(".block-content").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   });
-  await browser.$("textarea.block-editor").waitForExist();
+  await browser.$(editorSelector()).waitForExist();
   await browser.keys(["Control", "ArrowDown", "NULL"]);
   await browser.keys(["Escape"]);
   await browser.$(".embed-page .embed-page .block-content").waitForExist();
@@ -105,11 +106,13 @@ try {
   });
   await browser.keys(["Control", "f", "NULL"]);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".inpage-find-input")?.value === "needle" && document.querySelector(".inpage-find-count")?.textContent.startsWith("1 /")), { timeout: 10000 });
+  // The sidebar's Host embed is folded above: its source is not searched.
+  await browser.waitUntil(() => browser.execute(() => /^1\b.*not searched yet/.test(document.querySelector('.inpage-find-bar [role="status"]')?.textContent.trim() ?? "")), { timeout: 10000, timeoutMsg: "Find must disclose the unsearched sidebar embed" });
   await browser.keys(["Escape"]);
   stage = "editor selection Find";
   await browser.$(".main-content .block-content").click();
-  await browser.$("textarea.block-editor").waitForExist();
-  await browser.execute(() => { const el = document.querySelector("textarea.block-editor"); el.focus(); el.setSelectionRange(7, 13); });
+  await browser.$(editorSelector()).waitForExist();
+  await selectEditor(browser, 7, 13);
   await browser.keys(["Control", "f", "NULL"]);
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".inpage-find-input")?.value === "source" && document.querySelector(".inpage-find-count")?.textContent.startsWith("1 /")), { timeout: 10000 });
   await saveJourneyScreenshot(browser, path.join(RUN, "find.png"));
@@ -120,7 +123,7 @@ try {
 } catch (error) {
   try { if (browser) await saveJourneyScreenshot(browser, path.join(RUN, "failure.png")); } catch {}
   try { fs.writeFileSync(path.join(RUN, "failure-dom.html"), await browser.getPageSource()); } catch {}
-  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit}\nJourney: ${stage}\nExpected: outer fold saves only the host, inner fold saves its source host, deeper source stays unchanged, and selected text seeds Find with first match active.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
+  fs.writeFileSync(path.join(RUN, "failure.txt"), `Tested: ${testedCommit}\nJourney: ${stage}\nExpected: outer fold saves only the host, inner fold saves its source host, deeper source stays unchanged, selected text seeds Find with first match active, and Find names the unsearched sidebar embed.\nObserved: ${error.stack}\nClassification: ambiguous until screenshot and log review.\n`);
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}

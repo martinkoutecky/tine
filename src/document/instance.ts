@@ -1,5 +1,6 @@
 import { pageByName } from "./model";
 import { createSignal, type Signal } from "solid-js";
+import { invalidatePageRead } from "./readAdmission";
 
 // A generation identifies one exact loaded page instance. It is deliberately
 // frontend-only and monotonic across resets: a later page with the same name and
@@ -21,6 +22,7 @@ export function activatePageInstance(name: string): number {
 }
 
 export function retirePageInstance(name: string): void {
+  invalidatePageRead(name);
   ++pageInstanceClock;
   pageInstanceGenerations.delete(name);
 }

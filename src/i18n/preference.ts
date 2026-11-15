@@ -6,6 +6,7 @@
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { ownedWhen, readOwned } from "../owned";
+import { preferenceChangedElsewhere } from "../preferenceWrites";
 import { pushToast } from "../toasts";
 import { loadLocale, msg, negotiateLocale, showLocale, SOURCE_LOCALE } from "./index";
 
@@ -127,13 +128,13 @@ export async function startUiLanguage(): Promise<void> {
 async function listenForChanges(): Promise<void> {
   try {
     const { listen } = await import("@tauri-apps/api/event");
-    await listen<string>(BROADCAST, (event) => {
-      // Another window persisted this choice (or this one did: its echo keeps
-      // every window on the last write).
-      // Always a new operation, even for the value already showing: it retires an
-      // older startup read that would otherwise land after it (review CODE-1 F2).
-      const mine = begin();
-      void track(mine, activate(event.payload, mine));
+    await listen(BROADCAST, () => {
+      // Events can arrive out of write order, including this window's echo.
+      // Storage is the answer; retire older reads even if the choice is unchanged.
+      preferenceChangedElsewhere(preference, () => {
+        const mine = begin();
+        void track(mine, readStored(mine).then((read) => land(read, mine)));
+      });
     });
   } catch {
     // Not in Tauri (tests, the published export): one window only.

@@ -44,13 +44,15 @@ pub(super) struct BlockHit {
 }
 
 impl BlockHit {
-    pub(super) fn block(&self) -> &DocBlock {
+    pub(super) fn block(&self) -> (&DocBlock, bool) {
         let (first, rest) = self.path.split_first().expect("a block path is non-empty");
         let mut block = &self.page.document.roots[*first];
+        let mut comment = false;
         for i in rest {
             block = &block.children[*i];
+            comment |= crate::output_comments::is_comment(block, true);
         }
-        block
+        (block, comment)
     }
 }
 
@@ -137,7 +139,7 @@ impl Lookups {
                     .collect();
                 while let Some((path, block)) = stack.pop() {
                     let at = || (page, path.clone().into_boxed_slice());
-                    map.entry(block.uuid.clone()).or_insert_with(at);
+                    map.entry(block.uuid.to_string()).or_insert_with(at);
                     if let Some(id) = block.property("id") {
                         map.entry(id).or_insert_with(at);
                     }

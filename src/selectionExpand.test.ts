@@ -1,5 +1,5 @@
 // GH #262: hierarchical Ctrl/Cmd+A expansion and Shift+Up subtree
-// completion. Store-level semantics: visible-order slices, no DOM.
+// completion. GH #941 makes every selected block a complete source subtree.
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
 import {
@@ -66,18 +66,18 @@ describe("Shift+Up subtree completion (GH #262)", () => {
     const t = { P: p.id, c1: c1.id, c2: c2.id, g1: g1.id, g2: g2.id, c3: c3.id, S: s.id };
     selectBlock(t.c2);
     moveSelection(-1, true);
-    expect(selectedIds()).toEqual([t.c1, t.c2]); // no parent in slice — unchanged
+    expect(selectedIds()).toEqual([t.c1, t.c2, t.g1, t.g2]);
     moveSelection(-1, true); // focus on P
     expect(selectedIds()).toEqual([t.P, t.c1, t.c2, t.g1, t.g2, t.c3]); // subtree completed
     moveSelection(-1, true); // focus above P: P's subtree stays whole
     expect(selectedIds()).toEqual([t.S, t.P, t.c1, t.c2, t.g1, t.g2, t.c3]);
   });
 
-  it("Shift+Down keeps its existing forward shape", () => {
+  it("Shift+Down skips the selected parent's descendants (GH #941)", () => {
     const t = loadTree();
     selectBlock(t.P);
     moveSelection(1, true);
-    expect(selectedIds()).toEqual([t.P, t.c1]); // unchanged forward behavior
+    expect(selectedIds()).toEqual([t.P, t.c1, t.c2, t.g1, t.g2, t.c3, t.S]);
   });
 });
 
@@ -94,15 +94,15 @@ describe("hierarchical Ctrl/Cmd+A expansion (GH #262)", () => {
     expect(selectedIds()).toEqual([t.P, t.c1, t.c2, t.g1, t.g2, t.c3, t.S]);
   });
 
-  it("a collapsed parent is its own whole visible subtree", () => {
+  it("a collapsed parent's whole subtree includes hidden children", () => {
     const p = blk("P", [blk("c1")]);
     p.collapsed = true;
     const s = blk("S");
     load([p, s]);
     selectBlockSubtree(p.id);
-    expect(selectedIds()).toEqual([p.id]); // hidden children are not selected
+    expect(selectedIds()).toEqual([p.id, p.children[0].id]);
     expandBlockSelection();
-    expect(selectedIds()).toEqual([p.id, s.id]); // climbs to the whole outline
+    expect(selectedIds()).toEqual([p.id, p.children[0].id, s.id]);
   });
 
   it("respects the active outline scope: the ladder tops out at the scoped order", () => {

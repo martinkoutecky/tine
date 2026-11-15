@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 // A sidecar is user-controlled input opened by the native process. These limits
 // are intentionally far above any realistic highlight file, but keep malformed
 // or hostile EDN from consuming unbounded native memory or stack.
-const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DEPTH: usize = 128;
 const MAX_NODES: usize = 1_000_000;
 const MAX_COLLECTION_ITEMS: usize = 250_000;
@@ -129,7 +129,9 @@ impl<'a> Parser<'a> {
             if c == b',' || c.is_ascii_whitespace() {
                 self.i += 1;
             } else if c == b';' {
-                while self.i < self.s.len() && self.s[self.i] != b'\n' {
+                // Clojure's reader ends a comment at CR or LF, as the span
+                // reader (`query_edn`) does: both must see the same members.
+                while self.i < self.s.len() && !matches!(self.s[self.i], b'\n' | b'\r') {
                     self.i += 1;
                 }
             } else if c == b'#' && self.s.get(self.i + 1) == Some(&b'_') {

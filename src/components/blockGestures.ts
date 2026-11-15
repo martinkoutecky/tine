@@ -15,7 +15,7 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, hasSelection, selectionScope, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, topSelected, node as docNode, type OutlineScope } from "../document";
 import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -29,7 +29,7 @@ import { textareaCaretPoints } from "../editor/caretRows";
 import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
-import { rowHostOf, rowPositionOf } from "./block/embedRowHost";
+import { rowHostOf, rowPositionOf, type RowHost } from "./block/embedRowHost";
 import { bodyScopeOf } from "../document";
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -79,7 +79,7 @@ export function beginDrag(id: string, e: MouseEvent) {
     if (!dragMoved) {
       dragMoved = true;
       // A bullet drag moves the active selection when there is one (GH #240).
-      const selected = selectedIds();
+      const selected = topSelected();
       capturedIds = selected.length ? [...selected] : [id];
       setDragId(id);
       endEdit("drag-start");
@@ -189,7 +189,7 @@ export function beginEditGesture(
   // extends from there into the source rows inside it (D-20261030-EMB).
   const startRow = (e.target as Element | null)?.closest?.(".ls-block");
   const startHost = rowHostOf(startRow);
-  const anchor = startHost ?? { id: blockId, scope: outlineScope };
+  const anchor: RowHost = startHost ?? rowPositionOf(startRow) ?? { id: blockId, scope: outlineScope };
   if (e.shiftKey) {
     const editing = editingId();
     if (!editing && !hasSelection()) return;
@@ -201,8 +201,8 @@ export function beginEditGesture(
       // The editing row's own outline (an embed's rows sit in the embed's scope),
       // so a click outside that outline cannot extend across it.
       const row = documentOf(e).activeElement?.closest(".ls-block");
-      const from = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
-      selectBlock(from.id, from.scope);
+      const from: RowHost = rowPositionOf(row) ?? { id: editing, scope: outlineScope };
+      selectBlock(from.id, from.scope, from.surface);
     }
     // Never across an outline boundary: an unscoped selection must not run into an
     // embed's rows (it would take the source parent with it), nor out of one.
@@ -283,7 +283,7 @@ export function beginEditGesture(
       g.escalated = true;
       endEdit("select-block");
       doc.getSelection()?.removeAllRanges();
-      selectBlock(anchor.id, anchor.scope);
+      selectBlock(anchor.id, anchor.scope, anchor.surface);
       extendSelectionTo(overSelection!, anchor.scope);
     }
   };
@@ -318,14 +318,18 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   // parser-owned fence, then map its rendered body to visible-raw coordinates.
   const visible = splitProps(raw, BUILTIN_HIDE, fmt).visible;
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  if (range) {
-    const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
-    const index = cards.findIndex(card => card === range.startContainer || card.contains(range.startContainer));
+  const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
+  const index = cards.findIndex(card => card.parentElement!.contains(e.target as Node));
+  if (index >= 0) {
     const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[index];
     const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
-    const offset = index < 0 ? null : codeCardOffsetFromRange(cards[index].parentElement!, range);
-    if (projection && offset !== null) return projection.open.length + Math.min(offset, projection.body.length);
+    const offset = range && codeCardOffsetFromRange(cards[index].parentElement!, range);
+    // The card chooses body mode even when its caret cannot be mapped (or is
+    // empty). Coordinates choose only the body position, falling back to its end.
+    if (projection) return projection.open.length + Math.min(offset ?? projection.body.length, projection.body.length);
   }
+  // An outside edge can resolve to a nearby code glyph; it still chooses source.
+  if (range && cards.some(card => card === range.startContainer || card.contains(range.startContainer))) return visible.length;
   // GH #465: a click in the empty run-out past the last glyph means "the end",
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click

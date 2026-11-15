@@ -18,8 +18,19 @@ fn by_path_asset_stamps(assets: usize) -> (u64, u64) {
     for dir in ["pages", "journals", "logseq", "assets/sub"] {
         fs::create_dir_all(root.path().join(dir)).unwrap();
     }
-    fs::write(root.path().join("logseq/config.edn"), "{}\n").unwrap();
-    fs::write(root.path().join("pages/A.md"), "- a\n").unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let write = |path: &std::path::Path, bytes: &[u8]| {
+        fs::write(path, bytes).unwrap();
+        // Count the walk, not legitimate rechecks inside the 2 s racy window (§5.4).
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    };
+    write(&root.path().join("logseq/config.edn"), b"{}\n");
+    write(&root.path().join("pages/A.md"), b"- a\n");
     for index in 0..assets {
         let dir = if index % 2 == 0 {
             "assets"
@@ -27,15 +38,7 @@ fn by_path_asset_stamps(assets: usize) -> (u64, u64) {
             "assets/sub"
         };
         let path = root.path().join(format!("{dir}/f{index}.png"));
-        fs::write(&path, b"x").unwrap();
-        // Outside the 2 s racy window (§5.4), or the walk legitimately rechecks it.
-        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
+        write(&path, b"x");
     }
     cost_counters::reset();
     let (store, _, _) = Store::open(
@@ -66,15 +69,14 @@ fn an_asset_full_walk_stamps_from_the_listing_and_opens_no_asset() {
         with_assets.0.saturating_sub(fixed.0),
         with_assets.1.saturating_sub(fixed.1),
     );
-    // A handful of fixed by-path stamps (config.edn, fresh page files rechecked as
-    // racy) vary run to run; the defect scaled with the asset count (3 per asset).
-    let slack = (ASSETS / 10) as u64;
-    assert!(
-        extra.0 <= slack && extra.1 <= slack,
+    // Fixed config/CSS probes subtract exactly; watcher cycles are excluded.
+    assert_eq!(
+        extra,
+        (0, 0),
         "GH #623: the asset baseline at open and each focus rescan's full asset walk must stamp \
          from the directory listing (`DirEntry::metadata`, no file open on Windows), never by \
          path; {ASSETS} assets added {} by-path stamps at open and {} in two rescans \
-         (zero-asset graph: {fixed:?}, slack {slack}); exemplar \
+         (zero-asset graph: {fixed:?}); exemplar \
          crates/tine-store/src/model/page_identity.rs launch_listing_walk",
         extra.0,
         extra.1

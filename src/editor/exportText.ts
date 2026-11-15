@@ -5,9 +5,9 @@
 // policies over parser-owned spans, shared with markup export.
 
 import { cleanInline, expandExportNodes } from "./exportMarkup";
-import { editBlock } from "../render/parse";
 import { renderedBlockText, type RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
+import { projectExportNodes, exportCommentLabel, exportSourceRaw } from "./exportProjection";
 
 // dashes  = Logseq outline: `\t`×level + "- " + text (paste back into Logseq).
 // spaces  = indentation preserved with spaces, NO bullet (portable indented text).
@@ -21,6 +21,7 @@ export type MaxDepth = "all" | number;
 export type ExportContent = "rendered" | "source";
 
 export interface ExportOptions {
+  includeComments?: boolean;
   content: ExportContent;
   indent: IndentStyle;
   maxDepth?: MaxDepth;
@@ -42,6 +43,7 @@ export interface ExportOptions {
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
+  includeComments: true,
   content: "rendered",
   indent: "dashes",
   // OG 1.0.0 defaults its `:keep-only-level<=N` export option to `:all`
@@ -57,6 +59,9 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
 };
 
 export interface ExportNode {
+  id?: string;
+  hasParent?: boolean;
+  comment?: { author: string | null; date: string | null };
   raw: string;
   format?: Format; // md when absent
   children: ExportNode[];
@@ -66,7 +71,7 @@ export interface ExportNode {
  *  markers only exist in source. */
 function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
   if (opts.content === "rendered") {
-    return renderedBlockText(n.raw, n.format ?? "md", {
+    const lines = renderedBlockText(n.raw, n.format ?? "md", {
       typographicGlyphs: opts.typographicGlyphs ?? false,
       stripLinks: opts.stripLinks,
       removeTags: opts.removeTags,
@@ -76,9 +81,11 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
       resolveBlockRef: opts.resolveBlockRef,
       resolveMacro: opts.resolveMacro,
     }).split("\n");
+    if (n.comment) lines[0] = `[${exportCommentLabel(n)}] ${lines[0]}`;
+    return lines;
   }
-  const raw = opts.removeProperties ? editBlock(n.raw, n.format ?? "md", { kind: "visible" }) : n.raw;
-  return cleanInline(raw, n.format ?? "md", {...opts, resolveBlockRef:undefined}).split("\n");
+  const raw = exportSourceRaw(n, opts.removeProperties);
+  return cleanInline(raw, n.format ?? "md", {...opts, preserveCommentMetadata: !!n.comment, resolveBlockRef:undefined}).split("\n");
 }
 
 /** Serialize an export-node forest to text per `opts`. */
@@ -113,7 +120,7 @@ export function exportOutline(nodes: ExportNode[], opts: ExportOptions): string 
       for (const c of n.children) walk(c, level + 1);
     }
   };
-  for (const n of opts.content === "source" ? expandExportNodes(nodes, opts) : nodes) walk(n, 0);
+  for (const n of opts.content === "source" ? expandExportNodes(nodes, opts) : projectExportNodes(nodes, opts.includeComments)) walk(n, 0);
   while (out.length && out[out.length - 1] === "") out.pop();
   return out.join("\n");
 }

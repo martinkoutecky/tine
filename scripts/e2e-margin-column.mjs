@@ -7,6 +7,7 @@
 // and t then m shows them again.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { BLOCK_EDITOR, editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -80,25 +81,22 @@ try {
   const agent = await browser.$(`.page-blocks .ls-block.authored`);
   await agent.waitForExist({ timeout: 10_000 });
   await (await agent.$(".block-content")).click();
-  await (await browser.$(".page-blocks textarea.block-editor")).waitForExist({ timeout: 5_000 });
-  const selected = await browser.execute((phrase) => {
-    const ta = document.querySelector(".page-blocks textarea.block-editor");
+  await (await browser.$(editorSelector(".page-blocks"))).waitForExist({ timeout: 5_000 });
+  const selected = await withEditor(browser, ".page-blocks", (ta, phrase) => {
     const at = ta.value.indexOf(phrase);
-    ta.focus();
-    ta.setSelectionRange(at, at + phrase.length);
-    return ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    ta.select(at, at + phrase.length);
+    return ta.value.slice(ta.start, ta.end);
   }, PHRASE);
   if (selected !== PHRASE) throw new Error(`selection was ${JSON.stringify(selected)}`);
   await browser.keys(["Control", "r"]);
-  await browser.waitUntil(() => browser.execute(() =>
-    !!document.querySelector(".comment-name-prompt, .margin-column textarea.block-editor")),
+  await browser.waitUntil(() => browser.execute(selector =>
+    !!document.querySelector(`.comment-name-prompt, ${selector}`), editorSelector(".margin-column")),
   { timeout: 5000, timeoutMsg: "Comment opened neither a name prompt nor an editor" });
   if (await browser.$(".comment-name-prompt").isExisting()) await browser.$(".comment-name-prompt .export-btn-secondary").click();
 
   // The new comment opens for editing in the margin column, not in the outline.
-  await browser.waitUntil(() => browser.execute(() => {
-    const ta = document.querySelector(".margin-column .margin-thread textarea.block-editor");
-    return !!ta && ta.value === "" && document.activeElement === ta
+  await browser.waitUntil(() => withEditor(browser, ".margin-column .margin-thread", ta => {
+    return !!ta && ta.value === "" && ta.focused
       && !document.querySelector(".page-blocks .ls-block.comment-card");
   }), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open the new comment in the margin column" });
   await browser.keys(COMMENT);
@@ -106,12 +104,12 @@ try {
   await browser.keys(["Escape"]);
 
   // Visible margin threads need no duplicate count badge (MC3 §7).
-  await browser.waitUntil(() => browser.execute((comment) => {
+  await browser.waitUntil(() => browser.execute((comment, editor) => {
     const thread = document.querySelector(".margin-column .margin-thread .ls-block.comment-card");
     return !!thread && thread.textContent.includes(comment)
       && !document.querySelector(".page-blocks .ls-block.authored button.margin-marker")
-      && !document.querySelector("textarea.block-editor");
-  }, COMMENT), { timeout: 5_000, timeoutMsg: "the comment is not drawn in the margin without a duplicate badge" });
+      && !document.querySelector(editor);
+  }, COMMENT, BLOCK_EDITOR), { timeout: 5_000, timeoutMsg: "the comment is not drawn in the margin without a duplicate badge" });
   const geometry = await browser.execute(() => {
     const thread = document.querySelector(".margin-thread").getBoundingClientRect();
     const outline = document.querySelector(".page-blocks").getBoundingClientRect();
@@ -124,14 +122,10 @@ try {
   // Click the comment in the margin: it edits in place. Finish editing, then
   // send a reply from its composer (plain Enter now inserts a line break).
   await (await browser.$(".margin-column .margin-thread .ls-block.comment-card > .block-main .block-content")).click();
-  await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".margin-column textarea.block-editor")), {
+  await browser.waitUntil(() => browser.$(editorSelector(".margin-column")).isExisting(), {
     timeout: 5_000, timeoutMsg: "clicking the margin comment did not open its editor there",
   });
-  await browser.execute((comment) => {
-    const ta = document.querySelector(".margin-column textarea.block-editor");
-    ta.focus();
-    ta.setSelectionRange(comment.length, comment.length);
-  }, COMMENT);
+  await withEditor(browser, ".margin-column", (editor, comment) => editor.select(comment.length), COMMENT);
   await browser.keys(["Control", "Enter"]);
   await browser.$(".margin-column .comment-card").moveTo();
   await browser.$(".margin-column .comment-reply-draft").click();

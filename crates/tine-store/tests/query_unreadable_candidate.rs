@@ -18,8 +18,7 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 fn backlinks_after_a_candidate_file_is_damaged_or_deleted_on_disk_parse_nothing() {
     let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
-    let dir = std::env::temp_dir().join(format!("tine-594-candidate-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("tine-594-candidate-");
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("journals")).unwrap();
     fs::write(dir.join("pages/Target.md"), "- the target\n").unwrap();

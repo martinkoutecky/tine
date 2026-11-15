@@ -18,6 +18,7 @@ import {
 } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 
 if (process.platform !== "win32") throw new Error("windows portable must run on Windows");
 const BUILT_APP = process.env.TINE_APP;
@@ -60,7 +61,7 @@ function snapshot(dir) {
 }
 const hostBefore = hostFolders.map(snapshot);
 
-const env = { ...process.env, TINE_GRAPH: graph };
+const env = { ...process.env, TINE_GRAPH: graph, E2E_CLASSIC_SETTINGS_DIR: path.join(data, "roaming") };
 delete env.WEBVIEW2_USER_DATA_FOLDER;
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 const webviewTarget = await startWebdriverApplication(APP, env, NATIVE_PORT, "default", process.platform, { appOwnsUserDataFolder: true });
@@ -84,14 +85,8 @@ try {
   const body = await browser.$("body").getText();
   if (!body.includes("PORTABLE_ORIGINAL")) throw new Error("seeded graph did not render");
   await browser.$(".ls-block .block-content").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
-  await browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor");
-    if (!editor) return;
-    editor.focus();
-    editor.value = "PORTABLE_SAVED";
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: null }));
-  });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
+  await pasteEditorText(browser, "PORTABLE_SAVED");
   await browser.keys(["Escape"]);
   await browser.waitUntil(() => fs.readFileSync(journal, "utf8").includes("PORTABLE_SAVED"), {
     timeout: 10000,

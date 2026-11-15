@@ -15,6 +15,7 @@ import { ResourceFailure } from "./ResourceFailure";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { referenceRevision } from "../referenceKeys";
+import { FIND_REFERENCES_ATTR, FIND_REFERENCES_PAGE_ATTR } from "../inpageFind";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -49,7 +50,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
     <>
       <ResourceFailure of={groupsResource} what="references to this block" onRetry={() => void refetch()} />
     <Show when={groups() && groups()!.length > 0}>
-      <div class="block-references-inner">
+      <div class="block-references-inner" {...{ [FIND_REFERENCES_ATTR]: "block", [FIND_REFERENCES_PAGE_ATTR]: props.id }}>
         <div class="block-references-header">
           {t("editor-references-linked-reference", { count: count() })}
           <Show when={(groups() ?? []).length > 1}>

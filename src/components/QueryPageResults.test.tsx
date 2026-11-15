@@ -4,6 +4,18 @@ import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
 
 afterEach(() => { document.body.innerHTML = ""; });
 
+it("labels the comment excerpt that makes a page a content hit", () => {
+  const root = document.createElement("div");
+  const hit = { entity: "page" as const, page: { name: "Notes", kind: "page" as const, path: "pages/Notes.md", date_key: null },
+    display_text: "needle comment", evidence: [{ clause_id: 1, field: "visible_content" as const,
+      mode: "contains" as const, spans: [{ start: 0, end: 6 }] }], score: 0, is_comment: true };
+  const dispose = render(() => <QueryPageResults hits={[hit]} presentation="search"
+    surfaceId={() => "notes"} onOpen={() => {}} />, root);
+  expect(root.querySelector(".query-page-content-excerpt")?.textContent).toContain("comment");
+  expect(root.textContent?.match(/comment/g)).toHaveLength(2);
+  dispose();
+});
+
 it("groups adjacent page board rows without changing authored search order", () => {
   const hits = (["A", "B", "A"] as const).map((owner, index): QueryPageHit => ({
     entity: "page",

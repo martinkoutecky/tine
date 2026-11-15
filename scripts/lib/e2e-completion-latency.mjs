@@ -4,15 +4,18 @@
 // Temporary User Timing probes split ordering from render in the lane receipt;
 // the ordinary journey and this sampler do not require those probes to exist.
 import { waitForFileText } from "../e2e-file-poll.mjs";
+import { withEditor } from "./e2e-block-editor.mjs";
 
 export async function measureCompletionLatency(browser, sourceFile) {
-  await browser.execute(() => {
+  await withEditor(browser, "", editor => {
     const probe = window.__completionLatency = { inputs: [], requests: [] };
     document.addEventListener("input", event => {
       const target = event.target;
-      if (!target.matches("textarea.block-editor, .switcher-input")) return;
-      const surface = target.matches(".switcher-input") ? "switcher" : target.value.startsWith("#") ? "tag" : "page";
-      const query = surface === "switcher" ? target.value : target.value.slice(surface === "tag" ? 1 : 2, target.selectionStart);
+      const switcher = target.matches(".switcher-input");
+      if (!switcher && target !== editor?.element) return;
+      const value = switcher ? target.value : editor.value;
+      const surface = switcher ? "switcher" : value.startsWith("#") ? "tag" : "page";
+      const query = surface === "switcher" ? value : value.slice(surface === "tag" ? 1 : 2, editor.start);
       probe.inputs.push({ surface, query, start: performance.now() });
     }, true);
     // Tauri's invoke property is immutable. Observe its fetch transport without
@@ -60,11 +63,8 @@ export async function measureCompletionLatency(browser, sourceFile) {
         await browser.keys(["Control", "k"]);
         await browser.$(".switcher-input").waitForExist({ timeout: 5000 });
       } else {
-        await browser.execute(() => {
-          const editor = document.querySelector("textarea.block-editor");
-          editor.focus(); editor.value = ""; editor.setSelectionRange(0, 0);
-          editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
-        });
+        await browser.keys(["Control", "a"]);
+        await browser.keys("Backspace");
         for (const key of surface === "page" ? "[[" : "#") await browser.keys([key]);
       }
       let query = "";
@@ -76,8 +76,8 @@ export async function measureCompletionLatency(browser, sourceFile) {
           await browser.waitUntil(() => browser.execute((from, q) => window.__completionLatency.requests.slice(from)
             .some(row => row.query === q && row.paint !== undefined), count, query), { timeout: 30000, interval: 20 });
         } catch (error) {
-          const state = await browser.execute(() => ({ probe: window.__completionLatency,
-            raw: document.querySelector("textarea.block-editor")?.value,
+          const state = await withEditor(browser, "", editor => ({ probe: window.__completionLatency,
+            raw: editor?.value,
             labels: [...document.querySelectorAll(".ac-label")].map(node => node.textContent) }));
           throw Error(`${surface} ${query}: ${String(error)}; ${JSON.stringify(state)}`);
         }

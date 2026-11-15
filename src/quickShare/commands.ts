@@ -32,6 +32,7 @@ export type QuickShareConnectStatus =
 
 export interface QuickShareConnectStart { attemptId: string; userCode: string; verificationUri: string; expiresIn: number }
 export interface QuickSharePreview {
+  includeComments?: boolean;
   title: string;
   pages: { name: string; path: string; journal: boolean }[];
   leftOut: { name: string; path: string; reason: "private" | "exportsPage" }[];

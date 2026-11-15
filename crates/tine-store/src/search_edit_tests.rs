@@ -8,9 +8,7 @@ use tine_graph_features::{assets, journals, pdf};
 use tine_store::Store;
 
 fn mk(tag: &str) -> std::path::PathBuf {
-    // Unique per test (pid + tag) so parallel tests don't share a dir.
-    let root = std::env::temp_dir().join(format!("tine-se-{}-{}", std::process::id(), tag));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-se-{tag}-"));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     root

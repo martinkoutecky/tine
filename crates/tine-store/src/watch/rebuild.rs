@@ -102,14 +102,7 @@ mod tests {
     use crate::{ChangeKind, Origin, PageId, SaveBase, Why};
 
     fn temp_root(tag: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "tine-{tag}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-{tag}-"));
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         root

@@ -9,6 +9,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { editorKind, editorSelector, editorText, scratchProfile } from "./lib/native-editor-bench.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { BLOCK_EDITOR } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.join(ROOT, "artifacts/grid-edit-first-874");
@@ -48,12 +49,12 @@ try {
   }, { timeout: 10000, timeoutMsg: `expected Edit on ${JSON.stringify(expected)}` });
   const end = () => browser.keys(["Control", "End", "NULL"]);
   const recordCell = async label => {
-    const state = await browser.execute(() => {
-      const editor = document.querySelector("textarea.block-editor, .cm-content[contenteditable=true]");
+    const state = await browser.execute(selector => {
+      const editor = document.querySelector(selector);
       const cell = editor?.closest(".sheet-cell");
       return { focused: !!editor && (document.activeElement === editor || editor.contains(document.activeElement)),
         row: cell?.dataset.row, col: cell?.dataset.col };
-    });
+    }, BLOCK_EDITOR);
     assert.equal(state.focused, true, `${label}: caret remains in Edit`);
     evidence.push({ label, ...state });
     return state;
@@ -92,11 +93,11 @@ try {
   await textIs("second child");
   await recordCell(stage);
   await waitForFileText(FILE, text => /- gamma\n\s+- first child\n\s+- second child/.test(text));
-  const nested = await browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor, .cm-content[contenteditable=true]");
+  const nested = await browser.execute(selector => {
+    const editor = document.querySelector(selector);
     const line = editor?.closest(".sheet-nested-line");
     return !!line?.parentElement?.closest(".sheet-nested-line");
-  });
+  }, BLOCK_EDITOR);
   assert.equal(nested, true, "Tab nests the second child under the first inside gamma");
   screenshot("nested-edit.png");
 

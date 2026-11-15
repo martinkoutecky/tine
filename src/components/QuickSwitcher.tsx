@@ -2,7 +2,7 @@ import { shortcutKey } from "../shortcutKey";
 import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { nextResultIndex } from "../resultNavigation";
-import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
+import { For, Show, createSignal, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned, type Owned } from "../owned";
@@ -10,7 +10,7 @@ import { coalescedRead } from "../coalescedRead";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPrefill, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { graphEpoch, graphMeta } from "../graphSession";
+import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
 import { paletteCommands } from "../keybindings";
@@ -29,13 +29,14 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
 import { queryAllWindows } from "../windowRealm";
+import { createGraphResource } from "../graphResource";
 
 // One selectable result row.
 type Item =
   | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[]; matchedAlias?: string; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
-  | { t: "block"; page: string; pageKind: PageKind; path?: string; blockId: string; pageHeader?: boolean; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
+  | { t: "block"; page: string; pageKind: PageKind; path?: string; blockId: string; pageHeader?: boolean; isComment?: boolean; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
 
 interface Section {
   header: string;
@@ -115,16 +116,13 @@ export function QuickSwitcher(): JSX.Element {
   // zero limit skips the other branch, so pages never wait for block ranking.
   // Separate cancellation lanes keep the two requests from cancelling each
   // other. Presentation paging below only slices these already-ranked pools.
-  // The request owner is `graphOwner` (it retires with the display epoch), so
-  // the epoch is part of the key: an answer the epoch outran is asked again
-  // instead of staying on screen as the final, empty one. Epochs move at graph
-  // open and on a config, title-format or typography change, never per keystroke.
-  const searchResource = (target: "pages" | "blocks") => createResource(
+  // The request owner is `graphOwner`; createGraphResource keys it on the same
+  // epoch, so an answer the epoch outran is asked again (UI-SWITCHER-SEARCH-OUTLIVES-EPOCH-1111).
+  const searchResource = (target: "pages" | "blocks") => createGraphResource(
     () => (!switcherOpen() || commandsOnly() || !(target === "pages" ? pagesWanted() : blocksWanted()) ? null : {
       q: target === "pages" ? query() : debouncedQuery(),
       scope: currentPageScope(),
       graphRoot: graphMeta()?.root ?? "",
-      epoch: graphEpoch(),
       binding: bindingIdentity(),
       transliteration: pinyinMatchingEnabled(),
     }),
@@ -262,6 +260,7 @@ export function QuickSwitcher(): JSX.Element {
           blockId: blockDtoExternalId(hit.block),
           pageHeader: !!(hit.block.page_property || hit.block.page_preamble),
           text: hit.display_text,
+          isComment: hit.is_comment,
           crumb: hit.block.breadcrumb ?? [],
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
           adaptiveClass: hit.match_class ?? "body_evidence",
@@ -765,7 +764,7 @@ function Row(props: { item: Item }): JSX.Element {
       );
     case "block":
       return (
-        <SearchResultRow page={it.page} breadcrumb={it.crumb} text={it.text} spans={it.spans} />
+        <SearchResultRow page={it.page} breadcrumb={it.crumb} text={it.text} spans={it.spans} isComment={it.isComment} />
       );
   }
 }

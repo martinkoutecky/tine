@@ -2,17 +2,11 @@
 //! renames only the proposals the user confirmed (12a G3 finding 3, Rule 2 B5).
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_store::Store;
 
 fn fixture(label: &str, files: &[&str]) -> (PathBuf, std::sync::Arc<Store>) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-journal-migrations-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-journal-migrations-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

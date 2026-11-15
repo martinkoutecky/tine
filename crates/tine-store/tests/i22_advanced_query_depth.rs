@@ -11,8 +11,7 @@ use std::path::PathBuf;
 use tine_store::{OpenOptions, QueryDialect, Store};
 
 fn graph(name: &str) -> (PathBuf, Store) {
-    let dir = std::env::temp_dir().join(format!("tine-i22-adv-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir(&format!("tine-i22-adv-{name}-"));
     for sub in ["pages", "journals"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }

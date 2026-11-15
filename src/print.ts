@@ -19,6 +19,7 @@ import { mainWindow } from "./windowRealm";
 
 /** The default export options (match the Rust `PrintOpts::default`). */
 export const DEFAULT_PRINT_OPTS: PrintOpts = {
+  include_comments: true,
   expand_collapsed: true,
   font_px: 16,
   margin_mm: 16,
@@ -170,7 +171,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
       cleanup();
       return;
     }
-    const sheets = await owned(exportSheets([name]));
+    const sheets = await owned(exportSheets([name], { kind: "print", includeComments: opts.include_comments !== false }));
     if (!sheets || sheets.kind === "stale" || !owner()) { cleanup(); return; }
     const result = await Promise.race([
       readOwned(owner, backend().pagePrintHtml(name, opts, sheets.value)), cancelled,

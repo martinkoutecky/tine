@@ -695,6 +695,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "git_autocommit_tests",
             include_str!("git_autocommit_tests.rs"),
         ),
+        ("git_commit_cadence", include_str!("git_commit_cadence.rs")),
         ("git_identity", include_str!("git_identity.rs")),
         ("git_ignore_setup", include_str!("git_ignore_setup.rs")),
         ("git_lifecycle", include_str!("git_lifecycle.rs")),
@@ -762,7 +763,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 37, "scan every owner/*.rs file");
+    assert_eq!(files, 38, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -1875,6 +1876,72 @@ fn add_to_org_uses_page_grammar_and_property_drawers() {
 }
 
 #[test]
+fn gh930_no_author_add_writes_plain_blocks() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    for (name, no_author) in [("plain", true), ("attributed", false)] {
+        verb(
+            &slot,
+            "block.add",
+            json!({"page":name, "content":"- root\n  - child", "no_author":no_author}),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(graph.root.join(format!("pages/{name}.md"))).unwrap();
+        assert_eq!(text.contains("tine.author::"), !no_author, "{text}");
+    }
+}
+
+#[test]
+fn gh930_no_author_preserves_supplied_and_existing_properties() {
+    for (path, content, edited, org) in [
+        (
+            "pages/plain.md",
+            "- supplied\n  tine.author:: Ada\n  - child",
+            "edited\ntine.author:: Grace",
+            false,
+        ),
+        (
+            "pages/plain.org",
+            "* supplied\n:PROPERTIES:\n:tine.author: Ada\n:END:\n** child",
+            "edited\n:PROPERTIES:\n:tine.author: Grace\n:END:",
+            true,
+        ),
+    ] {
+        let graph = Graph::seeded(Default::default(), &[(path, "")]);
+        let slot = graph.slot();
+        let added = verb(
+            &slot,
+            "block.add",
+            json!({"page":"plain", "content":content, "no_author":true}),
+        )
+        .unwrap();
+        let handle = added["blocks"][0].as_str().unwrap();
+        let raw = || {
+            graph.store.page(&PageId::from(path)).unwrap().doc.blocks[0]
+                .raw
+                .clone()
+        };
+        assert_eq!(gh840_values(&raw(), org, "tine.author"), ["Ada"]);
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle":handle, "text":edited, "no_author":true}),
+        )
+        .unwrap();
+        assert_eq!(gh840_values(&raw(), org, "tine.author"), ["Grace"]);
+        let read = verb(&slot, "page.show", json!({"name":"plain"})).unwrap();
+        let handle = format!("plain/{}", block_handle(&read, 0));
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle":handle, "text":"edited again", "no_author":true}),
+        )
+        .unwrap();
+        assert_eq!(gh840_values(&raw(), org, "tine.author"), ["Grace"]);
+    }
+}
+
+#[test]
 fn gh930_add_refuses_blank_authors_without_writing() {
     let graph = Graph::new();
     let slot = graph.slot();
@@ -1983,6 +2050,14 @@ fn add_resolves_author_environment_and_explicit_override() {
         "{text}"
     );
     assert!(text.contains("tine.author:: Ada"), "{text}");
+    verb(
+        &slot,
+        "block.add",
+        json!({"page": "personal", "content": "- personal\n  - child", "no_author": true}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/personal.md")).unwrap();
+    assert!(!text.contains("tine.author::"), "{text}");
 }
 
 #[test]

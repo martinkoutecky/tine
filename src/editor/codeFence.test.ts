@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly } from "./codeFence";
+import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly, codeLanguageCaret, codeLanguageChange, codeLanguageInput } from "./codeFence";
 
 describe("codeFenceOnly", () => {
   it("detects a whole-block markdown fence with a language", () => {
@@ -208,4 +208,61 @@ it.each(["md", "org"] as const)("mixed %s projection preserves CRLF outside the 
   expect(p).toMatchObject({ open: prefix, body: "body", close: suffix });
   expect(codeBodyJoin(p, "edited")).toBe(prefix + "edited" + suffix);
   expect(codeBodyProjection(raw, format, 0)).toBeNull();
+});
+
+// Review HOLD on a2c44ce5a (#879): the label put the caret on the delimiter end, before the separator, so typing
+// a language into `#+BEGIN_SRC python` produced `#+BEGIN_SRCrust python`, which no longer parses as code.
+describe("codeLanguageCaret", () => {
+  it.each([
+    ["org", "#+BEGIN_SRC python\nprint(1)\n#+END_SRC", "python"],
+    ["md", "```js\nx\n```", "js"],
+    ["md", "``` js\nx\n```", "js"],
+    ["md", "```\t js\nx\n```", "js"],
+  ] as const)("lands on the language (%s %j)", (format, text, lang) => {
+    const caret = codeLanguageCaret(text, format);
+    expect(text.slice(caret, caret + lang.length)).toBe(lang);
+    const typed = text.slice(0, caret) + "rust" + text.slice(caret + lang.length);
+    expect(codeFenceOnly(typed, format)?.lang).toBe("rust");
+  });
+  it("lands right after the backticks of an unlabelled Markdown fence", () => {
+    const text = "```\nx\n```";
+    const caret = codeLanguageCaret(text, "md");
+    expect(caret).toBe(3);
+    expect(codeFenceOnly(text.slice(0, caret) + "rust" + text.slice(caret), "md")?.lang).toBe("rust");
+  });
+});
+
+describe("codeLanguageInput", () => {
+  it.each((["md", "org"] as const).flatMap(format => ["\n", "\r\n"].flatMap(eol =>
+    ["", "  "].flatMap(indent => ["SRC", "EXAMPLE"].flatMap(kind => ["r", "rust"].map(inserted => ({ format, eol, inserted, indent, kind })))))))("supplies Org's first separator only during input: %j", ({ format, eol, inserted, indent, kind }) => {
+    const raw = `前 🐈${eol}${indent}#+BEGIN_${kind}${eol}x${eol}#+END_${kind}`;
+    const at = codeLanguageCaret(raw, format);
+    const edit = codeLanguageInput(raw.slice(0, at) + inserted + raw.slice(at), format, at + inserted.length, inserted)!;
+    expect(edit).toEqual({ value: raw.slice(0, at) + " " + inserted + raw.slice(at), caret: at + inserted.length + 1, change: { from: at, insert: " " } });
+    expect(codeLanguageInput(raw, format, at, "")).toBeNull();
+    expect(codeLanguageInput(raw.slice(0, at) + " " + raw.slice(at), format, at + 1, " ")).toBeNull();
+  });
+  it.each(["```", "~~~", "#+BEGIN_SRC ", "#+BEGIN_SRC\t"])("preserves existing separators and Markdown syntax: %j", open => {
+    const raw = `${open}\nx\n${open.startsWith("#+") ? "#+END_SRC" : open}`;
+    const at = codeLanguageCaret(raw, "md");
+    expect(codeLanguageInput(raw.slice(0, at) + "rust" + raw.slice(at), "md", at + 4, "rust")).toBeNull();
+  });
+});
+
+describe("codeLanguageChange", () => {
+  it.each((["md", "org"] as const).flatMap(format => ["\n", "\r\n"].map(eol => ({ format, eol }))))(
+    "normalizes a buffer-only insertion and preserves untouched bytes: %j", ({ format, eol }) => {
+      const before = `前 🐈${eol}  #+BEGIN_SRC${eol}body${eol}  #+END_SRC${eol}after`;
+      const at = codeLanguageCaret(before, format);
+      const text = before.slice(0, at) + "rust" + before.slice(at);
+      expect(codeLanguageChange(before, text, format)).toEqual({ value: before.slice(0, at) + " rust" + before.slice(at), caret: at + 5, change: { from: at, insert: " " } });
+      expect(codeLanguageChange(before, before, format)).toBeNull();
+      expect(codeLanguageChange(text, before, format)).toBeNull();
+    });
+  it("leaves deletion of the separator, body edits, and whole-source replacement literal", () => {
+    const before = "#+BEGIN_SRC rust\nbody\n#+END_SRC";
+    expect(codeLanguageChange(before, before.replace(" rust", "rust"), "org")).toBeNull();
+    expect(codeLanguageChange(before, before.replace("body", "edited"), "org")).toBeNull();
+    expect(codeLanguageChange("", before.replace(" rust", "rust"), "org")).toBeNull();
+  });
 });

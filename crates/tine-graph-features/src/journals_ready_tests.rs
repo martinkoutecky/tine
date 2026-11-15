@@ -1,5 +1,33 @@
 use super::*;
 
+/// Hl2_0 review hold: the feed carried the graph's config restriction in the
+/// page's own `read_only`, so a Markdown journal stayed uneditable (and showed
+/// the Org banner) after the config was repaired. Like the page adapter, the
+/// feed reports only the file's intrinsic restriction; the config one is the
+/// graph fact the frontend already holds.
+#[test]
+fn an_unreadable_config_does_not_mark_a_markdown_journal_read_only_in_the_feed() {
+    let root = tempfile::tempdir().unwrap();
+    for dir in ["journals", "logseq"] {
+        std::fs::create_dir(root.path().join(dir)).unwrap();
+    }
+    std::fs::write(root.path().join("logseq/config.edn"), b"{:a \"\xff\"}\n").unwrap();
+    std::fs::write(root.path().join("journals/2020_01_01.md"), "- day\n").unwrap();
+    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    store.stop_watcher_for_tests();
+    let page = feed_page_through(&store, 3, None, None, true).unwrap();
+    let day = page
+        .pages
+        .iter()
+        .find(|p| p.doc.rev.is_some())
+        .expect("the journal file");
+    assert!(
+        !day.doc.read_only,
+        "the Markdown file itself stays editable"
+    );
+    store.close();
+}
+
 /// REG-JOURNAL-STEP-WINDOW: the file's own day comes from its name,
 /// so a body that failed to read at load (invalid UTF-8) keeps it too.
 #[test]

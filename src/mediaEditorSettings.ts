@@ -38,7 +38,7 @@ export function setMediaEditorCommand(settingKey: string, value: string): void {
   const read = commandReaders.get(settingKey) ?? (() => mediaEditorCommand(settingKey));
   commandReaders.set(settingKey, read);
   writePreference(read, (next) => setCommands(settingKey, next), v,
-    (next) => backend().setAppString(settingKey, next), "media editor command");
+    (next) => backend().setAppString(settingKey, next), msg("toast-save-media-editor-failed"));
 }
 
 const commandReaders = new Map<string, () => string>();

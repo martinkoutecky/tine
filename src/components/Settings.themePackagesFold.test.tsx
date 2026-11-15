@@ -33,10 +33,10 @@ afterEach(() => {
 });
 
 describe("theme packages list folds (GH #882)", () => {
-  it("shows the first four on the Appearance tab, then all on Show all, and folds again", async () => {
+  it("shows the first four in the Themes category, then all on Show all, and folds again", async () => {
     const root = document.body.appendChild(document.createElement("div"));
     const dispose = render(() => <Settings />, root);
-    openSettings("appearance");
+    openSettings("themes");
     await tick();
     expect(shownThemes(root)).toEqual(["theme.community.theme-one", "theme.community.theme-two", "theme.community.theme-three", "theme.community.theme-four"]);
     expect(toggle(root)?.textContent?.trim()).toBe("Show all 7 theme packages");

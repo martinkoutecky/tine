@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { writeGraphSignal } from "./graphPreferences";
@@ -14,5 +15,5 @@ export function applyTaskWorkflow(meta: { preferred_workflow: string }) {
 export function changeWorkflow(wf: "now" | "todo") {
   if (wf === workflow()) return;
   writeGraphSignal("workflow", workflow, setWorkflow, wf,
-    (next) => backend().setPreferredWorkflow(next), "preferred workflow");
+    (next) => backend().setPreferredWorkflow(next), msg("toast-save-workflow-failed"));
 }

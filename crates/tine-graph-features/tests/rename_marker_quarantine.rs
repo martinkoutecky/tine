@@ -2,7 +2,6 @@
 //! explicit source title. The report lists each skipped rewrite once.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
 use tine_store::{PageId, RenameMap, Store, TitleRebind};
 
@@ -16,12 +15,7 @@ fn hosted<T>(
 }
 
 fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-rename-markers-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-rename-markers-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

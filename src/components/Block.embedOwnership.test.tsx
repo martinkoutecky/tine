@@ -95,7 +95,8 @@ describe.each(["block", "page"] as const)("GH #726 %s embed selection boundary",
       await bullet(root, "source");
       selectBlock(from, { roots: [from], navOnly: true });
       extendSelectionTo(to);
-      expect(selectedIds()).toEqual([from]);
+      expect(selectedIds()).toEqual(from === "source" ? ["source", "child"] : [from]);
+      expect(selectedIds()).not.toContain(to);
       expect(doc.byId.host).toBeDefined();
       expect(doc.byId.source).toBeDefined();
     } finally { dispose(); }

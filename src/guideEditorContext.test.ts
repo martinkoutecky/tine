@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
+it("the block-selection tips explain route departure and journal scrolling", () => {
+  const page = readFileSync("crates/tine-guide/src/templates/tips.md", "utf8");
+  expect(page).toContain("Leaving a page clears its block selection");
+  expect(page).toContain("Scrolling between days in the Journals feed keeps the selection");
+});
+
 it("the search tour teaches pointer and keyboard activation in the focused split", () => {
   const page = readFileSync("crates/tine-guide/src/templates/find-and-revisit.md", "utf8");
   expect(page).toContain("Click or tap a result to open it in the pane you were using");
@@ -22,6 +28,10 @@ it("the code tour explains raw source entry on desktop and mobile", () => {
   expect(page).toContain("To edit the language or add text before or after the code");
   expect(page).toContain("the whole bullet opens as source, including its fences");
   expect(page).toContain("These paths work on desktop and mobile");
+  expect(page).toContain("skip the language list by tapping inside the code");
+  expect(page).toContain("Typing continues at your caret");
+  expect(page).toContain("click anywhere else in the bullet");
+  expect(page).toContain("Moving the caret keeps source visible until you leave the bullet");
 });
 
 it("the canonical context tour teaches pinned ancestor navigation and selecting an embed host", () => {

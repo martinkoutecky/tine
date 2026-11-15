@@ -141,7 +141,7 @@ let selectionKnown = false;
 function selectComposition(style: string, colors: string, typography: string): void {
   selectionKnown = true;
   writePreference(composition, applyCompositionLocally, resolveComposition(style, colors, typography),
-    (next) => backend().setAppString(COMPOSITION_KEY, encodeComposition(next)), "gallery theme");
+    (next) => backend().setAppString(COMPOSITION_KEY, encodeComposition(next)), msg("toast-save-gallery-theme-failed"));
 }
 
 /** Compatibility preset: one theme's presentation (if any) and colors together.

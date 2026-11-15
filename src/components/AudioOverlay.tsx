@@ -6,7 +6,7 @@ import { t } from "../i18n";
 // closes. It deliberately does not decode the whole track merely to draw a
 // waveform: long compressed recordings can expand into gigabytes of PCM.
 
-import { For, Show, createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -17,6 +17,7 @@ import { readOr } from "../resourceRead";
 import { assetRelPath } from "../render/inline";
 import { mime_from_path } from "../render/wasm/lsdoc_wasm";
 import { queryAllWindows, requestFrame, useOwnerWindow, viewportOf } from "../windowRealm";
+import { createGraphResource } from "../graphResource";
 const isExternal = (u: string) => /^(https?:|data:|blob:)/.test(u);
 
 function fmtTime(t: number): string {
@@ -68,7 +69,7 @@ export function AudioOverlay(): JSX.Element {
   onCleanup(() => { alive = false; });
   // Resolve to a range-aware native URL for graph assets (same path as the inline
   // embed), or the direct URL for external/http audio.
-  const [srcResource] = createResource(
+  const [srcResource] = createGraphResource(
     () => audioPlayer()?.url ?? null,
     async (u) => {
       if (isExternal(u)) return u;

@@ -34,34 +34,37 @@ const mobileMenu = (key, budget) => ({ env: "mobile", budget, what: `rows, menu.
 export const SURFACES = Object.freeze({
   // --- Commands: registries, no rendering ---------------------------------
   // GH #805 (0.10 lane brief): Quit Tine must be remappable in Shortcuts.
-  "commands.registry": { env: "desktop", budget: 155, // +2 open-comments review (this page / the graph), margin DESIGN §12 (D-20261108-MC4 family)
+  "commands.registry": { env: "desktop", budget: 157, // +2 open-comments review (this page / the graph), margin DESIGN §12 (D-20261108-MC4 family); +2 sidebar commands, GH #928
     what: "command ids in the Shortcuts list (remappable)", source: "src/keybindings.ts COMMANDS via commandDefaults()" },
   "commands.registry.editor": { env: "desktop", budget: 27, what: "editor-scope command ids", source: "commandDefaults() rows with scope \"editor\"" },
-  "commands.palette": { env: "desktop", budget: 95, // +2 open-comments review commands, margin DESIGN §12
+  "commands.palette": { env: "desktop", budget: 96, // +2 open-comments review commands, margin DESIGN §12; +1 open today in sidebar, GH #928
     what: "built-in rows in the command palette (plugin rows excluded)", source: "paletteCommands() minus plugin: ids; a registry command with paletteHidden stays out of it" },
   "keys.builtin": { env: "desktop", budget: 23, what: "non-remappable builtin key rows (documentation only)", source: "src/keybindings.ts BUILTIN_KEYS" },
   "slash.menu": { env: "desktop", budget: 53, what: "slash-menu rows", source: "src/editor/autocomplete.ts COMMANDS (COMMAND_DEFINITIONS)" },
   "angle.menu": { env: "desktop", budget: 16, what: "`<` block-menu rows", source: "src/editor/autocomplete.ts ADVANCED_BLOCK_COMMANDS" },
 
   // --- Settings ---------------------------------------------------------------
-  "settings.tabs": { env: "desktop", budget: 10, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" },
-  "settings.appearance.open": settingsOpen("appearance", 31),
+  "settings.tabs": { env: "desktop", budget: 11, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" }, // D-20261113 / #926: Themes is its own category.
+  "settings.appearance.open": settingsOpen("appearance", 45), // D-20261113-UI / #926: 23 after Themes moved out, + 3 move controls × 7 toolbar actions + Reset
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
-  "settings.appearance.advanced": settingsAdvanced("appearance", 17),
+  "settings.appearance.advanced": settingsAdvanced("appearance", 18), // D-20261111-QP2 / GH #926: Show the help button
+  "settings.themes.open": settingsOpen("themes", 8),
   // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
   "settings.editor.open": settingsOpen("editor", 10),
-  // CM6 stage-2 s1 explicitly requires one Beta-only, default-off setting.
+  // Original per-identity ceilings; the CM6-default lane reports the new
+// all-channel classic opt-out without raising either budget.
   // D-20261031-PEEK / GH #824 explicitly adds one numeric hover-delay setting;
   // D-20261110-TT adds Logseq's preview on/off switch (`:ui/enable-tooltip?`) beside it.
-  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 14 : 13),
+  "settings.editor.advanced": settingsAdvanced("editor", SHIP === "experiment" ? 12 : 11),
   "settings.journals.open": settingsOpen("journals", 13),
   "settings.journals.advanced": settingsAdvanced("journals", 1),
   "settings.files.open": settingsOpen("files", 7),
   "settings.files.advanced": settingsAdvanced("files", 3),
   "settings.backups.open": settingsOpen("backups", 3),
-  "settings.graph.open": settingsOpen("graph", 7),
+  "settings.graph.open": settingsOpen("graph", 8),
+  "settings.sharing.open": settingsOpen("sharing", 1),
   "settings.plugins.open": settingsOpen("plugins", 5),
-  "settings.diagnostics.open": settingsOpen("diagnostics", 6),
+  "settings.diagnostics.open": settingsOpen("diagnostics", 7), // D-20261111-QP2 / GH #926: the Help disclosure
   "settings.shortcuts.open": settingsOpen("shortcuts", 1, " (the rows are the commands budget)"),
   "settings.about.open": settingsOpen("about", 8),
 
@@ -82,13 +85,14 @@ export const SURFACES = Object.freeze({
   "menu.query.readonly": { env: "desktop", budget: 5, what: "rows, query block menu on a read-only query", source: "QueryActions with editable false" },
   "menu.rsHeader": { env: "desktop", budget: 3, what: "rows, right sidebar header menu", source: "RightSidebar header ⋯ menu" },
   "menu.rsItem": { env: "desktop", budget: 3, what: "rows, right sidebar item menu (three items open, the first a page)", source: "RightSidebar item ⋯ menu" },
-  "menu.topbarOverflow": { env: "desktop", budget: 7, what: "rows, topbar ··· overflow menu", source: "TopbarOverflowMenu opened inside the app" },
+  "menu.topbarOverflow": { env: "desktop", budget: 10, // D-20261113-UI / #926: seven optional actions, Back/Forward and Customize
+    what: "rows, topbar ··· overflow menu", source: "TopbarOverflowMenu opened inside the app" },
 
   // --- Chrome at rest (DOM present; CSS-only hiding is not visible to jsdom) --
   "topbar.atRest": { env: "desktop", budget: 13, what: "controls in the desktop topbar: toolbar buttons (not the ··· trigger) plus the frameless window controls", source: "App header.topbar controls outside .topbar-overflow, plus WindowControls buttons" },
   "topbar.windowControls": { env: "desktop", budget: 3, what: "frameless window controls", source: "WindowControls buttons" },
-  "sidebar.left.fixed": { env: "desktop", budget: 5, what: "controls in the left sidebar of an empty graph", source: "App .left-sidebar: workspace and graph switchers, Journals, All pages, New page" },
-  "sidebar.left.full": { env: "desktop", budget: 8, what: "controls in the left sidebar with Favorites, Recent and Namespaces present", source: "the same selector with a favorite, a recent page and a namespaced page" },
+  "sidebar.left.fixed": { env: "desktop", budget: 6, what: "controls in the left sidebar of an empty graph", source: "App .left-sidebar: workspace and graph switchers, Close navigation sidebar, Journals, All pages, New page" },
+  "sidebar.left.full": { env: "desktop", budget: 9, what: "controls in the left sidebar with Favorites, Recent and Namespaces present", source: "the same selector with a favorite, a recent page and a namespaced page" },
   "sidebar.right.header": { env: "desktop", budget: 2, what: "controls in the right sidebar header", source: "RightSidebar .right-sidebar-header buttons" },
   "sidebar.right.item": { env: "desktop", budget: 4, what: "controls in one right sidebar item head", source: "RightSidebar .rs-item-head: toggle, title, ⋯, close" },
 

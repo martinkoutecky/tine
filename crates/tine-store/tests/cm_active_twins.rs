@@ -79,7 +79,7 @@ fn active_twins_mask_meaning_and_promote_unchanged_siblings() {
         let snapshot = view.test_read_snapshot();
         let baseline = snapshot.referenced_names_for_completion(Some((
             "Shared",
-            &block.uuid,
+            &block.uuid.text(),
             "baseline [[BaselineOnly]]",
         )));
         assert!(baseline.iter().any(|name| name == "BaselineOnly"));

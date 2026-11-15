@@ -4,6 +4,7 @@
 // transactions.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -105,9 +106,9 @@ try {
   const addTarget = await browser.$(".page-trailing-block-target");
   await addTarget.waitForExist({ timeout: 5000 });
   await addTarget.click();
-  const freshEditor = await browser.$(".page-blocks textarea.block-editor");
+  const freshEditor = await browser.$(editorSelector(".page-blocks"));
   await freshEditor.waitForExist({ timeout: 5000 });
-  await freshEditor.setValue("Fresh source target");
+  await pasteEditorText(browser, "Fresh source target");
   await browser.keys(["Escape"]);
   await browser.waitUntil(() => {
     const raw = fs.readFileSync(`${GRAPH}/pages/Source Target.md`, "utf8");
@@ -187,7 +188,7 @@ try {
   mark("paste and badge/panel");
   // Paste the clipboard text produced by Copy block ref into another real block.
   await browser.$(".page-blocks .block-content-wrapper").click();
-  const editor = await browser.$(".page-blocks textarea.block-editor");
+  const editor = await browser.$(editorSelector(".page-blocks"));
   await editor.waitForExist({ timeout: 5000 });
   await browser.keys(["Control", "v"]);
   await browser.keys(["Escape"]);
@@ -276,15 +277,8 @@ try {
   });
   if (!sourceEditArmed) throw new Error("source block content was not available for editing");
   await sleep(200);
-  const sourceEditApplied = await browser.execute((value) => {
-    const editor = document.querySelector(".page-blocks textarea.block-editor");
-    if (!(editor instanceof HTMLTextAreaElement)) return false;
-    editor.focus();
-    editor.value = value;
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: null }));
-    return true;
-  }, "Updated source target");
-  if (!sourceEditApplied) throw new Error("source block editor did not open for input");
+  await browser.$(editorSelector(".page-blocks")).waitForExist({ timeout: 5000 });
+  await pasteEditorText(browser, "Updated source target");
   await browser.keys(["Escape"]);
   await browser.waitUntil(() => fs.readFileSync(`${GRAPH}/pages/Source Target.md`, "utf8").includes("Updated source target"), {
     timeout: 10_000, timeoutMsg: "updated source block was not saved",

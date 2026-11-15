@@ -59,6 +59,7 @@ const PASS_THROUGH: Record<string, [number, string]> = {
   "src/document/edits/properties.ts": [5, "the generic writers themselves (setBlockProperty, setPageProperty, toggle)"],
   "src/document/edits/propertyDeclaration.ts": [1, "property declaration page: the user's key"],
   "src/editor/editorCompletions.ts": [1, "both editors' property autocomplete inserts the key the user picked"],
+  "src/editor/exportProjection.ts": [1, "source export restores only parser-owned comment presentation keys when Remove properties is selected"],
   "src/render/renderedText.ts": [1, "copy-as-text prints the block's own properties"],
   "src/sheet/conversions.ts": [1, "clears TINE_SHEET_PROPS, all `tine.*`"],
   "src/sheet/fields.ts": [1, "a sheet cell edit writes the column's user property"],
@@ -211,7 +212,7 @@ describe("Tine writes only tine.* keys or OG-owned keys (D-20261102-PNS)", () =>
       ...rs.map((s) => resolve(s.expr, rsConsts)),
     ]);
     for (const key of ["tine.quote", "tine.quote-prefix", "tine.quote-suffix", "tine.author", "tine.export",
-      "tine.exports", "tine.favorites", "tine.journal-sections", "tine.share", "tine.view", "public", "collapsed", "id", "hl-page"]) {
+      "tine.exports", "tine.comments", "tine.favorites", "tine.journal-sections", "tine.share", "tine.view", "public", "collapsed", "id", "hl-page"]) {
       expect(keys, key).toContain(key);
     }
     for (const old of ["quote", "author", "export", "tine/exports", "tine/favorites", "tine/journal-sections"]) {

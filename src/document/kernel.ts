@@ -11,7 +11,7 @@ import type { OutlineNode } from "../editor/outline";
 import { outlineApply, outlineReads } from "../render/parse";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wiring";
-import { doc, keySource, keysUsed, pageByName, setDoc, writeRaw } from "./model";
+import { doc, keySource, keysUsed, pageByName, pageReadOnly, setDoc, writeRaw } from "./model";
 import { msg } from "../i18n";
 import { pushToastUnique } from "../toasts";
 import { editorHidePolicy } from "../editor/properties";
@@ -135,7 +135,7 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null, edited?
     roots: page.roots,
     blocks,
     header_root: headerRoot,
-    read_only: page.readOnly || page.guide,
+    read_only: pageReadOnly(page) || page.guide,
     frozen: graphRewriteFrozen() || pageFrozen(name),
   };
 }

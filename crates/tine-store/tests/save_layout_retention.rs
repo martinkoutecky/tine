@@ -3,7 +3,6 @@
 //! exact bytes on disk.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, PageDto};
 use tine_store::{EditKind, PageId, SaveBase, Store};
@@ -22,12 +21,7 @@ struct Page {
 
 impl Page {
     fn new(source: &str) -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "tine-layout-retention-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::fresh_dir("tine-layout-retention-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::write(root.join("pages/p.md"), source).unwrap();

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
+import { editorSelector, editorText, editorState } from "./lib/e2e-block-editor.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
@@ -48,8 +49,8 @@ try {
     const body = await browser.$("//div[contains(@class, 'block-content') and contains(., 'Original body')]");
     await body.waitForDisplayed({ timeout: 15_000 });
     await body.click();
-    await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
-    const before = await browser.$("textarea.block-editor").getValue();
+    await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
+    const before = await editorText(browser);
     // Org's CRLF reader may retain a terminal blank line. The contract is the
     // visible body/user property and absence of metadata, not that blank line.
     if (before.trimEnd() !== f.visible) throw new Error(`wrong visible projection: ${JSON.stringify(before)}`);
@@ -67,16 +68,14 @@ try {
     if (f.append) {
       stage = `append property after body: ${f.name}`;
       await browser.$("//div[contains(@class, 'block-content') and contains(., 'Revised Original body')]").click();
-      await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+      await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
       await browser.keys(["Control", "End"]);
       await browser.keys(["Control"]);
       await browser.keys(["Shift", "Enter"]);
       await browser.keys(["Shift"]);
       for (const char of "owner:: Ada") await browser.keys(char);
-      const live = await browser.execute(() => {
-        const ta = document.querySelector("textarea.block-editor");
-        return { text: ta.value, start: ta.selectionStart, end: ta.selectionEnd };
-      });
+      const state = await editorState(browser);
+      const live = state && { text: state.value, start: state.start, end: state.end };
       const expected = `Revised ${f.visible}\nowner:: Ada`;
       if (live.text !== expected || live.start !== expected.length || live.end !== expected.length) {
         throw new Error(`property typing changed the live buffer or caret: ${JSON.stringify(live)}`);
@@ -98,7 +97,7 @@ try {
     if (f.clear) {
       stage = "clear first-root flashcard";
       await browser.$("//div[contains(@class, 'block-content') and contains(., 'Revised Original body')]").click();
-      await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+      await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
       await browser.keys(["Control", "a"]);
       await browser.keys(["Control"]);
       await browser.keys(["Backspace"]);

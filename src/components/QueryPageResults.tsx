@@ -41,7 +41,7 @@ export function QueryPageResultContent(props: { hit: QueryPageHit }): JSX.Elemen
       <span class="search-result-excerpt query-page-content-excerpt"><For each={buildSearchExcerpt(hit().display_text,
         hit().evidence.filter((item) => item.field === "visible_content").flatMap((item) => item.spans))}>
         {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
-      </For></span>
+      </For><Show when={hit().is_comment}> <span class="switcher-kind">{t("search-result-row-comment")}</span></Show></span>
     </Show>
     <Show when={hit().matched_alias}><span class="query-page-alias">{t("query-page-results-alias", { alias: hit().matched_alias! })}</span></Show>
   </span></>;

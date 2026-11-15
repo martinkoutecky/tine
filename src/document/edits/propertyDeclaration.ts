@@ -1,7 +1,8 @@
 import { backend } from "../../backend";
-import { readOwned, bindingOwner } from "../../owned";
+import { bindingOwner } from "../../owned";
+import { admitRead } from "../readAdmission";
 import { ensurePageLoaded } from "../workingSet";
-import { pageByName } from "../model";
+import { pageByName, pageReadOnly } from "../model";
 import { captureEmptyPage } from "../convert";
 import { setPageProperty } from "./properties";
 
@@ -15,17 +16,17 @@ export async function ensurePagePropertyOnKeyPage(name: string, key: string, val
   if (!name) throw new Error("A property key needs a page name.");
   if (!pageByName(name)) {
     if (value === null) return;
-    const reading = await readOwned(bindingOwner(), backend().getPage(name, "page"));
+    const reading = await admitRead(bindingOwner(), () => backend().getPage(name, "page"), dto => [name, ...(dto ? [dto.name] : [])], dto => {
+      const refused = ensurePageLoaded(dto ?? captureEmptyPage(name, "page"));
+      const admitted = pageByName(name);
+      if (refused || !admitted || (dto && admitted.id !== dto.id))
+        throw new Error("The property key page changed before the type could be saved.");
+    });
     if (reading.kind === "stale") throw new Error("The graph changed before the type could be saved.");
-    const dto = reading.value ?? captureEmptyPage(name, "page");
-    const refused = ensurePageLoaded(dto);
-    const admitted = pageByName(name);
-    if (refused || !admitted || (reading.value && admitted.id !== reading.value.id))
-      throw new Error("The property key page changed before the type could be saved.");
   }
   const page = pageByName(name);
   if (page) {
-    if (page.readOnly || page.guide) throw new Error("The property key page is read-only.");
+    if (pageReadOnly(page) || page.guide) throw new Error("The property key page is read-only.");
     setPageProperty(name, key, value);
     return;
   }

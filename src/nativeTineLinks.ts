@@ -10,7 +10,7 @@ import type { LinkTarget, LinkDelivery } from "./deepLinkNavigation";
 export type CurrentPage =
   | { kind: "current-page"; name: string; url: string; block_url: string | null }
   | { kind: "no-current-page"; reason: "no-owner-endpoint" | "no-focused-window" | "not-page" | "journals" };
-export interface CurrentPageRequest { id: number; binding_generation: number }
+export interface CurrentPageRequest { id: number; binding_generation: number; graph_id: string }
 export interface ShareInboxResource { path: string; name?: string | null; type?: string | null }
 /** The ingest's durable record for an item (share_inbox.rs `Prepared`, ADR 0073):
  * the graph and frozen journal day it is bound to, its shaped Markdown (null

@@ -30,11 +30,11 @@ describe("community registry — enabled (default build)", () => {
     dispose();
   });
 
-  it("shows theme packages on the Appearance tab", async () => {
+  it("shows theme packages in the Themes category", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Settings />, root);
-    openSettings("appearance");
+    openSettings("themes");
     await tick();
     expect(sectionHeadings(root)).toContain("Theme packages");
     dispose();

@@ -12,6 +12,7 @@ afterEach(() => {
   resetNearObserverForTests();
   resetStore();
   resetReferenceSectionState();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
@@ -24,6 +25,10 @@ const page = (name: string, blocks: BlockDto[]): PageRead => ({
 });
 
 it.each([false, true])("loading one source page leaves every other Linked References group's DOM untouched (routed=%s)", async (routed) => {
+  // This tests DOM isolation, not wall-clock admission speed. Group shells and
+  // reads yield through frames/tasks, which can span the wait deadline on a busy
+  // gate. Drive those turns along with the source completions controlled below.
+  vi.useFakeTimers();
   const groups: RefGroup[] = Array.from({ length: 6 }, (_, n) => ({
     page: `Source ${n}`, kind: "page", blocks: [
       { ...block(`row-${n}`), tags: ["Hub"], breadcrumb: n === 2 ? ["Parent"] : [] },
@@ -48,9 +53,9 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
   // also observes unrelated source loads. The visible name still stays Hub.
   const dispose = render(() => <LinkedReferences name={routed ? pageByName("Hub")!.name : "Hub"} />, root);
   try {
-    await vi.waitFor(() => expect(pending.size).toBe(2));
-    await vi.waitFor(() => expect(root.querySelectorAll(".ref-block")).toHaveLength(groups.length));
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await vi.runAllTimersAsync();
+    expect(pending.size).toBe(2);
+    expect(root.querySelectorAll(".ref-block")).toHaveLength(groups.length);
     const elements = [...root.querySelectorAll<HTMLElement>(".reference-group")];
     const lastDisclosure = elements.at(-1)!.querySelector<HTMLButtonElement>(".reference-group-disclosure")!;
     lastDisclosure.click();
@@ -60,7 +65,7 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
     // Keep filters/headers absent; load top-level rows, then a nested row last:
     // the real components exercise section invalidation without requiring that fix.
     for (const group of groups.slice(0, 3)) {
-      await vi.waitFor(() => expect(pending.has(group.page)).toBe(true));
+      expect(pending.has(group.page)).toBe(true);
       const touched = new Set<string>();
       const observer = new MutationObserver(records => {
         for (const record of records) {
@@ -76,8 +81,8 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
           ? [{ ...block(`parent-${group.page}`), raw: "Parent", children: rows }]
           : rows;
         pending.get(group.page)!(page(group.page, blocks));
-        await vi.waitFor(() => expect(root.querySelector(`.ls-block:not(.ref-block)[data-block-id="${group.blocks[0].id}"]`)).not.toBeNull());
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await vi.runAllTimersAsync();
+        expect(root.querySelector(`.ls-block:not(.ref-block)[data-block-id="${group.blocks[0].id}"]`)).not.toBeNull();
         expect([...touched]).toEqual([group.page]);
         const currentGroups = [...root.querySelectorAll(".reference-group")];
         const currentBodies = [...root.querySelectorAll(".reference-blocks")];
@@ -91,10 +96,13 @@ it.each([false, true])("loading one source page leaves every other Linked Refere
     // Value stability must still let a real source edit update its breadcrumb.
     expect(elements[2].querySelector(".ref-breadcrumb")?.textContent).toContain("Parent");
     setRaw("parent-Source 2", "Changed parent");
-    await vi.waitFor(() => expect(elements[2].querySelector(".ref-breadcrumb")?.textContent).toContain("Changed parent"));
+    await vi.runAllTimersAsync();
+    expect(elements[2].querySelector(".ref-breadcrumb")?.textContent).toContain("Changed parent");
   } finally {
     dispose();
     for (const [name, resolve] of pending) resolve(page(name, []));
-    await queueReferenceRead(async () => true, () => true, () => 0);
+    const drained = queueReferenceRead(async () => true, () => true, () => 0);
+    await vi.runAllTimersAsync();
+    await drained;
   }
 });

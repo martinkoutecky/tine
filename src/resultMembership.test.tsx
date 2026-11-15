@@ -6,9 +6,10 @@ import { startEditing, endEdit } from "./editorController";
 import { bumpDataRev, bumpGraphEpoch } from "./graphSession";
 import type { BlockDto } from "./types";
 
-const save = vi.hoisted(() => ({ dirty: false, saving: false, pending: false, conflict: false }));
+const save = vi.hoisted(() => ({ dirty: false, saving: false, pending: false, conflict: false, instance: 0, page: "Source" }));
 vi.mock("./document", () => ({
-  node: () => ({ page: "Source" }),
+  node: () => ({ page: save.page }),
+  pageInstanceGeneration: () => save.instance,
   isDirty: () => save.dirty, isSaving: () => save.saving,
   isConflicted: () => save.conflict, pendingDataRevision: () => save.pending,
 }));
@@ -16,7 +17,7 @@ const disposals: (() => void)[] = [];
 afterEach(() => {
   disposals.splice(0).forEach((dispose) => dispose());
   endEdit("blur");
-  Object.assign(save, { dirty: false, saving: false, pending: false, conflict: false });
+  Object.assign(save, { dirty: false, saving: false, pending: false, conflict: false, instance: 0, page: "Source" });
   document.body.innerHTML = "";
 });
 function mount(load: (id: string) => Promise<string[]>, identity = () => "Target") {
@@ -33,6 +34,42 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const turn = () => new Promise((done) => setTimeout(done, 0));
+
+it.each([true, false])("GH #944: a deferred replacement keeps the previous answer (expanded: %s)", async expanded => {
+  const { installResultsPendingGate, resultTicket, resultsTicketCurrent } = await import("./queryResultsEpoch");
+  let publishing = false;
+  installResultsPendingGate(() => publishing, "own-work");
+  const [revision, setRevision] = createSignal(0);
+  const pending = deferred<string[] | undefined>();
+  const load = vi.fn<(source: string) => Promise<string[] | undefined>>()
+    .mockResolvedValueOnce(["task"]).mockReturnValueOnce(pending.promise).mockResolvedValue([]);
+  let answer!: ReturnType<typeof createMembershipResource<string, string[] | undefined>>[0];
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    [answer] = createMembershipResource(() => `Target:${revision()}`, () => "Target", load,
+      () => false, () => expanded, true, revision);
+    return <div>{answer()?.join(",")}</div>;
+  }, root));
+  try {
+    await turn();
+    const original = answer()!;
+    expect(root.textContent).toBe("task");
+    setRevision(1); await turn();
+    // Expanded reads lose adoption permission while publication is pending;
+    // collapsed reads can instead be deferred by the subscription's ready().
+    publishing = true;
+    pending.resolve(expanded ? [] : undefined); await turn();
+    expect(root.textContent).toBe("task");
+    expect(answer()).toBe(original);
+    expect(resultsTicketCurrent(resultTicket(original))).toBe(false);
+    expect(load).toHaveBeenCalledTimes(2);
+    publishing = false;
+    setRevision(2);
+    await turn();
+    expect(root.textContent).toBe("");
+    expect(load).toHaveBeenCalledTimes(3);
+  } finally { publishing = false; }
+});
 
 it("I-20 / GH #659: a read started before editing cannot remove or move the editor", async () => {
   const pending = deferred<string[]>();
@@ -97,6 +134,29 @@ it("embedded descendant editing retains the containing answer", () => {
   const child: BlockDto = { id: "child", raw: "TODO child", collapsed: false, children: [] };
   expect(blocksContainEdit([{ ...child, id: "root", children: [child] }], "child")).toBe(true);
   expect(blocksContainEdit([{ ...child, id: "root", children: [] }], "child")).toBe(false);
+});
+
+it.each([["replacement", true], ["transfer", true], ["replacement", false], ["transfer", false]] as const)(
+  "source %s retires a held answer (after local split: %s)", async (change, localSplit) => {
+  const { beginResultsChange } = await import("./queryResultsEpoch");
+  const load = vi.fn(async () => ["task"]);
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    const [answer] = createMembershipResource(() => "Target", () => "Target", load,
+      (rows, id) => rows.includes(id), () => true, true);
+    return <div>{answer()?.join(",")}</div>;
+  }, root));
+  await vi.waitFor(() => expect(root.textContent).toBe("task"));
+  startEditing("task");
+  load.mockResolvedValue(["replacement"]);
+  if (localSplit) { beginResultsChange()(); await turn(); }
+  expect(root.textContent).toBe("task");
+  expect(load).toHaveBeenCalledTimes(1);
+  if (change === "replacement") save.instance++;
+  else save.page = "Other";
+  beginResultsChange()();
+  await vi.waitFor(() => expect(root.textContent).toBe("replacement"));
+  expect(load).toHaveBeenCalledTimes(2);
 });
 
 it("D-10: a suppressed (collapsed) guarded read is not rerun by structural result epochs", async () => {

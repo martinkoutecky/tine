@@ -54,7 +54,7 @@ fn first_line(raw: &str) -> String {
 /// Every runtime uuid and persisted `id::` in `blocks`.
 fn held_ids(blocks: &[DocBlock], out: &mut std::collections::BTreeSet<String>) {
     for block in blocks {
-        out.insert(block.uuid.clone());
+        out.insert(block.uuid.to_string());
         if let Some(id) = block.property("id") {
             out.insert(id);
         }
@@ -275,7 +275,7 @@ fn runtime_ids_resolve_after_edits() {
         pages
             .iter()
             .filter(|(entry, _)| entry.name == "Other" || entry.name == "Target")
-            .flat_map(|(_, doc)| doc.roots.iter().map(|block| block.uuid.clone()))
+            .flat_map(|(_, doc)| doc.roots.iter().map(|block| block.uuid.to_string()))
             .collect()
     });
     drop(view);
@@ -428,7 +428,7 @@ fn acceptance_resolve_every_reference_in_a_graph() {
         ) {
             for block in blocks {
                 let answer = || (page.to_owned(), first_line(block.raw()));
-                oracle.entry(block.uuid.clone()).or_insert_with(answer);
+                oracle.entry(block.uuid.to_string()).or_insert_with(answer);
                 if let Some(id) = block.property("id") {
                     oracle.entry(id).or_insert_with(answer);
                 }

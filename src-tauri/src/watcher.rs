@@ -481,6 +481,7 @@ fn config_event_payload(change: &Change, slot: &GraphSlot) -> Option<serde_json:
             serde_json::json!({
                 "binding_generation": slot.binding_generation,
                 "meta": crate::state::graph_meta(slot),
+                "config_problem": crate::graph::config_problem(&slot.store),
             })
         })
 }
@@ -613,6 +614,36 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_config_publications_carry_the_read_problem_and_its_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("logseq")).unwrap();
+        let config = root.path().join("logseq/config.edn");
+        std::fs::write(&config, "{}\n").unwrap();
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let slot = GraphSlot::new(store, root.path().to_path_buf());
+        let subscription = slot.store.subscribe();
+        for bytes in [b"{:a \"\xff\"}\n".as_slice(), b"{}\n".as_slice()] {
+            std::fs::write(&config, bytes).unwrap();
+            slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+            let mut delivered = false;
+            while let Some(change) = subscription.try_recv().unwrap() {
+                if let Some(payload) = config_event_payload(&change, &slot) {
+                    assert_eq!(payload["config_problem"].is_object(), bytes.contains(&0xff));
+                    if bytes.contains(&0xff) {
+                        assert_eq!(payload["config_problem"]["kind"], "config-read");
+                    }
+                    delivered = true;
+                }
+            }
+            assert!(delivered, "config transition was published");
+        }
+        slot.store.close();
+    }
 
     #[test]
     fn own_workflow_changes_publish_the_bound_config_for_capture() {

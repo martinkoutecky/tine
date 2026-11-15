@@ -27,6 +27,7 @@ export interface BlockRowSwipeDeps {
   /** The block whose editor this row mounts, when it differs from `id`. */
   editorId?: string;
   scope: OutlineScope | null | undefined;
+  surface?: string;
   editing(): boolean;
   readOnly(): boolean;
 }
@@ -99,11 +100,11 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
         return;
       }
       if (action === "actions") {
-        selectBlock(deps.id, deps.scope ?? null);
+        selectBlock(deps.id, deps.scope ?? null, deps.surface);
         openContextMenu(x, y, deps.id);
         return;
       }
-      selectBlock(deps.id, deps.scope ?? null);
+      selectBlock(deps.id, deps.scope ?? null, deps.surface);
       if (action === "indent") indentSelection();
       else outdentSelection();
       clearSelection();

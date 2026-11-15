@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, isDirty, deletePage, splitBlock, insertOutlineAfter, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { publishOwnPage } from "./document/ownPublication.test.support";
 import { pasteOutlineInto } from "./tests/pasteOutline";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
@@ -16,7 +17,7 @@ import { doc, setDoc } from "./document/model";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, BUILTIN_HIDE, HIDE_ALL } from "./editor/properties";
-import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
+import { setCopyStripCollapsed } from "./copySettings";
 import { backend } from "./backend";
 import { isConflicted, installAliasDraftRouteHandler, unsavedDrafts } from "./document";
 import { baseRevFor, resolveConflict, unpublishedPages } from "./document/host/wiring";
@@ -309,7 +310,6 @@ beforeEach(() => {
   setFavorites([]);
   setRecentPages([]);
   setRightSidebar([]);
-  setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
   setCopyStripCollapsed(false);
 });
 
@@ -819,8 +819,7 @@ describe("clipboard copy strips id:: (OG parity)", () => {
     expect(copied).not.toContain("id:: 5462a76e"); // the real property is gone
   });
 
-  it("selectionMarkdown: default copies ONLY the selected block (not unselected children)", () => {
-    setCopyIncludeSubtree(false); // Tine default
+  it("selectionMarkdown: copying a parent includes its children and strips every id (GH #941)", () => {
     const parent = blk("parent\nid:: 11111111-1111-1111-1111-111111111111", [
       blk("child\nid:: 22222222-2222-2222-2222-222222222222"),
     ]);
@@ -829,18 +828,16 @@ describe("clipboard copy strips id:: (OG parity)", () => {
     const md = selectionMarkdown();
     expect(md).not.toContain("id::");
     expect(md).toContain("- parent");
-    expect(md).not.toContain("child"); // child wasn't selected → excluded
+    expect(md).toContain("\t- child");
   });
 
-  it("selectionMarkdown: include-subtree mode (OG) copies the whole sub-tree", () => {
-    setCopyIncludeSubtree(true); // = Logseq behavior
+  it("selectionMarkdown: a selected parent copies the whole subtree", () => {
     const parent = blk("parent", [blk("child")]);
     load([parent]);
     selectBlock(parent.id);
     const md = selectionMarkdown();
     expect(md).toContain("- parent");
     expect(md).toContain("\t- child");
-    setCopyIncludeSubtree(false); // restore default for other tests
   });
 
   it("collapsed:: kept by default (OG), stripped when the option is on", () => {
@@ -2048,9 +2045,9 @@ describe("save engine (persistence)", () => {
 
   it("drops an hls reload that resolves after a graph switch (I-20)", async () => {
     let finish!: (dto: PageRead | null) => void;
-    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const read = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
-    const reload = reloadHlsIfLoaded("hls__paper");
+    const reload = publishOwnPage("hls__paper");
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
     resetStore();
     loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("new graph notes")] });
@@ -2062,9 +2059,9 @@ describe("save engine (persistence)", () => {
 
   it("keeps a highlight note edit typed during its disk fetch", async () => {
     let finish!: (dto: PageRead | null) => void;
-    const read = vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const read = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     loadSingle({ name: "hls__paper", kind: "page", title: "hls__paper", id: "pages/hls__paper.md", pre_block: null, blocks: [blk("old notes")] });
-    const reload = reloadHlsIfLoaded("hls__paper");
+    const reload = publishOwnPage("hls__paper");
     await vi.waitFor(() => expect(read).toHaveBeenCalled());
     const id = pageByName("hls__paper")!.roots[0];
     setRaw(id, "typed during fetch", { timetracking: false });

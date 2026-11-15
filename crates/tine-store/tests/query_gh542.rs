@@ -42,8 +42,7 @@ impl Drop for Graph {
 }
 
 fn open(name: &str, pages: &[(&str, &str)]) -> Graph {
-    let dir = std::env::temp_dir().join(format!("tine-gh542-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir(&format!("tine-gh542-{name}-"));
     for sub in ["pages", "journals", "logseq"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }

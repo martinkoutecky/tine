@@ -132,9 +132,7 @@ settings-search-spell-checker = 拼写检查
 
 settings-search-dictionaries-languages-spelling = 词典 语言 拼写
 
-settings-search-copy-a-parent-block-s-sub-blocks = 复制父块的子块
 
-settings-search-clipboard-subtree = 剪贴板 子树
 
 settings-search-strip-collapsed-when-copying = 复制时去除 collapsed::
 

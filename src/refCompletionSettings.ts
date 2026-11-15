@@ -26,7 +26,7 @@ export const spaceAfterRefCompletion = spaceAfter;
 /** Apply now and queue a device-local write. Failure rolls back and toasts;
  * return does not confirm persistence. O(1) plus backend write. */
 export function setSpaceAfterRefCompletion(on: boolean): void {
-  writePreference(spaceAfter, setSpaceAfterSig, on, (next) => backend().setAppBool(KEY, next), "reference completion preference");
+  writePreference(spaceAfter, setSpaceAfterSig, on, (next) => backend().setAppBool(KEY, next), msg("toast-save-reference-completion-failed"));
 }
 
 /** Load the device preference at startup (default ON); read failure toasts and resolves. */

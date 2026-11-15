@@ -957,6 +957,7 @@ struct ScoredBlock<'a> {
     index: usize,
     page: &'a PageEntry,
     block: &'a DocBlock,
+    is_comment: bool,
     /// The authored sort keys of a sorted search, with their directions in
     /// `ascending`. With no sort, `ascending` is empty and relevance orders.
     keys: Vec<SortDecor>,
@@ -1156,20 +1157,38 @@ fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<(i32, Objecti
 fn walk_blocks<'a>(
     blocks: &'a [DocBlock],
     ancestors: &mut Vec<&'a DocBlock>,
-    visit: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> bool,
+    in_comment: bool,
+    visit: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], bool) -> bool,
 ) -> bool {
     for block in blocks {
-        if !visit(block, ancestors) {
+        let is_comment = in_comment
+            || (!ancestors.is_empty()
+                && tine_outline::editor_text::comment_quote(
+                    block
+                        .projection()
+                        .properties()
+                        .iter()
+                        .map(|(key, value)| (key.as_str(), value.as_str())),
+                )
+                .is_some());
+        #[cfg(test)]
+        COMMENT_MEMBERSHIP_VISITS.with(|count| count.set(count.get() + 1));
+        if !visit(block, ancestors, is_comment) {
             return false;
         }
         ancestors.push(block);
-        let keep_going = walk_blocks(&block.children, ancestors, visit);
+        let keep_going = walk_blocks(&block.children, ancestors, is_comment, visit);
         ancestors.pop();
         if !keep_going {
             return false;
         }
     }
     true
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMMENT_MEMBERSHIP_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Convert typed block hits back to the exact grouped shape used by existing

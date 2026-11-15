@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { Show } from "solid-js";
 import { backend } from "../backend";
 import { resetStore } from "../document";
 import { setToasts, toasts } from "../toasts";
@@ -13,6 +14,9 @@ import {
   workspaces,
 } from "../workspaces";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { installMobileDrawerMode } from "../mobileDrawers";
+import { openWorkspaceCreation, openWorkspaceMenu } from "../workspaceCreation";
+import { setLeftSidebarOpen, sidebarOpen } from "../ui";
 
 let dispose = () => {};
 
@@ -161,5 +165,75 @@ describe("WorkspaceSwitcher", () => {
     expect(field.value).toBe("工作区");
     const submit = host.querySelector<HTMLButtonElement>(".workspace-edit-form button[type=submit]")!;
     expect(submit.disabled).toBe(false);
+  });
+
+  it("#926: a customized toolbar beside an open sidebar gives New workspace to the sidebar once", () => {
+    setLeftSidebarOpen(true);
+    const bar = document.body.appendChild(document.createElement("div"));
+    const sidebar = document.body.appendChild(document.createElement("div"));
+    const d1 = render(() => <WorkspaceSwitcher compact />, bar);
+    const d2 = render(() => <WorkspaceSwitcher />, sidebar);
+    dispose = () => { d1(); d2(); };
+    try {
+      openWorkspaceCreation();
+      expect(sidebar.querySelector("input")).not.toBeNull();
+      expect(bar.querySelector("input")).toBeNull();
+    } finally { setLeftSidebarOpen(false); }
+  });
+
+  it("#926: New workspace reveals the sidebar when the chosen toolbar switcher is in the menu", () => {
+    setLeftSidebarOpen(false);
+    const bar = document.body.appendChild(document.createElement("div"));
+    const sidebar = document.body.appendChild(document.createElement("div"));
+    const d1 = render(() => <WorkspaceSwitcher compact toolbarStyle={{ display: "none" }} />, bar);
+    const d2 = render(() => <Show when={sidebarOpen()}><WorkspaceSwitcher /></Show>, sidebar);
+    dispose = () => { d1(); d2(); };
+    try {
+      openWorkspaceCreation();
+      expect(sidebarOpen()).toBe(true);
+      expect(sidebar.querySelector("input")).not.toBeNull();
+      expect(bar.querySelector("input")).toBeNull();
+    } finally { setLeftSidebarOpen(false); }
+  });
+
+  it("#926: the overflow Workspaces action opens the existing picker without creating a workspace", () => {
+    setLeftSidebarOpen(false);
+    const bar = document.body.appendChild(document.createElement("div"));
+    const sidebar = document.body.appendChild(document.createElement("div"));
+    const d1 = render(() => <WorkspaceSwitcher compact toolbarStyle={{ display: "none" }} />, bar);
+    const d2 = render(() => <Show when={sidebarOpen()}><WorkspaceSwitcher /></Show>, sidebar);
+    dispose = () => { d1(); d2(); };
+    try {
+      openWorkspaceMenu();
+      expect(sidebarOpen()).toBe(true);
+      expect(sidebar.querySelector(".workspace-menu")).not.toBeNull();
+      expect(sidebar.querySelector("input")).toBeNull();
+      expect(bar.querySelector(".workspace-menu")).toBeNull();
+    } finally { setLeftSidebarOpen(false); }
+  });
+
+  it("#926: in drawer mode New workspace opens the left drawer and its switcher's form, not the hidden bar switcher's", async () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "matchMedia");
+    const query = { matches: true, media: "(max-width: 639px)", addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: () => query });
+    const disposeMode = installMobileDrawerMode();
+    try {
+      setLeftSidebarOpen(false);
+      const bar = document.createElement("div"); document.body.append(bar);
+      const drawer = document.createElement("div"); document.body.append(drawer);
+      const d1 = render(() => <WorkspaceSwitcher compact />, bar);
+      const d2 = render(() => <WorkspaceSwitcher />, drawer);
+      dispose = () => { d1(); d2(); };
+      openWorkspaceCreation();
+      await Promise.resolve();
+      expect(sidebarOpen()).toBe(true);
+      expect(drawer.querySelector("input")).not.toBeNull();
+      expect(bar.querySelector("input")).toBeNull();
+    } finally {
+      setLeftSidebarOpen(false);
+      disposeMode();
+      if (saved) Object.defineProperty(globalThis, "matchMedia", saved);
+      else delete (globalThis as { matchMedia?: unknown }).matchMedia;
+    }
   });
 });

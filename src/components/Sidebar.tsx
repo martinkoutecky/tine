@@ -82,6 +82,7 @@ export const graphNavigationActions: GraphNavigationActions = {
 
 export function Sidebar(props: {
   onActiveNavigationComplete?: () => void;
+  onClose?: () => void;
   graphActions?: GraphNavigationActions;
 } = {}): JSX.Element {
   const [showNs, setShowNs] = createSignal(false);
@@ -110,10 +111,17 @@ export function Sidebar(props: {
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
         <div class="app-logo">{t("sidebar-tine")}</div>
-        <GraphSwitcher
-          onActiveNavigationComplete={props.onActiveNavigationComplete}
-          actions={props.graphActions ?? graphNavigationActions}
-        />
+        <div class="sidebar-graph-row">
+          <GraphSwitcher
+            onActiveNavigationComplete={props.onActiveNavigationComplete}
+            actions={props.graphActions ?? graphNavigationActions}
+          />
+          <Show when={props.onClose}>
+            <button class="icon-btn sidebar-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={props.onClose}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
+            </button>
+          </Show>
+        </div>
       </div>
 
       <div class="nav-contents">
@@ -121,7 +129,7 @@ export function Sidebar(props: {
           when={journalsReplacementHome()}
           fallback={
             <div
-              class="nav-item"
+              class="nav-item nav-first-level"
               classList={{ active: route().kind === "journals" }}
               onClick={(event) => {
                 openJournalsFromClick(event);
@@ -137,7 +145,7 @@ export function Sidebar(props: {
         >
           {(home) => (
             <div
-              class="nav-item home-nav"
+              class="nav-item nav-first-level home-nav"
               classList={{ active: (() => { const r = route(); return r.kind === "page" && isHomeRouteName(r.name, home()); })() }}
               onClick={() => { goHome(); props.onActiveNavigationComplete?.(); }}
               onMouseDown={internalLinkMouseDown}
@@ -155,7 +163,7 @@ export function Sidebar(props: {
           <div class="nav-section">
             <button
               type="button"
-              class="nav-section-header nav-section-toggle"
+              class="nav-section-header nav-first-level nav-section-toggle"
               data-sidebar-section="favorites"
               aria-expanded={favoritesSectionExpanded()}
               aria-controls="sidebar-favorites-list"
@@ -179,7 +187,7 @@ export function Sidebar(props: {
           <div class="nav-section">
             <button
               type="button"
-              class="nav-section-header nav-section-toggle"
+              class="nav-section-header nav-first-level nav-section-toggle"
               data-sidebar-section="recent"
               aria-expanded={recentSectionExpanded()}
               aria-controls="sidebar-recent-list"
@@ -223,7 +231,7 @@ export function Sidebar(props: {
         <div class="nav-section">
           <button
             type="button"
-            class="nav-section-header nav-all-pages-open"
+            class="nav-section-header nav-first-level nav-all-pages-open"
             classList={{ active: route().kind === "all-pages" }}
             onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
           >
@@ -233,7 +241,7 @@ export function Sidebar(props: {
 
         <Show when={allPageNames().some((name) => name.includes("/"))}><div class="nav-section">
           <div
-            class="nav-section-header nav-section-toggle"
+            class="nav-section-header nav-first-level nav-section-toggle"
             onClick={() => setShowNs(!showNs())}
           >
             <ReferenceDisclosure class="nav-toggle-caret" collapsed={!showNs()} />{t("sidebar-namespaces")}</div>

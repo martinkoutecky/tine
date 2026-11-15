@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
+import { editorSelector, editorState, editorText, withEditor } from "./lib/e2e-block-editor.mjs";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
@@ -66,24 +67,22 @@ function check(ok, message) {
   if (!BASELINE) throw new Error(message);
 }
 async function readyEditor() {
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
-  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor")), { timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
+  await browser.waitUntil(async () => (await editorState(browser))?.focused, { timeout: 5000 });
 }
 async function select(phrase) {
-  const selected = await browser.execute((words) => {
-    const ta = document.querySelector("textarea.block-editor");
+  const selected = await withEditor(browser, "", (ta, words) => {
     const at = ta.value.indexOf(words);
     if (at < 0) return null;
-    ta.focus(); ta.setSelectionRange(at, at + words.length);
-    ta.dispatchEvent(new Event("select", { bubbles: true }));
-    return ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    ta.select(at, at + words.length);
+    return ta.value.slice(ta.start, ta.end);
   }, phrase);
   if (selected !== phrase) throw new Error(`selection failed: ${selected}`);
 }
 async function leave() {
   // Escape can first dismiss a selection/formatting layer.
-  for (let n = 0; n < 3 && await browser.$("textarea.block-editor").isExisting(); n++) await browser.keys(["Escape"]);
-  await browser.$("textarea.block-editor").waitForExist({ reverse: true, timeout: 5000 });
+  for (let n = 0; n < 3 && await browser.$(editorSelector()).isExisting(); n++) await browser.keys(["Escape"]);
+  await browser.$(editorSelector()).waitForExist({ reverse: true, timeout: 5000 });
 }
 async function type(text) { await readyEditor(); await browser.keys(text); }
 async function editText(text) {
@@ -134,7 +133,7 @@ try {
   await openPageByName(browser, PAGE);
   await editText(PHRASE);
   await shot("00-ordinary-author-editor");
-  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("tine.author:: claude")), "An ordinary block's author property is visible in the editor");
+  check(!(await editorText(browser)).includes("tine.author:: claude"), "An ordinary block's author property is visible in the editor");
   await select(PHRASE);
   await shot("01-selection-toolbar");
   const toolbar = await browser.$('[data-selection-action="comment"]').isExisting();
@@ -148,7 +147,7 @@ try {
   await readyEditor();
   await type(COMMENT);
   await shot("02-comment-editor");
-  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("tine.quote::")), "Quote metadata is visible while editing");
+  check(!(await editorText(browser)).includes("tine.quote::"), "Quote metadata is visible while editing");
   await leave();
   await persisted(COMMENT, `tine.quote:: ${PHRASE}`);
   await browser.$(".margin-column .comment-card").waitForExist({ timeout: 5000 });
@@ -156,7 +155,7 @@ try {
   check(await browser.execute((phrase) => document.querySelector(".page-blocks .comment-quote-anchor")?.textContent === phrase, PHRASE), "Passage is not marked");
   await editText(COMMENT);
   await shot("04-reopened-comment");
-  check(await browser.execute(() => !document.querySelector("textarea.block-editor").value.includes("tine.quote::")), "Reopening exposes quote metadata");
+  check(!(await editorText(browser)).includes("tine.quote::"), "Reopening exposes quote metadata");
   await leave();
   const replyId = await browser.execute((text) => {
     const row = [...document.querySelectorAll(".block-content")].find(el => el.textContent.includes(text))?.closest(".comment-card");
@@ -170,7 +169,7 @@ try {
   check(replyButton, "Card has no Reply affordance");
   if (!replyButton) {
     await editText(COMMENT);
-    await browser.execute((text) => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(text.length, text.length); }, COMMENT);
+    await withEditor(browser, "", (editor, text) => editor.select(text.length), COMMENT);
     await browser.keys(["Enter"]);
   }
   if (replyButton) { await browser.keys(REPLY); await browser.keys(["Control", "Enter"]); }
@@ -280,16 +279,16 @@ try {
     await browser.$(`[data-block-id="${host}"] > .comment-composer textarea`).click();
     await browser.keys("A hand note"); await browser.keys(["Control", "Enter"]);
     await persisted("A hand note"); await editText("A hand note");
-    await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(0, ta.value.length); });
+    await withEditor(browser, "", editor => editor.select(0, editor.value.length));
     await type("A hand note");
     await browser.keys(["Shift", "Enter"]);
     // Individual native key commands release duplicate ':' keys reliably.
     for (const character of "tine.quote:: revised remark") await browser.keys(character);
     await shot("15-handwritten-quote-draft");
-    check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note\ntine.quote:: revised remark"), "Handwritten quote was hidden before the active edit session finished");
+    check(await editorText(browser) === "A hand note\ntine.quote:: revised remark", "Handwritten quote was hidden before the active edit session finished");
     await leave(); await persisted("A hand note", "tine.quote:: revised remark");
     await editText("A hand note");
-    check(await browser.execute(() => document.querySelector("textarea.block-editor").value === "A hand note"), "Handwritten quote did not save its value and reopen hidden");
+    check(await editorText(browser) === "A hand note", "Handwritten quote did not save its value and reopen hidden");
     await shot("16-handwritten-quote-hidden");
     await leave();
   }

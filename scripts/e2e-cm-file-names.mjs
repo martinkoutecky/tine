@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -78,7 +79,7 @@ async function followFromBlock(prefix) {
     { type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", origin: "viewport", ...point }, { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 }] },
   ]);
   await browser.releaseActions();
-  await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 10_000 });
   await browser.keys(["Control", "o"]);
 }
 

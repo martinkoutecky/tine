@@ -196,7 +196,13 @@ pub fn string_end(source: &str, at: usize) -> Option<usize> {
 
 /// Exactly one form, allowing trivia/discards before and after it.
 pub fn read(source: &str) -> Option<Form> {
-    if source.len() > MAX_BYTES {
+    read_with_limit(source, MAX_BYTES)
+}
+
+/// Reuse authored spans for sidecars with the value parser's larger byte bound.
+/// Depth and string validation remain identical to `read`; O(source bytes).
+pub(crate) fn read_with_limit(source: &str, max_bytes: usize) -> Option<Form> {
+    if source.len() > max_bytes {
         return None;
     }
     let mut reader = Reader {

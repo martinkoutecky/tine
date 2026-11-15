@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { remote } from "webdriverio";
+import { editorSelector, editorText, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { currentPageTitle, openPageByName } from "./lib/e2e-navigation.mjs";
@@ -54,11 +55,7 @@ const labels = () => browser.execute(() => [...document.querySelectorAll(".autoc
 /** Type `text` into the open block editor as input and return the choices once
  *  `ready` accepts them (the popup refreshes on a debounce). */
 async function complete(text, ready) {
-  await browser.execute((value) => {
-    const editor = document.querySelector("textarea.block-editor");
-    editor.focus(); editor.value = value; editor.setSelectionRange(value.length, value.length);
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value.at(-1) }));
-  }, text);
+  await pasteEditorText(browser, text);
   let current = [];
   try {
     await browser.waitUntil(async () => { current = (await labels()).filter((name) => !name.startsWith("Create")); return ready(current); },
@@ -69,9 +66,6 @@ async function complete(text, ready) {
   return current;
 }
 async function allPagesTitles() {
-  if (!await browser.$(".nav-all-pages-open").isExisting()) {
-    await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find((header) => header.textContent?.includes("ALL PAGES"))?.click());
-  }
   await browser.$(".nav-all-pages-open").waitForExist({ timeout: 15_000 });
   await browser.$(".nav-all-pages-open").click();
   await browser.$(".all-pages-row").waitForExist({ timeout: 15_000 });
@@ -84,7 +78,7 @@ try {
   await openPageByName(browser, "Scratch");
   await browser.$(".ls-block .block-content-wrapper").waitForExist({ timeout: 20_000 });
   await browser.$(".ls-block .block-content-wrapper").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5_000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5_000 });
   const choices = await complete("[[Wor", (names) => names.includes("Work") && names.includes("Work/Plan"));
   assert.equal(choices.filter((name) => name === "Work").length, 1, `Work offered once: ${JSON.stringify(choices)}`);
 
@@ -93,7 +87,7 @@ try {
     const row = [...document.querySelectorAll(".autocomplete .ac-label")].find((el) => el.textContent.trim() === "Work").parentElement;
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
   });
-  await browser.waitUntil(async () => (await browser.$("textarea.block-editor").getValue()).trim() === "[[Work]]", { timeout: 5_000 });
+  await browser.waitUntil(async () => (await editorText(browser)).trim() === "[[Work]]", { timeout: 5_000 });
 
   stage = "a relative path or a URL is no namespace parent in the popup";
   const dots = await complete("[[.", (names) => names.includes("./rel/x") && names.includes("../up/y"));
@@ -111,12 +105,12 @@ try {
   assert.ok(!fs.existsSync(path.join(graph, "pages/Work.md")), "offering a parent writes no file");
 
   stage = "the sidebar tree nests Work/Plan and lists no relative or URL name";
-  const clickText = (selector, text) => browser.execute((sel, label) => {
-    const el = [...document.querySelectorAll(sel)].find((node) => node.textContent?.includes(label));
+  const clickNamespaces = () => browser.execute(() => {
+    const el = document.querySelector(".nav-first-level.nav-section-toggle:not([data-sidebar-section])");
     el?.click();
     return !!el;
-  }, selector, text);
-  await browser.waitUntil(() => clickText(".nav-section-header", "NAMESPACES"), { timeout: 20_000, interval: 300 });
+  });
+  await browser.waitUntil(clickNamespaces, { timeout: 20_000, interval: 300 });
   await browser.$(".ns-tree").waitForExist({ timeout: 10_000 });
   const tree = await browser.execute(() => [...document.querySelectorAll(".ns-tree .ns-node-label")].map((el) => el.textContent?.trim() ?? ""));
   assert.deepEqual(tree, ["Work", "Plan"], `sidebar tree: ${JSON.stringify(tree)}`);
@@ -146,7 +140,7 @@ try {
   stage = "old/sub remains an alias completion and opens its owner";
   await openPageByName(browser, "Scratch");
   await browser.$(".ls-block .block-content-wrapper").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5_000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5_000 });
   await complete("[[old/s", (names) => names.includes("old/sub"));
   await browser.keys("Escape");
   // The Quick Switcher lists an alias under its owner's row (the helper's

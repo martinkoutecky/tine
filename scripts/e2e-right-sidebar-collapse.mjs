@@ -2,6 +2,7 @@
 // edit-safe unmounting, collection bulk controls, and native restart restore.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -162,14 +163,9 @@ await withApp(0, async (browser) => {
   await expectBodies(browser, 2);
 
   await browser.$(`${pageA} .block-content`).click();
-  const editor = await browser.$(`${pageA} textarea.block-editor`);
+  const editor = await browser.$(editorSelector(pageA));
   await editor.waitForExist({ timeout: 5000 });
-  await browser.execute((selector) => {
-    const input = document.querySelector(selector);
-    input.focus();
-    input.value = "Committed before native collapse";
-    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
-  }, `${pageA} textarea.block-editor`);
+  await pasteEditorText(browser, "Committed before native collapse");
   await browser.$(`${pageA} [data-right-sidebar-item-toggle]`).click();
   await expectBodies(browser, 1);
   await browser.waitUntil(() => fs.readFileSync(PAGE_A, "utf8").includes("Committed before native collapse"), {

@@ -1,5 +1,5 @@
 import { msg, t } from "../i18n";
-import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
+import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, pageReadOnly, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { clipboardWriteRevision, copyRich } from "../clipboard";
 import { captureBinding, bindingCurrent } from "../binding";
 import { SHEET_CELL_HIDE, FORM_MANAGED, hideKeys, joinProps, splitProps, splitLogbook } from "../editor/properties";
@@ -51,7 +51,7 @@ function gridPage(gridId: string): string | null {
   // grid mutation resolves its page through here, so this is the single choke
   // that keeps sheet writes off pages the block editor already refuses to edit.
   const page = docNode(gridId)?.page ?? null;
-  if (page && pageByName(page)?.readOnly) return null;
+  if (page && pageReadOnly(pageByName(page))) return null;
   return page;
 }
 

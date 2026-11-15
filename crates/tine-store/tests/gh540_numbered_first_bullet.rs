@@ -35,14 +35,7 @@ fn page(name: &str, blocks: Vec<BlockDto>) -> PageDto {
 }
 
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "tine-gh540-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-gh540-{tag}-"));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     root

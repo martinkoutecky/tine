@@ -1,11 +1,11 @@
 import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
-import { LineGutter } from "./LineGutter";
+import { codeGutterStyle, LineGutter } from "./LineGutter";
 import { TableWrap, longCellClass } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Index, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
+import { For, Index, Show, createContext, createMemo, createResource, useContext, type Accessor, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { astText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -20,12 +20,14 @@ import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
-import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
+import { BeginQuery } from "../components/BeginQuery";
+import { inspectBeginQuery } from "./beginQuery";
 import { readOr } from "../resourceRead";
 import "./codeBlock.css";
 import { QueryMacro } from "../components/Macro";
 import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./queryMacroRender";
 import { PeekContext } from "./PeekPopup";
+import { CodeLanguage } from "./CodeLanguage";
 
 function escapeHtml(code: string): string {
   return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -42,6 +44,8 @@ function loadHljs() {
 // syntax-highlighted once highlight.js loads. The highlight result is memoized
 // (highlightAuto is expensive) so re-renders don't re-tokenize.
 function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const editSource = useContext(BodySourceContext)?.codeEditAction;
+  const lines = createMemo(() => (props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n"));
   const [hljs] = createResource(loadHljs);
   const html = createMemo(() => {
     const h = readOr(hljs, undefined, "highlight.js");
@@ -56,9 +60,9 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     }
   });
   return (
-    <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
-      <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
-      <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
+    <pre class="code-block" style={codeGutterStyle(lines().length)} classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
+      <CodeLanguage lang={props.lang} onEdit={props.spanAttrs && editSource?.() ? () => editSource()?.(Number(props.spanAttrs!["data-so"])) : undefined} />
+      <LineGutter lines={lines()} code />
       <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
@@ -350,16 +354,20 @@ function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: str
   return <PropertyRows entries={b.props} format={formatForBlock(blockId) ?? format} blockId={blockId} macroExpansion={macroExpansion} />;
 }
 
-// The raw text this body was parsed from. A checkbox click maps its item to a raw
+// This body's parser source and optional live-host code action share one context.
+// A checkbox click maps its item to a raw
 // line through the item's own lsdoc source span, which is a position in THIS text;
 // `toggleAstCheckbox` refuses when it is not the block's current raw (a macro
 // expansion, or a render older than the text), so a click never edits a line the
-// renderer did not draw. Direct `renderBlocks` callers provide none: inert.
-const CheckboxSourceContext = createContext<string>();
+// renderer did not draw. Fragment hosts can provide only the code action,
+// leaving checkboxes inert without a matching raw source.
+// Only code widgets read editability; prose must not observe page-host revisions.
+type CodeEditAction = Accessor<((sourceByte: number) => void) | undefined>;
+export const BodySourceContext = createContext<{ raw?: string; codeEditAction?: CodeEditAction }>();
 
 // An in-block list from the AST (`ListItem[]`).
 function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
-  const sourceRaw = useContext(CheckboxSourceContext);
+  const sourceRaw = useContext(BodySourceContext)?.raw;
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -367,6 +375,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: Sp
         {(item) => (
           <li
             class="md-list-item"
+            value={item.checkbox === undefined ? item.number : undefined}
             classList={{
               "has-checkbox": item.checkbox !== undefined,
               "has-term": !!item.name && item.name.length > 0,
@@ -417,7 +426,7 @@ function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   );
 }
 
-function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false): JSX.Element {
+function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false, codeEditAction?: CodeEditAction): JSX.Element {
   // One parse supplies both the visible body and its property-dependent table
   // presentation. This stays on AstBody's path, so SheetGrid cells inherit it.
   const parsed = parseBody(raw, format);
@@ -427,10 +436,10 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   // A hover preview never mounts a live query (GH #735; same rule as inline query macros).
   const beginQuery = inPeek ? null : inspectBeginQuery(raw, format, blocks);
   return beginQuery
-    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
-    : <CheckboxSourceContext.Provider value={raw}>
+    ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} findHost={blockId} />
+    : <BodySourceContext.Provider value={{ raw, codeEditAction }}>
         {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
-      </CheckboxSourceContext.Provider>;
+      </BodySourceContext.Provider>;
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
@@ -454,7 +463,7 @@ function PlaceholderText(props: { raw: string }): JSX.Element {
   return <>{placeholderLines(props.raw).join("\n")}</>;
 }
 
-export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean }): JSX.Element {
+export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean; codeEditAction?: CodeEditAction }): JSX.Element {
   // P1 block-render virtualization (see docs/adr): defer the synchronous parse +
   // AST→DOM build until the block is near the viewport. Render-once-keep: once a
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
@@ -500,7 +509,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
-        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek)}>
+        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek, props.codeEditAction)}>
           <Index each={queryRuns()}>{(run, blockIndex) => {
             const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
               fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>

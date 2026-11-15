@@ -6,12 +6,14 @@ import { closeShareDialog, shareTarget } from "./shareState";
 import { mainPaneRouter, resetTabsToJournals } from "./router";
 import { applySidebarSession, rightSidebar } from "./ui";
 import { appNow, journalTitle } from "./journal";
+import { saveToolbarChoice } from "./toolbarChoice";
 
 let dispose = () => {};
 
 afterEach(() => {
   dispose();
   dispose = () => {};
+  saveToolbarChoice(null);
   setLeftSidebarOpen(true);
   applySidebarSession({ right: false, items: [] });
   resetTabsToJournals();
@@ -22,6 +24,7 @@ afterEach(() => {
 describe("topbar workspace placement", () => {
   it.each(["button", "overflow"])("GH #740: Shift-click Journals in the %s opens today beside the current page", async (surface) => {
     const host = document.body.appendChild(document.createElement("div"));
+    if (surface === "overflow") saveToolbarChoice({ bar: ["settings"], menu: ["journals", "calendar", "share", "theme", "right-sidebar", "workspaces"] });
     mainPaneRouter.openPage("Project", "page", { inPlace: true });
     const before = mainPaneRouter.route();
     dispose = render(() => <App />, host);

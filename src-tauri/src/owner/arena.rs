@@ -130,6 +130,7 @@ fn block_metadata(block: &BlockDto) -> BlockDto {
         breadcrumb,
         page_property,
         page_preamble,
+        comment,
         marker,
         priority,
         heading_level,
@@ -147,6 +148,7 @@ fn block_metadata(block: &BlockDto) -> BlockDto {
         breadcrumb: breadcrumb.clone(),
         page_property: *page_property,
         page_preamble: *page_preamble,
+        comment: *comment,
         marker: marker.clone(),
         priority: priority.clone(),
         heading_level: *heading_level,
@@ -201,6 +203,7 @@ mod tests {
             let mut node = block(&format!("node {depth}"), tree);
             node.id = format!("id-{depth}");
             node.has_id = Some(true);
+            node.comment = depth % 2 == 0;
             node.marker = Some("TODO".into());
             node.tags = vec!["tag".into()];
             node.properties = vec![("key".into(), "value".into())];

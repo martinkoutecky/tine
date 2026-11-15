@@ -55,7 +55,7 @@ try {
     if (layout === "mobile") {
       // Resizing an open desktop sidebar turns it into an open mobile drawer.
       // Dismiss it through its visible control before tapping page content.
-      const close = await browser.$(".mobile-drawer-close");
+      const close = await browser.$(".sidebar-close");
       if (await close.isDisplayed()) await close.click();
       await browser.waitUntil(() => browser.execute(() =>
         document.querySelector(".app-container")?.getAttribute("data-active-drawer") === ""), {timeout:5000});
@@ -81,10 +81,8 @@ try {
       language.dispatchEvent(new MouseEvent("mousedown", {button:0, bubbles:true, cancelable:true}));
       return true;
     }), {timeout:10000, timeoutMsg:"the Python language option was not offered"});
-    await browser.waitUntil(async () => (await browser.$(".main-content textarea.block-editor").getValue()) === "const x = 1;", {timeout:5000});
-    // Picking a language explicitly enters code editing; Escape returns to
-    // the whole source, just like OG's code editor, before adding prose.
-    await browser.keys(["Escape"]);
+    // D-20261114-CS879: language completion keeps an existing raw source
+    // session raw, so surrounding prose can be added without changing modes.
     await browser.waitUntil(async () => (await browser.$(".main-content textarea.block-editor").getValue()) === "```python\nconst x = 1;\n```", {timeout:5000});
     await browser.keys(["Control", "End", "NULL"]);
     // Shift+Enter appends a newline within the raw block rather than splitting.

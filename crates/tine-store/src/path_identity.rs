@@ -76,11 +76,7 @@ mod canonical_root_fallback_tests {
     use std::path::PathBuf;
 
     fn test_root(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "tine-root-{name}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-root-{name}-"));
         fs::create_dir_all(&root).unwrap();
         // The fallback deliberately refuses links in every ancestor. macOS's
         // temporary directory commonly starts with the /var -> /private/var

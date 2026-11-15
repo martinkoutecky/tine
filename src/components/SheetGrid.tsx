@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { ownSelectionSurface } from "../document";
 import { registerFindSheet, sheetFindChild } from "../sheet/find";
 import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
@@ -222,6 +223,7 @@ export function SheetGrid(props: { id: string }): JSX.Element {
 
 function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
+  ownSelectionSurface(cellSurfaceKey(props.id, surfaceId), undefined, surfaceId);
   let gridRef: HTMLDivElement | undefined;
   const [seamStyle, setSeamStyle] = createSignal<JSX.CSSProperties | null>(null);
   const [resizing, setResizing] = createSignal(false);

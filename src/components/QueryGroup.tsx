@@ -94,7 +94,7 @@ export function QueryGroup(props: QueryGroupProps): JSX.Element {
     onCleanup(() => unobserveNear(node));
   });
   return (
-    <div ref={element} class="query-group" classList={{ "query-group-flat": props.flat }}
+    <div ref={element} class="query-group" classList={{ "query-group-flat": props.flat }} data-find-source-mounted={near()}
       style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${(1 + (props.group()?.blocks.length ?? 0)) * 1.9}em` } : undefined}>
       <Show when={near()}><MountedQueryGroup {...props} /></Show>
     </div>

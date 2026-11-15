@@ -5,7 +5,7 @@ import { Rich } from "../i18n/Rich";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 export { ClozeMacro, TweetMacro, VideoMacro, YoutubeTimestamp, ZoteroMacro, youtubeTimestampMacroFor } from "./MediaMacros";
 import { TableWrap } from "./TableWrap";
-import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, useContext, type JSX } from "solid-js";
 import { reservedGroupHeight } from "../reservedGroupHeight";
 import { preserveAboveViewport } from "../scrollContainer";
 import { SurfaceContext } from "./Block";
@@ -81,6 +81,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { createGraphResource } from "../graphResource";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -151,7 +152,6 @@ interface ReadingRequest {
   argument: string;
   name: string;
   properties: [string, string][];
-  epoch: number;
 }
 interface Reading {
   request: ReadingRequest;
@@ -161,7 +161,7 @@ interface Reading {
  *  request (I-20). */
 function createQueryReading(request: () => ReadingRequest | undefined) {
   const owners = {};
-  const [resource] = createResource(request, async (req): Promise<Reading | undefined> => {
+  const [resource] = createGraphResource(request, async (req): Promise<Reading | undefined> => {
     const landed = await readOwned(
       latestOwner(owners, "parse", graphOwner()),
       backend().parseQuery(req.argument, macroTextDialect(req.name), req.properties),
@@ -188,6 +188,9 @@ export function QueryMacro(props: {
   title?: string;
   /** Owner page context for read-only surfaces such as BEGIN_QUERY. */
   currentPage?: string;
+  /** The outline block Find counts this query under when `blockId` is withheld
+   *  (BEGIN_QUERY offers no host editing controls); defaults to `blockId`. */
+  findHost?: string;
   /** For advanced sources, hide rows if the report has ignored clauses. (The
    *  engine now refuses a query with any unlowerable clause, so `ignored` is
    *  empty whenever `supported`; kept as a belt-and-braces display guard.) Pair
@@ -241,11 +244,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const hostProperties = createMemo<[string, string][]>(
     () => hostAllProperties().filter(([key]) => {
       const lower = key.toLowerCase();
+      if (lower === "tine.breadcrumbs") return false; // Presentation-only: toggling needs no engine read.
       return lower.startsWith("tine.") || lower === "query-table";
     }),
     [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
-    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
+    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties() }),
     undefined,
     { equals: sameJson },
   );
@@ -259,10 +263,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const optionValues = createMemo(() => readEdnOptions(opts()));
   const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
-  // OG query.cljs/custom-query-inner defaults the ancestor trail on. The
-  // shared render option can later serve the separately decided simple view.
+  // Advanced queries keep OG's independent page headings; the approved simple
+  // query switch hides both kinds of context (GH #881).
   const listOptions = createMemo(() => isAdvanced()
-    ? { ...queryListOptions(form()), ...queryListOptions(opts()) } : {});
+    ? { ...queryListOptions(form()), ...queryListOptions(opts()) }
+    : { breadcrumb: hostProperty("tine.breadcrumbs") !== "false" });
+  const setBreadcrumbs = (shown: boolean) => {
+    const blockId = props.blockId;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node || !blockWritable(blockId) || isPublishedExport()) return;
+    withUndoUnit("query:breadcrumbs", [node.page], () => setBlockProperty(blockId, "tine.breadcrumbs", shown ? null : "false"));
+  };
   const bothKinds = (): boolean =>
     hostProperties().some(([key, value]) => key.toLowerCase() === RESULT_KINDS_PROPERTY && value.trim().toLowerCase() === PAGES_AND_BLOCKS);
   const setBothKinds = (on: boolean) => {
@@ -311,7 +322,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     // These renderer-only properties must also travel to the generated home.
     // They do not belong to parseQuery's key (query-table itself does).
     const legacyDisplay = hostAllProperties()
-      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc");
+      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc"
+        || key.toLowerCase() === "tine.breadcrumbs");
     return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
       properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
   };
@@ -381,7 +393,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const answerQuery = { ...query.query, source: source.kind === "advanced"
       ? { kind: source.kind, original: source.original } : { kind: source.kind } };
     const { view: _presentation, columns: _columns, group_by: _group, aggregates: _aggregates, ...answerView } = query.view;
-    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, collapsed(), both]);
+    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, both]);
     // A collapsed count is never acted on: neither saves nor epochs rerun it.
     // The answer day reruns a day-relative query, collapsed or not, once the
     // date has moved past the shown answer's (card hB3Lv8); like a save, it
@@ -521,7 +533,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return explainOpen() && request && request.search === null && ranEmpty() ? request : undefined;
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const explainOwners = {};
-  const [explained] = createResource(explainRequest, async (request): Promise<ExplainEmptyResult | undefined> => {
+  const [explained] = createGraphResource(explainRequest, async (request): Promise<ExplainEmptyResult | undefined> => {
     const landed = await readOwned(
       latestOwner(explainOwners, "explain", graphOwner()),
       backend().queryExplainEmpty(request.query.query, request.query.view, request.context),
@@ -861,7 +873,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // use the same presentation options (GH #881).
   const listResults = () => (
     <Show when={globalSort() || listOptions().groupByPage === false} fallback={
-      <QueryGroups groups={groupedQueryByKey} showBreadcrumb={listOptions().breadcrumb} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
+      <QueryGroups groups={groupedQueryByKey} showBreadcrumb={listOptions().breadcrumb} showPage={isAdvanced() || listOptions().breadcrumb !== false} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
     }>
       {/* OG ungrouped lists have no page heading. Tine keeps its existing
           sorted page crumbs when breadcrumbs are enabled (GH #881). */}
@@ -974,6 +986,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   return (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        data-find-host={props.findHost ?? props.blockId} data-find-answered={!!displayed()
+          && (!collapsed() || (groups().length === 0 && !pageRows()?.length && !displayed()?.both?.pages.length))}
         style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
@@ -1104,6 +1118,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 session={builderSession}
                 onChange={applyEdit}
                 display={{ view: displayView, apply: applyDisplay,
+                  // A legacy table (query-table, trailing `table`) renders as a table, so the switch would do nothing.
+                  get breadcrumbs() { return legacyTable() ? undefined : { shown: () => listOptions().breadcrumb !== false, set: setBreadcrumbs }; },
                   defaultColumns: effectiveDefaultColumns,
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
@@ -1270,6 +1286,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               >
                                 <span class="switcher-kind">{hit.page.kind}</span>
                                 <span>{hit.display_text}</span>
+                                <Show when={hit.is_comment}><span class="switcher-kind">{t("search-result-row-comment")}</span></Show>
                               </button>
                             ) : null}
                           >
@@ -1293,6 +1310,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                                   page={blockHit().page}
                                   breadcrumb={blockHit().block.breadcrumb ?? []}
                                   text={blockHit().display_text}
+                                  isComment={blockHit().is_comment}
                                   spans={blockHit().evidence.flatMap((evidence) => evidence.spans)}
                                 />
                               </button>

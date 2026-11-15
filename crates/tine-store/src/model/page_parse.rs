@@ -62,15 +62,11 @@ pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, Dis
     (doc, rev)
 }
 
-/// Run every lsdoc parse the page's later stages read, inside the one-page
-/// isolation (`isolate_page_parse`): each block's projection (cached on the
-/// block, so the initial capture's projection pass then finds it built) and
-/// the pre-blocks' (page properties and prose). A parser panic then names this one file as
-/// unreadable instead of escaping from a graph-wide index build, where it
-/// would stop the whole load (one bad file must never stop the graph load).
-/// Cost: the block projections move here from the capture's parallel pass
-/// (no new work); the pre-blocks are one extra parse each of the pre-block's
-/// property lines and prose, O(pre-block bytes), for pages that have one.
+/// Validate every projection a page's readers need: block bodies and the
+/// pre-blocks' page properties and prose. Publication, DTO reads and save-base
+/// validation share this answer inside their page-level panic boundaries.
+/// Block projections are cached on the document; pre-block projections are
+/// temporary. Cost O(page bytes + blocks), with no filesystem access.
 pub(super) fn prime_projections(doc: &Document) {
     fn walk(blocks: &[DocBlock]) {
         for block in blocks {

@@ -8,16 +8,17 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { appendFeed, appendToTodayJournal, ensurePageLoaded, loadFeed, pageByName, pinPageWhileDrafting, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed, setRaw } from "./index";
+import { appendFeed, appendToTodayJournal, ensurePageLoaded, loadFeed, pageByName, pinPageWhileDrafting, resetStore, restoreTodayJournalInFeed, setRaw } from "./index";
+import { publishOwnPage } from "./ownPublication.test.support";
 import { baseRevFor } from "./host/wiring";
 import { registerPaneRouteProvider } from "./workingSet";
 import { doc } from "./model";
-import { endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
 import { journalTitle, appNow } from "../journal";
 import { setToasts, toasts } from "../toasts";
 import type { BlockDto, PageDto, PageKind } from "../types";
 import { answerOpensFromDocument } from "./host/documentHost.test.support";
-import { bindTestHost } from "./host/wiring.test.support";
+import { bindTestHost, mailPage, type TestHost } from "./host/wiring.test.support";
 
 let serial = 0;
 const block = (raw: string): BlockDto => ({ id: `rr-${++serial}`, raw, collapsed: false, children: [] });
@@ -28,12 +29,14 @@ const raws = (name: string) => pageByName(name)?.roots.map((id) => doc.byId[id].
 const refusalToast = () => toasts().find((toast) => toast.kind === "error" && toast.message.includes("pages/stray.md"));
 
 let unpin: (() => void) | null = null;
+let host: TestHost;
 beforeAll(() => initParser());
 beforeEach(async () => {
   serial = 0;
   resetStore();
   setToasts([]);
-  answerOpensFromDocument(await bindTestHost());
+  host = await bindTestHost();
+  answerOpensFromDocument(host);
 });
 afterEach(() => {
   unpin?.(); unpin = null;
@@ -97,12 +100,13 @@ describe("capture never lands in a second file holding the destination's name", 
     loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])]);
     expect(doc.feed).toEqual(["Aug 31st, 2026"]);
     let finish!: (page: PageDto) => void;
-    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const requested = file(today, "journals/today.md", []);
+    vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve as never; })).mockResolvedValue(requested);
     const save = vi.spyOn(backend(), "pageSubmit");
     const capturing = appendToTodayJournal("- captured thought");
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     strayHolding(today, holds[0][1]);
-    finish(file(today, "journals/today.md", []));
+    finish(requested);
     expect(await capturing).toBe(false);
     expect(JSON.stringify(save.mock.calls)).not.toContain("captured thought");
     expect(raws(today)).toEqual(["stray text"]);
@@ -149,29 +153,33 @@ describe("the PDF-notes refresh never drops a highlight write it declined", () =
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  it("defers while a block on the notes page is edited, then applies disk content and baseline", async () => {
+  it("a held notes page takes its own publication through host mail and retains its editor and baseline", async () => {
     const notes = "hls__paper";
     expect(loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])])).toBe("published");
     install(file(notes, "pages/hls__paper.md", ["old note"], "page"));
     await editing(notes);
     const disk = file(notes, "pages/hls__paper.md", ["old note", "new highlight"], "page");
-    vi.spyOn(backend(), "getPage").mockResolvedValue(disk as never);
-    const applied = await reloadHlsIfLoaded(notes);
-    expect(raws(notes)).toEqual(["old note"]); // the caret is never stolen
+    const read = vi.spyOn(backend(), "getPageByPath");
+    await publishOwnPage(notes);
+    expect(read).not.toHaveBeenCalled();
+    host.deliver({ key: disk.id, page: mailPage(2000, disk), answer: null });
+    expect(editingId()).not.toBeNull();
+    expect(doc.byId[editingId()!].page).toBe(notes);
+    expect(doc.byId[editingId()!].raw).toBe("old note");
+    expect(raws(notes)).toEqual(["old note", "new highlight"]);
     endEdit("blur");
     await vi.waitFor(() => expect(raws(notes)).toEqual(["old note", "new highlight"]));
     expect(baseRevFor(notes)).toBe(disk.rev);
-    expect(applied).toBe(false);
   });
 
   it("shows a sticky error when the deferred refresh fails, instead of dropping it unhandled", async () => {
     const notes = "hls__failing";
     vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
     install(file(notes, "pages/hls__failing.md", ["old note"], "page"));
-    await editing(notes);
-    vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("disk unreadable"));
-    expect(await reloadHlsIfLoaded(notes)).toBe(false);
-    endEdit("blur");
+    unpin = pinPageWhileDrafting(() => notes);
+    vi.spyOn(backend(), "getPageByPath").mockRejectedValue(new Error("disk unreadable"));
+    await publishOwnPage(notes);
+    unpin(); unpin = null;
     await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && t.message.includes("refresh a page"))).toBe(true));
     expect(raws(notes)).toEqual(["old note"]);
   });
@@ -179,8 +187,8 @@ describe("the PDF-notes refresh never drops a highlight write it declined", () =
   it("applies at once when the notes page is idle", async () => {
     const notes = "hls__paper";
     install(file(notes, "pages/hls__paper.md", ["old note"], "page"));
-    vi.spyOn(backend(), "getPage").mockResolvedValue(file(notes, "pages/hls__paper.md", ["old note", "hl"], "page") as never);
-    expect(await reloadHlsIfLoaded(notes)).toBe(true);
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(file(notes, "pages/hls__paper.md", ["old note", "hl"], "page") as never);
+    await publishOwnPage(notes);
     expect(raws(notes)).toEqual(["old note", "hl"]);
   });
 });

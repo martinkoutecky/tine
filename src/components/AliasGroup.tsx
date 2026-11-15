@@ -1,12 +1,13 @@
 import { t } from "../i18n";
-import { For, Show, createMemo, createResource, type JSX } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphEpoch, pageAliasRev, pageInventoryRev } from "../graphSession";
+import { pageAliasRev, pageInventoryRev } from "../graphSession";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { resolvedTarget } from "../pageIndex";
 import { pageIdentityKey } from "../pageIdentity";
 import { readOr } from "../resourceRead";
 import { PageRef } from "../render/inline";
+import { createGraphResource } from "../graphResource";
 
 /** The page header's alias group (D-20261019-AL1/AL2, card hB9Zjw): an alias
  * group is one thing, so the header tells "the names this thing has" from
@@ -31,8 +32,8 @@ export function AliasGroupHeader(props: {
   onEdit?: (event: MouseEvent) => void;
 }): JSX.Element {
   const owners = {};
-  const [answer] = createResource(
-    () => props.inGraph && `${props.name}\0${graphEpoch()}\0${pageInventoryRev()}\0${pageAliasRev()}`,
+  const [answer] = createGraphResource(
+    () => props.inGraph && `${props.name}\0${pageInventoryRev()}\0${pageAliasRev()}`,
     async () => {
       const owner = latestOwner(owners, "alias-group", graphOwner());
       const result = await readOwned(owner, backend().pageAliasGroup(props.name));

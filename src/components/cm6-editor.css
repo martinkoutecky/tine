@@ -32,7 +32,7 @@
 .cm6-block-editor:has(.code-edit) { padding: var(--ls-block-content-pad-y) 0; }
 .cm6-block-editor:has(.code-edit) .cm-editor {
   background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
-  padding-block: 30px 10px; padding-inline: 48px 12px; margin: 4px 0;
+  padding-block: 30px 10px; padding-inline: var(--code-content-inset) 12px; margin: 4px 0;
   font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5;
 }
 .cm6-block-editor:has(.code-edit) .cm-scroller { overflow-x: auto; }

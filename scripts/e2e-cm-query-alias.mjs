@@ -16,6 +16,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector, blurEditor } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const artifacts = path.join(root, "artifacts/cm-query-alias");
@@ -65,9 +66,9 @@ async function replaceFirstBlock(scope, text) {
     const el = document.querySelector(`${scope} .block-content-wrapper`);
     el?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   }, scope);
-  await browser.$(`${scope} textarea.block-editor`).waitForExist({ timeout: 10_000, timeoutMsg: `no editor in ${scope}` });
+  await browser.$(editorSelector(scope)).waitForExist({ timeout: 10_000, timeoutMsg: `no editor in ${scope}` });
   await paste(text);
-  await browser.execute((scope) => document.querySelector(`${scope} textarea.block-editor`)?.blur(), scope);
+  await blurEditor(browser, scope);
 }
 
 try {

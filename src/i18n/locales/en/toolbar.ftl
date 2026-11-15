@@ -1,0 +1,13 @@
+toolbar-title = Toolbar
+toolbar-description = Drag buttons to move or reorder them, or use the arrow and move buttons. Your choice stays on this device. When space is tight, buttons on the right go into the … menu first.
+toolbar-on-bar = On the toolbar
+toolbar-in-menu = In the … menu
+toolbar-move-up = Move { $action } up
+toolbar-move-down = Move { $action } down
+toolbar-move-to-menu-label = Move { $action } to the … menu
+toolbar-move-to-bar-label = Move { $action } to the toolbar
+toolbar-move-to-menu = To menu
+toolbar-move-to-bar = To toolbar
+toolbar-reset = Reset toolbar
+toolbar-customize = Customize toolbar…
+toolbar-save-failed = Could not save the toolbar choice

@@ -44,3 +44,15 @@ it("keeps a context-menu open failure sticky and retries the same graph (master 
   expect(openKnown).toHaveBeenLastCalledWith("/graphs/notes", false);
   setToasts([]);
 });
+
+// GH #926: the row shows the presentable path (display_path); Copy path copies
+// the canonical one, which is what pasting into a file manager or a link needs.
+it("copies the full canonical path even when the row shows a shorter spelling", () => {
+  const full = "/private/var/mobile/Containers/Data/Application/0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C/Documents/Notes";
+  const copyPath = vi.fn(async () => {});
+  const actions = graphRowMenuActions({ name: "Notes", path: full, display_path: "Documents/Notes" }, {
+    openKnown: vi.fn(), reveal: vi.fn(), copyPath, forget: vi.fn(), desktop: false, isCurrent: false,
+  });
+  actions.find((action) => action.label === "Copy path")!.run!();
+  expect(copyPath).toHaveBeenCalledExactlyOnceWith(full);
+});

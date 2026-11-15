@@ -1,5 +1,10 @@
 import { For, Show, type JSX } from "solid-js";
 
+/** Code card inset shared by reading and editing. O(1) from the displayed line count. */
+export function codeGutterStyle(lineCount: number): JSX.CSSProperties {
+  return { "--code-line-digits": String(String(lineCount).length) };
+}
+
 /** Calculator/code line gutter. Code mirrors line heights, including soft wraps,
  * without measuring layout; numbers stay on the first visual row of each line.
  * O(lines of the displayed payload); callers supply already-parsed content.

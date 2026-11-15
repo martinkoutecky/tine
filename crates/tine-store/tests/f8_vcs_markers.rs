@@ -12,21 +12,14 @@ use crate::test_host_writer::{HostWriter, SaveRefused};
 use crate::{EditKind, OpenOptions, PageId, Refusal, SaveBase, Store, Why};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-
-static SEQ: AtomicU64 = AtomicU64::new(0);
 
 const MARKED: &str =
     "<<<<<<< HEAD\n- mine\n||||||| base\n- old\n=======\n- theirs\n>>>>>>> feature\n";
 
 fn scratch(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "tine-f8-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-f8-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

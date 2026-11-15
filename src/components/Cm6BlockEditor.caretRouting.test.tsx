@@ -85,7 +85,7 @@ it.each(["numeric", "range"] as const)("CM6 maps a %s caret into a mixed code bo
   const sidebar = host.querySelector("[data-sidebar-surface]")!;
   await clickBlock(sidebar, "a");
   const start = raw.indexOf("code") + 1;
-  startEditing("b", kind === "numeric" ? start : { start, end: start + 2, direction: "backward" });
+  startEditing("b", kind === "numeric" ? start : { start: 1, end: 3, direction: "backward", codeBodyStart: raw.indexOf("code") });
   await flush();
   const focused = editorIn(sidebar.querySelector('[data-block-id="b"]')!);
   const main = editorIn(host.querySelector('[data-caret-main] [data-block-id="b"]')!);
@@ -104,6 +104,26 @@ async function clickBlock(surface: Element, id: string) {
   await flush();
   return editorIn(surface.querySelector(`[data-block-id="${id}"]`)!);
 }
+
+it.each(["SCHEDULED", "DEADLINE"])("CM6 reveals the bottom %s line before resolving an edge caret on mount and re-entry", async keyword => {
+  const raw = `TODO target\n${keyword}: <2026-11-15 Sun>`;
+  const host = await mount("cm6", raw);
+  const sidebar = host.querySelector("[data-sidebar-surface]")!;
+  await clickBlock(sidebar, "a");
+  for (const col of [0, 7, 100]) {
+    startEditing("b", { col, edge: "last" });
+    await flush();
+    const editor = editorIn(sidebar.querySelector('[data-block-id="b"]')!);
+    const lineStart = raw.indexOf("\n") + 1;
+    const expected = Math.min(lineStart + col, raw.length);
+    expect(editor.value()).toBe(raw);
+    expect(document.activeElement).toBe(editor.element);
+    expect(editor.selection()).toEqual([expected, expected]);
+    // Re-enter from the header, where the planning source is concealed again.
+    editor.select(0);
+  }
+  expect(node("b").raw).toBe(raw);
+});
 
 for (const kind of ["cm6", "textarea"] as const) {
   it.each([

@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide explains Enter and unmatched children in live results (UI-QUERY-REF-ENTER-EDITOR-1113)", () => {
+  const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
+  for (const outcome of ["query result or Linked Reference", "creates a child and keeps typing there", "even when the child does not match the query"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches advanced query breadcrumb options (GH #881)", () => {
   const guide = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   for (const outcome of [":breadcrumb-show? false", "keep their source page headings", ":group-by-page? false", "right sidebar and embeds", ":table-view? false"]) expect(guide).toContain(outcome);
@@ -22,6 +26,7 @@ it("the Guide explains query pauses and stale collapsed reference counts", () =>
   const queries = readFileSync("crates/tine-guide/src/templates/queries.md", "utf8");
   const references = readFileSync("crates/tine-guide/src/templates/pages-links-references-search.md", "utf8");
   for (const outcome of ["pause typing for 1.5 seconds", "latest saved publication", "last answer visible"]) expect(queries).toContain(outcome);
+  for (const outcome of ["While a query refreshes", "previous results stay visible", "**Scheduled & Deadline**", "journal section with no results hides once the refresh finishes"]) expect(queries).toContain(outcome);
   for (const outcome of ["keep their last count", "Count may be out of date", "opening the section reloads"]) expect(references).toContain(outcome);
 });
 it("the Guide explains preview placement and reachable source actions (GH #750, GH #752)", () => {

@@ -33,6 +33,21 @@ function rustFiles(dir: string, out: string[] = []): string[] {
 const BUILDS_INTO_TARGET = /"(?:\.\.\/)+target\b|CARGO_TARGET_TMPDIR|CARGO_TARGET_DIR/;
 
 describe("test scratch directories", () => {
+  it("Rust fixture paths use atomic allocation instead of formatted names in the shared temp directory", () => {
+    const offenders: string[] = [];
+    for (const file of rustFiles(join(ROOT, "crates"))) {
+      const source = readFileSync(file, "utf8");
+      // Include PathBuf::from(temp_dir()) and multiline expressions. Reject all
+      // formatted names: a nonce computed outside the expression is still unsafe.
+      const pattern = /\btemp_dir\s*\(\s*\)\s*\)*\s*\.\s*join\s*\(\s*format!\s*\(/g;
+      for (const match of source.matchAll(pattern)) {
+        const line = source.slice(0, match.index).split("\n").length;
+        offenders.push(`${relative(ROOT, file)}:${line}`);
+      }
+    }
+    expect(offenders, "Allocate fixtures atomically with test_support::fresh_dir or tempfile::TempDir").toEqual([]);
+  });
+
   it("no Rust test (crates/*/tests, inline test modules, src-tauri) builds a path under target/", () => {
     const files = [
       ...rustFiles(join(ROOT, "crates")),

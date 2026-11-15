@@ -63,7 +63,7 @@ const click = (selector, text) => browser.execute((sel, label) => {
 try {
   await start();
   stage = "expand the sidebar Namespaces section (inline tree is kept)";
-  await browser.waitUntil(() => click(".nav-section-header", "NAMESPACES"), { timeout: 20_000, interval: 300 });
+  await browser.waitUntil(() => click(".nav-first-level.nav-section-toggle:not([data-sidebar-section])"), { timeout: 20_000, interval: 300 });
   await browser.$(".ns-tree").waitForExist({ timeout: 10_000 });
   assert.ok(await browser.$(".nav-namespaces-open").isExisting(), "the sidebar offers the full view");
 
@@ -119,9 +119,6 @@ try {
   // page Other/Notes below it; it is a page (model rule 1, OG), so All pages
   // lists it and it opens itself.
   stage = "All pages lists a namespace parent that has no file";
-  if (!await browser.$(".nav-all-pages-open").isExisting()) {
-    await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find((header) => header.textContent?.includes("ALL PAGES"))?.click());
-  }
   await browser.$(".nav-all-pages-open").waitForExist({ timeout: 15_000 });
   await browser.$(".nav-all-pages-open").click();
   await browser.$(".all-pages-row").waitForExist({ timeout: 15_000 });

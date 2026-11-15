@@ -45,7 +45,7 @@ pub struct ReferenceSource<'a> {
     /// Explicit page references recognized by the parser.
     pub explicit: &'a [ProjectedPageRef],
     /// Byte ranges in the raw source eligible for plain-text matching.
-    pub plain_ranges: &'a [Range<usize>],
+    pub plain_ranges: PlainRangeList<'a>,
     /// Structural source ranges excluded from plain-text matching.
     pub withheld_ranges: &'a [Range<usize>],
 }
@@ -71,13 +71,38 @@ pub fn rename_targets(raw: &str, is_org: bool) -> Vec<RewriteTarget> {
     projection.rewrite_targets.unwrap_or_default()
 }
 
+/// A view of a block's plain-search ranges: the stored form keeps one range
+/// inline, and a build result or a longer list is a slice.
+#[derive(Debug, Clone, Copy)]
+pub enum PlainRangeList<'a> {
+    /// The usual single range.
+    One(u32, u32),
+    /// Any number of ranges.
+    Many(&'a [Range<usize>]),
+}
+
+impl<'a> PlainRangeList<'a> {
+    /// The ranges, in source order.
+    pub fn iter(self) -> impl Iterator<Item = Range<usize>> + 'a {
+        let one = match self {
+            Self::One(start, end) => Some(start as usize..end as usize),
+            Self::Many(_) => None,
+        };
+        let many = match self {
+            Self::One(..) => &[],
+            Self::Many(ranges) => ranges,
+        };
+        one.into_iter().chain(many.iter().cloned())
+    }
+}
+
 impl ReferenceSourceProjection {
     /// Borrow this build result as a [`ReferenceSource`].
     #[cfg(any(test, feature = "test-faults"))]
     pub fn as_source(&self) -> ReferenceSource<'_> {
         ReferenceSource {
             explicit: &self.explicit,
-            plain_ranges: &self.plain_ranges,
+            plain_ranges: PlainRangeList::Many(&self.plain_ranges),
             withheld_ranges: &self.withheld_ranges,
         }
     }
@@ -361,8 +386,8 @@ pub fn occurrences_of_kind_prepared(
         let Some(needle) = needle else {
             continue;
         };
-        for eligible in projection.plain_ranges {
-            plain_match::visit_plain_matches(raw, eligible, needle, |range| {
+        for eligible in projection.plain_ranges.iter() {
+            plain_match::visit_plain_matches(raw, &eligible, needle, |range| {
                 if projection
                     .explicit
                     .iter()
@@ -442,9 +467,9 @@ pub fn has_occurrence_prepared(
             .any(|reference| projected_reference_matches(reference, names.names, config));
     }
     for needle in names.needles().iter().flatten() {
-        for eligible in projection.plain_ranges {
+        for eligible in projection.plain_ranges.iter() {
             let mut found = false;
-            plain_match::visit_plain_matches(raw, eligible, needle, |range| {
+            plain_match::visit_plain_matches(raw, &eligible, needle, |range| {
                 found = !projection
                     .explicit
                     .iter()

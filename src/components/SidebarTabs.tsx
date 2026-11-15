@@ -103,7 +103,7 @@ export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }):
       <div class="nav-section" data-sidebar-section="tabs">
         <button
           type="button"
-          class="nav-section-header nav-section-toggle"
+          class="nav-section-header nav-first-level nav-section-toggle"
           data-sidebar-section-toggle="tabs"
           aria-expanded={tabsSectionExpanded()}
           aria-controls="sidebar-tabs-list"

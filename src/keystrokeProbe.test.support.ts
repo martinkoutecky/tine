@@ -25,7 +25,7 @@ export const NODE_FIELDS = ["raw", "children", "collapsed", "parent", "page", "l
 type Field = (typeof NODE_FIELDS)[number];
 const FIELD_SET: ReadonlySet<string | symbol> = new Set(NODE_FIELDS);
 
-export interface SiteStat { runs: number; rawReads: number; anyReads: number; readers: Map<string, number> }
+export interface SiteStat { runs: number; notifications: number; rawReads: number; anyReads: number; readers: Map<string, number> }
 export interface Measurement {
   /** Reads of `raw` on nodes other than the edited one. */
   foreignRaw: number;
@@ -37,6 +37,8 @@ export interface Measurement {
   ownRaw: number;
   /** Computation re-runs in the window. */
   runs: number;
+  /** Clean computations invalidated, including Solid's pending-only walks. */
+  notifications: number;
   /** Wall-clock ms of the edit call (jsdom: only a sanity figure). */
   ms: number;
   bySite: Map<string, SiteStat>;
@@ -48,7 +50,7 @@ let cur: { site: string } | null = null;
 const runStack: string[] = [];
 let bySite = new Map<string, SiteStat>();
 let foreignRawIds = new Set<string>();
-let foreignRaw = 0, foreignAny = 0, ownRaw = 0, runs = 0;
+let foreignRaw = 0, foreignAny = 0, ownRaw = 0, runs = 0, notifications = 0;
 
 const THIS_FILE = "keystrokeProbe.test.support";
 function frames(stack: string | undefined, limit: number): string[] {
@@ -64,7 +66,7 @@ function frames(stack: string | undefined, limit: number): string[] {
 }
 const site = (key: string): SiteStat => {
   let s = bySite.get(key);
-  if (!s) bySite.set(key, s = { runs: 0, rawReads: 0, anyReads: 0, readers: new Map() });
+  if (!s) bySite.set(key, s = { runs: 0, notifications: 0, rawReads: 0, anyReads: 0, readers: new Map() });
   return s;
 };
 
@@ -73,11 +75,19 @@ Error.stackTraceLimit = 40;
 // Wrap every computation's function so re-runs are counted and reads inside are
 // attributed. Installed at import time; computations created before the import
 // (none: the probe is the first import of the guard test) are not covered.
-const hooks = (DEV as unknown as { hooks: { afterCreateOwner: ((o: { fn?: (v: unknown) => unknown; name?: string }) => void) | null } }).hooks;
+const hooks = (DEV as unknown as { hooks: { afterCreateOwner: ((o: { fn?: (v: unknown) => unknown; name?: string; state: number }) => void) | null } }).hooks;
 hooks.afterCreateOwner = (owner) => {
   if (typeof owner.fn !== "function") return;
   const created = frames(new Error().stack, 2).join(" < ") || "(no src frame)";
   const key = owner.name ? `${created} [${owner.name}]` : created;
+  let state = owner.state;
+  Object.defineProperty(owner, "state", {
+    get: () => state,
+    set: (next: number) => {
+      if (tracing && state === 0 && next !== 0) { notifications++; site(key).notifications++; }
+      state = next;
+    },
+  });
   const fn = owner.fn;
   owner.fn = function (this: unknown, v: unknown) {
     if (tracing) { runs++; site(key).runs++; }
@@ -147,12 +157,12 @@ export function instrumentDocStore<T extends object>(store: T, initial: unknown)
 /** Run `edit` as one measured keystroke on node `id`. */
 export function measure(id: string, edit: () => void): Measurement {
   bySite = new Map(); foreignRawIds = new Set();
-  foreignRaw = foreignAny = ownRaw = runs = 0;
+  foreignRaw = foreignAny = ownRaw = runs = notifications = 0;
   edited = id; tracing = true;
   const t0 = performance.now();
   try { untrack(edit); } finally { tracing = false; edited = null; }
   const ms = performance.now() - t0;
-  return { foreignRaw, foreignAny, foreignRawNodes: foreignRawIds.size, ownRaw, runs, ms, bySite };
+  return { foreignRaw, foreignAny, foreignRawNodes: foreignRawIds.size, ownRaw, runs, notifications, ms, bySite };
 }
 
 export function median(xs: number[]): number {

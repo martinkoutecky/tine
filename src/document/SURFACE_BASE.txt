@@ -95,7 +95,6 @@ readPageProperty
 readSchedule
 redo
 registerPaneRouteProvider
-reloadHlsIfLoaded
 reloadPage
 removeOwnNumberedList
 renamePageOnDisk

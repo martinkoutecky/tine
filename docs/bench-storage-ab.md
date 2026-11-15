@@ -112,6 +112,14 @@ from a requestAnimationFrame gap above 100 ms because WebKitGTK exposes no `long
 
 ### Query scenario tolerances
 
+`query.settledMs` and `queryWarm.settledMs` are candidate-only: last key to no query
+busy signal after publication. The v0.7.4 baseline exposes no `aria-busy` during
+refetch, so its samples measure the harness's detection floor rather than query
+settlement. Raw trials retain those samples; the summary excludes baseline samples
+for every candidate-only metric and emits no delta, spread or A/B verdict for it,
+including when recomputing old reports with `--summarize-only`. Query reflection
+and publication timings remain comparable across arms.
+
 `query.*` timings use an absolute tolerance of 100 ms and RSS metrics 10 MiB. Both are PROVISIONAL. Method: the existing A/A
 (`scratch/aa3` in the harness receipt) has key-to-Published at 0.2 % spread (about 1 ms of 410), RSS medians 1-3 MiB apart
 (main 207.4 vs 209.4, tree 760.5 vs 763.5), and the least stable in-page UI timing (carry-over visibility) needed 15 ms for a 4 ms

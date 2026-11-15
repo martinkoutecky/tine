@@ -4,7 +4,7 @@
 use super::*;
 
 fn raws(blocks: &[DocBlock]) -> Vec<String> {
-    blocks.iter().map(|block| block.raw.clone()).collect()
+    blocks.iter().map(|block| block.raw.to_string()).collect()
 }
 
 /// Every fixture must keep its meaning through the canonical serializer.
@@ -159,5 +159,5 @@ fn a_deep_outline_parses_without_recursion() {
     let flat: String = (0..100_000).map(|i| format!("- block {i}\n")).collect();
     let doc = parse(&flat);
     assert_eq!(doc.roots.len(), 100_000);
-    assert_eq!(doc.roots[99_999].raw, "block 99999");
+    assert_eq!(doc.roots[99_999].raw(), "block 99999");
 }

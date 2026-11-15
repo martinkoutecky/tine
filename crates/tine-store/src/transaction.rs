@@ -987,35 +987,6 @@ impl<'a> PagePlan<'a> {
         self
     }
 
-    fn path(&self, file: &FileId) -> Result<PathBuf, Why> {
-        let path = self
-            .store
-            .path_for_os_handoff(file, false)
-            .map_err(|error| match error {
-                StoreError::InvalidTarget(message) => Why::Refused(Refusal::InvalidTarget(message)),
-                StoreError::Io(error)
-                    if file.as_str().starts_with("logseq/.tine-trash/")
-                        && error.kind() == io::ErrorKind::NotADirectory =>
-                {
-                    let target = self.store.graph.root.join(file.as_str());
-                    failed_trash_dir(error.into(), target.parent().unwrap_or(&target))
-                }
-                StoreError::Io(error) => Why::Failed(error.into()),
-                other => Why::Refused(Refusal::InvalidTarget(format!("{other:?}"))),
-            })?;
-        let checked = if file.as_str().starts_with("assets/") {
-            self.store.graph.ensure_asset_write_target(&path)
-        } else {
-            self.store.graph.ensure_write_target(&path)
-        };
-        checked.map_err(|error| match error.kind() {
-            io::ErrorKind::InvalidInput => Why::Refused(Refusal::InvalidTarget(error.to_string())),
-            // Uninspectable now (REG-WIN-WRITE-TARGET-TRANSIENT): a failure, not outside.
-            _ => Why::Failed(error.into()),
-        })?;
-        Ok(path)
-    }
-
     fn page(&self, file: &FileId) -> bool {
         self.store.as_page(file).is_some()
     }

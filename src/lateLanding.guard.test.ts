@@ -70,7 +70,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/backgroundFlush.ts#installBackgroundFlush.flush": ["flushAll", "flushAll"],
   "src/clipboard.ts#copyBlockOutline": ["writeRich"],
   "src/components/primitives.ts#openExternal": ["openExternal"],
-  "src/copySettings.ts#initCopySettings": ["getAppBool", "getAppBool", "getAppBool"],
+  "src/copySettings.ts#initCopySettings": ["getAppBool", "getAppBool"],
   "src/debug.ts#dbg": ["debugLog"],
   "src/editor/linkDefault.ts#initLinkDefault": ["setAppString"],
   "src/launcherRanking.ts#initLauncherRankingSetting": ["getAppBool"],
@@ -110,7 +110,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
 // below pins that it really does start from graphOwner. `bindingOwner` is the
 // write-side owner (graph binding without the display epoch, R4) from src/owned.ts.
 const OWNERS = new Set(["graphOwner", "bindingOwner", "ownedWhen", "latestOwner", "revisionOwner", "focusedSurfaceOwner"]);
-const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable"]);
+const BOUNDARIES = new Set(["readOwned", "admitRead", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable"]);
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
 const DURABLE_BACKEND_METHODS = new Set([
@@ -187,6 +187,7 @@ const OWNER_PARAM_HELPERS = new Set([
   "src/components/ExportModal.tsx#warmMacro",
   "src/components/ExportModal.tsx#warmQueryMacros",
   "src/document/workingSet.ts#admitPageFile",
+  "src/journalFeedRead.ts#readJournalFeedWindow",
   "src/guide.ts#markGuideAnnounced",
   "src/queryTwin.ts#bothFamilies",
 ]);
@@ -345,7 +346,7 @@ function durableReadViolations(file: string, source: string): string[] {
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const violations: string[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "readOwned") {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && ["readOwned", "admitRead"].includes(node.expression.text)) {
       const work = node.arguments[1];
       const walk = (candidate: ts.Node): void => {
         if (ts.isCallExpression(candidate) && ts.isPropertyAccessExpression(candidate.expression) &&
@@ -402,6 +403,8 @@ describe("I-20 owned backend completion syntax", () => {
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().importAsset('a.png', undefined, 1))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().writeHighlights('a.pdf', 'A', [], [], 'replace-page', 1))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().openPdf('a.pdf', 'A', 1))")).toHaveLength(0);
+    expect(durableReadViolations("src/planted.ts", "admitRead(graphOwner(), () => backend().renamePage('A', 'B', 'rename-page'), names, install)")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "admitRead(graphOwner(), () => backend().getPage('A', 'page'), names, install)")).toHaveLength(0);
   });
   it("fails a planted old graph completion", () => {
     expect(() => assertLateLandings("src/planted.ts", "async function stale() { const dto = await backend().getPage('P', 'page'); reloadPage(dto); }")).toThrow(/I-20.*exemplar src\/components\/Page\.tsx/s);
@@ -411,6 +414,8 @@ describe("I-20 owned backend completion syntax", () => {
     expect(lateLandingViolations("src/planted.ts", "function outer() { return items.map(async () => { const dto = await backend().getPage('a', 'page'); setPage(dto); }); }")).toHaveLength(1);
     expect(lateLandingViolations("src/planted.ts", "async function alias() { const api = backend(); const dto = await api.getPage('a', 'page'); setPage(dto); }")).toHaveLength(1);
     expect(lateLandingViolations("src/planted.ts", "import { graphOwner } from './owned'; async function safe() { const result = await readOwned(graphOwner(), backend().getPage('a', 'page')); if (result.kind === 'stale') return; setPage(result.value); }")).toHaveLength(0);
+    expect(lateLandingViolations("src/planted.ts", "import { graphOwner } from './owned'; async function safe() { await admitRead(graphOwner(), () => backend().getPage('a', 'page'), names, install); }")).toHaveLength(0);
+    expect(lateLandingViolations("src/planted.ts", "await admitRead(() => true, () => backend().getPage('a', 'page'), names, install);")).not.toHaveLength(0);
     expect(lateLandingViolations("src/planted.ts", "async function alias() { const p = backend().getPage('a', 'page'); const dto = await p; setPage(dto); }")).toHaveLength(1);
     expect(lateLandingViolations("src/planted.ts", "backend().getPage('a', 'page').catch((e) => setError(e));")).toHaveLength(1);
     expect(lateLandingViolations("src/planted.ts", "backend().getPage('a', 'page').finally(() => setDone(true));")).toHaveLength(1);

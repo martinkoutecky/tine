@@ -475,11 +475,7 @@ mod tests {
 
     #[test]
     fn search_and_advanced_scope_keep_one_generation_during_write() {
-        let root = std::env::temp_dir().join(format!(
-            "tine-d3-search-scope-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-d3-search-scope-");
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::write(root.join("pages/Scope.md"), "- TODO oldtoken\n").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -594,7 +590,7 @@ mod tests {
 
     #[test]
     fn completed_workspace_searches_release_their_lanes() {
-        let root = std::env::temp_dir().join(format!("tine-life-search-{}", std::process::id()));
+        let root = crate::test_support::fresh_dir("tine-life-search-");
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::write(root.join("pages/P.md"), "- needle\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
@@ -679,11 +675,7 @@ mod tests {
         // The Search tab sends one request per keystroke on one lane. The
         // handler threads run in any order: here the newest request holds its
         // lane while the older one arrives.
-        let root = std::env::temp_dir().join(format!(
-            "tine-lane-order-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let root = crate::test_support::fresh_dir("tine-lane-order-");
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::write(root.join("pages/Keyboard Alpha.md"), "- Body\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;

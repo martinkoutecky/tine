@@ -93,7 +93,7 @@ export function runWithCommentName(run: () => void): void {
       setCommentNameRequest(null);
       const normalized = normalizeAuthorName(name ?? "");
       if (normalized) setCommentAuthorName(normalized);
-      else writePreference(declinedSig, setDeclinedSig, true, () => backend().setAppString(DECLINED_KEY, "1"), "comment name prompt");
+      else writePreference(declinedSig, setDeclinedSig, true, () => backend().setAppString(DECLINED_KEY, "1"), msg("toast-save-comment-prompt-failed"));
       run();
     },
   };

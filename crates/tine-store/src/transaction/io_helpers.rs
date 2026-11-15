@@ -25,7 +25,7 @@ pub(super) fn unresolved_undo_path(error: &impl std::fmt::Debug) -> IoError {
 pub(super) fn content_refusal(error: io::Error) -> Why {
     if error
         .get_ref()
-        .and_then(|inner| inner.downcast_ref::<std::str::Utf8Error>())
+        .and_then(|inner| inner.downcast_ref::<crate::model::NotUtf8>())
         .is_some()
     {
         return Why::Refused(Refusal::Undecodable);

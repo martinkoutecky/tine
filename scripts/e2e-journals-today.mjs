@@ -1,9 +1,10 @@
 // GF4: native cold first-body timing and late-day merge with an open editor.
 // Run under xvfb-run; E2E_BASELINE=1 records the unchanged app's timing only.
-// E2E_HOLD_LOAD=1 requires a binary built with tine-store/test-faults.
+// The merge gate requires E2E_HOLD_LOAD=1 and tine-store/test-faults.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -12,6 +13,8 @@ import { generateRealisticGraph } from "./generate-realistic-graph.mjs";
 
 const root = process.cwd();
 const app = path.resolve(process.env.TINE_APP || "target/debug/tine");
+const hold = process.env.E2E_HOLD_LOAD === "1";
+if (!hold && process.env.E2E_BASELINE !== "1") throw new Error("The journal merge gate requires E2E_HOLD_LOAD=1 and an app built with tine-store/test-faults");
 const out = path.resolve(process.env.E2E_ARTIFACT_DIR || "artifacts/journals-today/native");
 fs.mkdirSync(out, { recursive: true });
 const trial = fs.mkdtempSync(path.join(out, "trial-"));
@@ -24,7 +27,6 @@ const title = (d) => `${d.toLocaleString("en-US", { month: "short" })} ${d.getDa
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:tine/guide-announced? true}\n");
 for (const ago of [0, 4, 6]) fs.writeFileSync(path.join(graph, "journals", `${stem(date(ago))}.md`), Array.from({ length: 80 }, (_, row) => `- GF4 body ${ago} row ${row}\n`).join(""));
 fs.writeFileSync(path.join(graph, "pages/GF4 mentions.md"), `- [[${iso(date(1))}]] [[${iso(date(3))}]] [[2099-01-03]]\n`);
-const hold = process.env.E2E_HOLD_LOAD === "1";
 const pause = path.join(graph, ".tine-test-pause-load");
 if (hold) fs.writeFileSync(pause, "");
 for (const name of ["data", "config", "cache"]) fs.mkdirSync(path.join(trial, name));
@@ -50,13 +52,30 @@ try {
     // The older file-backed day (4 days ago), picked by its title: the feed wraps every day in
     // `.journal-feed-day`, so a positional `.page-section:nth-child(2)` no longer matches, and
     // would name a different day once the fileless days are merged in.
-    const older = await browser.$(`//*[contains(@class,"main-content")]//*[contains(@class,"page-section")][.//h1[contains(@class,"journal-title")][normalize-space()="${title(date(4))}"]]//*[contains(@class,"block-content-wrapper")]`);
+    const older = await browser.$(`//*[contains(@class,"main-content")]//*[contains(@class,"page-section")][.//h1[contains(@class,"journal-title")][normalize-space()="${title(date(4))}"]]//*[contains(@class,"block-content-wrapper")][contains(.,"GF4 body 4 row 0")]`);
     await older.scrollIntoView({ block: "center" });
     await older.click();
-    const editor = await browser.$(".main-content textarea.block-editor");
+    const editor = await browser.$(editorSelector(".main-content"));
     await editor.waitForExist({ timeout: 10000 });
-    const before = await browser.execute(() => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
+    await withEditor(browser, ".main-content", driver => {
+      window.__gf4OpeningSettled = false;
+      const editor = driver.element;
+      const scroller = editor.closest(".main-content");
+      let previous, stable = 0;
+      const sample = () => {
+        if (!editor.isConnected) return;
+        const signature = `${editor.getBoundingClientRect().top}|${scroller.scrollTop}|${scroller.scrollHeight}|${editor.clientHeight}`;
+        stable = signature === previous && driver.focused && driver.value === "GF4 body 4 row 0" ? stable + 1 : 0;
+        previous = signature;
+        if (stable >= 2) window.__gf4OpeningSettled = true;
+        else requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await browser.waitUntil(() => browser.execute(() => window.__gf4OpeningSettled),
+      { timeout: 10000, interval: 50, timeoutMsg: "the known journal editor did not finish opening" });
+    const before = await withEditor(browser, ".main-content", driver => {
+      const editor = driver.element;
       window.__gf4Editor = editor;
       const scroller = editor.closest(".main-content");
       window.__gf4Frames = [];
@@ -67,8 +86,10 @@ try {
         if (editor.isConnected) requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
-      return { value: editor.value, top: editor.getBoundingClientRect().top };
+      return { value: driver.value, top: editor.getBoundingClientRect().top, days: document.querySelectorAll("h1.journal-title").length };
     });
+    proof.before = before;
+    if (before.days !== 3 || before.value !== "GF4 body 4 row 0") throw new Error(`merge setup was not held: ${JSON.stringify(before)}`);
     if (hold) fs.unlinkSync(pause);
     await browser.waitUntil(() => browser.execute(name => [...document.querySelectorAll("h1.journal-title")].some(el => el.textContent.includes(name)), title(date(1))), { timeout: 120000, interval: 100 });
     await browser.waitUntil(() => browser.execute(names => names.every(name => {
@@ -79,13 +100,11 @@ try {
     // single read can catch the editor mid-restore (a transient jump, under load). The contract is that the
     // viewport position survives: wait until the same editor is back within the same 2px tolerance, then
     // run the unchanged assertion below on that settled read. A position that never returns still fails.
-    await browser.waitUntil(() => browser.execute((top) => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
-      return !!editor && Math.abs(editor.getBoundingClientRect().top - top) <= 2;
+    await browser.waitUntil(() => withEditor(browser, ".main-content", (editor, top) => {
+      return !!editor && Math.abs(editor.element.getBoundingClientRect().top - top) <= 2;
     }, before.top), { timeout: 5000, interval: 50, timeoutMsg: "viewport did not settle back to the editor's position" });
-    const after = await browser.execute(() => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
-      return { sameEditor: editor === window.__gf4Editor, focused: document.activeElement === editor, value: editor?.value, top: editor?.getBoundingClientRect().top,
+    const after = await withEditor(browser, ".main-content", editor => {
+      return { sameEditor: editor?.element === window.__gf4Editor, focused: editor?.focused, value: editor?.value, top: editor?.element.getBoundingClientRect().top,
         titles: [...document.querySelectorAll("h1.journal-title")].map(el => el.textContent.trim()) };
     });
     proof.viewportFrames = await browser.execute(() => window.__gf4Frames);
@@ -110,6 +129,11 @@ try {
 } catch (error) {
   proof.observed = String(error); proof.classification = "ambiguous; inspect screenshot and driver log";
   if (browser) {
+    proof.viewportFrames = await browser.execute(() => window.__gf4Frames).catch(() => []);
+    proof.editorAtFailure = await withEditor(browser, ".main-content", editor => {
+      return { sameEditor: editor?.element === window.__gf4Editor, focused: editor?.focused,
+        value: editor?.value, top: editor?.element.getBoundingClientRect().top };
+    }).catch(() => null);
     await browser.saveScreenshot(path.join(trial, "failure.png")).catch(() => {});
     fs.writeFileSync(path.join(trial, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));
   }

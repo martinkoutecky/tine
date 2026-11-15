@@ -271,7 +271,6 @@ gpu-tine-is-rendering-on-the-cpu-your-gpu = Tine is rendering on the CPU — you
 
 graph-open-failure-couldn-t-open-the-graph = Couldn't open the graph. ({ $detail })
 
-graph-preferences-could-not-save = Could not save { $label }.
 
 # $error is an untranslated diagnostic from the operating system or backend.
 graph-session-couldn-t-save-the-journal-template-setting = Couldn't save the journal template setting. ({ $error })
@@ -305,7 +304,6 @@ launcher-ranking-could-not-load-adaptive-launcher-ranking-preference = Could not
 
 move-notice-moved-in = Moved in { $page }
 
-preference-writes-could-not-save = Could not save { $label }.
 
 preference-writes-could-not-load = Could not load { $label }.
 
@@ -400,9 +398,9 @@ ui-failure-export-preview = Couldn't prepare a block for the export preview. It 
 ui-failure-sheet-export = Couldn't read the sheets for export. They are exported as plain outlines.
 ui-failure-editor-load = Couldn't load the CodeMirror editor. You can keep editing with the classic editor.
 
-ui-failure-config-read = Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.
+ui-failure-config-read = Couldn't read config.edn. The graph is read-only; repair the config to resume editing.
 
-ui-failure-config-read-after = { $done }, but config.edn couldn't be read. The graph is open read-only; repair the config and reopen the graph.
+ui-failure-config-read-after = { $done }, but config.edn couldn't be read. The graph is read-only; repair the config to resume editing.
 
 ui-failure-conflict-inventory = Couldn't refresh conflicts. The last successful inventory is kept.
 

@@ -7,6 +7,8 @@
 // (hover reveal, container-query tiers) is out of reach and documented in
 // docs/ui-census-budget.md.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
 import { checkSurfaceBudgets, SURFACES, type Surface } from "../scripts/lib/ui-census-budget.mjs";
 import { commandDefaults, BUILTIN_KEYS, paletteCommands } from "./keybindings";
 import { ADVANCED_BLOCK_COMMANDS, COMMANDS as SLASH_COMMANDS } from "./editor/autocomplete";
@@ -18,8 +20,10 @@ import { QueryActions } from "./components/QueryActions";
 import { RightSidebar } from "./components/RightSidebar";
 import { WindowControls } from "./components/WindowChrome";
 import { backend } from "./backend";
+import { saveToolbarChoice, toolbarActions } from "./toolbarChoice";
 import { refreshPageIndex, resetPageIndex } from "./pageIndex";
 import { resetStore } from "./document";
+import { primeQuickShareGate, resetQuickShareGateForTest } from "./quickShareGate";
 import { loadSingle } from "./document/workingSet";
 import { endEdit } from "./editorController";
 import {
@@ -39,7 +43,6 @@ vi.mock("@tauri-apps/api/window", () => {
 const counts: Record<string, number> = {};
 const labels: Record<string, string[]> = {};
 // ---- Settings -------------------------------------------------------------
-const SETTINGS_TABS: SettingsTabId[] = ["appearance", "editor", "journals", "files", "backups", "graph", "plugins", "diagnostics", "shortcuts", "about"];
 async function measureSettings() {
   // The home-page picker lists graph pages; an empty graph keeps it structural.
   vi.spyOn(backend(), "quickSwitch").mockResolvedValue([]);
@@ -48,7 +51,13 @@ async function measureSettings() {
     openSettings("appearance");
     const nav = await settled(() => root.querySelectorAll(".settings-nav-item").length);
     counts["settings.tabs"] = nav;
-    for (const tab of SETTINGS_TABS) {
+    // Keep the ordinary navigation budget, then expose gated tab bodies too.
+    resetQuickShareGateForTest();
+    vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+    await primeQuickShareGate();
+    await settled(() => root.querySelectorAll(".settings-nav-item").length);
+    const tabs = [...root.querySelectorAll<HTMLElement>(".settings-nav-item")].map(item => item.dataset.settingsTab as SettingsTabId);
+    for (const tab of tabs) {
       openSettings(tab);
       // Anchor: the tab is current once its nav item is active.
       await settled(() => [root.querySelector(".settings-nav-item.active")?.textContent, root.querySelector(".settings-pane-body")?.innerHTML.length]);
@@ -68,7 +77,7 @@ async function measureSettings() {
       }
       if (tab === "shortcuts") counts["settings.shortcuts.rows"] = body.querySelectorAll(".help-shortcut-row").length;
     }
-  } finally { dispose(); closeSettings(); vi.restoreAllMocks(); }
+  } finally { dispose(); closeSettings(); resetQuickShareGateForTest(); vi.restoreAllMocks(); }
 }
 
 // ---- Context menus ---------------------------------------------------------
@@ -138,9 +147,11 @@ async function measureChrome() {
     counts["topbar.windowControls"] = windowButtons;
     counts["sidebar.left.fixed"] = await settled(() => leftSidebarControls(app.root));
     labels["sidebar.left.fixed"] = [...leftSidebarControlSet(app.root)].map(describeControl);
-    // The overflow menu: open it and count what it offers.
+    // Reach the maximal chosen menu, including its fixed Customize row.
+    saveToolbarChoice({ bar: [], menu: toolbarActions.map(action => action.id) });
     required(overflow.find((el) => el.classList.contains("topbar-overflow-trigger")) ?? null, "the toolbar overflow trigger").click();
-    counts["menu.topbarOverflow"] = await settled(() => document.querySelectorAll("[data-topbar-overflow-action]").length);
+    counts["menu.topbarOverflow"] = await settled(() => document.querySelectorAll('.topbar-overflow-menu [role="menuitem"]').length);
+    expect(counts["menu.topbarOverflow"]).toBe(toolbarActions.length + 3);
     // Every conditional left-sidebar header: Favorites, Recent, Namespaces.
     seedFavorites(["Alpha"]);
     setRecentPages([{ name: "Alpha", kind: "page" }]);
@@ -148,7 +159,7 @@ async function measureChrome() {
     await refreshPageIndex();
     counts["sidebar.left.full"] = await settled(() => leftSidebarControls(app.root));
     labels["sidebar.left.full"] = [...leftSidebarControlSet(app.root)].map(describeControl);
-  } finally { app.dispose(); seedFavorites([]); setRecentPages([]); resetPageIndex(); inventory.mockRestore(); }
+  } finally { app.dispose(); saveToolbarChoice(null); seedFavorites([]); setRecentPages([]); resetPageIndex(); inventory.mockRestore(); }
 }
 
 describe("UI census budgets (desktop)", () => {
@@ -181,6 +192,21 @@ describe("UI census budgets (desktop)", () => {
     const { slack } = checkSurfaceBudgets(counts, "desktop");
     // Shrinking passes; say so, so the headroom is not left for the next addition.
     for (const line of slack) console.warn(`UI census: ${line}`);
+  });
+
+  it("measures every declared Settings tab, including gated tabs", () => {
+    const source = ts.createSourceFile("Settings.tsx", readFileSync("src/components/Settings.tsx", "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const tabs = source.statements.filter(ts.isVariableStatement)
+      .flatMap(statement => [...statement.declarationList.declarations])
+      .find(declaration => declaration.name.getText(source) === "TABS")?.initializer;
+    expect(tabs && ts.isArrayLiteralExpression(tabs)).toBe(true);
+    if (!tabs || !ts.isArrayLiteralExpression(tabs)) throw new Error("Settings TABS must be an array");
+    for (const entry of tabs.elements) {
+      if (!ts.isObjectLiteralExpression(entry)) throw new Error("Settings tab must be a descriptor");
+      const id = entry.properties.find(property => property.name?.getText(source) === "id");
+      if (!id || !ts.isPropertyAssignment(id) || !ts.isStringLiteral(id.initializer)) throw new Error("Settings tab must have a literal id");
+      expect(counts[`settings.${id.initializer.text}.open`] ?? 0, `Settings ${id.initializer.text} measurement`).toBeGreaterThan(0);
+    }
   });
 
   it("fails on planted growth, a missing probe, a zero probe and an unbudgeted surface", () => {

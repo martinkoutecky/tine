@@ -184,6 +184,11 @@ unless the block also links the page; this is a declared difference.
   from this page-to-page link table. One lazy frontend owner per graph shares
   timestamp/count seeds across panes. Seeds carry publication revisions; newer
   in-flight deltas replay after the seed, and graph switches retire old reads.
+  Each target orders its own rows after the seed revision; a newer row for one
+  page never discards another page's older update. Removal revisions remain
+  until the next seed or graph switch, so late rows cannot restore a removal.
+  A full invalidation newer than the seed reloads the metric even when a newer
+  individual row has already arrived.
   Later publications carry changed timestamp and final count rows (null removes
   a row). A body edit contributes one timestamp and no changed counts, with no
   metric IPC or graph recount. Identity changes update reached registrations and

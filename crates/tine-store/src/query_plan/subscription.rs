@@ -55,7 +55,7 @@ impl QueryPlan {
             }
             if branch.target == QueryTarget::Blocks {
                 let mut matched = false;
-                walk_blocks(&doc.roots, &mut Vec::new(), &mut |block, _| {
+                walk_blocks(&doc.roots, &mut Vec::new(), false, &mut |block, _, _| {
                     matched |= block_relevance(
                         self,
                         &branch.predicate,

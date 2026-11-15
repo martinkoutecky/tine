@@ -1,6 +1,6 @@
 //! Public whole-graph read contract.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use tine_core::model::{BacklinkFilterTarget, PageEntry, PageKind};
@@ -36,12 +36,7 @@ fn page_entry_empty_path_keeps_legacy_wire_form() {
 
 impl Fixture {
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "tine-whole-graph-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let path = crate::test_support::fresh_dir("tine-whole-graph-");
         std::fs::create_dir_all(path.join("pages")).unwrap();
         std::fs::create_dir_all(path.join("journals")).unwrap();
         std::fs::write(path.join("pages/Target.md"), "- target\n").unwrap();

@@ -125,8 +125,7 @@ mod cold_index_tests {
     /// R-CREATE-UNREADABLE-OWNER: which names an unreadable entry could own.
     #[test]
     fn unreadable_page_could_own_answers_per_entry_shape() {
-        let dir = std::env::temp_dir().join(format!("tine-could-own-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-could-own-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(
@@ -221,8 +220,7 @@ mod cold_index_tests {
 
     #[test]
     fn a_late_title_claimant_seen_by_path_replaces_the_cached_winner() {
-        let dir = std::env::temp_dir().join(format!("tine-late-title-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-late-title-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages/Other.md"), "title:: Claimed\n- old owner\n").unwrap();
         let graph = Graph::open(&dir);
@@ -238,8 +236,7 @@ mod cold_index_tests {
 
     #[test]
     fn journal_first_read_opens_no_ordinary_preambles_and_late_titles_resolve() {
-        let dir = std::env::temp_dir().join(format!("tine-journal-first-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-journal-first-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::write(dir.join(".tine-test-pause-load"), "").unwrap();
@@ -291,9 +288,7 @@ mod cold_index_tests {
 
     #[test]
     fn cold_name_snapshot_reads_each_page_preamble_once() {
-        let dir =
-            std::env::temp_dir().join(format!("tine-cold-name-snapshot-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-cold-name-snapshot-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
         for i in 0..8 {

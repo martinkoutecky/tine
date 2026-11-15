@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { bumpGraphEpoch } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
 import { outlineMaxDepth } from "../editor/outline";
 import type { ConflictInventory, ConflictObject, DiffRow, SyncConflictDiff } from "../types";
@@ -24,6 +25,8 @@ vi.mock("../document", async (importOriginal) => ({
 }));
 import { PageConflictResolution } from "./ConflictResolution";
 import { conflictQueue, setConflictInventory } from "../conflictQueue";
+import { resetStore } from "../document";
+import { resolutionPublication } from "./ownPublication.test.support";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
@@ -94,6 +97,7 @@ beforeEach(() => {
   setToasts([]);
 });
 afterEach(() => {
+  resetStore();
   document.body.innerHTML = "";
   setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
   vi.restoreAllMocks();
@@ -228,6 +232,25 @@ describe("in-page conflict resolution", () => {
     dispose();
   });
 
+  // UI-GRAPH-RESOURCE-OUTLIVES-EPOCH-1112: the comparison read is owned by the
+  // graph epoch; a read the epoch outran is asked again rather than leaving
+  // "Couldn't read this conflict." in place of a comparison that exists.
+  it("shows the comparison, not a read failure, after the epoch moves under the read", async () => {
+    const answer = { mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) };
+    let finishFirst!: (value: typeof answer) => void;
+    vi.spyOn(backend(), "vcsMarkerConflictDiff")
+      .mockImplementationOnce(() => new Promise((finish) => { finishFirst = finish; }))
+      .mockResolvedValue(answer);
+    const { host, dispose } = mount(markerConflict);
+    try {
+      await vi.waitFor(() => expect(finishFirst).toBeDefined());
+      bumpGraphEpoch();
+      finishFirst(answer);
+      await vi.waitFor(() => expect(host.querySelector('[data-row-id="0"] .sync-merge-seg.active')?.getAttribute("data-decision")).toBe("theirs"));
+      expect(host.querySelector(".page-conflict-count")!.textContent).toBe("2 conflicts");
+    } finally { dispose(); }
+  });
+
   it("names the sides the marker file itself named and says why saves are refused", async () => {
     vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows) });
     const { host, dispose } = mount(markerConflict);
@@ -251,9 +274,10 @@ describe("in-page conflict resolution", () => {
   });
 
   it("applies through the guarded marker path with the file's own base_rev, then reloads the page", async () => {
+    const live = resolutionPublication(markerConflict);
     setConflictInventory(inventoryWith(markerConflict));
     vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows, "marker-rev") });
-    const resolve = vi.spyOn(backend(), "resolveVcsMarkerConflict").mockResolvedValue();
+    const resolve = vi.spyOn(backend(), "resolveVcsMarkerConflict").mockImplementation(live.publish);
     const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
     // The follow-up re-derivation never lands: the object must leave the queue
     // because the guarded write retired it, not because a later walk did.
@@ -265,16 +289,17 @@ describe("in-page conflict resolution", () => {
     expect(resolve).toHaveBeenCalledWith("pages/Merged.md", { "0": "theirs", "1": "both" }, "marker-rev", ["replace-page"], "union");
     expect(sync).not.toHaveBeenCalled();
     expect(conflictQueue()).toEqual([]);
-    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "pages/Merged.md", name: "Merged", kind: "page", created: false, removed: false }, true); // a resolution is shown even under "always ask" (22a)
+    expect(live.shown()).toEqual(["resolved live content"]);
     dispose();
   });
 
   // L7s6-02: the write lands whatever the panel does meanwhile, so the page and the queue must catch up.
   it("reconciles the page and the queue when the panel closes before the guarded write answers", async () => {
+    const live = resolutionPublication(markerConflict);
     setConflictInventory(inventoryWith(markerConflict));
     vi.spyOn(backend(), "vcsMarkerConflictDiff").mockResolvedValue({ mine_label: "HEAD", theirs_label: "feature", regions: 2, diff: diff(threeWayRows, "marker-rev") });
     let land!: () => void;
-    vi.spyOn(backend(), "resolveVcsMarkerConflict").mockImplementation(() => new Promise<void>((resolve) => { land = resolve; }));
+    vi.spyOn(backend(), "resolveVcsMarkerConflict").mockImplementation(() => new Promise<void>((resolve) => { land = () => { void live.publish().then(resolve); }; }));
     const inventory = vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
     const { host, dispose } = mount(markerConflict);
     await settle();
@@ -284,7 +309,7 @@ describe("in-page conflict resolution", () => {
     land();
     await settle();
     expect(conflictQueue()).toEqual([]);
-    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "pages/Merged.md", name: "Merged", kind: "page", created: false, removed: false }, true);
+    expect(live.shown()).toEqual(["resolved live content"]);
     expect(inventory).toHaveBeenCalled();
     expect(toasts().filter((toast) => toast.message.includes("Applied"))).toEqual([]); // no success toast from a closed panel
   });
@@ -346,8 +371,9 @@ describe("in-page conflict resolution", () => {
       ],
     };
     setConflictInventory(inventoryWith(journal));
+    const live = resolutionPublication(journal);
     vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff([threeWayRows[1]], "journal-rev"));
-    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockResolvedValue();
+    const sync = vi.spyOn(backend(), "resolveSyncConflict").mockImplementation(live.publish);
     vi.spyOn(backend(), "conflictInventory").mockImplementation(() => new Promise(() => {}));
     const { host, dispose } = mount(journal);
     await settle();
@@ -358,7 +384,7 @@ describe("in-page conflict resolution", () => {
       "journal-rev", "copy-rev", ["replace-page", "delete-page"], "union", undefined,
     );
     expect(conflictQueue()).toEqual([]);
-    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "journals/2026_07_05.md", name: "Jul 5th, 2026", kind: "journal", created: false, removed: false }, true);
+    expect(live.shown()).toEqual(["resolved live content"]);
     dispose();
   });
 

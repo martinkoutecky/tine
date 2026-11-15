@@ -5,7 +5,6 @@
 //! name memos; any config.edn byte change rebuilt the name index).
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -17,13 +16,7 @@ use tine_store::{cost_counters, EditKind, PageId, Resolved, SaveBase, Store};
 const PAGES: usize = 40;
 
 fn graph() -> (PathBuf, Arc<Store>) {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-og-perf-publish-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-og-perf-publish-");
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

@@ -1,9 +1,10 @@
 // Shared native WebDriver instrumentation. No application/test-only editor API.
 import fs from "node:fs";
 import path from "node:path";
+export { editorText } from "./e2e-block-editor.mjs";
 const identity = JSON.parse(fs.readFileSync(new URL("../../src-tauri/app-identity.json", import.meta.url), "utf8"));
 
-export const editorKind = process.env.BENCH_EDITOR || "textarea";
+export const editorKind = process.env.BENCH_EDITOR || "cm6";
 if (!["textarea", "cm6"].includes(editorKind)) throw new Error("BENCH_EDITOR must be textarea or cm6");
 export const editorSelector = editorKind === "cm6" ? '.cm-content[contenteditable="true"]' : "textarea.block-editor";
 export const summary = xs => {
@@ -58,13 +59,6 @@ export async function stopTyping(browser) {
   return { ...samples, hostAfter: process.platform === "linux" ? { load: fs.readFileSync("/proc/loadavg", "utf8").trim(), cpuPressure: fs.readFileSync("/proc/pressure/cpu", "utf8").trim() } : undefined };
 }
 
-export async function editorText(browser, scope = "") {
-  return browser.execute(selector => {
-    const editor = document.querySelector(selector);
-    return editor instanceof HTMLTextAreaElement ? editor.value : [...editor.querySelectorAll(".cm-line")].map(line => line.textContent).join("\n");
-  }, `${scope} ${editorSelector}`.trim());
-}
-
 export async function nativeCalibration(browser) {
   const samples = await browser.execute(() => {
     const samples = [];
@@ -86,6 +80,28 @@ export async function nativeCalibration(browser) {
 export async function startNativeProfile(browser) {
   await browser.execute(() => {
     const p = window.__nativeProfile = { calls: {}, slow: [], transactions: [], restore: [] };
+    p.mutations = { records: 0, added: 0, removed: 0, blocks: new Set() };
+    const mutations = new MutationObserver(records => {
+      for (const record of records) {
+        p.mutations.records++; p.mutations.added += record.addedNodes.length; p.mutations.removed += record.removedNodes.length;
+        const element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+        const block = element?.closest("[data-block-id]");
+        if (block) p.mutations.blocks.add(block.getAttribute("data-block-id"));
+      }
+    });
+    mutations.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+    p.restore.push(() => mutations.disconnect());
+    const internals = window.__TAURI_INTERNALS__;
+    if (internals?.invoke) {
+      const invoke = internals.invoke;
+      p.ipc = {};
+      internals.invoke = function (command, args, ...rest) {
+        const entry = p.ipc[command] ??= { count: 0, bytes: 0 };
+        entry.count++; entry.bytes += new TextEncoder().encode(JSON.stringify(args ?? {})).length;
+        return invoke.call(this, command, args, ...rest);
+      };
+      p.restore.push(() => { internals.invoke = invoke; });
+    }
     // Optional diagnostic only: this is CM's DOM-to-view link, never used to
     // drive an edit. All measured typing still arrives via native WebDriver.
     const view = document.querySelector(".cm-content")?.cmTile?.root?.view;
@@ -100,13 +116,14 @@ export async function startNativeProfile(browser) {
       };
       p.restore.push(() => { view.update = original; });
     }
-    for (const [object, name] of [[Element.prototype, "getBoundingClientRect"], [Range.prototype, "getBoundingClientRect"], [Range.prototype, "getClientRects"], [window, "getComputedStyle"]]) {
+    for (const [object, name] of [[Element.prototype, "getBoundingClientRect"], [Range.prototype, "getBoundingClientRect"], [Range.prototype, "getClientRects"], [window, "getComputedStyle"],
+      [Document.prototype, "querySelectorAll"], [Element.prototype, "querySelectorAll"], [Document.prototype, "querySelector"], [Element.prototype, "querySelector"]]) {
       const original = object[name];
       object[name] = function (...args) {
         const at = performance.now();
         const result = original.apply(this, args);
         const elapsed = performance.now() - at;
-        const key = `${object === window ? "window" : object === Element.prototype ? "Element" : "Range"}.${name}`;
+        const key = `${object === window ? "window" : object === Element.prototype ? "Element" : object === Document.prototype ? "Document" : "Range"}.${name}`;
         const entry = p.calls[key] ??= { count: 0, ms: 0 };
         entry.count++; entry.ms += elapsed;
         if (elapsed >= 1) p.slow.push({ key, ms: elapsed, stack: new Error().stack });
@@ -124,7 +141,9 @@ export async function stopNativeProfile(browser) {
     const p = window.__nativeProfile;
     p.restore.forEach(restore => restore());
     window.__tineBench = false;
-    return { calls: p.calls, slow: p.slow, transactions: p.transactions, parse: window.__tineParseStats };
+    delete window.__nativeProfile;
+    return { calls: p.calls, slow: p.slow, transactions: p.transactions, editorParts: p.editorParts, ipc: p.ipc,
+      mutations: { ...p.mutations, blocks: [...p.mutations.blocks] }, parse: window.__tineParseStats };
   });
 }
 

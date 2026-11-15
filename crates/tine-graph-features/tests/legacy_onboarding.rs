@@ -13,12 +13,7 @@ use tine_store::{PageId, Resolved, Store};
 const TARGET_ID: &str = "7a1c0f5e-0000-4000-8000-000000000001";
 
 fn scratch(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-onboard-port-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::test_support::fresh_dir(&format!("tine-onboard-port-{label}-"));
     fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -594,6 +589,9 @@ fn guide_says_the_launch_backup_waits_for_a_quiet_start() {
         files.contains("once opening has gone quiet") && files.contains("at most three minutes")
     );
     assert!(!files.contains("about a second after opening"));
+    assert!(files.contains("Even while you keep editing"));
+    assert!(files.contains("only a successful commit does"));
+    assert!(files.contains("this device's status below each explanation"));
 }
 
 #[test]

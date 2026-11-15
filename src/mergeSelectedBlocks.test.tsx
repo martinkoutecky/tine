@@ -85,18 +85,17 @@ describe("merging a selection (GH #764)", () => {
     expect(page.blocks.map((b) => b.raw)).toEqual(["one\none child\ntwo\ntwo child\nthree\nthree child", "after"]);
   });
 
-  it("keeps a merged block's children under the first block, after its own", () => {
+  it("merges the complete selected parent subtrees, including endpoint descendants (GH #941)", () => {
     load([
       block("a", "one", [block("a1", "own child")]),
       block("b", "two", [block("b1", "kept child", [block("b11", "grandchild")])]),
     ]);
     select("a", "b");
-    // a1 is visible under a, so the selection holds a, a1, b.
-    expect(selectedIds()).toEqual(["a", "a1", "b"]);
+    expect(selectedIds()).toEqual(["a", "a1", "b", "b1", "b11"]);
     merge();
-    expect(doc.byId.a.raw).toBe("one\nown child\ntwo");
-    expect(doc.byId.a.children).toEqual(["b1"]);
-    expect(doc.byId.b1.children).toEqual(["b11"]);
+    expect(doc.byId.a.raw).toBe("one\nown child\ntwo\nkept child\ngrandchild");
+    expect(doc.byId.a.children).toEqual([]);
+    expect(Object.keys(doc.byId)).toEqual(["a"]);
   });
 
   it("is one undo step", () => {
@@ -109,13 +108,14 @@ describe("merging a selection (GH #764)", () => {
     expect(snap()).toBe(before);
   });
 
-  it("merges a collapsed block and keeps the children that were hidden", () => {
+  it("merges every selected descendant's text even under a collapsed parent (GH #941)", () => {
     load([block("a", "one"), block("b", "two", [block("b1", "hidden kid")], true)]);
     select("a", "b");
-    expect(selectedIds()).toEqual(["a", "b"]);
+    expect(selectedIds()).toEqual(["a", "b", "b1"]);
     merge();
-    expect(doc.byId.a.raw).toBe("one\ntwo");
-    expect(doc.byId.a.children).toEqual(["b1"]);
+    expect(doc.byId.a.raw).toBe("one\ntwo\nhidden kid");
+    expect(doc.byId.a.children).toEqual([]);
+    expect(doc.byId.b1).toBeUndefined();
   });
 
   it("joins Org blocks with a line break too", () => {

@@ -6,7 +6,7 @@ import { rawText, renderEnglish } from "../i18n";
 
 vi.mock("../owned", async (orig) => ({ ...await orig<typeof import("../owned")>(), graphOwner: () => () => true }));
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: async () => [] }));
-vi.mock("../ui", () => ({ closeQueryExport: vi.fn(), openSettings: vi.fn() }));
+vi.mock("../ui", async original => ({ ...await original<typeof import("../ui")>(), closeQueryExport: vi.fn(), openSettings: vi.fn() }));
 vi.mock("../toasts", () => ({ pushToast: vi.fn() }));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const request = { argument: "(task TODO)", dialect: "macro-query", properties: [], name: "Tasks" } as never;
@@ -39,6 +39,23 @@ it("counts a page spelled twice in a malformed prior snapshot once", async () =>
   vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
   const root = await dialog(true, { previousPages: ["Old", "old", "Public"] }, true);
   expect(root.querySelector(".folder-export-membership")?.textContent).toContain("+0 new / −1 gone");
+});
+
+it("shows the native saved comments choice and obtains a fresh fingerprint after changing it", async () => {
+  const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
+  const root = await dialog(false, { includeComments: false });
+  const box = [...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!.querySelector("input")!;
+  expect(box.checked).toBe(false);
+  const planner = vi.mocked(backend().publishQueryPlan);
+  const initial = await planner.mock.results[0].value;
+  planner.mockResolvedValue({ ...initial, includeComments: true, fingerprint: "with-comments" });
+  box.click();
+  await vi.waitFor(() => expect(planner).toHaveBeenLastCalledWith(expect.objectContaining({ includeComments: true })));
+  await vi.waitFor(() => expect(exportButton(root).disabled).toBe(false));
+  exportButton(root).click();
+  await vi.waitFor(() => expect(api).toHaveBeenCalled());
+  expect(api.mock.calls[0][0]).toMatchObject({ includeComments: true });
+  expect(api.mock.calls[0][1]).toBe("with-comments");
 });
 it("exports a reviewed query directly into its graph and reports recovery and missing assets", async () => {
   const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "/graph/published-queries/tasks", pages: 1,

@@ -4,7 +4,7 @@
 .SH NAME
 tine\-prop\-remove \- Remove KEY from a block, page or journal
 .SH SYNOPSIS
-\fBtine prop remove\fR [\fB\-\-page\fR] [\fB\-\-debug\fR] [\fB\-\-journal\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK_OR_KEY\fR> [\fIKEY\fR] 
+\fBtine prop remove\fR [\fB\-\-page\fR] [\fB\-\-debug\fR] [\fB\-\-journal\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-\-no\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK_OR_KEY\fR> [\fIKEY\fR] 
 .SH DESCRIPTION
 Remove KEY from a block, page or journal
 .SH OPTIONS
@@ -35,6 +35,9 @@ May also be specified with the \fBTINE_RUN\fR environment variable.
 .TP
 \fB\-\-author\fR \fI<AUTHOR>\fR
 Author on created blocks and on the run\*(Aqs commits (default: TINE_AUTHOR, else agent; blank environment values count as unset). With `edit`, the flag (not the variable) also sets the block\*(Aqs tine.author::
+.TP
+\fB\-\-no\-author\fR
+Skip automatic block attribution for personal scripts. Existing properties and git run commit names stay unchanged
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

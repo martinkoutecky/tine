@@ -2,7 +2,6 @@
 //! preamble text (REG-OG-C5-L03-S1, REG-OG-C5-L03-S2, REG-OG-C5-L03-S3).
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
@@ -18,13 +17,7 @@ fn hosted<T>(
 }
 
 fn fixture(label: &str, files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-og-c5-p2-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-og-c5-p2-{label}-"));
     for dir in ["pages", "journals", "assets"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

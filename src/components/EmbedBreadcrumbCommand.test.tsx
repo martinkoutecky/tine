@@ -19,7 +19,7 @@ beforeEach(async () => {
   stored = "";
   vi.spyOn(backend(), "getAppString").mockImplementation(async (key, fallback) => key === STYLE_KNOBS_KEY ? stored : fallback);
   vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => {
-    if (key === STYLE_KNOBS_KEY) stored = value;
+    if (key === STYLE_KNOBS_KEY) stored = value ?? "";
   });
   await initStyleKnobs();
 });

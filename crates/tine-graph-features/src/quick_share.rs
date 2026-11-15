@@ -52,6 +52,7 @@ const ENC_INFO: &[u8] = b"tine-share/1/enc";
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SharePreview {
+    pub include_comments: bool,
     pub title: String,
     pub pages: Vec<ExportPage>,
     pub left_out: Vec<LeftOutPage>,
@@ -477,6 +478,7 @@ pub fn prepare(
     }
     Ok(PreparedShare {
         preview: SharePreview {
+            include_comments: planned.plan.include_comments,
             title,
             pages: planned.plan.pages.clone(),
             left_out: planned.plan.left_out.clone(),

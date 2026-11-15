@@ -1,0 +1,6 @@
+{
+  "text": "- Body passage\n\t- [Comment] COMMENTMARKER\n\t\t- [Comment] REPLYMARKER",
+  "source": "- Body passage\n\t- COMMENTMARKER\n\t  tine.quote:: Body passage\n\t\t- REPLYMARKER",
+  "html": "<ul>\n  <li>Body passage\n    <ul>\n      <li><aside class=\"comment\"><header>Comment</header>COMMENTMARKER</aside>\n        <ul>\n          <li><aside class=\"comment\"><header>Comment</header>REPLYMARKER</aside></li>\n        </ul>\n      </li>\n    </ul>\n  </li>\n</ul>",
+  "opml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n  <head>\n    <title>untitled</title>\n  </head>\n  <body>\n    <outline text=\"Body passage\">\n      <outline text=\"[Comment] COMMENTMARKER\">\n        <outline text=\"[Comment] REPLYMARKER\"/>\n      </outline>\n    </outline>\n  </body>\n</opml>"
+}

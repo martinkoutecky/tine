@@ -9,8 +9,9 @@ import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { showWorkspaces } from "./navSettings";
 import { adjustSidebarWidth } from "./sidebarSizing";
+import { openTodayInSidebar } from "./journalsNavigation";
 import { openCssEditor, openCssInDefaultApp } from "./cssEditor";
-import { isMobilePlatform } from "./nativeChrome";
+import { isMac as isMacDesktop, isMobilePlatform } from "./nativeChrome";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -23,7 +24,7 @@ import { browserPlatform } from "./browserPlatform";
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
+import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer, openPageInSidebar } from "./ui";
 import { pushToast } from "./toasts";
 import { msg, render, renderEnglish, type UiText, type Msg } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
@@ -40,6 +41,7 @@ import {
   openAllGraphs,
   openQueryInNewTab,
   openPage,
+  pageTargetFromRoute,
   goBack,
   goForward,
   closeActiveTab,
@@ -49,7 +51,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle, appNow } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, selectionScope, clearSelection, selectedIds, singleSelectedId, topSelected, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -183,11 +185,11 @@ function focusPaneByNumber(n: number) {
 }
 
 function editSelectedBlock(): boolean {
-  const ids = selectedIds();
-  if (ids.length !== 1 || !docNode(ids[0])) return false;
-  if (editSelectedGridChild(ids[0], "start")) return true;
+  const id = singleSelectedId();
+  if (!id || !docNode(id)) return false;
+  if (editSelectedGridChild(id, "start")) return true;
   clearSelection();
-  startEditing(ids[0]);
+  startEditing(id);
   return true;
 }
 
@@ -226,6 +228,12 @@ function seenRoutedPage(): string | null {
   return route.kind === "page" ? route.name : null;
 }
 
+/** The page menu's "Open in sidebar" (`openPageInSidebar(target)`) for the focused pane's page. */
+function openCurrentPageInSidebar(): void {
+  const target = pageTargetFromRoute(route());
+  if (target) openPageInSidebar(target);
+}
+
 function firstVisibleBlockInFocusedPane(): string | null {
   const currentRoute = paneRouter(focusedPaneId()).route();
   return currentRoute.kind === "page"
@@ -236,7 +244,7 @@ function firstVisibleBlockInFocusedPane(): string | null {
 function restoreBlockSelectionAfterPaneReturn(previous: string | null) {
   if (hasSelection()) return;
   const target = previous && docNode(previous) ? previous : firstVisibleBlockInFocusedPane();
-  if (target) selectBlock(target);
+  if (target) selectBlock(target, null, focusedPaneId() === "main" ? "main" : `pane:${focusedPaneId()}`);
 }
 
 // Materialize a split at the selected seam/edge. Two flavors (Martin's Jul 8
@@ -347,6 +355,10 @@ const COMMANDS: CommandDef[] = [
   // textarea itself and is a no-op when nothing is being edited.
   { id: "editor/follow-link", binding: "mod+o", label: msg("command-editor-follow-link"), scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: msg("command-editor-open-link-in-sidebar"), scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
+  // GH #928, unbound by decision. "Today" is OG's `:sidebar/open-today-page` (config.cljs:396, alt+shift+j,
+  // mod+shift+j on mac, which is Toggle devtools here); "current page" is the page menu's "Open in sidebar".
+  { id: "sidebar/open-today", binding: "", label: msg("command-sidebar-open-today"), scope: "global", run: openTodayInSidebar, global: true },
+  { id: "sidebar/open-current-page", binding: "", label: msg("command-sidebar-open-current-page"), scope: "global", available: () => pageTargetFromRoute(route()) !== null, run: openCurrentPageInSidebar, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => { rememberEditorSelectionForPalette(); openCommandPalette(pluginFocusedBlock() ?? null); }, global: true },
   // Margin dialogue (vision §3.7): the palette form of Ctrl/Cmd+R. Opening the
   // palette blurs the editor, so the selection is remembered as it opens.
@@ -508,7 +520,7 @@ const COMMANDS: CommandDef[] = [
   // GH #764 (D-20261101-L5): palette and keymap only, no default key. Acts on a block selection.
   { id: "editor/merge-selected-blocks", binding: "", label: msg("command-editor-merge-selected-blocks"), scope: "global", run: () => { mergeSelectedBlocks(); }, global: true },
   // GH #918: the block context menu's Remove author, offered only where that menu offers it.
-  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", available: () => removeAuthorTarget() !== null, run: () => { const id = removeAuthorTarget(); if (id !== null) removeAuthor(id); }, global: true },
+  { id: "editor/remove-author", binding: "", label: msg("command-editor-remove-author"), scope: "global", available: () => removeAuthorTarget() !== null, run: () => removeAuthor(), global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
@@ -1001,7 +1013,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (matchesCommand(e, "editor/move-block-down")) return moveSelectionItems(1), true;
   if (matchesCommand(e, "editor/move-block-up")) return moveSelectionItems(-1), true;
   if (e.key === "Enter" || e.key === "ArrowRight") {
-    const ids = selectedIds();
+    const ids = topSelected();
     const gridId = ids.length === 1 && blockIsGridView(ids[0]) ? ids[0] : ids.length === 0 ? outlinedGridSelectionId() : null;
     if (gridId) {
       const surface = focusedGridSurface(gridId);
@@ -1022,10 +1034,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   }
   if (mod && shortcutKey(e) === "x") {
     const ids = selectedIds();
-    // Cut deletes whole subtrees, so its public text carries them regardless of the copy preference.
-    const text = selectionMarkdown(true);
+    const text = selectionMarkdown();
     void cutBlocks(ids, text, () =>
-      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown(true) : "",
+      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
       () => deleteSelection())
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
     return true;
@@ -1034,7 +1045,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     return expandBlockSelection(), true;
   }
   if (e.key === "Enter") {
-    const ids = selectedIds();
+    const ids = topSelected();
     const last = ids[ids.length - 1];
     if (last && !editSelectedGridChild(last, "end")) startEditing(last, 1e9);
     return true;
@@ -1104,6 +1115,11 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     if (isTauri() && isWebviewReloadChord(e)) e.preventDefault();
     // Ignore bare modifier presses (incl. Super/Windows).
     if (isModifierKey(e)) return;
+    // Native buttons own activation even when a block selection is still present (GH #879).
+    if ((e.key === "Enter" || e.key === " ") && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.target as HTMLElement | null)?.tagName === "BUTTON") {
+      resetSeq(); return;
+    }
 
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
@@ -1141,7 +1157,7 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         if (matchesCommand(e, "editor/edit-selected-block") && editSelectedBlock()) {
           e.preventDefault(); resetSeq(); return;
         }
-        const previous = selectedIds().at(-1) ?? null;
+        const previous = topSelected().at(-1) ?? null;
         if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();
         // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to
@@ -1275,19 +1291,12 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
     if (handleSheetPasteEvent(e)) e.preventDefault();
   };
   type MouseHistoryDirection = "back" | "forward";
-  type MouseHistorySource = "dom" | "native";
-  const mouseGuards = new Set<ReturnType<typeof installMouseHistory>>();
-  let lastMouseHistory: { direction: MouseHistoryDirection; source: MouseHistorySource; at: number } | undefined;
-  const navigateMouseHistory = (direction: MouseHistoryDirection, source: MouseHistorySource) => {
-    if (source === "native" && [...mouseGuards].some(guard => !guard.nativeAllowed())) return;
-    const now = performance.now();
-    // A platform that exposes both its native command and DOM auxclick must not
-    // advance twice for one physical release. Repeated events from the same
-    // source remain distinct clicks and are never collapsed.
-    if (lastMouseHistory?.direction === direction && lastMouseHistory.source !== source && now - lastMouseHistory.at < 100) {
-      return;
-    }
-    lastMouseHistory = { direction, source, at: now };
+  // Linux/Windows graph webviews intercept native releases; workspace popups
+  // and macOS/iOS/Android use DOM input.
+  // Select one owner, rather than guessing duplicate presses from their timing.
+  const nativeMainHistory = "__TAURI_INTERNALS__" in window && !isMacDesktop && !isMobilePlatform;
+  let mainMouse: ReturnType<typeof installMouseHistory> | undefined;
+  const navigateMouseHistory = (direction: MouseHistoryDirection) => {
     if (direction === "back") goBack();
     else goForward();
   };
@@ -1301,9 +1310,9 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
         const unlisten = await listen<{ direction: MouseHistoryDirection; target: string }>(
           "history-navigate",
           (e) => {
-            if (e.payload?.target !== target) return;
-            if (e.payload.direction === "back" || e.payload.direction === "forward") {
-              navigateMouseHistory(e.payload.direction, "native");
+            if (!nativeMainHistory || e.payload?.target !== target) return;
+            if ((e.payload.direction === "back" || e.payload.direction === "forward") && mainMouse?.acceptNative(e.payload.direction) !== false) {
+              navigateMouseHistory(e.payload.direction);
             }
           },
         );
@@ -1316,21 +1325,23 @@ export function installKeybindings(overrides: Record<string, ShortcutBinding> = 
   // One set of listeners per Tine window (OG-MULTIWINDOW P1): a shortcut typed
   // in a workspace window reaches the same handler, and its window's listeners
   // go away with it.
-  const uninstallWindows = onEachWindow((win) => {
+  const uninstallWindows = onEachWindow((win, id) => {
     win.addEventListener("keydown", handler, true);
     win.addEventListener("paste", pasteHandler, true);
     win.addEventListener("keydown", superTracker, true);
     win.addEventListener("keyup", superTracker, true);
     win.addEventListener("blur", clearSuper);
-    const disposeMouse = installMouseHistory(win, win.document, direction => navigateMouseHistory(direction, "dom"));
-    mouseGuards.add(disposeMouse);
+    const disposeMouse = installMouseHistory(win, win.document, direction => {
+      if (!nativeMainHistory || id !== MAIN_WINDOW_ID) navigateMouseHistory(direction);
+    });
+    if (id === MAIN_WINDOW_ID) mainMouse = disposeMouse;
     return () => {
       win.removeEventListener("keydown", handler, true);
       win.removeEventListener("paste", pasteHandler, true);
       win.removeEventListener("keydown", superTracker, true);
       win.removeEventListener("keyup", superTracker, true);
       win.removeEventListener("blur", clearSuper);
-      mouseGuards.delete(disposeMouse);
+      if (mainMouse === disposeMouse) mainMouse = undefined;
       disposeMouse();
     };
   });

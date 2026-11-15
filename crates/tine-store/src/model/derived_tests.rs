@@ -547,7 +547,7 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
                 let doc = &row.expect("the owner's row").1;
                 doc.roots
                     .iter()
-                    .map(|block| (block.raw().to_owned(), block.uuid.clone()))
+                    .map(|block| (block.raw().to_owned(), block.uuid.to_string()))
                     .collect::<Vec<_>>()
             })
             .unwrap()
@@ -581,7 +581,7 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
             .is_ok());
     }
     let child = store.graph.with_cached(&path, |row| {
-        row.unwrap().1.roots[0].children[0].uuid.clone()
+        row.unwrap().1.roots[0].children[0].uuid.to_string()
     });
     assert_eq!(bodies()[0].1, "saved-root", "R8: the saved root's identity");
     assert_eq!(

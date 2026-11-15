@@ -145,8 +145,7 @@ fn fingerprint(g: &ReadSnapshot) -> String {
 }
 
 fn mk(tag: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("tine-dcfuzz-{}-{}", std::process::id(), tag));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-dcfuzz-{tag}-"));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     root

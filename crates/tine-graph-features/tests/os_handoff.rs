@@ -26,14 +26,7 @@ fn asset_target(store: &Store, name: &str) -> Result<std::path::PathBuf, String>
 #[test]
 fn open_targets_require_existing_regular_files() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!(
-        "tine-handoff-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir("tine-handoff-");
     for area in ["pages", "journals", "assets"] {
         std::fs::create_dir_all(root.join(area)).unwrap();
     }

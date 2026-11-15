@@ -114,9 +114,7 @@ mod tests {
 
     #[test]
     fn published_alias_links_and_authored_anchors_resolve() {
-        let dir =
-            std::env::temp_dir().join(format!("tine-publish-alias-anchor-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-publish-alias-anchor-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/Actual.md"),
@@ -149,8 +147,7 @@ mod tests {
 
     #[test]
     fn published_page_shows_logbook_badge_and_ordinal_markers() {
-        let dir = std::env::temp_dir().join(format!("tine-publish-facets-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-publish-facets-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/Facets.md"),
@@ -208,11 +205,7 @@ mod tests {
 
     #[test]
     fn repeated_query_sources_use_one_render_cache_entry() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-query-memo-cache-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-publish-query-memo-cache-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/Tasks.md"),
@@ -246,11 +239,7 @@ mod tests {
 
     #[test]
     fn repeated_page_embeds_render_from_corpus_after_source_removal() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-embed-reuse-corpus-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-publish-embed-reuse-corpus-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(
             dir.join("pages/Target.md"),
@@ -353,8 +342,7 @@ mod tests {
 
     #[test]
     fn print_asset_inlining_enforces_per_file_and_shared_export_budgets() {
-        let dir = std::env::temp_dir().join(format!("tine-print-budget-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-print-budget-");
         fs::create_dir_all(dir.join("assets")).unwrap();
         fs::write(dir.join("assets/one.png"), b"1234").unwrap();
         fs::write(dir.join("assets/two.png"), b"5678").unwrap();
@@ -411,11 +399,7 @@ mod tests {
 
     #[test]
     fn publication_rejects_query_sources_before_keying_and_bounds_valid_memos() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-query-source-bound-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-publish-query-source-bound-");
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
@@ -459,8 +443,7 @@ mod tests {
     /// once per publish, so lookup work does not grow with the macro count.
     #[test]
     fn publish_macro_lookups_are_built_once_per_publish() {
-        let dir = std::env::temp_dir().join(format!("tine-publish-probes-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let dir = crate::test_support::fresh_dir("tine-publish-probes-");
         fs::create_dir_all(dir.join("pages")).unwrap();
         const PAGES: usize = 40;
         const MACROS: usize = 30;

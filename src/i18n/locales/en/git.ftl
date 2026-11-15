@@ -6,7 +6,13 @@ git-settings-policy-sync-automatically = Commit and sync automatically
 git-settings-interval = At most every
 git-settings-interval-aria = Minutes between autocommits
 git-settings-minutes = minutes
-git-settings-hint = When the graph is in a git repository, Tine commits the graph's changes after a minute without edits, at most once per interval, and before and after a rename, merge, delete or backup restore. Files git ignores are left out. The sync options also pull and push the branch's upstream: on demand when you press Sync now, automatically after each commit and once per interval as well. Tine never merges, rebases or force-pushes.
+git-settings-commits-heading = When Tine commits
+git-settings-hint = In a git repository, Tine commits after a minute without edits, and before and after a rename, merge, delete or backup restore. Changes that have waited an hour (or your interval, if longer) are committed even while you keep editing.
+git-settings-sync-heading = Sync
+git-settings-sync-hint = Sync pulls and pushes the branch's upstream, on demand with Sync now or automatically after each commit and once per interval. Tine never merges, rebases or force-pushes.
+git-settings-ignore-heading = Ignored files
+git-settings-search-hint = { git-settings-sync-hint } { git-settings-ignore-hint }
+git-settings-ignore-hint = Tine's commits leave out files git ignores. Once per device, Tine adds .syncthing.* and logseq/.tine-* to the graph's .gitignore and takes copies of those files out of git (not off the disk). If you delete a line, Tine won't add it back on this device. Syncthing conflict copies are still committed unless your own rules ignore them.
 git-settings-not-available = Git is not available on this device yet.
 git-settings-not-a-repository = This graph isn't in a git repository. You can create one here to keep its history.
 
@@ -37,6 +43,12 @@ git-settings-ignore-added =
         [tine] Tine added logseq/.tine-* to { $path } to keep its own files for this device, such as its trash, out of git, so devices syncing one repository don't stop at a deleted page. Copies already in git are removed from it, not from disk, in a separate Tine commit. You can remove the line; Tine won't add it again on this device and still leaves those files out of its commits.
         [both] Tine added .syncthing.* and logseq/.tine-* to { $path } to keep Syncthing's temporary files and Tine's own files for this device, such as its trash, out of git. Copies already in git are removed from it, not from disk, in a separate Tine commit. You can remove the lines; Tine won't add them again on this device. Conflict copies are still committed unless your own rules ignore them.
        *[syncthing] Tine added .syncthing.* to { $path } to keep Syncthing's temporary files out of git. You can remove the line; Tine won't add it again on this device. Conflict copies are still committed unless your own rules ignore them.
+    }
+git-settings-ignore-status =
+    { $which ->
+        [tine] Tine added logseq/.tine-* to { $path }.
+        [both] Tine added .syncthing.* and logseq/.tine-* to { $path }.
+       *[syncthing] Tine added .syncthing.* to { $path }.
     }
 git-settings-ignore-failed =
     { $which ->

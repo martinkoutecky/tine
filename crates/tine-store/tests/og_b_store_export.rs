@@ -37,6 +37,7 @@ fn export_targets_use_real_ids_in_markdown_and_org() {
         out.path(),
         "site",
         store.config().all_pages_public,
+        true,
     )
     .unwrap();
     let html: String = fs::read_dir(&site.path)

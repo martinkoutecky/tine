@@ -6,21 +6,15 @@
 //! released with the store.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tine_store::{ChangeKind, OpenOptions, Origin, Store, Subscription, WatchMode};
 
-static NEXT: AtomicUsize = AtomicUsize::new(0);
 /// Serialize these tests so a sibling cannot reuse the descriptor being observed.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "tine-asset-watch-{name}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    let dir = crate::test_support::fresh_dir(&format!("tine-asset-watch-{name}-"));
     std::fs::create_dir_all(&dir).unwrap();
     // The store canonicalizes its root; so do the tests, or macOS /tmp differs.
     std::fs::canonicalize(dir).unwrap()

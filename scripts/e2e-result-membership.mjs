@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
+import { BLOCK_EDITOR, editorSelector, editorText } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 
@@ -57,7 +58,7 @@ try {
     for (const close of document.querySelectorAll(".toast-sticky .toast-close")) close.click();
   });
   await browser.$(".main-content .query-block .live-ref-group .block-content-wrapper").click();
-  const selector = ".main-content .query-block textarea.block-editor";
+  const selector = editorSelector(".main-content .query-block");
   await browser.$(selector).waitForExist({ timeout: 10_000 });
   // Native select-all and typing keep one editor session. WebKit's WebDriver
   // clearElement command blurs an empty block before elementSendKeys can run.
@@ -67,11 +68,7 @@ try {
   await waitForFileText(TASK, (text) => text.includes("CANC my task"));
   await waitQuery(1, "CANC my task");
   // Locate the current editor afresh after the witness query renders.
-  const retained = await browser.execute(() => {
-    const query = document.querySelectorAll(".main-content .page-blocks .query-block")[0];
-    const editor = query?.querySelector("textarea.block-editor");
-    return editor?.value;
-  });
+  const retained = await editorText(browser, ".main-content .page-blocks .query-block");
   if (retained !== "CANC my task") throw new Error(`autosave evicted or replaced the editor: ${JSON.stringify(retained)}`);
   proof.steps.push("saved partial marker recomputed the witness query while TODO query retained its editor");
   await browser.$(selector).click();
@@ -79,10 +76,10 @@ try {
   await browser.keys("CANCELED my task");
   await browser.$(".main-content h1.page-title").click();
   await waitForFileText(TASK, (text) => text.includes("CANCELED my task") && !text.includes("CANC my task"));
-  await browser.waitUntil(() => browser.execute(() => {
+  await browser.waitUntil(() => browser.execute(editor => {
     const query = document.querySelectorAll(".main-content .page-blocks .query-block")[0];
-    return !!query && !query.querySelector("textarea.block-editor") && !query.textContent.includes("my task");
-  }), { timeout: 20_000, interval: 150, timeoutMsg: "settled canceled task remained in the TODO query after blur" });
+    return !!query && !query.querySelector(editor) && !query.textContent.includes("my task");
+  }, BLOCK_EDITOR), { timeout: 20_000, interval: 150, timeoutMsg: "settled canceled task remained in the TODO query after blur" });
   if (fs.readFileSync(TASK, "utf8").trim() !== "- CANCELED my task") throw new Error("final source bytes differ from the completed edit");
   proof.steps.push("blur saved the full CANCELED marker and removed the row from the TODO answer");
   // The semantic observation is saved bytes plus the rendered answer. Native

@@ -90,11 +90,11 @@ function mountCount(file: string, source: string, component: string): number {
 // A window root's structural shells coordinate layout/drawers; its independently
 // loaded child surfaces must own a boundary. Scan unknown mounts too, so adding a
 // new dialog without adding a name to REQUIRED_SEAMS still fails (I-20).
-const APP_SHELLS = new Set(["Show", "Suspense", "FailureBoundary", "DrawerBackground",
+const APP_SHELLS = new Set(["Show", "For", "Suspense", "FailureBoundary", "DrawerBackground",
   "MobileDrawerPanel", "MobileDrawerController", "PaneTree", "PaneEdgeHighlights",
   "PaneSelectHint", "ResizeGrips", "Toasts",
   // Static SVG only; no independently loaded state or failure surface.
-  "JournalsIcon", "ShareIcon",
+  "JournalsIcon", "ShareIcon", "ToolbarActionIcon",
   // Context providers carry a value; their children are judged as the root's own.
   "WindowContext.Provider"]);
 /** Shells that are pure containers of top-level surfaces: the scan follows the

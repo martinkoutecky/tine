@@ -9,6 +9,7 @@ import { openExportNodesModal } from "../ui";
 import { blockDtosToExportNodes } from "./ExportModal";
 import type { ExportNode } from "../editor/exportText";
 import type { BlockDto, PageEntry, RefGroup } from "../types";
+import { projectExportNodes } from "../editor/exportProjection";
 
 export function uniqueResultRoots(blocks: BlockDto[]): BlockDto[] {
   const descendants = new Set<string>();
@@ -73,7 +74,11 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
           else roots.push(source);
         }
         count += roots.length;
-        children = blockDtosToExportNodes(uniqueResultRoots(roots), sourceFormat);
+        const projected = projectExportNodes(blockDtosToExportNodes(dto.blocks, sourceFormat));
+        const byId = new Map<string, ExportNode>();
+        const index = (nodes: ExportNode[]) => { for (const node of nodes) { if (node.id) byId.set(node.id, node); index(node.children); } };
+        index(projected);
+        children = uniqueResultRoots(roots).map(block => byId.get(block.id) ?? blockDtosToExportNodes([block], sourceFormat)[0]);
       }
       if (children.length) forest.push({ raw: group.page, format, children });
     }

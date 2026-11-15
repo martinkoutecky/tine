@@ -41,6 +41,7 @@ right-sidebar-collapse-sidebar-item = جمع کردن مورد نوار کنار
 right-sidebar-on = در { $page }
 right-sidebar-this-block-is-no-longer-available = این بلوک دیگر در دسترس نیست.
 search-result-row-block = بلوک
+search-result-row-comment = دیدگاه
 sidebar-tine = Tine
 sidebar-journals = روزنوشت‌ها
 sidebar-favorites = برگزیده‌ها

@@ -155,18 +155,26 @@ describe("arrow navigation inside ref/query/embed groups (GH #341)", () => {
     dispose();
   });
 
-  it("does not bind a structural destination to a result-only surface", async () => {
+  it("keeps structural typing visible inside a result root", async () => {
     mockFiveCharacterVisualRows();
-    const { editor, dispose } = await mountAndEdit("rootB");
+    const { root, editor, dispose } = await mountAndEdit("rootB");
     editor.select(2, 2);
     editor.keydown({ key: "Enter", bubbles: true, cancelable: true });
     await settle();
 
-    // Arrow destinations belong to this rendered list. A split destination is
-    // source-outline structure and may no longer be a result, so it must not be
-    // constrained to the ref surface where no matching editor may mount.
+    // OG 6e7afa8eb editor.cljs outliner-insert-block!: a ref/query root
+    // inserts a child, which must edit here even if it is not itself a match.
     expect(editingId()).not.toBe("rootB");
-    expect(editingSurface()).toBeNull();
+    const id = editingId()!;
+    expect(doc.byId[id].parent).toBe("rootB");
+    const next = await vi.waitFor(() => {
+      const target = editorOf(root, id);
+      expect(target).not.toBeNull(); return target!;
+    });
+    expect(document.activeElement).toBe(next.element);
+    expect(next.value()).toBe("ot B");
+    next.type("continued ");
+    await vi.waitFor(() => expect(doc.byId[id].raw).toBe("continued ot B"));
     dispose();
   });
 

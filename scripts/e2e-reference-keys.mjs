@@ -2,6 +2,7 @@
 // pane edits/external writes, with unchanged expanded/collapsed behavior.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { editorSelector, editorText, blurEditor } from "./lib/e2e-block-editor.mjs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -56,7 +57,7 @@ async function typeIn(scope, token, file, paste = false) {
     if (!body) throw new Error(`missing editable body for ${file}`);
     body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   }, scope, file);
-  await browser.$(`${scope} textarea.block-editor`).waitForExist();
+  await browser.$(editorSelector(scope)).waitForExist();
   await browser.keys(["Control", "End"]);
   if (paste) {
     // Use the native clipboard and trusted Ctrl+V. A synthetic plain-text
@@ -70,7 +71,7 @@ async function typeIn(scope, token, file, paste = false) {
     await browser.keys(["Control", "v"]);
   } else await browser.keys(token);
   await waitForFileText(pageFile(file), text => text.includes(token));
-  await browser.execute(scope => document.querySelector(`${scope} textarea.block-editor`)?.blur(), scope);
+  await blurEditor(browser, scope);
   await delay(2300);
 }
 async function measure(scope, token, file) {
@@ -140,17 +141,17 @@ try {
   const sourcePane = '.pane-leaf:not([data-pane-id="main"])';
   await browser.$(`${sourcePane} .page-properties .prop-row`).waitForExist();
   await browser.$(`${sourcePane} .page-properties .prop-row`).click();
-  const header = await browser.$(`${sourcePane} .page-blocks textarea.block-editor`);
+  const header = await browser.$(editorSelector(`${sourcePane} .page-blocks`));
   await header.waitForExist(); await header.click();
-  assert((await header.getValue()).includes("tags:: Other"), "edit the actual page tags block");
+  assert((await editorText(browser, sourcePane)).includes("tags:: Other"), "edit the actual page tags block");
   await browser.performActions([{ type: "key", id: "replace-page-tags", actions: [
     { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" },
     { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" },
   ] }]);
   await browser.releaseActions();
   await header.addValue("tags:: Target");
-  assert.equal(await header.getValue(), "tags:: Target", "native input must preserve both property colons");
-  await browser.execute(scope => document.querySelector(`${scope} textarea.block-editor`)?.blur(), sourcePane);
+  assert.equal(await editorText(browser, sourcePane), "tags:: Target", "native input must preserve both property colons");
+  await blurEditor(browser, sourcePane);
   await waitForFileText(pageFile("Unrelated"), text => text.includes("tags:: Target"));
   await shown(".main-content .tagged-pages", "Unrelated"); passed();
   stage = "external additions and removals update all three sections";

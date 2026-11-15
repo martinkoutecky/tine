@@ -9,7 +9,8 @@ import { pushToast } from "../toasts";
 import { msg, t } from "../i18n";
 
 /** Settings → Graph: where the open graph lives on disk (GH #447). The path is
- *  shown on every platform; **Show in folder** reveals the graph root in the
+ *  shown on every platform, in the backend's presentable spelling (`display_root`:
+ *  on iOS the folder inside Tine's Documents, never the sandbox prefix, GH #926); **Show in folder** reveals the graph root in the
  *  system file manager where the build can (desktop), through the same native
  *  command as the graph menu's row action. Read-only: nothing is written. */
 export function GraphFolderSetting(): JSX.Element {
@@ -27,7 +28,7 @@ export function GraphFolderSetting(): JSX.Element {
         <div class="settings-field-row" >
           <span class="settings-label">{settingLabel(settings["settings-graph-folder-label"])}</span>
           <div class="settings-field-control">
-            <span class="settings-value" data-graph-folder-value>{root()}</span>
+            <span class="settings-value" data-graph-folder-value>{graphMeta()?.display_root || root()}</span>
             <Show when={canRevealInFileManager()}>
               <button class="settings-btn" onClick={() => void reveal(root())}>{t("settings-graph-folder-reveal")}</button>
             </Show>

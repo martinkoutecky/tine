@@ -8,7 +8,6 @@ import {
   Switch,
   createEffect,
   createMemo,
-  createResource,
   createSignal,
   createUniqueId,
   onCleanup,
@@ -74,6 +73,7 @@ import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
 import { t, msg, render } from "../i18n";
 import { DialogActions } from "./DialogActions";
+import { createGraphResource } from "../graphResource";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -374,7 +374,7 @@ function hitPage(hit: QueryHit): string {
 }
 
 function hitKind(hit: QueryHit): string {
-  return hit.entity === "page" ? t("query-prose-page") : t("query-prose-block");
+  return hit.is_comment ? t("search-result-row-comment") : hit.entity === "page" ? t("query-prose-page") : t("query-prose-block");
 }
 
 function MarkedText(props: { text: string; spans: MatchSpan[] }): JSX.Element {
@@ -543,7 +543,7 @@ function AdvancedModal(props: {
   onCleanup(() => { mounted = false; });
   const edits = {};
   const [printing, setPrinting] = createSignal(false);
-  const [builderSession, { mutate }] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
+  const [builderSession, { mutate }] = createGraphResource(dsl, async (text): Promise<BuilderSession | undefined> => {
     const owner = graphOwner(() => mounted && dsl() === text, revisionOwner(edits, currentRevision(edits)));
     const source = queryWorkspaceDsl(text);
     const parsed = await readOwned(owner, backend().parseQuery(source.argument, source.dialect));
@@ -1166,7 +1166,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
               <div role="listitem">
                 {task(hit)}
                 {resultButton(hit, <SearchResultRow page={hit.page} breadcrumb={hit.block.breadcrumb ?? []}
-                  text={hit.display_text} spans={hitSpans(hit)} />)}
+                  text={hit.display_text} spans={hitSpans(hit)} isComment={hit.is_comment} />)}
               </div>
             )}</For>
           </div>
@@ -1176,6 +1176,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             <For each={blockHits()}>{(hit) => (
               <li>{task(hit)}<button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                 <span class="query-list-context">{hitPage(hit)}</span>
+                <Show when={hit.is_comment}><span class="switcher-kind">{hitKind(hit)}</span></Show>
                 <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
               </button></li>
             )}</For>
@@ -1203,7 +1204,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                 <h2>{group().page}<span class="query-board-count">{group().hits.length}</span></h2>
                 <div role="list"><For each={group().hits}>{(hit) => (
                   <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
-                    <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
+                    <span class={hit.is_comment ? "switcher-kind" : "sr-only"}>{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
                   </button></div>
                 )}</For></div>
               </section>

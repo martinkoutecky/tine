@@ -105,10 +105,10 @@ function detail(error: unknown): string {
   try { return JSON.stringify(error); } catch { return String(error); }
 }
 
-export function reportUiFailure(family: UiFailureFamily, error: unknown): void {
+export function reportUiFailure(family: UiFailureFamily, error: unknown): number | null {
   const unbound = GRAPH_READS.has(family) && captureBinding().backendGeneration === 0;
   dbg(`${family}${unbound ? " (window unbound; not reported)" : ""}: ${detail(error)}`);
-  if (!unbound) pushToastUnique(msg(MESSAGES[family].id), "error");
+  return unbound ? null : pushToastUnique(msg(MESSAGES[family].id), "error");
 }
 
 /** How many unreadable files the toast names before "and N more". */

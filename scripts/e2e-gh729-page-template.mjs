@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -32,13 +33,7 @@ const testedBase = "og 9a7896ec3 + gh729 working diff";
 const connect = () => remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2, connectionRetryTimeout: 30_000,
   capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } } });
 async function typeSlash(query) {
-  await browser.execute((text) => {
-    const textarea = document.querySelector("textarea.block-editor");
-    textarea.value = text;
-    textarea.setSelectionRange(text.length, text.length);
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-    textarea.focus();
-  }, query);
+  await pasteEditorText(browser, query);
 }
 const menuLabels = () => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")].map((n) => n.textContent.trim()));
 try {
@@ -49,9 +44,7 @@ try {
   const target = await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'insert here']");
   await target.waitForDisplayed({ timeout: 10_000 });
   await target.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
-  // Set text and dispatch its input atomically: WebDriver clearValue blurs this
-  // controlled textarea before its subsequent elementSendKeys call on WebKit.
+  await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
   await typeSlash("/template");
   await browser.waitUntil(async () => {
     const labels = await menuLabels();

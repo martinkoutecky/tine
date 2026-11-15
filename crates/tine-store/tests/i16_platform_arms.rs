@@ -423,7 +423,7 @@ fn no_replace_guard_rejects_a_second_owner() {
 #[test]
 fn windows_no_replace_keeps_the_existing_destination() {
     let _integration_guard = crate::integration_lock();
-    let root = std::env::temp_dir().join(format!("tine-i16-windows-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-i16-windows-");
     fs::create_dir_all(root.join("pages")).unwrap();
     let source = root.join("pages/source.md");
     let dest = root.join("pages/dest.md");

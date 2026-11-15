@@ -93,7 +93,7 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     vi.mocked(api.tineLinks!.scanKnownGraphs).mockResolvedValue([{ root: "/copy", graphId: id }, { root, graphId: id }]);
     let remembered = "";
     vi.spyOn(api, "getAppString").mockImplementation(async () => remembered);
-    const remember = vi.spyOn(api, "setAppString").mockImplementation(async (_key, value) => { remembered = value; });
+    const remember = vi.spyOn(api, "setAppString").mockImplementation(async (_key, value) => { remembered = value ?? ""; });
     const first = openTineLink({ kind: "url", url: `tine://graph/${id}` });
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
     const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')];

@@ -7,13 +7,14 @@
 // deleteBlock) and its normal guarded save; this module adds no write path.
 import { backend } from "../backend";
 import {
-  appendQueryBlock, blockProperty, blockWritable, childIds, deleteBlock, ensurePageLoaded, flushPage, formatForPage,
+  admitRead, appendQueryBlock, blockProperty, blockWritable, childIds, deleteBlock, ensurePageLoaded, flushPage, formatForPage,
   node, pageByName, pageRoots, queryBlockRaw, reportPageLoadRefusal, setBlockProperty,
 } from "../document";
 import { SHARE_PROPERTY, ensureExportsPage, locateExportsPages } from "../exportsPage";
 import { queryMacroExtents } from "../editor/queryMacro";
 import { bindingOwner, ownedWhen, readOwned, type Owner, type WriteOwner } from "../owned";
 import type { PageKind } from "../types";
+import { COMMENTS_PROPERTY, stageExportComments } from "../exportComments";
 
 /** The property value of a share: `<login>/<gist_id>`, never the key. */
 export function shareValue(login: string, gistId: string): string {
@@ -57,6 +58,8 @@ function carriesQuery(blockId: string, macro: string): boolean {
 /** Where the share dialog started: the query block it opened on (when its query was not changed), and the query
  *  text a new definition carries. */
 export interface ShareDefinitionTarget {
+  includeComments?: boolean;
+  commentsChanged?: boolean;
   hostBlockId: string | null;
   macro: string;
 }
@@ -77,6 +80,8 @@ export async function markSharePending(target: ShareDefinitionTarget, shareId: s
   bound();
   const host = target.hostBlockId;
   if (host && blockWritable(host) && carriesQuery(host, target.macro) && blockProperty(host, SHARE_PROPERTY) === null) {
+    if (target.commentsChanged) stageExportComments(host, target.includeComments !== false, owner);
+    bound();
     setBlockProperty(host, SHARE_PROPERTY, value);
     const page = node(host)?.page;
     if (blockProperty(host, SHARE_PROPERTY) !== value || !page) throw new Error("the query block can't be edited");
@@ -90,7 +95,9 @@ export async function markSharePending(target: ShareDefinitionTarget, shareId: s
   }
   const page = await ensureExportsPage();
   bound();
-  const appended = await appendQueryBlock(page, target.macro, [[SHARE_PROPERTY, value]]);
+  const properties: [string, string][] = [[SHARE_PROPERTY, value]];
+  if (target.includeComments === false) properties.push([COMMENTS_PROPERTY, "false"]);
+  const appended = await appendQueryBlock(page, target.macro, properties);
   bound();
   if (!appended) {
     // The record id is fresh, so a block carrying it on this page is the one this call appended.
@@ -166,7 +173,7 @@ async function sharePropertyQuery(bound: Owner) {
 }
 
 /** Whether block `id` is a definition exactly as markSharePending appended it to an Exports page: a root block
- *  with no children whose raw is the one query macro plus its `tine.share::`, spelled as appendQueryBlock spells
+ *  with no children whose raw is the query plus `tine.share::` and its optional `tine.comments:: false`, spelled as appendQueryBlock spells
  *  it. Removing its share deletes the block (D-20261026-QSD): left behind it is a stale plain query. A block the
  *  user edited (more text, another property, an id, children) or one elsewhere keeps everything but the property. */
 function appendedDefinition(id: string, exportsPages: ReadonlySet<string>): boolean {
@@ -177,7 +184,9 @@ function appendedDefinition(id: string, exportsPages: ReadonlySet<string>): bool
   const extents = queryMacroExtents(block.raw);
   if (extents.length !== 1 || extents[0].start !== 0) return false;
   const macro = block.raw.slice(extents[0].start, extents[0].end);
-  return block.raw.trimEnd() === queryBlockRaw(macro, [[SHARE_PROPERTY, value]], formatForPage(block.page));
+  const properties: [string, string][] = [[SHARE_PROPERTY, value]];
+  if (blockProperty(id, COMMENTS_PROPERTY) === "false") properties.push([COMMENTS_PROPERTY, "false"]);
+  return block.raw.trimEnd() === queryBlockRaw(macro, properties, formatForPage(block.page));
 }
 
 /** Set every `tine.share::` whose value `matches` to `next` (null removes it; a definition the share appended to
@@ -201,10 +210,10 @@ async function rewriteShareProperty(needle: string, matches: (value: string) => 
   for (const [name, kind] of pages) {
     if (!owner()) return changed;
     if (!pageByName(name)) {
-      const loaded = await readOwned(owner, backend().getPage(name, kind));
+      const loaded = await admitRead(owner, () => backend().getPage(name, kind), dto => [name, ...(dto ? [dto.name] : [])], dto => dto ? ensurePageLoaded(dto) : "missing");
       if (loaded.kind === "stale") return changed;
-      if (!loaded.value) continue;
-      const refusal = ensurePageLoaded(loaded.value);
+      if (loaded.value === "missing") continue;
+      const refusal = loaded.value;
       if (refusal) { reportPageLoadRefusal(refusal, "Its share property was not changed."); failed.push(name); continue; }
     }
     const ids = pageBlocks(name).filter(carries);

@@ -110,6 +110,7 @@ pub(crate) async fn publish_live(
     destination: String,
     name: String,
     all_pages: bool,
+    include_comments: bool,
     sheets: Vec<SheetExport>,
     state: GraphContext<'_>,
 ) -> Result<ExportReceipt, String> {
@@ -123,6 +124,7 @@ pub(crate) async fn publish_live(
             &PathBuf::from(destination),
             &name,
             all_pages,
+            include_comments,
             &bundle,
             sheets,
             &scratch,

@@ -281,7 +281,7 @@ function BlockWindow(props: { ids: () => readonly string[]; first: boolean; widt
       host.removeEventListener("mousedown", press, true);
     });
   });
-  return <div ref={host} class="outline-window" data-outline-window>
+  return <div ref={host} class="outline-window" data-outline-window data-find-source-mounted={mounted()}>
     <Show when={mounted()} fallback={
       <div aria-hidden="true" style={{ height: `${height() || geometry().estimate() || props.ids().length * 30}px` }} />
     }>

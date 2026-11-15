@@ -10,6 +10,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const out = path.resolve(process.env.KEYED_OUT || "artifacts/gx4-s3/native");
 fs.mkdirSync(out, { recursive: true });
@@ -58,7 +59,7 @@ async function measure(full, token) {
     window.__keyedIpc = [];
     document.querySelector(".right-sidebar .block-content-wrapper").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   });
-  await browser.$(".right-sidebar textarea.block-editor").waitForExist();
+  await browser.$(editorSelector(".right-sidebar")).waitForExist();
   await browser.keys(["Control", "End"]); await browser.keys(token);
   await waitForFileText(pageFile("Unrelated"), text => text.includes(token));
   await delay(2200);

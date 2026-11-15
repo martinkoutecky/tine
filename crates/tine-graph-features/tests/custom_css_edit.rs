@@ -6,14 +6,7 @@ use tine_graph_features::{config, custom_css};
 use tine_store::{OpenOptions, Store};
 
 fn graph(tag: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "tine-css-edit-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let root = crate::test_support::fresh_dir(&format!("tine-css-edit-{tag}-"));
     for dir in ["pages", "journals"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();
     }

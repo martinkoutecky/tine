@@ -33,12 +33,14 @@ const OTHER_TEXTAREAS = new Map<string, string>([
   ["src/components/CssEditor.test.tsx", "Standalone custom CSS settings editor (CssEditor.tsx)."],
   ["src/components/DiagnosticsTab.test.tsx", "Readonly diagnostics report preview (DiagnosticsTab.tsx)."],
   ["src/components/ExportModal.memory.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
+  ["src/components/ExportModal.comments.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/ExportModal.ogFront.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/ExportModal.qd6.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/ExportModal.test.tsx", "Readonly export-preview payload (ExportModal.tsx)."],
   ["src/components/FormulaEditor.test.tsx", "Standalone formula-editor-textarea (FormulaEditor.tsx)."],
   ["src/components/GraphVerification.test.tsx", "Graph report comparison input (GraphVerification.tsx)."],
   ["src/components/QueryTextPane.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
+  ["src/components/graphResourceEpoch.test.tsx", "Standalone query-text-pane-input (QueryBuilder.tsx)."],
 ]);
 
 const DIRECT = /textarea\.block-editor|querySelector(?:All)?(?:<[^>]*>)?\(["']textarea["']\)|HTMLTextAreaElement/u;

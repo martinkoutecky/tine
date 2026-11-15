@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { BLOCK_EDITOR, editorSelector, editorState } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
@@ -145,7 +146,7 @@ try {
   // Click edits; Esc keeps text and selects; Enter edits the selected cell.
   await cell.click();
   await sleep(400);
-  let editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  let editing = (await editorState(browser))?.focused === true;
   check("clicking a cell enters Edit", editing);
   let selectedCells = await browser.$$(".sheet-cell-selected");
   check("click selected exactly one cell", selectedCells.length === 1);
@@ -168,13 +169,13 @@ try {
 
   await browser.keys(["Escape"]);
   await sleep(250);
-  editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  editing = (await editorState(browser))?.focused === true;
   selectedCells = await browser.$$(".sheet-cell-selected");
   check("Esc from cell edit returns to selection", !editing && selectedCells.length === 1);
 
   await browser.keys(["Enter"]);
   await sleep(300);
-  editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  editing = (await editorState(browser))?.focused === true;
   check("Enter edits selected cell", editing);
 
   // Type at the end, then Esc keeps it and selects the cell.
@@ -183,7 +184,7 @@ try {
   await sleep(200);
   await browser.keys(["Escape"]);
   await sleep(300);
-  const stillEditing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  const stillEditing = (await editorState(browser))?.focused === true;
   check("Esc keeps text and closes the editor", !stillEditing);
   const selRing = await browser.$$(".sheet-cell-selected");
   check("Esc returns to cell selection", selRing.length === 1);
@@ -593,10 +594,10 @@ try {
   if (await card.isExisting()) {
     await card.click();
     await sleep(300);
-    const cardClick = await browser.execute(() => ({
+    const cardClick = await browser.execute(selector => ({
       selected: document.querySelectorAll(".sheet-board-card.sheet-cell-selected").length,
-      editing: !!document.activeElement && document.activeElement.tagName === "TEXTAREA",
-    }));
+      editing: document.activeElement?.matches(selector) === true,
+    }), BLOCK_EDITOR);
     check("clicking a board card selects without editing", cardClick.selected === 1 && !cardClick.editing, JSON.stringify(cardClick));
 
     // GH #756: a genuine block-editor focus transfer happens after the card's
@@ -607,8 +608,8 @@ try {
     });
     if (!editorBlockId) throw new Error("GH #756: missing focus editor fixture");
     await browser.$(`.ls-block[data-block-id="${editorBlockId}"] .block-content`).click();
-    await browser.$("textarea.block-editor").waitForDisplayed({ timeout: 5000 });
-    check("GH #756: block editor has focus before card drag", await browser.execute(() => document.activeElement?.matches("textarea.block-editor") === true));
+    await browser.$(editorSelector()).waitForDisplayed({ timeout: 5000 });
+    check("GH #756: block editor has focus before card drag", (await editorState(browser))?.focused === true);
     const dragPoints = await browser.execute(() => {
       const source = [...document.querySelectorAll(".sheet-board-card")].find((el) => el.textContent?.includes("buy milk"));
       const board = source?.closest(".sheet-board");
@@ -630,7 +631,7 @@ try {
     await browser.releaseActions();
     await browser.waitUntil(() => fs.readFileSync(JFILE, "utf8").includes("DOING buy milk"), { timeout: 10000, timeoutMsg: "GH #756: card did not save DOING after dragging from editor focus" });
     check("GH #756: dragging from block-editor focus writes the card marker", fs.readFileSync(JFILE, "utf8").includes("DOING buy milk"));
-    check("GH #756: the outside editor closed and drag cleanup restored selection", await browser.execute(() => !document.querySelector("textarea.block-editor, .sheet-board-drag-ghost") && !document.documentElement.classList.contains("drag-selection-suppressed")));
+    check("GH #756: the outside editor closed and drag cleanup restored selection", await browser.execute(selector => !document.querySelector(`${selector}, .sheet-board-drag-ghost`) && !document.documentElement.classList.contains("drag-selection-suppressed"), BLOCK_EDITOR));
     await browser.$('//article[contains(@class,"sheet-board-card")][contains(.,"buy milk")]').click();
 
     await browser.execute(() => {
@@ -766,7 +767,7 @@ try {
     check("tags board card rendered", false, "no paper one card found");
   }
 
-  const markerClick = await browser.execute(() => {
+  const markerClick = await browser.execute(selector => {
     const cell = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="1"]');
     const marker = cell?.querySelector(".block-marker");
     if (!cell || !marker) return { clicked: false };
@@ -774,9 +775,9 @@ try {
     return {
       clicked: true,
       selected: cell.classList.contains("sheet-cell-selected"),
-      editing: !!document.activeElement && document.activeElement.tagName === "TEXTAREA",
+      editing: document.activeElement?.matches(selector) === true,
     };
-  });
+  }, BLOCK_EDITOR);
   await sleep(2400);
   const diskMarker = fs.readFileSync(JFILE, "utf8");
   check("marker pill single-click toggled the open pair", markerClick.clicked && diskMarker.includes("- DOING row one"), JSON.stringify({ markerClick, diskMarker }));

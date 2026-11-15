@@ -13,3 +13,16 @@ it("a warm render parse serves region operations without another parse", () => {
   expect(editBlock(raw,"md",{kind:"strip_copy",template:false})).toBe("Task\n```\nid:: literal\n```");
   expect(parseBlock(raw,false)).toBe(ast);
 });
+
+it.each(["\n", "\r\n"])("removes the last Org drawer entry before a directive (%j)", (nl) => {
+  const raw = `Task${nl}:PROPERTIES:${nl}:collapsed: true${nl}:END:${nl}#+OWNER: retained`;
+  expect(editBlock(raw, "org", { kind: "property", key: "collapsed" })).toBe(`Task${nl}#+OWNER: retained`);
+});
+
+it.each(["\n", "\r\n"])("removes the last Markdown property without changing following bytes (%j)", (nl) => {
+  for (const suffix of ["", "\n", "\nBody", "\n#+OWNER: retained", "\n#+BEGIN_QUOTE\nquoted\n#+END_QUOTE"]) {
+    const tail = suffix.replaceAll("\n", nl);
+    const raw = `Task${nl}id:: real${tail}`;
+    expect(editBlock(raw, "md", { kind: "property", key: "id" })).toBe(`Task${tail}`);
+  }
+});

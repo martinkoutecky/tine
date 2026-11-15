@@ -8,7 +8,8 @@ the oracle for behaviour; the mechanism here is develop's.
 ## 1. One answer, one door
 
 - **Answer (I-12).** `Store::config()` is the only answer to "the current
-  configuration" in the backend. The frontend's is the `graphMeta` signal, and
+  configuration" in the backend. The frontend receives settings in `graphMeta`
+  and its unreadable flag in `graphConfigUnreadable` (`src/graphConfig.ts`), and
   `applyConfigDerivedState` (src/graph.ts) is the one producer of state derived
   from it that is not read reactively (workflow, journal formats, the page
   file-name format that names Org `[[file:…]]` links in `render/pageRefs.ts`,
@@ -19,7 +20,9 @@ the oracle for behaviour; the mechanism here is develop's.
   publications only for that binding generation. Its scratch document remains
   separate and never becomes a graph writer.
 - **Door (I-1).** Every settings write goes through
-  `tine_graph_features::config::update`: one read of the file, a pure text
+  `tine_graph_features::config::update`: a known store read problem returns
+  the typed config failure without another file read. A writable attempt uses
+  one read of the file, a pure text
   edit, and a `Transaction::replace` (or `create`) guarded by the revision just
   read. An outside write between the read and the commit is a conflict, and
   the edit is re-applied to the new bytes (at most four attempts). A page
@@ -49,6 +52,14 @@ placeholder (`logseq/.config.edn.icloud`) opens read-only, its settings
 unknown. A real change reloads the live configuration and journal format,
 and publishes an External change naming `logseq/config.edn`. The desktop
 shell turns that into `graph-config-changed` with the fresh `GraphMeta`.
+Both graph-open replies and live publications also carry the read problem from
+`Store::config().problem`. The window adopts it only for its current binding and
+graph root. One catalog notice and the page banners name config.edn, and editing
+affordances use that graph restriction in addition to each page's intrinsic Org
+round-trip restriction. Repeated unreadable publications do not add notices.
+Repairing the config clears the notice and the graph restriction without
+reopening; an unsafe Org page remains read-only. A problem-only transition
+fetches no loaded pages; build-key changes retain the reconciliation below.
 
 Own and outside config writes retain parsed pages, their observations, the
 name index and every in-memory index when `checkpoint::config_key` is
@@ -117,7 +128,7 @@ Session state remains outside the graph, with no additional persisted fields.
 | An edit would produce a config without a balanced root map | `InvalidData`; nothing is written | Same: never make a malformed file out of a good one |
 | A key's value has a shape Tine does not edit (`(…)`, reader tags, a collection where a scalar belongs) | `InvalidData`; nothing is written | Hand-edited or newer-Logseq config |
 | A rename finds config.edn malformed, or it becomes unreadable after the graph last loaded it | The rename proceeds; home and favorites are not updated; a value the step cannot edit, or a file it cannot read, is reported as `config_skipped` and the window toasts it | Sync delivery / external-editor race; a bad config must not block page work |
-| config.edn could not be read when the graph last loaded it (not valid UTF-8, or too large to parse) | The graph runs on the default settings and is read-only: a rename, like every page write, is refused before anything changes, because the graph's `:file/name-format` is unknown and a page file would be written under another name. The one write guard refuses with the typed `Refusal::ConfigUnreadable` (the read error rides along for logs). The window words it from the catalog, as the open-time notice does (`ui-failure-config-read`), never as the raw read error: the commands carry the wire family `config-unreadable`. (The page host's own saves do not consult the guard, so they are not refused for this reason.) Fixing or replacing config.edn lifts it | Sync delivery; an undownloaded or corrupted config |
+| config.edn could not be read at open or on a live reload (not valid UTF-8, too large to parse, or inaccessible) | The graph runs on default settings and its editing UI is read-only: the unknown `:file/name-format` cannot safely name a page write. The transaction guard refuses with typed `Refusal::ConfigUnreadable`; a Settings config read failure carries the same internal `config-unreadable` family. The window shows `ui-failure-config-read`, never the raw read error, in the notice, page banner and Settings error. The cause remains available for diagnostics. The page host's own saves do not consult the transaction guard; this change preserves that policy. Fixing or replacing config.edn lifts the graph restriction and clears the notice through the watcher without a restart; intrinsic Org restrictions remain | Sync delivery; external editor; disk/permission error; an undownloaded or corrupted config |
 | A rename's config.edn write fails after its page files were published (disk full, permission, a lost race) | The pages stay renamed and nothing is rolled back; config.edn keeps its old bytes. The app's rename returns the rename as done with the cause in `config_skipped`, so the window refreshes and toasts that the page was renamed but home and favorites may still name the old page; the CLI keeps the error and reports the rename as uncertain (`IncompleteRename`) | Disk error between the last page step and the config step |
 
 A malformed config never blocks opening the graph: the reader is lenient and
@@ -137,6 +148,10 @@ lists the favorite under its old name, as OG never follows title:: edits.
 
 ## Tests
 
+- src/components/Page.configUnreadable.test.tsx
+- crates/tine-graph-features/tests/config_writes.rs::unreadable_settings_use_the_config_refusal_family_without_changing_bytes
+- crates/tine-store/src/store/page_read.rs::graph_config_restriction_does_not_erase_the_pages_intrinsic_read_only_reason
+- src-tauri/src/watcher.rs::live_config_publications_carry_the_read_problem_and_its_recovery
 - crates/tine-graph-features/tests/audit_rn_b.rs::audit_l7s1_01_character_literals_keep_hidden_and_surgical_config_edits
 - crates/tine-store/tests/config_live_reload.rs::an_outside_config_edit_is_taken_in_by_the_notify_watcher
 - src/capture.workflow.test.tsx

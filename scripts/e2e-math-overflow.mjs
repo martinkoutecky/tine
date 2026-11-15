@@ -18,7 +18,7 @@ const root = path.resolve(import.meta.dirname, "..");
 await checkMathTouch(root);
 // Explicit component-only mode for hosts without a native application binary.
 if (process.argv.includes("--touch-only")) process.exit(0);
-const artifacts = path.join(root, "target/artifacts/math-touch-pan");
+const artifacts = process.env.E2E_ARTIFACT_DIR || path.join(root, "target/artifacts/math-touch-pan");
 fs.mkdirSync(artifacts, { recursive: true });
 const out = fs.mkdtempSync(path.join(artifacts, "native-"));
 const graph = path.join(out, "graph");
@@ -175,7 +175,7 @@ try {
   // The existing mobile-drawer fixture permits a real 390px native WebView.
   await browser.setWindowSize(390, 1000);
   await browser.waitUntil(() => browser.execute(() => window.innerWidth <= 400), { timeout: 10000 });
-  const closeNavigation = await browser.$(".mobile-drawer-close");
+  const closeNavigation = await browser.$(".sidebar-close");
   if (await closeNavigation.isDisplayed()) await closeNavigation.click();
   await check('[data-pane-id="main"] .page-blocks', "phone-main");
   assert.ok(proof.outcomes.every(item => item.rows.length === 6 && item.rows.every(row => row.startReachable && row.endReachable)),

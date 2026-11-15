@@ -16,7 +16,7 @@
 
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 use crate::render_query_cache::substitute_current_page;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -58,143 +58,12 @@ fn export_time(epoch: i64) -> io::Result<String> {
         .map_err(io::Error::other)
 }
 
-/// The same raw argument, dialect and host properties passed to `query_parse`.
-/// A name chooses a portable query leaf in the graph; a current
-/// page binds advanced inputs and the exported query's home run.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueryExportRequest {
-    pub argument: String,
-    pub dialect: QueryTextDialect,
-    #[serde(default)]
-    pub properties: Vec<(String, String)>,
-    #[serde(default)]
-    pub current_page: Option<String>,
-    pub name: String,
-    #[serde(default)]
-    pub host_block_id: Option<String>,
-    /// Explicit reviewed output name, otherwise derived from name.
-    #[serde(default)]
-    pub folder: Option<String>,
-    /// Preserve and replace the current leaf rather than refusing a collision.
-    #[serde(default)]
-    pub replace: bool,
-    /// Device-local cumulative asset budget; None uses 1 GiB.
-    #[serde(default)]
-    pub asset_budget_bytes: Option<u64>,
-    /// "Include the query text" (PK3, off by default): only then does the
-    /// published home carry the query macro, its parsed form and its answer;
-    /// otherwise the home lists the exported pages and nothing of the query.
-    #[serde(default)]
-    pub include_query_text: bool,
-}
+pub use crate::publication_options::QueryExportRequest;
 
-/// Resolve one persisted block UUID to the dialog's query publication input.
-/// O(log I + candidate-page blocks) over one held graph view, no writes. The parser owns query
-/// recognition and raw arguments; publication still uses `plan_query`/`publish_query`.
-pub fn query_request_by_uuid(
-    store: &Store,
-    uuid: &str,
-    name: Option<&str>,
-    replace: bool,
-) -> io::Result<QueryExportRequest> {
-    let graph = store
-        .whole_graph()
-        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    let corpus = graph.corpus(tine_store::CorpusScope::BlockIdCandidates(uuid), true);
-    let mut found = None;
-    for page in &corpus.pages {
-        let mut stack: Vec<_> = page.document.roots.iter().collect();
-        while let Some(block) = stack.pop() {
-            #[cfg(feature = "test-faults")]
-            tine_store::cost_counters::query_uuid_block(uuid);
-            stack.extend(block.children.iter());
-            if block
-                .property("id")
-                .is_some_and(|id| id.eq_ignore_ascii_case(uuid))
-            {
-                if found.is_some() {
-                    return Err(refusal(format!("ambiguous block UUID: {uuid}")));
-                }
-                found = Some((page, block));
-            }
-        }
-    }
-    let (page, block) = found.ok_or_else(|| refusal(format!("unknown block UUID: {uuid}")))?;
-    let (argument, dialect, title) =
-        render::query_for_export(block.visible_text(), block.is_org()).map_err(refusal)?;
-    let properties = block
-        .properties()
-        .into_iter()
-        .filter(|(key, _)| query_parse_property(key) || legacy_table_property(key))
-        .collect();
-    Ok(QueryExportRequest {
-        argument,
-        dialect,
-        properties,
-        current_page: Some(page.name.clone()),
-        name: name
-            .map(str::to_owned)
-            .or(title)
-            .unwrap_or_else(|| format!("Query {uuid}")),
-        host_block_id: Some(block.uuid.clone()),
-        folder: None,
-        replace,
-        asset_budget_bytes: None,
-        include_query_text: false,
-    })
-}
+mod source;
+pub use source::{query_request_by_uuid, query_request_inline, query_request_on_page};
 
-/// A page the query selected that the export leaves out, and why.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LeftOutPage {
-    pub name: String,
-    pub path: String,
-    pub reason: render::LeftOut,
-}
-
-/// One complete owner page in a reviewed query selection.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportPage {
-    pub name: String,
-    pub path: String,
-    pub journal: bool,
-}
-
-/// Stateless plan shown before publication. `fingerprint` binds selected
-/// source documents, query input and result membership; no server-side session.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueryExportPlan {
-    pub anchor: String,
-    pub row_count: usize,
-    pub pages: Vec<ExportPage>,
-    /// Selected by the query but not exported (`public:: false`, the exports page).
-    pub left_out: Vec<LeftOutPage>,
-    /// The query's own page (`current_page`) is among the exported pages, so the
-    /// export carries the page the query is written on (PK3 (c) quiet notice).
-    pub selects_host_page: bool,
-    pub folder: String,
-    pub path: String,
-    pub exists: bool,
-    pub suggested_folder: Option<String>,
-    pub fingerprint: String,
-    /// Read-only membership evidence from the previous leaf; no new stored record.
-    pub previous_pages: Option<Vec<String>>,
-}
-
-/// Published destination and number of selected source pages.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportReceipt {
-    pub path: String,
-    pub pages: usize,
-    pub files: u64,
-    pub retired: Option<String>,
-    pub warnings: Vec<String>,
-}
+pub use crate::publication_options::{ExportPage, ExportReceipt, LeftOutPage, QueryExportPlan};
 
 /// Default cumulative budget for a query export's copied assets, in bytes.
 pub const QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
@@ -407,6 +276,12 @@ fn resolve_plan_review(
         }
         None => true,
     });
+    let include_comments =
+        crate::output_comments::included(request.include_comments, &request.properties);
+    crate::output_comments::project(&mut chosen, include_comments);
+    if !include_comments {
+        crate::output_comments::close_result(&mut result, &chosen);
+    }
     if chosen.is_empty() && !left_out.is_empty() {
         return Err(refusal(
             "every page this query selects is private or the exports page",
@@ -446,6 +321,7 @@ fn resolve_plan_review(
     reviewed.replace = false;
     reviewed.asset_budget_bytes = None;
     reviewed.include_query_text = false;
+    reviewed.include_comments = Some(include_comments);
     hasher.update(serde_json::to_vec(&reviewed).map_err(io::Error::other)?);
     hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
     for page in &selected.pages {
@@ -461,6 +337,7 @@ fn resolve_plan_review(
         tine_store::publish::query_publication_destination(store, &folder, snapshot_byte_limit)?;
     Ok(Planned {
         plan: QueryExportPlan {
+            include_comments,
             anchor: anchor.into(),
             row_count: result.total,
             pages,
@@ -588,14 +465,19 @@ fn close_query_result(
 /// block text for the renderer; only query-table affects the parsed reading.
 /// Publication owns baking this exact key, rather than making the reader
 /// guess which differently configured query's answer it can reuse.
+/// Properties that are part of a query's parse key: what the renderer's
+/// `hostProperties` sends to the engine (`src/components/Macro.tsx`).
 fn query_parse_property(key: &str) -> bool {
-    key.starts_with("tine.") || key == "query-table"
+    (key.starts_with("tine.") || key == "query-table") && !display_only_property(key)
 }
 
-fn legacy_table_property(key: &str) -> bool {
+/// Renderer-only properties: not part of the parse key, but they travel to a
+/// generated query home so the export looks like the source block.
+/// `tine.breadcrumbs` is presentation only (GH #881).
+fn display_only_property(key: &str) -> bool {
     matches!(
         key,
-        "query-properties" | "query-sort-by" | "query-sort-desc"
+        "query-properties" | "query-sort-by" | "query-sort-desc" | "tine.breadcrumbs"
     )
 }
 
@@ -743,7 +625,7 @@ pub(crate) fn snapshot_at(
         };
         let mut raw = format!("{{{{{macro_name} {}}}}}", request.argument.trim());
         for (key, value) in &request.properties {
-            if (query_parse_property(key) || legacy_table_property(key))
+            if (query_parse_property(key) || display_only_property(key))
                 && !key.contains('\n')
                 && !value.contains('\n')
             {
@@ -1114,6 +996,7 @@ fn publish_at(
     if planned.selected.pages.is_empty() {
         return Err(refusal("query has no pages to export"));
     }
+    let mut result = planned.result;
     let mut warnings = Vec::new();
     // Every emitted file (the static HTML fallback and the snapshot) is
     // rendered from the private build graph: an unexported page can change no
@@ -1125,6 +1008,13 @@ fn publish_at(
         scratch,
         BUILD_GRAPH_REFUSED,
         |build, meta, corpus| {
+            if request.include_query_text && !planned.plan.include_comments {
+                crate::output_comments::remap_result_ids(
+                    &mut result,
+                    &planned.selected.pages,
+                    &corpus.pages,
+                );
+            }
             let files = collect_static(
                 store,
                 build,
@@ -1158,7 +1048,7 @@ fn publish_at(
                 &corpus,
                 &request.name,
                 &home,
-                Some((request, &planned.parsed, &planned.result)),
+                Some((request, &planned.parsed, &result)),
                 epoch,
             )?;
             Ok((files, snap))
@@ -1205,9 +1095,18 @@ pub fn publish_live(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    include_comments: bool,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
-    publish_live_with_sheets(store, parent, name, all_pages, bundle, Vec::new())
+    publish_live_with_sheets(
+        store,
+        parent,
+        name,
+        all_pages,
+        include_comments,
+        bundle,
+        Vec::new(),
+    )
 }
 
 /// `publish_live` opening on `home` when given (it must be a selected page,
@@ -1219,6 +1118,7 @@ pub fn publish_live_home(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    include_comments: bool,
     home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
@@ -1228,6 +1128,7 @@ pub fn publish_live_home(
         parent,
         name,
         all_pages,
+        include_comments,
         home,
         bundle,
         Vec::new(),
@@ -1242,12 +1143,21 @@ pub fn publish_live_with_sheets(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    include_comments: bool,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
     let scratch = std::env::temp_dir();
     live(
-        store, parent, name, all_pages, None, bundle, sheets, &scratch,
+        store,
+        parent,
+        name,
+        all_pages,
+        include_comments,
+        None,
+        bundle,
+        sheets,
+        &scratch,
     )
 }
 
@@ -1258,12 +1168,21 @@ pub fn publish_live_with_sheets_in(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    include_comments: bool,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
     scratch: &Path,
 ) -> io::Result<ExportReceipt> {
     live(
-        store, parent, name, all_pages, None, bundle, sheets, scratch,
+        store,
+        parent,
+        name,
+        all_pages,
+        include_comments,
+        None,
+        bundle,
+        sheets,
+        scratch,
     )
 }
 
@@ -1294,6 +1213,7 @@ fn live(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    include_comments: bool,
     requested_home: Option<&str>,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
@@ -1306,6 +1226,7 @@ fn live(
     let mut corpus = graph.corpus(None, true);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
+    crate::output_comments::project(&mut corpus.pages, include_comments);
     if corpus.pages.len() > MAX_PAGES {
         return Err(refusal("live export selects too many pages"));
     }
@@ -1368,6 +1289,7 @@ pub fn publish_static(
     parent: &Path,
     name: &str,
     all_pages: bool,
+    include_comments: bool,
 ) -> io::Result<ExportReceipt> {
     if name.trim().is_empty() || name.len() > 256 {
         return Err(refusal("static export name is invalid"));
@@ -1376,6 +1298,7 @@ pub fn publish_static(
     let mut corpus = graph.corpus(None, true);
     let selection = render::PageSelection::every_page(all_pages);
     corpus.pages.retain(|page| selection.includes(page));
+    crate::output_comments::project(&mut corpus.pages, include_comments);
     if corpus.pages.len() > MAX_PAGES {
         return Err(refusal("static export selects too many pages"));
     }
@@ -1454,6 +1377,7 @@ mod snapshot_consistency_tests {
             replace: false,
             asset_budget_bytes: None,
             include_query_text: false,
+            include_comments: None,
         };
         let graph = store.whole_graph().unwrap();
         let reviewed = resolve_plan(&store, &graph, &request).unwrap();

@@ -3,6 +3,8 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { QuickShareAll } from "./QuickShareAll";
 import { invalidateBinding } from "../binding";
+import * as documentLayer from "../document";
+import * as commentChoices from "../exportComments";
 import type { QuickSharePrepared } from "../quickShare/commands";
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: vi.fn(async () => []) }));
 
@@ -63,6 +65,52 @@ it("closing the preview discards every unconsumed payload", async () => {
   root.querySelector<HTMLButtonElement>(".quick-share-all-close")!.click();
   await vi.waitFor(() => expect(discard).toHaveBeenCalledTimes(2));
   expect(upload).not.toHaveBeenCalled();
+});
+it("shows mixed saved choices and reviews fresh payloads for either explicit comments choice", async () => {
+  const { root, prepare, discard, upload } = mount();
+  prepare.mockImplementation(async (request, id) => {
+    if (id === "bad") throw { kind: "notFound" };
+    const result = prepared(id!);
+    result.preview.includeComments = request.includeComments ?? id !== "first";
+    return result;
+  });
+  await vi.waitFor(() => expect(root.querySelector("button")).not.toBeNull());
+  root.querySelector("button")!.click();
+  const checkbox = () => [...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")?.disabled).toBe(false));
+  expect(checkbox().indeterminate).toBe(true);
+  expect(prepare.mock.calls.every(([request]) => request.includeComments === undefined)).toBe(true);
+  for (const includeComments of [true, false]) {
+    checkbox().click();
+    await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")?.disabled).toBe(false));
+    expect(checkbox().checked).toBe(includeComments);
+    expect(checkbox().indeterminate).toBe(false);
+    expect(prepare.mock.calls.slice(-3).every(([request]) => request.includeComments === includeComments)).toBe(true);
+  }
+  expect(discard).toHaveBeenCalledTimes(4);
+  expect(upload).not.toHaveBeenCalled();
+});
+it("saves completed choices together once per definition page after the outputs finish", async () => {
+  const { root, upload } = mount();
+  vi.spyOn(documentLayer, "pageByName").mockReturnValue({ kind: "page" } as never);
+  const stage = vi.spyOn(commentChoices, "stageExportComments").mockReturnValue("Project");
+  const flush = vi.spyOn(documentLayer, "flushPage").mockResolvedValue(true);
+  let finish!: (value: never) => void;
+  upload.mockResolvedValueOnce({} as never).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await vi.waitFor(() => expect(root.querySelector("button")).not.toBeNull());
+  root.querySelector("button")!.click();
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")?.disabled).toBe(false));
+  [...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!
+    .querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")?.disabled).toBe(false));
+  root.querySelector<HTMLButtonElement>(".quick-share-all-confirm")!.click();
+  await vi.waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+  expect(stage).not.toHaveBeenCalled();
+  expect(flush).not.toHaveBeenCalled();
+  finish({} as never);
+  await vi.waitFor(() => expect(flush).toHaveBeenCalledExactlyOnceWith("Project"));
+  expect(stage.mock.calls.map(([id, include]) => [id, include])).toEqual([["first", false], ["second", false]]);
 });
 it.each([[true, "page"], [false, "page"], [true, "block"], [false, "block"]] as const)("previews folders alongside shares without writing (sharing enabled: %s, anchor: %s)", async (enabled, anchor) => {
   const { root, upload } = mount();

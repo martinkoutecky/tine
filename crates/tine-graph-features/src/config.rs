@@ -6,6 +6,8 @@
 //! re-parses the graph.
 //! Errors are I/O errors; exhausted conflicts return WouldBlock. Callers need
 //! no graph path, lock, or cache state.
+//! A known config read problem needs no reread; fresh read failures carry the
+//! same typed ConfigUnreadable family as the transaction guard.
 
 use std::io;
 
@@ -49,9 +51,13 @@ fn check_root(text: &str) -> io::Result<()> {
 }
 
 fn update(store: &Store, edit: impl Fn(&str) -> io::Result<String>) -> io::Result<()> {
+    if let Some(problem) = store.config().problem {
+        return Err(crate::config_unreadable(problem));
+    }
     let id = config_id(store)?;
     crate::retry_on_conflict("config changed repeatedly during update", || {
-        let current = read_config(store, &id)?;
+        let current =
+            read_config(store, &id).map_err(|error| crate::config_unreadable(error.into()))?;
         let text = current.as_ref().map_or("{}\n", |(text, _)| text);
         check_root(text)?;
         let next = edit(text)?;

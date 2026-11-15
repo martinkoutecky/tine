@@ -137,7 +137,7 @@ fn published_conformance_snapshots_match_the_writer() {
         let output = root.path().join("output");
         fs::create_dir_all(&output).unwrap();
         let store = Store::open(&graph, Default::default()).unwrap().0;
-        let value = match publish_live(&store, &output, "Site", true, &bundle()) {
+        let value = match publish_live(&store, &output, "Site", true, true, &bundle()) {
             Ok(_) => {
                 let snapshot: Value = serde_json::from_slice(
                     &fs::read(output.join("site/app/snapshot.json")).unwrap(),

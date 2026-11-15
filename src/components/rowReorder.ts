@@ -43,14 +43,15 @@ export interface RowReorderOptions {
 }
 
 /** Attach a reorder drag to a row's pointerdown. `onTarget` reports the live
- *  drop target (or null); `commit` receives the final one. */
+ *  drop target (or null); `commit` receives the final one. The returned cancel
+ *  releases listeners and selection suppression if the owning view unmounts. */
 export function beginRowReorderDrag(
   event: PointerEvent,
   rowSelector: string,
   onTarget: (target: RowDropTarget | null) => void,
   commit: (target: RowDropTarget) => void,
   opts: RowReorderOptions = {},
-): void {
+): (() => void) | undefined {
   if (event.button !== 0) return;
   if (armed) {
     // A second finger (or pen) never starts or steers a drag while one is
@@ -68,6 +69,7 @@ export function beginRowReorderDrag(
   const indentSign = doc.documentElement.dir === "rtl" ? -1 : 1;
   const pressed = event.target as Element | null;
   let dragging = false;
+  let finished = false;
   /** The row menu this hold opened, while the drag has not yet taken over. */
   let heldMenu: ReturnType<typeof contextMenu> = null;
   let target: RowDropTarget | null = null;
@@ -153,6 +155,8 @@ export function beginRowReorderDrag(
     onTarget(target);
   };
   function cleanup() {
+    if (finished) return;
+    finished = true;
     if (armed?.cancel === cleanup) armed = null;
     clearTimeout(holdTimer);
     holdTimer = undefined;
@@ -174,7 +178,7 @@ export function beginRowReorderDrag(
   }
   const onCancel = (ev: PointerEvent) => { if (mine(ev)) cleanup(); };
   const onUp = (ev: PointerEvent) => {
-    if (!mine(ev)) return;
+    if (!mine(ev) || finished) return;
     cleanup();
     if (!dragging) return;
     suppressClick = true;
@@ -185,4 +189,5 @@ export function beginRowReorderDrag(
   doc.addEventListener("pointerup", onUp);
   doc.addEventListener("pointercancel", onCancel);
   armed = { pointerId, cancel: cleanup };
+  return cleanup;
 }

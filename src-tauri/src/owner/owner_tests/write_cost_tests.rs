@@ -167,6 +167,16 @@ fn a_write_that_names_its_page_spends_its_lower_bound() {
     spent(&slot);
     add(&graph, json!({ "page": "a", "content": "- more" }));
     assert_eq!(spent(&slot), EXISTING, "add to an existing page");
+    add(
+        &graph,
+        json!({ "page": "a", "content": "- personal", "no_author": true }),
+    );
+    assert_eq!(spent(&slot), EXISTING, "no-author add to an existing page");
+    add(
+        &graph,
+        json!({ "page": "Personal", "content": "- personal", "no_author": true }),
+    );
+    assert_eq!(spent(&slot), CREATED, "no-author add creating its page");
     add(&graph, json!({ "page": "Brand new", "content": "- new" }));
     assert_eq!(spent(&slot), CREATED, "add creating its page");
     add(&graph, json!({ "page": "brand NEW", "content": "- again" }));
@@ -263,6 +273,7 @@ fn a_block_edit_spends_its_lower_bound() {
             out.contains("1 passed"),
             "the child ran no case:\n{out}\n{err}"
         );
+        println!("{out}\n{err}");
         return;
     }
     use tine_store::cost_counters;
@@ -275,6 +286,11 @@ fn a_block_edit_spends_its_lower_bound() {
             "edited".to_owned(),
         ),
         ("2 MiB", format!("- one\n{id}"), "x".repeat(2 << 20)),
+        (
+            "already 2 MiB",
+            format!("- {}\n{id}", "x".repeat(2 << 20)),
+            format!("{}!", "x".repeat(2 << 20)),
+        ),
     ] {
         let graph = Graph::seeded(Default::default(), &[("pages/a.md", &old)]);
         // Every fixture file older than the watcher's racy window (TE-9).
@@ -324,6 +340,9 @@ fn a_block_edit_spends_its_lower_bound() {
             "{label}: parses, old-source parses, full reads, store reads, name reads, listings"
         );
         assert_eq!((c.fsyncs, c.files_written), (5, 2), "{label}: syncs, files");
+        // Target is one (PC-3). Current staging and serialization each call
+        // PagePlan::path; pin both and report the excess, without changing I/O.
+        assert_eq!(c.save_path_resolutions, 2, "{label}: validated save paths");
         // The page, and the draft carrying the new and the old page under its header.
         let carried = 2 * new + old.len() as u64;
         let header = c.bytes_written.checked_sub(carried);

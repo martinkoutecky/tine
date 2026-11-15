@@ -10,6 +10,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector, editorText } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const app = process.env.TINE_APP || path.join(root, "target/release/tine");
@@ -41,10 +42,10 @@ const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, 
   expected: "The typed prefix stays literal; both saved fences and unrelated text survive route reopen", steps: [] };
 let browser;
 let stage = "startup";
-const editorValue = () => browser.execute(() => document.querySelector(".main-content textarea.block-editor")?.value);
+const editorValue = () => editorText(browser, ".main-content");
 async function openEditor() {
   await browser.$(".main-content .block-content-wrapper").click();
-  await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 10000 });
+  await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 10000 });
 }
 try {
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 2,

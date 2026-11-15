@@ -15,7 +15,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"
 ammonia = "4"
-lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.10" }
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.11" }
 tine-outline = { path = "../tine-outline" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
@@ -40,6 +40,7 @@ test-faults = []
 # The integration tests link the library without `cfg(test)`.
 tine-core = { path = ".", features = ["test-faults"] }
 libc = "0.2"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 pretty_assertions = "1"
 
 # Keep all integration cases in one linked executable.

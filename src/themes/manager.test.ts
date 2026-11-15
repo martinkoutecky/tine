@@ -32,7 +32,7 @@ beforeEach(() => {
     if (getFails) throw new Error("transient read failure");
     return stored[key] ?? fallback;
   });
-  vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { stored[key] = value; });
+  vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { if (value === null) delete stored[key]; else stored[key] = value; });
 });
 afterEach(() => { vi.restoreAllMocks(); setToasts([]); });
 

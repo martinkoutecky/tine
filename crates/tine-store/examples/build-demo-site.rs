@@ -77,7 +77,7 @@ fn main() {
     let mut files = Vec::new();
     bundle(Path::new("dist"), "", &mut files).expect("read built frontend");
     files.sort_by(|a, b| a.0.cmp(&b.0));
-    let receipt = publish_live_with_sheets(&store, parent, "demo", true, &files, sheets)
+    let receipt = publish_live_with_sheets(&store, parent, "demo", true, true, &files, sheets)
         .expect("publish Guide demo");
     println!("published {} pages -> {}", receipt.pages, receipt.path);
 }

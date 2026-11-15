@@ -6,6 +6,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
+import { editorSelector, editorText, editorState, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
@@ -81,15 +82,12 @@ try {
   const seed = await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'seed']");
   await seed.waitForDisplayed({ timeout: 10_000 });
   await seed.click();
-  const editor = await browser.$("textarea.block-editor");
+  const editor = await browser.$(editorSelector());
   await editor.waitForExist({ timeout: 10_000 });
   await browser.keys(["Control", "a"]);
   await browser.keys(["Control"]);
   await browser.keys([..."DOING test"]);
-  const seen = await browser.execute(() => {
-    const t = document.querySelector("textarea.block-editor");
-    return { value: t.value, start: t.selectionStart, end: t.selectionEnd };
-  });
+  const seen = await editorState(browser);
   if (seen.value !== "DOING test") throw new Error(`editor must hide the LOGBOOK: ${JSON.stringify(seen)}`);
   if (seen.start !== "DOING test".length || seen.end !== seen.start) throw new Error(`caret left the task line: ${JSON.stringify(seen)}`);
   await browser.keys(["Escape"]);
@@ -101,7 +99,7 @@ try {
   stage = "edit a clocked task and press Enter at its visible end";
   const task = await browser.$("//div[contains(@class, 'block-content') and contains(., 'test')]");
   await task.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
   await browser.keys(["Control", "a"]);
   await browser.keys(["Control"]);
   await browser.keys([..."DOING revised"]);
@@ -117,7 +115,7 @@ try {
     stage = `compose a drawer by hand on ${name}`;
     await openPageByName(browser, name);
     await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'plain']").click();
-    await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+    await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
     await browser.keys(["End"]);
     const lines = [":LOGBOOK:", clock, ":END:"];
     for (const line of lines) {
@@ -130,7 +128,7 @@ try {
       if (pause) {
         await new Promise(resolve => setTimeout(resolve, pause));
         fs.appendFileSync(path.join(TMP, "manual-autosaves.jsonl"), JSON.stringify({
-          name, line, editor: await browser.$("textarea.block-editor").getValue(),
+          name, line, editor: await editorText(browser),
           saved: fs.readFileSync(path.join(GRAPH, "pages", filename), "utf8"),
         }) + "\n");
       }
@@ -140,10 +138,10 @@ try {
       for (const character of line) await browser.keys([character]);
     }
     const literal = `plain\n${lines.join("\n")}`;
-    const value = await browser.$("textarea.block-editor").getValue();
+    const value = await editorText(browser);
     if (value !== literal) throw new Error(`active handwritten buffer differs: ${JSON.stringify(value)}`);
     for (const character of " suffix") await browser.keys([character]);
-    const finalValue = await browser.$("textarea.block-editor").getValue();
+    const finalValue = await editorText(browser);
     if (finalValue !== literal + " suffix") throw new Error(`final handwritten buffer differs: ${JSON.stringify(finalValue)}`);
     await browser.keys(["Escape"]);
     const expectedManual = bullet + (literal + " suffix").replaceAll("\n", `\n${indent}`) + "\n";
@@ -152,16 +150,12 @@ try {
   stage = "case-equivalent Org properties survive switch and reopen";
   await openPageByName(browser, "PropertyCase");
   await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'plain']").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
   const typed = "plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text";
-  await browser.execute(value => {
-    const textarea = document.querySelector("textarea.block-editor");
-    textarea.value = value;
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
-  }, typed);
+  await pasteEditorText(browser, typed);
   await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'next']").click();
   await browser.$("//div[contains(@class, 'block-content') and contains(., 'my newly typed text')]").click();
-  const reopened = await browser.$("textarea.block-editor").getValue();
+  const reopened = await editorText(browser);
   if (!reopened.includes("my newly typed text")) throw new Error(`lost typed text after switching: ${JSON.stringify(reopened)}`);
   const propertyFile = path.join(GRAPH, "pages/PropertyCase.org");
   await waitForFileText(propertyFile, text => text.includes("my newly typed text") && text.includes(`:LOGBOOK:\n${clock}\n:END:`));
@@ -178,7 +172,7 @@ try {
       stage = `GH829 ${name}: new block, Ctrl+Enter twice, Enter`;
       await openPageByName(browser, name);
       await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'seed']").click();
-      await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+      await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
       await browser.keys(["End"]);
       await browser.keys(["Enter"]);
       for (const ch of "测试 first second") await browser.keys([ch]);
@@ -187,9 +181,9 @@ try {
         await browser.keys(["Control"]);
       };
       await cycle();
-      if (await browser.$("textarea.block-editor").getValue() !== "TODO 测试 first second") throw new Error(`${name}: first cycle did not produce TODO`);
+      if (await editorText(browser) !== "TODO 测试 first second") throw new Error(`${name}: first cycle did not produce TODO`);
       await cycle();
-      const editorValue = await browser.$("textarea.block-editor").getValue();
+      const editorValue = await editorText(browser);
       if (editorValue !== "DOING 测试 first second") throw new Error(`${name}: drawer leaked into editor: ${JSON.stringify(editorValue)}`);
       if (done) await cycle();
       const marker = done ? "DONE" : "DOING";

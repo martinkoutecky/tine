@@ -11,8 +11,7 @@ use std::sync::Arc;
 
 #[test]
 fn gh221_malformed_html_fragment_indexes_without_panic() {
-    let dir = std::env::temp_dir().join(format!("gh221-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir("gh221-");
     std::fs::create_dir_all(dir.join("pages")).unwrap();
     // The reporter's minimal repro: one line, no trailing newline.
     std::fs::write(dir.join("pages/test-page.md"), b"- <div </div><").unwrap();

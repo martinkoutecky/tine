@@ -234,9 +234,14 @@ fn full_publish_builds_a_constant_number_of_corpora() {
         let (_dir, store, _) = graph(pages, 1);
         let out = tempfile::tempdir().unwrap();
         cost_counters::reset();
-        let _ =
-            tine_graph_features::publish_query::publish_static(&store, out.path(), "site", true)
-                .unwrap();
+        let _ = tine_graph_features::publish_query::publish_static(
+            &store,
+            out.path(),
+            "site",
+            true,
+            true,
+        )
+        .unwrap();
         let counts = cost_counters::snapshot();
         store.close();
         counts.corpus

@@ -5,7 +5,6 @@
 //! line's terminator too. Every case goes through the page plan and the page host.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, PageDto};
 use tine_store::{EditKind, PageId, SaveBase, Store};
@@ -48,12 +47,7 @@ impl Page {
     }
 
     fn at(path: &str, source: &str) -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "tine-lone-cr-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = crate::test_support::fresh_dir("tine-lone-cr-");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::create_dir_all(root.join("journals")).unwrap();
         fs::write(root.join(path), source).unwrap();

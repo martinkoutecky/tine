@@ -79,6 +79,25 @@ describe("Settings → Graph shows the graph folder (GH #447)", () => {
     dispose();
   });
 
+  // GH #926 (IOS-PATH-926): on iOS the backend's presentable spelling is the
+  // folder inside Tine's Documents; the sandbox prefix is not shown. Show in
+  // folder (desktop only) still takes the full canonical root.
+  it("shows the backend's presentable path, not the full sandbox path, and reveals the full one", async () => {
+    const full = "/private/var/mobile/Containers/Data/Application/0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C/Documents/Graphs/Work notes";
+    setGraphMeta({ root: full, display_root: "Documents/Graphs/Work notes" } as GraphMeta);
+    const reveal = vi.spyOn(backend(), "revealKnownGraph").mockResolvedValue(undefined);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <GraphFolderSetting />, root);
+    const value = root.querySelector("[data-graph-folder-value]")!.textContent;
+    expect(value).toBe("Documents/Graphs/Work notes");
+    expect(value).not.toContain("Containers");
+    button(root, "Show in folder")!.click();
+    await tick();
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(full);
+    dispose();
+  });
+
   // The capability follows the build's platform: the native reveal commands
   // exist for cfg(desktop) only (platform.rs reveal_page_source).
   for (const [platform, expected] of [["desktop", true], ["ios", false], ["android", false]] as const) {

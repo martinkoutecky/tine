@@ -162,7 +162,7 @@ fn static_export(
     let store = graph(&root.join("graph"), files);
     let output = root.join("output");
     fs::create_dir_all(&output).unwrap();
-    publish_live(&store, &output, "Site", all_pages, &bundle()).unwrap();
+    publish_live(&store, &output, "Site", all_pages, true, &bundle()).unwrap();
     store.close();
     let site = output.join("site");
     (
@@ -176,7 +176,7 @@ fn static_site(root: &Path, files: &[(&str, &str)]) -> BTreeMap<String, String> 
     let store = graph(&root.join("graph"), files);
     let output = root.join("output");
     fs::create_dir_all(&output).unwrap();
-    let receipt = publish_static(&store, &output, "Site", false).unwrap();
+    let receipt = publish_static(&store, &output, "Site", false, true).unwrap();
     store.close();
     site_files(Path::new(&receipt.path))
 }
@@ -337,6 +337,7 @@ fn closure_request(name: &str, host: Option<&str>) -> QueryExportRequest {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: true,
+        include_comments: None,
     }
 }
 
@@ -534,6 +535,7 @@ fn clash_request(name: &str) -> QueryExportRequest {
         replace: false,
         asset_budget_bytes: None,
         include_query_text: false,
+        include_comments: None,
     }
 }
 
@@ -650,4 +652,43 @@ fn not_namespace_is_live_only() {
     assert!(row(&snapshot, "old/sub")
         .get("namespace_excluded")
         .is_none());
+}
+
+/// GH #881: `tine.breadcrumbs:: false` is presentation only. A published query
+/// record's key must not carry it (the renderer leaves it out of its lookup, so
+/// a record keyed with it is never found), and a generated query home keeps it
+/// so the export hides breadcrumbs like the source block.
+#[test]
+fn breadcrumb_switch_is_not_part_of_a_published_query_key() {
+    let _integration_guard = crate::integration_lock();
+    let files: &[(&str, &str)] = &[(
+        "pages/Shop.md",
+        "- {{query (task TODO)}}\n  tine.breadcrumbs:: false\n- TODO Buy apples\n",
+    )];
+    let keyed_with_breadcrumbs = |snapshot: &Value| {
+        snapshot["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| {
+                record["properties"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|pair| pair[0] == "tine.breadcrumbs")
+            })
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = static_snapshot(dir.path(), files, true);
+    assert!(!snapshot["queries"].as_array().unwrap().is_empty());
+    assert!(!keyed_with_breadcrumbs(&snapshot));
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut request = closure_request("Shopping list", None);
+    request.argument = "(task TODO)".into();
+    request.dialect = QueryTextDialect::MacroQuery;
+    request.properties = vec![("tine.breadcrumbs".into(), "false".into())];
+    let (snapshot, _) = query_export(dir.path(), files, &request);
+    assert!(!keyed_with_breadcrumbs(&snapshot));
+    assert!(snapshot.to_string().contains("tine.breadcrumbs:: false"));
 }

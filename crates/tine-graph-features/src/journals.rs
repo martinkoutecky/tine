@@ -112,7 +112,6 @@ pub struct FeedRead {
 fn feed_read(read: tine_store::PageRead) -> FeedRead {
     let mut doc = read.doc;
     doc.rev = Some(read.rev.into());
-    doc.read_only = read.read_only.is_some();
     FeedRead { id: read.id, doc }
 }
 
@@ -1040,12 +1039,7 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
     let (bytes, _) = store
         .read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
         .map_err(store_error)?;
-    String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "stream did not contain valid UTF-8",
-        )
-    })
+    String::from_utf8(bytes).map_err(|_| tine_store::not_utf8())
 }
 
 /// Trash one top-level journal with a revision guard, retrying an external

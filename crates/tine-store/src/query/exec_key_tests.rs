@@ -245,6 +245,14 @@ fn page_property_presence_enumerates_no_fileless_rows() {
             let (scanned, _) = fileless(graph, source, dialect, false);
             assert_eq!(narrowed, scanned, "{source}");
             assert!(!narrowed.contains("Ghost"), "{source}: {narrowed}");
+            let today = JournalDate::today();
+            let (query, _) = parse_query_text(source, dialect, today);
+            let resolved = resolve_for_execution(&query, &ExecutionContext::none(), today);
+            assert!(
+                !plan(graph, resolved.query(), today, false)
+                    .may_list_fileless(None, &graph.config().journal_format()),
+                "{source}: even unknown fileless changes cannot touch a property-required plan"
+            );
             counts.push(rows);
         }
         // The counter is live: a page query without a necessary condition

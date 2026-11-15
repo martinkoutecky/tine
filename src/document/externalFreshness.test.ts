@@ -86,6 +86,16 @@ describe("a checkout-sized batch (graph-changed-bulk)", () => {
 // (`reading_a_contained_page_again_publishes_nothing`). With a store that does,
 // each read starts the next one.
 describe("a shown page no host holds", () => {
+  it("a read retired by graph switch cannot restart the new graph's feed", async () => {
+    let deliver!: (dto: PageDto) => void;
+    vi.spyOn(backend(), "getPage").mockImplementationOnce(() => new Promise(resolve => { deliver = resolve as never; }));
+    const request = applyGraphChange(changed("Open", "journal"));
+    resetStore();
+    deliver(page("Open", ["old graph text"]));
+    await request;
+    expect(pageByName("Open")).toBeUndefined();
+    expect(feedRestarts).toBe(0);
+  });
   const readsFor = async (announcedByReads: number) => {
     reads = [];
     let left = announcedByReads;

@@ -34,7 +34,7 @@ export function migrateLinkAutocompletePolicy(value: unknown, legacy?: boolean |
  * and toasts; return does not confirm persistence. O(1) plus backend write. */
 export function setLinkAutocompletePolicy(next: LinkAutocompletePolicy): void {
   latestOwner(refreshScope, "policy");
-  writePreference(policy, setPolicy, next, (value) => backend().setAppString(POLICY_KEY, value), "link autocomplete policy");
+  writePreference(policy, setPolicy, next, (value) => backend().setAppString(POLICY_KEY, value), msg("toast-save-link-autocomplete-failed"));
 }
 
 /** Refresh this WebView from the device-local string key; Quick Capture refreshes

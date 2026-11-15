@@ -213,6 +213,49 @@ test("the query scenario is in the default set, its metrics are registered, and 
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("query settle timings require the candidate's busy signal on both cold and warm edits", () => {
+  for (const name of ["query.settledMs", "queryWarm.settledMs"]) {
+    assert.equal(metricInfo(name).candidateOnly, true, name);
+  }
+  assert.notEqual(metricInfo("query.publishedMs").candidateOnly, true);
+  assert.notEqual(metricInfo("query.reflectMs").candidateOnly, true);
+});
+
+test("summarize-only excludes candidate-only baseline samples from comparisons and verdicts", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-candidate-only-"));
+  const arms = ["baseline", "candidate"].map((id) => ({ id, source: id, sha256: id, sourceRevision: id, adapter: "ipc" }));
+  fs.writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ arms, scenarios: ["query"], loadAvgStart: 0, loadAvgEnd: 0 }));
+  for (const arm of arms) {
+    const trial = path.join(dir, "trials", `query-${arm.id}-01`);
+    fs.mkdirSync(trial, { recursive: true });
+    const settled = arm.id === "baseline" ? 443 : 1136;
+    fs.writeFileSync(path.join(trial, "result.json"), JSON.stringify({
+      arm: arm.id, scenario: "query", run: 1, failures: {}, series: {},
+      metrics: { "query.settledMs": settled, "queryWarm.settledMs": settled, "carry2.unfreezeMs": settled, "query.publishedMs": arm.id === "baseline" ? 418 : 412 },
+    }));
+  }
+  const noise = path.join(dir, "noise.json");
+  fs.writeFileSync(noise, JSON.stringify({ summary: { metrics: { "query.settledMs": { spreadPct: 1 }, "queryWarm.settledMs": { spreadPct: 1 } } } }));
+  const run = spawnSync(process.execPath, [path.join(HERE, "bench-storage-ab.mjs"), "--summarize-only", "--out", dir, "--noise-floor", noise], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  const { summary } = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+  const markdown = fs.readFileSync(path.join(dir, "comparison.md"), "utf8");
+  for (const name of ["query.settledMs", "queryWarm.settledMs", "carry2.unfreezeMs"]) {
+    const metric = summary.metrics[name];
+    assert.equal(metric.cells.baseline, null, name);
+    assert.equal(metric.cells.candidate.median, 1136, name);
+    assert.equal(metric.deltaPct, null, name);
+    assert.equal(metric.spreadPct, null, name);
+    assert.equal(metric.absDiff, null, name);
+    assert.equal(metric.noisy, false, name);
+    assert.equal(metric.verdict, "candidate-only", name);
+    assert.match(markdown.split("\n").find((line) => line.startsWith(`| ${name} |`)), /\| candidate-only \|$/);
+  }
+  assert.equal(summary.metrics["query.publishedMs"].cells.baseline.median, 418);
+  assert.equal(summary.metrics["query.publishedMs"].cells.candidate.median, 412);
+  assert.notEqual(summary.metrics["query.publishedMs"].deltaPct, null);
+});
+
 const haveGcc = spawnSync("gcc", ["--version"], { encoding: "utf8" }).status === 0;
 test("iotrace sees a write, fsync, rename and unlink made by a thread created after attach", { skip: !haveGcc || process.platform !== "linux" || process.arch !== "x64" }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "iotrace-"));

@@ -103,3 +103,8 @@ reference-evidence-occurrence-label = Jump to mention { $index } of { $total }
 # Helper-return and component-prop interface text (GH #107).
 export-prose-plain-text-output-has-no-markup-markers-to-remove = Plain text output has no markup markers to remove
 export-prose-only-applies-to-plain-text-output = Only applies to plain text output
+export-include-comments = Include comments
+export-comment = Comment
+export-definition-cannot-edit = The export definition cannot be edited.
+export-definition-changed = The export definition changed. Review it again.
+export-definition-save-failed = Could not save { $page }.

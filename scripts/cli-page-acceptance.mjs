@@ -5,6 +5,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 
 const [binary, output] = process.argv.slice(2);
 assert(binary && output, "supply APP and a new artifact directory");
@@ -28,11 +29,12 @@ try {
       : "title:: Project\nalias:: Shortcut\n\n- target\n  author:: Martin\n");
     fs.writeFileSync(path.join(graph, `pages/Project___child.${format}`), `${prefix}child\n`);
     fs.writeFileSync(path.join(graph, `pages/Links.${format}`), `${prefix}[[Project]] [[Project/child]]\n`);
-    const env = { ...process.env, TINE_RUN:"", TINE_AUTHOR:"slice3", XDG_DATA_HOME:path.join(base,"data"), XDG_CONFIG_HOME:path.join(base,"config"), XDG_CACHE_HOME:path.join(base,"cache"), XDG_STATE_HOME:path.join(base,"state") };
+    const fixture = accountHomeFixture(base, base, { ...process.env, HOME:base, TINE_RUN:"", TINE_AUTHOR:"", XDG_DATA_HOME:path.join(base,"data"), XDG_CONFIG_HOME:path.join(base,"config"), XDG_CACHE_HOME:path.join(base,"cache"), XDG_STATE_HOME:path.join(base,"state") });
+    const env = fixture.env;
     const log = fs.openSync(path.join(base,"serve.log"), "w");
     const owner = spawn(app, ["serve",graph], { env,stdio:["ignore",log,log] });
     fs.closeSync(log);
-    owners.push({owner,graph,env});
+    owners.push({owner,graph,env,fixture});
     function cli(args, expected = 0, json = true) {
       const result = spawnSync(app, [...args,"--graph",graph,...(json ? ["--json"] : [])], {env,encoding:"utf8",timeout:30_000});
       assert.equal(result.status, expected, `${args.join(" ")}: ${result.stderr}`);
@@ -48,6 +50,37 @@ try {
       await sleep(100);
     }
     assert.equal(cli(["status"]).owner,"serve");
+    // #930: exercise the literal CLI and inspect the saved Markdown/Org bytes.
+    env.TINE_AUTHOR = "Personal Script";
+    const personalFile = path.join(graph, `pages/Personal.${format}`);
+    const personalWrite = args => {
+      const reply = cli([...args,"--no-author"]);
+      assert(!fs.readFileSync(personalFile,"utf8").includes("tine.author"),args.join(" "));
+      return reply;
+    };
+    personalWrite(["add", `${prefix}my task\n${format === "org" ? "** " : "  - "}child`, "--page", "Personal"]);
+    const personal = () => cli(["page","show","Personal"]).page.blocks;
+    const address = i => `Personal/${personal()[i].handle}`;
+    personalWrite(["edit",address(0),"my edited task"]);
+    const personalRef = personalWrite(["ref",address(0)]);
+    personalWrite(["embed",personalRef.uuid]);
+    personalWrite(["add","another task","--page","Personal"]);
+    personalWrite(["move",address(1),"--before",address(0)]);
+    personalWrite(["prop","set",address(0),"status","done"]);
+    personalWrite(["prop","remove",address(0),"status"]);
+    personalWrite(["delete",address(0),"--yes"]);
+    cli(["page","create","Personal Empty","--no-author"]);
+    cli(["page","delete","Personal Empty","--yes","--no-author"]);
+    const unchanged = fs.readFileSync(personalFile,"utf8");
+    cli(["add","refused","--page","Personal","--author",""],6);
+    assert.equal(fs.readFileSync(personalFile,"utf8"),unchanged);
+    const conflict = spawnSync(app,["add","refused","--page","Personal","--no-author","--author","Ada","--graph",graph],{env,encoding:"utf8",timeout:30_000});
+    assert.equal(conflict.status,2,conflict.stderr);
+    assert(conflict.stderr.includes("--no-author") && conflict.stderr.includes("--author"));
+    assert.equal(fs.readFileSync(personalFile,"utf8"),unchanged);
+    env.TINE_AUTHOR = "";
+    cli(["add","default task","--page","Default Author"]);
+    assert(fs.readFileSync(path.join(graph,`pages/Default Author.${format}`),"utf8").includes(format === "org" ? ":tine.author: agent" : "tine.author:: agent"));
     cli(["page","rename","RefOnly","RenamedRef"]);
     cli(["page","rename","Ghost","NewGhost"]);
     assert.equal(cli(["page","show","FilelessLinks"]).page.blocks[0].raw,"[[RenamedRef]] [[NewGhost]] [[NewGhost/child]] [[Home]]");
@@ -94,14 +127,16 @@ try {
     const stopped = spawnSync(app,["serve",graph,"--stop"],{env,encoding:"utf8",timeout:30_000});
     assert.equal(stopped.status,0,stopped.stderr);
   }
-  fs.writeFileSync(path.join(root,"receipt.json"),JSON.stringify({commit,passed:true,formats:["md","org"],verbs:["page create","page rename","page delete","ref","embed"],transcript},null,2)+"\n");
-  console.log("PASS: five verbs against real serve owners, Markdown and Org");
+  fs.writeFileSync(path.join(root,"receipt.json"),JSON.stringify({commit,passed:true,formats:["md","org"],verbs:["add","edit","move","prop set","prop remove","delete","page create","page rename","page delete","ref","embed"],transcript},null,2)+"\n");
+  console.log("PASS: CLI writes and author opt-out against real serve owners, Markdown and Org");
 } catch (error) {
   fs.writeFileSync(path.join(root,"failure.json"),JSON.stringify({commit,journey:"CLI page and helper verbs",expected:"durable owner operations in both formats",observed:String(error),classification:"ambiguous",transcript},null,2)+"\n");
   throw error;
 } finally {
-  for (const {owner,graph,env} of owners) {
+  for (const {owner,graph,env,fixture} of owners) {
     spawnSync(app,["serve",graph,"--stop"],{env,encoding:"utf8",timeout:30_000});
     if (owner.exitCode === null) owner.kill("SIGTERM");
+    fixture.close?.();
+    fixture.verify({ requireLease:false });
   }
 }

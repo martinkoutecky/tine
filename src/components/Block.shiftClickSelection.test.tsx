@@ -52,7 +52,7 @@ describe("Shift+click selects whole blocks from the editing caret (GH #924)", ()
         press(host, "A");
         editorIn(host).select(7);
         const event = press(host, "D", true, padding);
-        expect(selectedIds()).toEqual(["A", "B", "C", "D"]);
+        expect(selectedIds()).toEqual(["A", "B", "C", "D", "child"]);
         expect(hasSelection()).toBe(true);
         expect(editingId()).toBeNull();
         expect(maybeEditorIn(host)).toBeNull();
@@ -60,7 +60,7 @@ describe("Shift+click selects whole blocks from the editing caret (GH #924)", ()
         expect(host.querySelectorAll(".block-main.selected")).toHaveLength(4);
         // Whole-block operations retain all text and the collapsed endpoint's
         // children, regardless of the character under the pointer.
-        expect(selectionMarkdown(true)).toContain("Block D has text after the click\n\t- Last block child");
+        expect(selectionMarkdown()).toContain("Block D has text after the click\n\t- Last block child");
         press(host, "B", true, padding);
         expect(selectedIds()).toEqual(["A", "B"]);
       } finally { dispose(); }
@@ -73,7 +73,7 @@ describe("Shift+click selects whole blocks from the editing caret (GH #924)", ()
       press(host, "D");
       editorIn(host).select(7);
       press(host, "A", true);
-      expect(selectedIds()).toEqual(["A", "B", "C", "D"]);
+      expect(selectedIds()).toEqual(["A", "B", "C", "D", "child"]);
       expect(editingId()).toBeNull();
     } finally { dispose(); }
   });
@@ -104,7 +104,7 @@ describe("Shift+click selects whole blocks from the editing caret (GH #924)", ()
     } finally { dispose(); }
   });
 
-  it.each(["ArrowUp", "ArrowDown"])("keeps the existing keyboard %s range selection", key => {
+  it.each(["ArrowUp", "ArrowDown"])("keyboard %s first selects the current block, as Logseq does", key => {
     const disposeKeys = installKeybindings();
     const { host, dispose } = mount("page", "main");
     try {
@@ -112,7 +112,7 @@ describe("Shift+click selects whole blocks from the editing caret (GH #924)", ()
       const editor = editorIn(host);
       editor.select(key === "ArrowUp" ? 0 : editor.value().length);
       editor.keydown({ key, shiftKey: true });
-      expect(selectedIds()).toEqual(key === "ArrowUp" ? ["A", "B"] : ["B", "C"]);
+      expect(selectedIds()).toEqual(["B"]);
       expect(editingId()).toBeNull();
     } finally { dispose(); disposeKeys(); }
   });

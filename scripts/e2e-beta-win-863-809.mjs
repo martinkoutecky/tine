@@ -19,6 +19,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { x11Tools } from "./lib/e2e-x11.mjs";
 import { startWebdriverApplication, stopWebdriverApplication, tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 
 if (!["linux", "win32"].includes(process.platform)) throw new Error("This probe supports Linux and Windows");
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -199,7 +200,7 @@ try {
         [...document.querySelectorAll(".references-count")].some(el => el.textContent.trim() === "1")), { timeout: 15_000 });
       if (fs.existsSync(journalFile)) throw new Error("Virtual fixture unexpectedly already has a journal file");
       await browser.$(".main-content .page-section .block-content-wrapper").click();
-      const editor = await browser.$(".main-content textarea.block-editor");
+      const editor = await browser.$(editorSelector(".main-content"));
       await editor.waitForExist({ timeout: 10_000 });
       if (creates) {
         expectedBody = "GH863 created in feed";
@@ -334,7 +335,7 @@ try {
       { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 },
     ] }]);
     await browser.releaseActions();
-    await browser.waitUntil(() => browser.execute(() => !!document.querySelector("textarea.block-editor")), { timeout: 5000 });
+    await browser.waitUntil(() => withEditor(browser, "", editor => !!editor), { timeout: 5000 });
     if (process.platform === "linux") {
       const title = (await browser.getTitle()).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const id = xdo("search", "--onlyvisible", "--name", `^${title}$`).split(/\s+/)[0];

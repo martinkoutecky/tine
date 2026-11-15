@@ -1,5 +1,6 @@
 //! Pure document identity and DTO projection.
 
+use crate::block_id::BlockId;
 use crate::doc::{self, DocBlock};
 use crate::model::{BlockDto, Format, PageDto, PageKind};
 use sha2::{Digest, Sha256};
@@ -59,7 +60,7 @@ mod runtime_id_tests {
         let mut roots = vec![DocBlock::new("parent"), DocBlock::new("sibling")];
         roots[0].children.push(DocBlock::new("child"));
         assign_doc_runtime_ids(&mut roots, "pages/old.md");
-        let live = roots[0].uuid.clone();
+        let live = roots[0].uuid.to_string();
         let mut visited = Vec::new();
         visit_doc_runtime_ids(&roots, "pages/./new.md", |_, id| {
             visited.push(id.to_string())
@@ -73,9 +74,9 @@ mod runtime_id_tests {
         assert_eq!(
             visited,
             vec![
-                loaded[0].uuid.clone(),
-                loaded[0].children[0].uuid.clone(),
-                loaded[1].uuid.clone()
+                loaded[0].uuid.to_string(),
+                loaded[0].children[0].uuid.to_string(),
+                loaded[1].uuid.to_string()
             ]
         );
     }
@@ -106,7 +107,7 @@ mod runtime_id_tests {
             let mut actual = Vec::new();
             fn collect(blocks: &[DocBlock], out: &mut Vec<(String, Option<String>)>) {
                 for block in blocks {
-                    out.push((block.uuid.clone(), block.property("id")));
+                    out.push((block.uuid.to_string(), block.property("id")));
                     collect(&block.children, out);
                 }
             }
@@ -149,7 +150,7 @@ fn assign_runtime_ids_rec(blocks: &mut [DocBlock], parent: Uuid) {
         // path, while doing constant work per node (O(blocks)).
         let structural = structural_child(parent, sibling_index);
         if block.uuid.is_empty() {
-            block.uuid = structural.to_string();
+            block.uuid = structural.into();
         }
         assign_runtime_ids_rec(&mut block.children, structural);
     }
@@ -171,7 +172,7 @@ pub fn assign_doc_runtime_ids(roots: &mut [DocBlock], owner_rel_path: &str) {
 /// block whose positional key is taken gets the next free key derived from it
 /// (deterministic, still a runtime locator). O(blocks) expected.
 pub fn assign_doc_runtime_ids_unique(roots: &mut [DocBlock], owner_rel_path: &str) {
-    fn kept(blocks: &[DocBlock], into: &mut HashSet<String>) {
+    fn kept(blocks: &[DocBlock], into: &mut HashSet<BlockId>) {
         for block in blocks {
             if !block.uuid.is_empty() {
                 into.insert(block.uuid.clone());
@@ -179,15 +180,15 @@ pub fn assign_doc_runtime_ids_unique(roots: &mut [DocBlock], owner_rel_path: &st
             kept(&block.children, into);
         }
     }
-    fn fill(blocks: &mut [DocBlock], parent: Uuid, taken: &mut HashSet<String>) {
+    fn fill(blocks: &mut [DocBlock], parent: Uuid, taken: &mut HashSet<BlockId>) {
         for (sibling_index, block) in blocks.iter_mut().enumerate() {
             let structural = structural_child(parent, sibling_index);
             if block.uuid.is_empty() {
                 let mut key = structural;
-                while taken.contains(&key.to_string()) {
+                while taken.contains(&key.into()) {
                     key = deterministic_runtime_uuid(key, b"taken");
                 }
-                block.uuid = key.to_string();
+                block.uuid = key.into();
                 taken.insert(block.uuid.clone());
             }
             fill(&mut block.children, structural, taken);
@@ -235,7 +236,7 @@ fn block_runtime_id(b: &DocBlock) -> String {
         !b.uuid.is_empty(),
         "DocBlock must have an explicit runtime owner before DTO projection"
     );
-    b.uuid.clone()
+    b.uuid.to_string()
 }
 
 /// Convert a frontend DTO block back to a doc block, keeping the frontend's
@@ -249,7 +250,7 @@ pub fn dto_block_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
         .iter()
         .map(|c| dto_block_to_doc(c, is_org))
         .collect();
-    block.uuid = b.id.clone();
+    block.uuid = (&b.id).into();
     block.set_org(is_org);
     block
 }
@@ -284,12 +285,13 @@ pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
         id: block_runtime_id(b),
         has_id: Some(b.projection().regions.id.is_some()),
-        raw: b.raw.clone(),
+        raw: b.raw.to_string(),
         collapsed: b.collapsed(),
         children: Vec::new(),
         breadcrumb: Vec::new(),
         page_property: false,
         page_preamble: false,
+        comment: false,
         // All header facets off the one lsdoc projection (marker/priority/heading/
         // properties/scheduled/deadline) — priority is header-position only, matching
         // the chip, so a loaded block never shows a priority the edit path wouldn't.

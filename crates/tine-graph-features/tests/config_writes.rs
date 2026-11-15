@@ -7,7 +7,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::config::Config;
 use tine_core::model::Format;
@@ -15,13 +14,7 @@ use tine_graph_features::config;
 use tine_store::{Area, FaultPoint, Store};
 
 fn scratch(label: &str, input: Option<&str>) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tine-config-writes-{label}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&dir);
+    let dir = crate::test_support::fresh_dir(&format!("tine-config-writes-{label}-"));
     fs::create_dir_all(dir.join("pages")).unwrap();
     fs::create_dir_all(dir.join("logseq")).unwrap();
     if let Some(input) = input {
@@ -115,6 +108,40 @@ fn setters() -> Vec<(&'static str, Setter, fn(&Config) -> bool)> {
             |c| c.start_of_week == 3,
         ),
     ]
+}
+
+#[test]
+fn unreadable_settings_use_the_config_refusal_family_without_changing_bytes() {
+    let _integration_guard = crate::exclusive_integration_lock();
+    let dir = scratch("unreadable-family", None);
+    let bytes = b"{:a \"\xff\"}\n";
+    fs::write(dir.join("logseq/config.edn"), bytes).unwrap();
+    let store = open(&dir);
+    for (key, setter, _) in setters() {
+        let before = tine_store::cost_counters::snapshot();
+        let error = setter(&store).unwrap_err();
+        let after = tine_store::cost_counters::snapshot();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{key}");
+        assert!(
+            error.to_string().starts_with("config-unreadable: "),
+            "{key}: {error}"
+        );
+        assert_eq!(
+            after.store_reads, before.store_reads,
+            "{key}: reuse the known problem"
+        );
+        assert_eq!(after.fsyncs, before.fsyncs, "{key}: refused before writes");
+        assert_eq!(
+            after.bytes_written, before.bytes_written,
+            "{key}: no bytes written"
+        );
+        assert_eq!(
+            fs::read(dir.join("logseq/config.edn")).unwrap(),
+            bytes,
+            "{key}"
+        );
+    }
+    store.close();
 }
 
 /// DUP-3 (master 4ae2f6f4f): the depth-blind keyword search found a key

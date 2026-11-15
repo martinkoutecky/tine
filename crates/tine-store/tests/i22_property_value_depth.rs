@@ -23,8 +23,7 @@ fn run_small_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
 #[test]
 fn a_deep_property_value_does_not_abort_the_index_build() {
     let _integration_guard = crate::integration_lock();
-    let dir: PathBuf =
-        std::env::temp_dir().join(format!("tine-i22-prop-depth-{}", std::process::id()));
+    let dir: PathBuf = crate::test_support::fresh_dir("tine-i22-prop-depth-");
     let _ = std::fs::remove_dir_all(&dir);
     for sub in ["pages", "journals"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();

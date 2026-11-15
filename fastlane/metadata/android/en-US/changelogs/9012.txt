@@ -1,0 +1,1 @@
+Twelfth Tine 0.9 Beta. Copying a collapsed block now includes the children it hides. Going back after zooming into a block keeps your place more reliably. In Org pages, Linked References find links inside emphasis and tags. An empty task stays a task when it gets an id, is folded or scheduled. A content-free diagnostic note helps find why a new block sometimes gets no cursor.

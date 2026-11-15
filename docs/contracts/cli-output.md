@@ -15,13 +15,40 @@ prints `Published N pages to PATH` on success. If public-page selection publishe
 stderr also explains that no publishable page has `public:: true` and names `--all-pages` as the override.
 This warning keeps the successful export status (exit 0).
 
-`tine export query GRAPH '((UUID))' [--name NAME] [--force]` uses the same
-plain-text success line and warning/recovery reporting. It publishes the one
-query block's result pages into `published-queries/<folder>/` through the shared
+Static, live and query exports include comment threads by default. `--no-comments`
+omits complete threads and leaves their body hosts intact. Static HTML labels
+included comments as annotations (author/date where known); the live viewer uses
+the app's margin. Query export also reads the definition's `tine.comments:: false`;
+the CLI flag excludes comments for that run without editing the definition.
+
+`tine export query GRAPH ('((UUID))' | --query TEXT | --page PAGE) [--name NAME] [--force]` uses the same
+plain-text success line and warning/recovery reporting. It publishes the selected
+query's result pages into `published-queries/<folder>/` through the shared
 query publisher in the graph's existing app or headless owner (starting one when needed).
 Unknown UUIDs, non-query blocks, multiple queries and existing
 output without `--force` exit 1 with an explanation on stderr. A bare UUID is
 also accepted. Sheets retain the documented CLI plain-outline rendering.
+
+Exactly one source is required; missing or conflicting sources exit 2 before
+contacting an owner. Inline `--query` requires `--name` and accepts the complete
+argument of `{{query …}}`: OG simple queries or advanced queries, selected by
+the shared Rust macro-query discriminator (no TQL auto-detection). It has no
+host page or block properties. `--page` resolves names exactly as `page show`
+(case, aliases, namespaces and journal titles), then selects the first
+parser-recognized query in depth-first document order: parent before children,
+siblings in authored order, first query within a block. It does not follow
+embeds; code and properties count only when the body parser recognizes a query.
+A page without a query exits 1. Page selection uses the query's title, else
+`Query PAGE` with the resolved page name; UUID naming remains `Query UUID`.
+The selected block retains its properties and host context. All sources share
+the publisher's validation, privacy rules, refusal and recovery behavior.
+
+Source resolution adds no durable writes. Inline input costs O(text bytes);
+page lookup uses the existing bounded name resolver, file inventory and named
+corpus, then O(page bytes) parser work up to the first query, without visiting
+unrelated pages. UUID resolution retains its indexed candidate-page cost.
+Each invocation sends one publication verb after owner discovery; query
+evaluation, review and output retain the shared publisher's cost bounds.
 
 ## One payload, two renderings
 
@@ -103,29 +130,46 @@ its reason: `no-owner-endpoint` (no endpoint for the selected graph),
 A frontend that fails to answer within 5 seconds
 returns `busy` on stderr; it is not reported as an absent page.
 
-Links use the existing current-graph `tine://page/NAME` route and block URL
-producer. Page URLs open in the active graph; they are not graph UUID bookmarks.
-Block URLs use the existing block identity, including runtime UUIDs; no `id::`
-is created, so an ID-less block link may stop resolving after structural edits.
-Newly inserted blocks with only a transient key have `block_url: null` until
-they have a linkable UUID.
-For durable graph-qualified bookmarks use Copy Tine link in the app.
+Page URLs are `tine://page/NAME?graph=UUID`, made by the same `pageLink`
+producer as Copy Tine link. Before asking a graph window, the owner obtains the
+UUID through `Store::ensure_link_identity`: one bounded identity read, or a
+one-time guarded create of `logseq/tine-graph-id` when missing. If that fails
+(including a read-only graph, refused publication or malformed existing identity),
+the command returns the existing `internal` error (`cli-write-failed`, exit 1),
+with the cause on stderr and no page payload. A failed publication may have left
+the complete identity visible; retry reuses it. An unqualified page link would
+open the active graph rather than reliably naming the requested graph. `block_url` is
+`tine://block/UUID` for the editing block's authored `id::`, the address Copy Tine link
+gives a block, and is null for a block with no authored `id::` (including one just inserted
+or loaded without one): its runtime id changes at the next load, so a saved link would
+silently stop resolving. The verb never writes an `id::`; Copy block ref or Copy Tine link
+on the block does that explicitly.
 
 The operation's lower bound and implementation are one owner request/reply and
-one frontend question/answer, O(name + URL bytes), zero graph reads, writes,
-stats, fsyncs or renders after ordinary CLI endpoint discovery. There is no
-cached route: the frontend reads its existing focused-window/pane state once.
+one frontend question/answer, O(name + URL bytes + bounded identity I/O).
+After ordinary CLI endpoint discovery, a graph-window request reads only the
+small identity (at most 128 bytes) through its existing bounded metadata checks;
+the first request creates one 37-byte file through the guarded transaction
+(temp, fsync, no-clobber publication, lock). Repeated requests only read it.
+There are zero other graph reads, writes, stats, fsyncs or renders. A missing
+owner/window returns absence without identity work. There is no
+cached route: the frontend reads its existing focused-window/pane state once, and
+the authored `id::` from the block's loaded text.
 The existing owner hello exchange remains part of connection setup: including
 it, a successful invocation has two owner socket round trips and one frontend
-question/answer. Only one owner verb is sent.
+question/answer. Only one owner verb is sent. A test pins the question and answer
+counts, one identity read per request and exactly one create across repeats,
+zero other store work and a 50 ms budget per request below the socket
+(`owner::window::current_page_tests`), and the real-app journey pins one
+`owner_current_page_answer` per invocation and a 1.5 s median for the whole command.
 
 | field | type | presence | disclosure | meaning |
 |---|---|---|---|---|
 | `schema` | string | always | no | `"tine.cli/1"` |
 | `kind` | string | always | no | `"current-page"` or `"no-current-page"` |
 | `name` | string | optional | no | current page's displayed name; present on `current-page` |
-| `url` | string | optional | no | current-graph page URL; present on `current-page` |
-| `block_url` | string or null | optional | no | focused editor's block URL; present on `current-page`, null without an editor |
+| `url` | string | optional | no | graph-qualified page URL; present on `current-page` |
+| `block_url` | string or null | optional | no | focused editor's block URL; present on `current-page`, null without an editor or without an authored `id::` on its block |
 | `reason` | string | optional | yes | why there is no page; present on `no-current-page` |
 
 ### `page.show` / `journal`
@@ -336,7 +380,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   (`JournalFormat::absent_link_is_journal`, the rule `WholeGraph::link_target` uses), never a second file under
   `pages/`; an ordinary page file with exactly that name keeps its own file (D-20261107-KD, where OG would
   count that file as the same page as the journal: `convert-page-if-journal-impl`). Content is a page fragment in the
-  page's format (Markdown `- ` or Org outline). Every created block gets `tine.author::` (from `--author`, else
+  page's format (Markdown `- ` or Org outline). By default, every created block gets `tine.author::` (from `--author`, else
   `TINE_AUTHOR`, else `agent`); edits add one only for an explicit `--author`. Names are trimmed for both block attribution and run commits. An explicit blank `--author` is refused; blank or whitespace-only `TINE_AUTHOR` counts as unset. An anchor without `id::` gets one in the same write. A
   `((uuid))` that names no block is refused `broken-ref`.
   When `--under` targets a comment or any descendant of its thread, each
@@ -345,7 +389,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   insertion gets no date. Existing threads and their nesting stay unchanged.
   When creating a page, a properties-only leading pre-block, or qualifying first Markdown
   properties-only bullet, becomes the page header. It receives no implicit `tine.author`;
-  outline blocks still do. Existing pages keep add's outline-insertion behavior.
+  outline blocks still do unless `--no-author` is set. Existing pages keep add's outline-insertion behavior.
 - **`page.prop`**: `tine prop set --page PAGE KEY VALUE` / `tine prop remove --page PAGE KEY`,
   or `--journal` / `--journal=DATE` instead of `--page`. Exactly one page/journal target is
   required; the page must already exist. Wire args: `page` or `journal`, `key`, `value`
@@ -377,7 +421,7 @@ or is killed while its write stands in line does not cancel it: the write can la
   metadata nor counts as naming a key.
   `--author NAME` on the command line sets `tine.author::`, replacing a retained or supplied one and adding one
   to a block without it. An empty name is refused (`refused:kernel`, malformed input). `TINE_AUTHOR` alone names
-  the run's commits and leaves `tine.author::` alone: set once for a session, it would overwrite people's attribution
+  the run's commits and leaves `tine.author::` alone on edits (on adds it names new blocks by default): set once for a session, it would overwrite people's attribution
   on every edit.
   Text-only edits preserve the source position and order of hidden rows and LOGBOOK when that keeps
   property ownership and creates no more property groups than canonical placement. Otherwise the join
@@ -395,6 +439,11 @@ or is killed while its write stands in line does not cancel it: the write can la
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
   nothing changes. **`--author NAME`** (or `TINE_AUTHOR`, default `agent`) names the agent on created blocks'
   `tine.author::` and on the run's commits; on `block.edit`, see above.
+  **`--no-author`** skips automatic block attribution for personal scripts, including every
+  block in an added outline. It overrides `TINE_AUTHOR` for block attribution, keeps existing
+  and explicitly supplied properties as an app edit does, and leaves run commit identity unchanged.
+  It conflicts with `--author NAME` (usage error, exit 2). An explicitly empty `--author`
+  remains refused (exit 6). MCP does not expose this flag.
 
 Kind `written`. Write replies carry no page text.
 
@@ -828,4 +877,4 @@ The set is closed (`verbs.rs::Diag`) and this table is pinned to it.
 | `cli-read-failed` | a references, block preview or search read failed |
 | `cli-query-failed` | a parsed query failed to run |
 | `cli-store-failed` | the Store failed a page read in a way no code names |
-| `cli-write-failed` | a write's plan failed on an I/O error, or planned no bytes |
+| `cli-write-failed` | a write's plan failed on an I/O error, planned no bytes, or `page.current` could not obtain the graph link identity |

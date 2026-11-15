@@ -20,6 +20,7 @@ const META: GraphMeta = {
   journal_file_name_format: "yyyy_MM_dd",
   preferred_format: "md",
   macros: {},
+  enable_tooltip: true, file_name_format: "legacy", doc_mode_enter_for_new_block: false, logical_outdenting: false, enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false,
   enable_timetracking: true,
   show_brackets: true,
   logbook_with_second_support: true,
@@ -143,7 +144,6 @@ async function loadHarness(
     resetStore, flushAll, tryFreezeGraphRewrite, bindHost: vi.fn(async () => {}),
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
-    reloadHlsIfLoaded: vi.fn(),
     createPage,
     journalTemplatePage: (title: string, blocks: unknown[], page?: PageRead | null) => ({
       name: title, kind: "journal", title, pre_block: page?.pre_block ?? null, blocks, format: page?.format,
@@ -1078,12 +1078,12 @@ it("opens with the config-read problem available to Settings and clears it on a 
   const failure = await import("./uiFailure");
   const report = vi.spyOn(failure, "reportUiFailure");
   expect(await loadGraphPath(META.root)).toMatchObject({ kind: "loaded" });
-  const { graphConfigProblem } = await import("./graph");
-  expect(graphConfigProblem()).toEqual(problem);
+  const { graphConfigUnreadable } = await import("./graphConfig");
+  expect(graphConfigUnreadable()).toBe(true);
   expect(report).toHaveBeenCalledWith("config-read", problem);
   expect(createPage).not.toHaveBeenCalled();
   expect(await loadGraphPath(META.root, { forceRefresh: true })).toMatchObject({ kind: "loaded" });
-  expect(graphConfigProblem()).toBeNull();
+  expect(graphConfigUnreadable()).toBe(false);
 });
 
 

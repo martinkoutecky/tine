@@ -145,12 +145,6 @@ impl Plan {
             || self.touches(graph, entry, after, new_facts, config)
     }
 
-    /// Whether an answer can hold pages without a file: a page anchor lists
-    /// the reference-only pages (`exec_candidates.rs`).
-    pub(crate) fn lists_fileless_pages(&self) -> bool {
-        self.anchor == Anchor::Page
-    }
-
     pub(super) fn estimated_bytes(&self) -> usize {
         super::memo::retained::serialized_bytes(&self.filter)
             .saturating_add(self.compiled.estimated_bytes())
@@ -535,7 +529,7 @@ impl Plan {
         out: &mut Vec<Hit<'a>>,
     ) {
         for (ordinal, block) in facts.pre_blocks().iter().enumerate() {
-            if !self.page_property_rows && !block.uuid.starts_with("page-preamble:") {
+            if !self.page_property_rows && !block.uuid.text().starts_with("page-preamble:") {
                 continue;
             }
             if eval::eval_block(&self.filter, block, &PathRefCounts::new(), ctx) {

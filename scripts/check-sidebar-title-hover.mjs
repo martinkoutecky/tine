@@ -57,9 +57,9 @@ try {
   page.on("requestfailed", request => console.error(request.url(), request.failure()?.errorText));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/qbc-hover`);
   await page.waitForFunction(() => window.fixtureReady);
-  await page.locator(".nav-section-header").filter({ hasText: "ALL PAGES" }).click();
-  await page.locator(".nav-section-header").filter({ hasText: "NAMESPACES" }).click();
-  for (const list of ["#sidebar-favorites-list", "#sidebar-recent-list", '.nav-section:has-text("ALL PAGES")', ".ns-tree"]) {
+  await page.locator(".nav-all-pages-open").click();
+  await page.locator(".nav-first-level.nav-section-toggle:not([data-sidebar-section])").click();
+  for (const list of ["#sidebar-favorites-list", "#sidebar-recent-list", '.nav-section:has(.nav-all-pages-open)', ".ns-tree"]) {
     const label = page.locator(`${list} .nav-page-label`).filter({ hasText: "A long page title with" }).first();
     await label.hover();
     assert.equal(await label.getAttribute("title"), list === ".ns-tree" ? `Project/${name}` : name);

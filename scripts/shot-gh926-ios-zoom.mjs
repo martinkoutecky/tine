@@ -17,8 +17,8 @@ import assert from "node:assert/strict";
 const engine = process.env.GH926_BROWSER === "webkit" ? webkit : chromium;
 const label = `${process.env.GH926_LABEL ?? "after"}-${engine.name()}`;
 const baseline = process.env.GH926_BASE;
-const out = "target/artifacts/fix-ios-ui-926/shots";
-const baselineFiles = ["src/styles/app.css", "src/styles/topbar.css", "src/styles/settingsControls.css", "src/styles/conflicts.css", "src/styles/pdf-workspace.css", "src/styles/diagnostics.css", "src/styles/settingsRows.css"];
+const out = process.env.GH926_OUT ?? "target/artifacts/fix-ios-ui-926/shots";
+const baselineFiles = ["src/styles/app.css", "src/styles/topbar.css", "src/styles/settingsControls.css", "src/styles/conflicts.css", "src/styles/pdf-workspace.css", "src/styles/diagnostics.css", "src/styles/settingsRows.css", "src/styles/help.css"];
 mkdirSync(out, { recursive: true });
 const baselinePlugin = {
   name: "gh926-baseline", enforce: "pre",
@@ -50,17 +50,20 @@ try {
   page.setDefaultNavigationTimeout(60000);
   page.on("pageerror", (error) => console.error(String(error)));
   page.on("console", (message) => { if (message.type() === "error") console.error(`console: ${message.text()}`); });
-  await page.addInitScript(() => {
+  // GH926_THEME=dark shoots the dark palette (the shots are looked at in both).
+  await page.addInitScript((theme) => {
+    if (theme) localStorage.setItem("logseq-claude.theme", theme);
     globalThis.__TINE_PLATFORM__ = "ios";
     localStorage.setItem("logseq-claude.sidebarOpen", "0");
-  });
+  }, process.env.GH926_THEME);
   await page.goto(server.resolvedUrls.local[0]);
   await page.locator("[data-search-trigger]").waitFor({ timeout: 60000 });
   await page.evaluate(async () => {
     (await import("/src/spellcheckSettings.ts")).setSpellcheckEnabled(true);
     const session = await import("/src/graphSession.ts");
-    // The reporter's case: a long iOS sandbox path in Settings > Graph (synthetic).
-    session.setGraphMeta({ ...session.graphMeta(), root: "/private/var/mobile/Containers/Data/Application/0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C/Documents/Tine graph" });
+    // The reporter's case: a long iOS sandbox path (synthetic); Settings > Graph
+    // shows the backend's display_root, the folder inside Documents (IOS-PATH-926).
+    session.setGraphMeta({ ...session.graphMeta(), root: "/private/var/mobile/Containers/Data/Application/0F8B2C1E-7A3D-4C55-9B21-1D2E3F4A5B6C/Documents/Tine graph", display_root: "Documents/Tine graph" });
     // A recorded error, twice, so Settings > Diagnostics lists a row with its
     // repeat count and Copy button (the widest such row).
     const { pushToast } = await import("/src/toasts.ts");
@@ -196,6 +199,79 @@ try {
       });
     }
   }
+  // Keyboard Shortcuts on a phone: every row's command id starts at the same x,
+  // whether or not the row carries Unbind/Reset (GH #926, alignment only).
+  for (const scale of [1, 1.5]) {
+    await check(`${scale}: Keyboard Shortcuts rows align their command ids`, async () => {
+      await openHome(scale);
+      const lefts = await page.evaluate(async () => {
+        const ui = await import("/src/ui.ts");
+        ui.openSettings("shortcuts");
+        for (let i = 0; i < 40 && !document.querySelector(".help-shortcut-row[data-shortcut-id]"); i++) await new Promise((r) => setTimeout(r, 50));
+        const rows = [...document.querySelectorAll(".help-shortcut-row[data-shortcut-id]")];
+        const out = { bound: new Set(), unbound: new Set() };
+        for (const row of rows) {
+          const id = row.querySelector(".help-shortcut-id");
+          if (!id?.getClientRects().length) continue;
+          out[row.querySelector(".help-shortcut-tail button") ? "bound" : "unbound"].add(Math.round(id.getBoundingClientRect().left));
+        }
+        ui.closeSettings();
+        return { bound: [...out.bound], unbound: [...out.unbound] };
+      });
+      assert.ok(lefts.bound.length && lefts.unbound.length, `both row kinds measured: ${JSON.stringify(lefts)}`);
+      const all = new Set([...lefts.bound, ...lefts.unbound]);
+      assert.equal(all.size, 1, `command ids start at different x: ${JSON.stringify(lefts)}`);
+    });
+  }
+  // TOOLBAR-390 (D-20261111-QP2): calendar, journals and theme stay on a 390px
+  // phone's bar wherever they fit. With Workspaces hidden (#927) all four optional
+  // actions fit too, with no "…".
+  // TOOLBAR-390B (D-20261111-QP2): with Workspaces shown (the default) and the
+  // drawer closed, the compact switcher would not leave room for Share, so it is
+  // not on the bar; the same four actions stay, and the drawer's switcher is the
+  // one-tap path to workspaces.
+  for (const scale of [1, 2]) {
+    await check(`${scale}: the phone bar drops the compact workspace switcher and the drawer keeps it`, async () => {
+      await openHome(scale);
+      const bar = await page.evaluate(() => {
+        const visible = (el) => el.getClientRects().length > 0;
+        return {
+          compactMounted: !!document.querySelector(".topbar [data-workspace-switcher-compact]"),
+          compactVisible: [...document.querySelectorAll(".topbar [data-workspace-switcher-compact]")].some(visible),
+          optional: [...document.querySelectorAll(".topbar .topbar-optional-action")].filter(visible).length,
+          trigger: !!document.querySelector(".topbar-overflow-trigger")?.getClientRects().length,
+        };
+      });
+      assert.equal(bar.compactMounted, true, "the compact switcher is still mounted (CSS only hides it)");
+      assert.equal(bar.compactVisible, false, "the compact switcher is not on the phone bar");
+      // At 100 % the four optional actions stay inline; at 200 % the content box
+      // is far narrower and they use the "…" menu (the zoom checks above).
+      if (scale === 1) assert.deepEqual({ optional: bar.optional, trigger: bar.trigger }, { optional: 4, trigger: false });
+      await page.screenshot({ path: `${out}/${label}-${scale}-bar-no-switcher.png` });
+      await page.evaluate(async () => (await import("/src/ui.ts")).setLeftSidebarOpen(true));
+      await page.locator("[data-workspace-switcher-sidebar] [data-workspace-switcher]").waitFor({ state: "visible" });
+      await page.waitForTimeout(500); // the drawer slides in
+      await page.screenshot({ path: `${out}/${label}-${scale}-drawer-switcher.png` });
+      const inDrawer = await page.evaluate(() => {
+        const r = document.querySelector("[data-workspace-switcher-sidebar] [data-workspace-switcher] button")?.getBoundingClientRect();
+        return !!r && r.width > 0 && r.right <= innerWidth;
+      });
+      await page.evaluate(async () => (await import("/src/ui.ts")).setLeftSidebarOpen(false));
+      assert.equal(inDrawer, true, "the drawer's workspace switcher is reachable");
+    });
+  }
+  await check("1: with Workspaces hidden, the optional actions stay on the bar", async () => {
+    await page.evaluate(async () => (await import("/src/navSettings.ts")).setShowWorkspaces(false));
+    await openHome(1);
+    const bar = await page.evaluate(() => ({
+      optional: [...document.querySelectorAll(".topbar .topbar-optional-action")].filter((b) => b.getClientRects().length).length,
+      trigger: !!document.querySelector(".topbar-overflow-trigger")?.getClientRects().length,
+      offScreen: [...document.querySelectorAll(".topbar button")].filter((b) => b.getClientRects().length && b.getBoundingClientRect().right > innerWidth + 0.5).map((b) => b.title),
+    }));
+    await page.screenshot({ path: `${out}/${label}-1-home-no-workspaces.png` });
+    await page.evaluate(async () => (await import("/src/navSettings.ts")).setShowWorkspaces(true));
+    assert.deepEqual(bar, { optional: 4, trigger: false, offScreen: [] });
+  });
 } finally {
   await browser?.close();
   await server.close();

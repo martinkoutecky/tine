@@ -42,7 +42,8 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-const meta = (enable_tooltip?: boolean) => setGraphMeta({ root: "/test", ...(enable_tooltip === undefined ? {} : { enable_tooltip }) } as GraphMeta);
+// An absent config key reaches IPC as true, resolved by Rust, never as a missing field.
+const meta = (enable_tooltip = true) => setGraphMeta({ root: "/test", enable_tooltip } as GraphMeta);
 const popup = () => document.body.querySelector(".peek-popup");
 
 async function advance(ms: number) {

@@ -38,8 +38,10 @@ vi.mock("./Macro", () => ({
   QueryMacro: (props: { body: string; title?: string; hostRaw?: { raw: string; format: string } }) =>
     <div class="q" data-body={props.body} data-title={props.title ?? ""} data-host-raw={props.hostRaw?.raw ?? ""} />,
 }));
-vi.mock("./BeginQuery", () => ({
+vi.mock("../render/beginQuery", () => ({
   inspectBeginQuery: (raw: string) => raw.startsWith("#+BEGIN_QUERY") ? { kind: "query", query: raw } : null,
+}));
+vi.mock("./BeginQuery", () => ({
   BeginQuery: (props: { match: { query: string }; hideWhenEmpty?: boolean }) => <div class="bq" data-body={props.match.query} data-hide-empty={String(!!props.hideWhenEmpty)} />,
 }));
 vi.mock("./Rendered", () => ({

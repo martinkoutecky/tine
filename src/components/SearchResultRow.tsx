@@ -136,12 +136,13 @@ export function SearchResultRow(props: {
   breadcrumb: string[];
   text: string;
   spans: SearchMatchSpan[];
+  isComment?: boolean;
 }): JSX.Element {
   const context = () => [props.page, ...props.breadcrumb].filter(Boolean).join(" › ");
   const segments = () => buildSearchExcerpt(props.text, props.spans);
   return (
     <>
-      <span class="switcher-kind">{t("search-result-row-block")}</span>
+      <span class="switcher-kind">{t(props.isComment ? "search-result-row-comment" : "search-result-row-block")}</span>
       <span class="search-result-body" aria-label={`${context()}: ${props.text}`}>
         <span class="search-result-context"><EmojiText text={context()} /></span>
         <span class="search-result-excerpt">

@@ -6,7 +6,6 @@
 //! ENAMETOOLONG, so the import, delete, marker resolution or create refused.
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::test_host_writer::HostWriter;
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
@@ -16,13 +15,7 @@ use tine_store::{Content, EditKind, PageId, SaveBase, Store};
 const NAME_MAX: usize = 255;
 
 fn fixture(label: &str) -> (PathBuf, std::sync::Arc<Store>) {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-c3y-{label}-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-c3y-{label}-"));
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }

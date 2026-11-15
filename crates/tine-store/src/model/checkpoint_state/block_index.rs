@@ -191,11 +191,11 @@ mod tests {
             vec![(upper, 1), (simple, 3), (urn, 4), ("custom", 5)],
         );
         let held = index.clone();
-        index.edit(lower, |owners| owners.insert(0, 0));
+        index.edit(BlockKey::of(lower), |owners| owners.insert(0, 0));
         assert_eq!(index.owners(lower).unwrap().slots(), &[0, 2]);
         assert_eq!(held.owners(lower).unwrap().slots(), &[2]);
-        index.edit(lower, Vec::clear);
-        index.edit("custom", Vec::clear);
+        index.edit(BlockKey::of(lower), Vec::clear);
+        index.edit(BlockKey::of("custom"), Vec::clear);
         let rows: std::collections::BTreeMap<_, _> = index.rows().collect();
         assert!(!rows.contains_key(lower));
         assert!(!rows.contains_key("custom"));

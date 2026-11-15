@@ -34,7 +34,7 @@ const STORE_KEY = "tine.pdfExportOpts";
 function loadOpts(): PrintOpts {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return { ...DEFAULT_PRINT_OPTS, ...JSON.parse(raw) };
+    if (raw) return { ...DEFAULT_PRINT_OPTS, ...JSON.parse(raw), include_comments: true };
   } catch {
     /* ignore malformed/missing */
   }
@@ -42,7 +42,8 @@ function loadOpts(): PrintOpts {
 }
 function saveOpts(o: PrintOpts): void {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(o));
+    const { include_comments: _, ...saved } = o;
+    localStorage.setItem(STORE_KEY, JSON.stringify(saved));
   } catch {
     /* storage unavailable — non-fatal */
   }
@@ -109,6 +110,8 @@ function Dialog(props: { name: string }): JSX.Element {
         </div>
 
         <div class="export-opts">
+          <label class="export-toggle"><input type="checkbox" checked={opts().include_comments !== false}
+            onChange={event => update({ include_comments: event.currentTarget.checked })} />{t("export-include-comments")}</label>
           <div class="export-opt-row export-indent">
             <span class="export-opt-label">{t("pdf-export-collapsed-blocks")}</span>
             <For each={COLLAPSED}>

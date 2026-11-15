@@ -5,13 +5,14 @@ import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
-import { selectBlock, extendSelectionTo, resetStore, pageByName, undo, pasteClipboardPayload, selectedIds, blockProperty } from "../document";
+import { selectBlock, extendSelectionTo, resetStore, pageByName, undo, pasteClipboardPayload, selectedIds, setBlockProperty, blockProperty, loadFeed } from "../document";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { openContextMenu, closeContextMenu, closeExportModal, exportModal } from "../ui";
 import { setGraphMeta } from "../graphSession";
 import { clearTransientLayersForTest } from "../transientLayers";
 import type { BlockDto } from "../types";
 import { bindTestHost } from "../document/host/wiring.test.support";
+import { removeAuthorTarget } from "../blockRefActions";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -48,6 +49,34 @@ function click(stem: string) {
 function raws() { return pageByName("P")!.roots.map(id => doc.byId[id].raw.split("\n")[0]); }
 
 describe("selection context menu (GH #591)", () => {
+  it("Remove author is offered on a mixed read-only selection and skips the read-only page", () => {
+    load();
+    const page = (name: string, id: string, read_only: boolean) => ({ name, kind: "page" as const, title: name, format: "md" as const,
+      pre_block: null, read_only, blocks: [{ ...block(id, "Words\ntine.author:: Ada Test"), properties: [["tine.author", "Ada Test"]] as [string, string][] }] });
+    loadFeed([page("P", A, false), page("Q", B, true)]);
+    selectBlock(A); extendSelectionTo(B); open(B); click("Remove author");
+    expect(doc.byId[A].raw).toBe("Words");
+    expect(doc.byId[B].raw).toBe("Words\ntine.author:: Ada Test");
+    undo();
+    expect(doc.byId[A].raw).toBe("Words\ntine.author:: Ada Test");
+  });
+  it("Remove author clears the selected forest including folded children, with one undo (GH #918)", () => {
+    load(true);
+    for (const id of [A, child]) setBlockProperty(id, "tine.author", "Synthetic author");
+    const before = [A, child, B].map(id => doc.byId[id].raw);
+    open(B); click("Remove author");
+    for (const id of [A, child, B]) expect(blockProperty(id, "tine.author")).toBeNull();
+    expect(doc.byId[B].raw).toBe(before[2]);
+    undo();
+    expect([A, child, B].map(id => doc.byId[id].raw)).toEqual(before);
+  });
+  it("one selected parent keeps the same Remove author target in the menu and palette (GH #941)", () => {
+    load(); setBlockProperty(A, "tine.author", "Synthetic author"); selectBlock(A); open();
+    expect(removeAuthorTarget()).toBe(A);
+    click("Remove author");
+    expect(blockProperty(A, "tine.author")).toBeNull();
+    expect(doc.byId[A].children).toEqual([child]);
+  });
   it("copies every selected block without duplicating a selected child and labels plural actions", async () => {
     load(); open(B);
     const labels = [...document.querySelectorAll(".ctx-item")].map(el => el.textContent?.trim());
@@ -88,6 +117,18 @@ describe("selection context menu (GH #591)", () => {
     const text = vi.mocked(backend().writeText).mock.calls[0][0];
     for (const id of [A, child, B]) expect(text).toContain(action.endsWith("embed") ? `{{embed ((${id}))}}` : `((${id}))`);
   });
+  for (const collapsed of [false, true]) {
+    it.each(["Copy block ref", "Copy block embed"])(`%s on one selected parent includes its child, collapsed=${collapsed} (GH #941)`, async action => {
+      load(collapsed); selectBlock(A); open(); click(action);
+      await vi.waitFor(() => expect(backend().writeText).toHaveBeenCalledTimes(1));
+      const expected = [A, child].map(id => action.endsWith("embed") ? `{{embed ((${id}))}}` : `- ((${id}))`).join("\n");
+      expect(vi.mocked(backend().writeText).mock.calls[0][0]).toBe(expected);
+    });
+    it(`export of one selected parent carries its child, collapsed=${collapsed} (GH #941)`, () => {
+      load(collapsed); selectBlock(A); open(); click("Copy / export");
+      expect(exportModal()).toEqual({ ids: [A, child] });
+    });
+  }
   it("leaves every source intact when clipboard writing fails", async () => {
     load(); vi.mocked(backend().writeRich).mockRejectedValue(new Error("clipboard busy"));
     open(); click("Cut block");
@@ -107,6 +148,7 @@ describe("selection context menu (GH #591)", () => {
     load(false, true); open();
     const labels = [...document.querySelectorAll(".ctx-item")].map(el => el.textContent?.trim());
     expect(labels).toContain("Copy blocks");
+    expect(labels).not.toContain("Remove author");
     expect(labels).not.toContain("Cut blocks"); expect(labels).not.toContain("Delete blocks");
     click("Copy block");
     await vi.waitFor(() => expect(backend().writeRich).toHaveBeenCalled());

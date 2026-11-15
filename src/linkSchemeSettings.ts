@@ -4,7 +4,6 @@ import { rememberableLinkScheme } from "./linkSchemePolicy";
 import { loadPreference, preferenceChangedElsewhere, preferenceRevision, writePreference } from "./preferenceWrites";
 import { revisionOwner, writeOwned } from "./owned";
 import { msg, t } from "./i18n";
-import { pushToast } from "./toasts";
 
 // A JSON array in the existing device-local string accessor: no graph writes or sync.
 const KEY = "always_open_link_schemes";
@@ -65,5 +64,5 @@ export function setLinkSchemeRemembered(scheme: string, remember: boolean): void
       await emit(CHANGED, { origin });
     } catch { /* Persisted; a window without an event bus reads it at startup. */ }
   },
-    "link scheme consent", () => pushToast(msg("links-consent-save-failed"), "error"));
+    msg("links-consent-save-failed"));
 }

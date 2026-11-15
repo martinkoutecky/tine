@@ -14,7 +14,7 @@ import { msg } from "./i18n";
 // statement, projected to config.edn without writing the page back.
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
-import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage, reloadHlsIfLoaded } from "./document";
+import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage } from "./document";
 import { graphMeta } from "./graphSession";
 import { hasMarker } from "./tineKeys";
 import { changed, pageChangeKey } from "./changeKeys";
@@ -90,7 +90,7 @@ const markerFor = (format: Format) =>
  *  this module through ui.ts, so a static import would close a cycle (I-11). */
 export interface FavoritesPageDoor {
   createPage: typeof createPage; favoritesArrangementPage: typeof favoritesArrangementPage;
-  favoritesArrangementBlocks: typeof favoritesArrangementBlocks; reloadHlsIfLoaded: typeof reloadHlsIfLoaded;
+  favoritesArrangementBlocks: typeof favoritesArrangementBlocks;
 }
 let door: FavoritesPageDoor | null = null;
 /** Until installed, persisting a change that needs the page throws (rolled back with a toast). */
@@ -124,7 +124,7 @@ export function setFavorites(items: FavItem[]): void {
 }
 
 function commit(next: FavLayout): void {
-  writeGraphSignal("favorites", layout, setLayout, next, persistArrangement, "favorites");
+  writeGraphSignal("favorites", layout, setLayout, next, persistArrangement, msg("toast-save-favorites-failed"));
 }
 /** The tree without the rows `hit` selects; their children move up. */
 const dropRows = (nodes: FavNode[], hit: (node: FavNode) => boolean): FavNode[] => nodes.flatMap((node) =>
@@ -270,7 +270,7 @@ const toBlocks = (nodes: FavNode[]): BlockDto[] =>
  *  is reused. Returns the page's name. */
 async function writeArrangementPage(next: FavLayout, text: string): Promise<string> {
   const owner = bindingOwner();
-  const { createPage, favoritesArrangementPage, reloadHlsIfLoaded } = pageDoor();
+  const { createPage, favoritesArrangementPage } = pageDoor();
   for (let n = 1; ; n += 1) {
     const name = arrangementPage ?? (n === 1 ? DEFAULT_FAVORITES_PAGE : `${DEFAULT_FAVORITES_PAGE} ${n}`);
     const read = await readOwned(owner, backend().getPage(name, "page"));
@@ -308,7 +308,6 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
     if (!owner()) throw new Error("graph changed during the Favorites page write");
     setArrangementPage(name);
     pageBase = text;
-    void reloadHlsIfLoaded(name);
     return name;
   }
 }

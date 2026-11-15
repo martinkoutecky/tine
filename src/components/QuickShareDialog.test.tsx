@@ -60,6 +60,19 @@ async function open() {
 const button = (root: HTMLElement, cls: string) => root.querySelector<HTMLButtonElement>(`.${cls}`);
 const text = (root: HTMLElement) => root.textContent ?? "";
 
+it("refreshes the one-use preview when Include comments changes, before upload", async () => {
+  const root = await open();
+  const box = [...root.querySelectorAll("label")].find(label => label.textContent?.includes("Include comments"))!.querySelector("input")!;
+  expect(box.checked).toBe(true);
+  const first = await api.prepare.mock.results[0].value;
+  box.click();
+  await vi.waitFor(() => expect(api.prepare).toHaveBeenCalledTimes(2));
+  expect(api.prepare.mock.calls[1][0]).toMatchObject({ includeComments: false });
+  expect(api.discard).toHaveBeenCalledWith(first.prepareId);
+  expect(api.create).not.toHaveBeenCalled();
+  expect(box.checked).toBe(false);
+});
+
 it("prepares the reviewed request and shows what goes out before anything is uploaded", async () => {
   const root = await open();
   expect(api.prepare).toHaveBeenCalledTimes(1);

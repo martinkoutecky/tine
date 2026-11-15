@@ -35,7 +35,7 @@ it("the Guide teaches Chinese IME reference and command input with ASCII storage
 });
 
 it("the Guide keeps census controls and workspace creation discoverable", () => {
-  expect(guide("where-things-are")).toContain("**Themes** is the first section");
+  expect(guide("where-things-are")).toContain("**Themes** is its own Settings category");
   expect(guide("where-things-are")).toContain("Namespaces appears only when");
   expect(guide("customize-look")).toContain("**Appearance** → **Advanced** → **Custom CSS**");
   expect(guide("keep-context-visible")).toContain("**New workspace…** from the command palette");
@@ -45,6 +45,12 @@ it("the Guide explains Settings search results, navigation and clearing", () => 
   const settings = guide("where-things-are");
   for (const detail of ["**theme names and descriptions**", "**plugin settings**", "Choosing a plugin setting opens that plugin's form", "English terms of two or more characters"]) expect(settings).toContain(detail);
   for (const detail of ["only matching settings", "matching words highlighted", "Choose a result", "including Advanced settings", "Clear the search", "filters commands and keys within that tab", "matching description, keyword, alias or English name"]) expect(settings).toContain(detail);
+});
+
+it("the Guide teaches phone Settings categories, Back, close and Themes (#926)", () => {
+  const text = guide("where-things-are");
+  for (const detail of ["**category list**", "iOS edge swipe", "close icon", "Desktop and tablets", "Search results open the category"]) expect(text).toContain(detail);
+  expect(guide("customize-look")).toContain("→ **Themes** and look at **Color scheme**");
 });
 
 it("the Guide explains slash glosses, accessible carry controls and current Diagnostics tools", () => {

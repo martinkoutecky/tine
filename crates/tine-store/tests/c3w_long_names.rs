@@ -4,19 +4,12 @@
 //! save and create of such a page failed with ENAMETOOLONG.
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_store::{PageId, SaveBase, Store};
 
 fn scratch() -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "tine-c3w-w1-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir("tine-c3w-w1-");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     root

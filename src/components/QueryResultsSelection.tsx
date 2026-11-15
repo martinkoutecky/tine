@@ -51,7 +51,7 @@ export function QueryResultsSelection(props: { hits: QueryHit[] }): JSX.Element 
           const next = new Set(current); if (event.currentTarget.checked) next.add(hit); else next.delete(hit); return next;
         })} />
         {hit.entity === "page" ? <QueryPageResultContent hit={hit} /> : <SearchResultRow
-          page={hit.page} breadcrumb={hit.block.breadcrumb ?? []} text={hit.display_text}
+          page={hit.page} breadcrumb={hit.block.breadcrumb ?? []} text={hit.display_text} isComment={hit.is_comment}
           spans={hit.evidence.filter(item => item.field === "visible_content").flatMap(item => item.spans)} />}
       </label>}</For>
     </div>}</Show>

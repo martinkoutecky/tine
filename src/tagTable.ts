@@ -1,17 +1,18 @@
 /** A shown tag table fetches groups; its toggle reads native membership only. */
-import { createEffect, createResource, type Accessor } from "solid-js";
+import { createEffect, type Accessor } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
 import { referenceKey, referenceRevision } from "./referenceKeys";
 import type { RefGroup } from "./types";
 import { readOr } from "./resourceRead";
 import { changed } from "./changeKeys";
+import { createGraphResource } from "./graphResource";
 
 /** One boolean IPC per target/membership revision, with graph-owned adoption.
  *  Body-only edits do not refresh this resource; no query or rows are loaded. */
 export function createTagTableAvailabilityResource(name: Accessor<string>, enabled: Accessor<boolean>) {
   const owners = {};
-  return createResource(
+  return createGraphResource(
     () => enabled() ? `${name()}\0${changed(referenceKey("tagTableMembership", name()))}` : null,
     async () => {
       const owner = latestOwner(owners, "tag-table-availability", graphOwner());
@@ -24,7 +25,7 @@ export function createTagTableAvailabilityResource(name: Accessor<string>, enabl
 export function createTagTableResource(name: Accessor<string>, enabled: Accessor<boolean> = () => true) {
   const owners = {};
   const dependency = referenceRevision(() => referenceKey("tagTable", name()));
-  const resource = createResource(
+  const resource = createGraphResource(
     () => enabled() ? `${name()}\0${dependency.revision()}` : null,
     async (): Promise<{ groups: RefGroup[]; error?: string } | undefined> => {
       const pageName = name();

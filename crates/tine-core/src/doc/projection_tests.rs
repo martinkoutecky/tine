@@ -6,6 +6,10 @@ fn runtime_uuid_is_not_serialized() {
     block.uuid = "runtime-only".into();
     let value = serde_json::to_value(&block).unwrap();
     assert!(value.get("uuid").is_none());
+    assert_eq!(
+        serde_json::to_string(&block).unwrap(),
+        r#"{"raw":"body","children":[],"is_org":false}"#
+    );
 }
 
 #[test]
@@ -75,26 +79,26 @@ fn visible_text_fallbacks_store_only_what_differs() {
     assert_eq!(plain.visible_folded(true), "plain lowercase text");
     assert_eq!(plain.visible_folded(false), "plain lowercase text");
     let p = plain.projection();
-    assert!(p.visible.is_none() && p.visible_lower.is_none());
+    assert!(p.stored_visible().is_none() && p.stored_lower().is_none());
 
     let cased = DocBlock::new("Caf\u{e9} Ship");
     assert_eq!(cased.visible_text(), "Caf\u{e9} Ship");
     assert_eq!(cased.visible_folded(true), "cafe ship");
     assert_eq!(cased.visible_folded(false), "caf\u{e9} ship");
     let p = cased.projection();
-    assert!(p.visible.is_none() && p.visible_lower.is_some());
+    assert!(p.stored_visible().is_none() && p.stored_lower().is_some());
 
     let props = DocBlock::new("Body Text\nid:: abc\nkey:: v");
     assert_eq!(props.visible_text(), "Body Text");
     assert_eq!(props.visible_folded(true), "body text");
-    assert!(props.projection().visible.is_some());
+    assert!(props.projection().stored_visible().is_some());
 
     let mut edited = DocBlock::new("Caf\u{e9}");
     assert_eq!(edited.visible_folded(true), "cafe");
     edited.set_raw("plain");
     assert_eq!(edited.visible_text(), "plain");
     assert_eq!(edited.visible_folded(true), "plain");
-    assert!(edited.projection().visible_lower.is_none());
+    assert!(edited.projection().stored_lower().is_none());
 }
 
 /// GH #623: an ordinary block (no refs, properties, planning, tags, marker) carries
@@ -103,11 +107,12 @@ fn visible_text_fallbacks_store_only_what_differs() {
 #[test]
 fn ordinary_block_projection_stays_small() {
     assert!(
-        std::mem::size_of::<BlockProjection>() <= 88,
+        std::mem::size_of::<BlockProjection>() <= 56,
         "BlockProjection grew to {} B; every block pays this inline (GH #623). \
          Put rarely-set facets in ProjectionExtra.",
         std::mem::size_of::<BlockProjection>()
     );
+    assert!(std::mem::size_of::<DocBlock>() <= 144);
     let plain = DocBlock::new("nothing special here");
     assert!(plain.projection().extra.is_none());
     let rich = DocBlock::new("TODO [[Page]] #tag\nkey:: v");
@@ -246,7 +251,7 @@ fn line_leading_planning_timestamp_keeps_trailing_body_text() {
             !body.contains(date),
             "timestamp is removed from body: {body}"
         );
-        assert_eq!(b.raw, raw, "facet projection never rewrites raw");
+        assert_eq!(b.raw(), raw, "facet projection never rewrites raw");
     }
 
     let indented = DocBlock::new("TODO x\n  DEADLINE: <2026-07-30 Thu>tail");
@@ -278,4 +283,112 @@ fn org_properties_from_drawer_not_key_colons() {
         plain.visible_text().contains("foo:: bar"),
         "org key:: stays visible"
     );
+}
+
+/// The checkpoint form is the flat field list, whatever the in-memory shape.
+#[test]
+fn projection_wire_is_the_flat_field_list_and_round_trips() {
+    #[derive(Serialize)]
+    struct Flat<'a> {
+        regions: &'a crate::block_regions::BlockRegions,
+        visible: Option<&'a str>,
+        visible_lower: Option<&'a str>,
+        visible_literal: Option<Option<&'a str>>,
+        plain_ranges: Vec<std::ops::Range<usize>>,
+        extra: &'a Option<Box<ProjectionExtra>>,
+    }
+    for (raw, literal) in [
+        ("plain lowercase", false),
+        ("Mixed Case", false),
+        ("Mixed Čase", true),
+        ("TODO [[Page]] and [[Other]] #tag\nkey:: v", false),
+        ("", false),
+        ("```\nunclosed fence", false),
+        ("id:: aaaaaaaa-0000-0000-0000-000000000001", true),
+    ] {
+        let block = DocBlock::new(raw);
+        let p = block.projection();
+        if literal {
+            block.visible_folded(false);
+        }
+        let flat = Flat {
+            regions: &p.regions,
+            visible: p.stored_visible(),
+            visible_lower: p.stored_lower(),
+            visible_literal: p.visible_literal.get().map(|l| l.as_ref().map(|t| &***t)),
+            plain_ranges: p.plain_ranges.view().iter().collect(),
+            extra: &p.extra,
+        };
+        let bytes = postcard::to_stdvec(p).unwrap();
+        assert_eq!(bytes, postcard::to_stdvec(&flat).unwrap(), "{raw}");
+        assert_eq!(
+            serde_json::to_string(p).unwrap(),
+            serde_json::to_string(&flat).unwrap()
+        );
+        let back: BlockProjection = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(postcard::to_stdvec(&back).unwrap(), bytes, "{raw}");
+    }
+}
+
+#[test]
+fn plain_ranges_past_u32_keep_their_exact_values() {
+    let far = (u32::MAX as usize + 1)..(u32::MAX as usize + 9);
+    let ranges = PlainRanges::from(vec![far.clone()]);
+    assert_eq!(ranges.view().iter().collect::<Vec<_>>(), vec![far]);
+    assert!(matches!(
+        PlainRanges::from(vec![1..2]),
+        PlainRanges::One(1, 2)
+    ));
+    assert!(matches!(PlainRanges::from(vec![]), PlainRanges::None));
+}
+
+#[test]
+fn compact_regions_keep_the_existing_flat_wire() {
+    use crate::block_regions::*;
+    #[derive(Serialize)]
+    struct Flat<'a> {
+        header: &'a Header,
+        literals: &'a [Range],
+        property_regions: &'a [Range],
+        properties: &'a [Property],
+        planning: &'a [Planning],
+        drawers: &'a [Drawer],
+        id: Option<&'a Property>,
+        quarantined: bool,
+        literal_blocks: &'a [LiteralBlock],
+        open_fence: Option<&'a OpenFence>,
+        headline_end: Option<usize>,
+    }
+    for (raw, org) in [
+        ("plain", false),
+        ("body\nid:: AAAAAAAA-0000-4000-8000-000000000001", false),
+        ("```\nopen", false),
+        ("TODO\nSCHEDULED: <2026-11-01 Sun>", false),
+        ("\n:PROPERTIES:\n:ID: custom-key\n:END:", true),
+        ("body\n:PROPERTIES:\n:ID: custom-key\n:END:", true),
+    ] {
+        let regions = crate::block_regions::parse(raw, org);
+        let flat = Flat {
+            header: &regions.header,
+            literals: &regions.literals,
+            property_regions: &regions.property_regions,
+            properties: &regions.properties,
+            planning: &regions.planning,
+            drawers: &regions.drawers,
+            id: regions.id.as_deref(),
+            quarantined: regions.quarantined,
+            literal_blocks: &regions.literal_blocks,
+            open_fence: regions.open_fence.as_deref(),
+            headline_end: regions.headline_end,
+        };
+        let bytes = postcard::to_stdvec(&regions).unwrap();
+        assert_eq!(bytes, postcard::to_stdvec(&flat).unwrap(), "{raw}");
+        assert_eq!(
+            serde_json::to_string(&regions).unwrap(),
+            serde_json::to_string(&flat).unwrap(),
+            "{raw}"
+        );
+        let decoded: BlockRegions = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(regions, decoded);
+    }
 }

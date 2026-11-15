@@ -1,4 +1,4 @@
-import { For, Show, createResource, onCleanup, type JSX } from "solid-js";
+import { For, Show, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { graphOwner, readOwned } from "../owned";
@@ -11,11 +11,12 @@ import { Rich } from "../i18n/Rich";
 import { settings } from "./settingDefinitions";
 import { Field, settingHint } from "./settingsField";
 import { ResourceFailure } from "./ResourceFailure";
+import { createGraphResource } from "../graphResource";
 
 /** Journal template names with on-demand navigation to the selected definition. */
 export function JournalTemplateField(): JSX.Element {
   let alive = true; onCleanup(() => { alive = false; });
-  const [templatesResource, { refetch }] = createResource(async () => {
+  const [templatesResource, { refetch }] = createGraphResource(() => true, async () => {
     const owner = graphOwner(() => alive);
     try { const result = await readOwned(owner, backend().listTemplateNames()); return result.kind === "current" ? result.value : undefined; }
     catch (error) { if (owner()) reportUiFailure("template-read", error); throw error; }

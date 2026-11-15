@@ -6,7 +6,7 @@
 import { readPageProperty, pageHeaderProperties } from "../document";
 import type { BlockDto, Format } from "../types";
 import { facetsOf } from "../render/facets";
-import { assetRelPath } from "../media";
+import { pdf_asset_file } from "../render/wasm/lsdoc_wasm.js";
 
 /** True for a PDF highlight (annotation) block. */
 export function isAnnotationBlock(raw: string, format: Format): boolean {
@@ -55,9 +55,7 @@ export function pdfFileFromPreBlock(preBlock: string | null | undefined, format:
  * identities are derived from it. A path with no `assets/` directory (an
  * absolute path elsewhere) keeps only its basename. O(path bytes). */
 export function pdfAssetFile(path: string): string {
-  const rel = assetRelPath(path);
-  if (rel) return rel;
-  return path.split(/[\\/]/).pop() || path;
+  return pdf_asset_file(path);
 }
 
 function pdfBasename(path: string | null | undefined): string | null {

@@ -16,7 +16,7 @@ fs.renameSync(path.join(output, "quick-share.html"), path.join(output, "index.ht
 const manifest = { generation: 1, link: 1, envelope: 1, document: 1, snapshot_schema: 1, built_from: builtFrom, fixture_sha256: fixtureFingerprint(root), files: fileHashes(output) };
 fs.writeFileSync(path.join(output, "viewer.json"), JSON.stringify(manifest, null, 2) + "\n");
 // Compatibility is checked against the production files before creating an artifact.
-execFileSync(process.execPath, ["scripts/check-quick-share-viewer.mjs", output], { cwd: root, stdio: "inherit" });
+execFileSync(process.execPath, ["--test", "scripts/quick-share-compatibility.test.mjs"], { cwd: root, stdio: "inherit", env: { ...process.env, QUICK_SHARE_VIEWER_DIR: output } });
 const zip = path.join(artifacts, VIEWER_ZIP);
 // zip updates an existing archive; use a fresh name so stale files cannot survive.
 const fresh = path.join(artifacts, `viewer-${process.pid}.zip`);

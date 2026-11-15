@@ -2,6 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The reload-chord tests flip this; every other test sees the real isTauri().
 const desktopApp = vi.hoisted(() => ({ on: null as boolean | null }));
+const mousePlatform = vi.hoisted(() => ({ mac: false, mobile: false }));
+const nativeHistory = vi.hoisted(() => ({ listener: undefined as undefined | ((event: { payload: { direction: string; target: string } }) => void), unlisten: vi.fn() }));
+vi.mock("./nativeChrome", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./nativeChrome")>(),
+  get isMac() { return mousePlatform.mac; },
+  get isMobilePlatform() { return mousePlatform.mobile; },
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, listener) => {
+  if (name === "history-navigate") nativeHistory.listener = listener;
+  return nativeHistory.unlisten;
+}) }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({ listen: async () => () => {} }) }));
 vi.mock("./backend", async (importOriginal) => {
   const real = await importOriginal<typeof import("./backend")>();
   return { ...real, isTauri: () => desktopApp.on ?? real.isTauri() };
@@ -9,10 +22,11 @@ vi.mock("./backend", async (importOriginal) => {
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
-import { closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
+import { applySidebarSession, openPageInSidebar, rightSidebar, rightSidebarOpen, closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { appNow, journalTitle } from "./journal";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
 import { clearSelection, hasSelection, moveSelection, resetStore, selectBlock, selectedIds, setRaw, undo } from "./document";
@@ -30,7 +44,7 @@ const pluginGraphMeta: GraphMeta = {
   root: "/plugin-test", journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
   shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, ref_default_open_blocks_level: 2, default_journal_template: null,
   favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
-  preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
+  preferred_format: "md", macros: {}, enable_tooltip: true, file_name_format: "legacy", doc_mode_enter_for_new_block: false, logical_outdenting: false, enable_search_remove_accents: true, quick_capture_template_text: null, quick_capture_template_media: null, quick_capture_default_page: null, quick_capture_insert_today: false, quick_capture_redirect_page: false, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
   logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
 };
 
@@ -121,8 +135,8 @@ function installFakeWindow() {
   };
 
   return {
-    dispatchMouse(type: string, button: number, buttons = 0) {
-      const event = { type, button, buttons, clientX: 20, clientY: 20, preventDefault() {} } as MouseEvent;
+    dispatchMouse(type: string, button: number, buttons = 0, clientX = 20) {
+      const event = { type, button, buttons, clientX, clientY: 20, preventDefault() {} } as MouseEvent;
       listeners.filter(l => l.type === type && l.capture).forEach(l => l.listener(event));
     },
     dispatchCaptureKeydown(event: KeyboardEvent) {
@@ -240,6 +254,19 @@ it("GH #428 can remap Escape to editing a single selected block", () => {
   dispose();
 });
 
+it("editing a selected folded subtree returns to its root, not a hidden child (GH #941)", () => {
+  loadSingle({ name: "Selection", kind: "page", title: "Selection", pre_block: null, blocks: [
+    { id: "parent", raw: "Parent", collapsed: true, children: [
+      { id: "hidden", raw: "Child", collapsed: false, children: [] },
+    ] },
+  ] });
+  selectBlock("parent");
+  expect(selectedIds()).toEqual(["parent", "hidden"]);
+  paletteCommands().find(c => c.id === "editor/edit-selected-block")!.run();
+  expect(editingId()).toBe("parent");
+  expect(hasSelection()).toBe(false);
+});
+
 it("GH #587 activates visible tab slots in the focused pane, with slot nine meaning last", () => {
   const snapshot: PaneSnapshot = {
     tabs: Array.from({ length: 11 }, (_, i) => ({ history: [{ kind: "page" as const, name: `Tab ${i + 1}`, pageKind: "page" as const }], pos: 0, pinned: i === 0 })),
@@ -280,6 +307,134 @@ afterEach(() => {
 });
 
 describe("mouse side-button navigation (#156)", () => {
+  it.each(["windows", "linux"])("%s workspace popups keep their DOM history owner (GH #948)", async () => {
+    installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    const popup = new EventTarget();
+    Object.assign(popup, { document: new EventTarget(), getSelection: () => null });
+    const unregister = registerWindow("workspace-history", popup as unknown as Window);
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Popup history ${i}`, "page");
+      for (const direction of ["back", "forward"] as const) {
+        for (let i = 0; i < 3; i++) {
+          const button = direction === "back" ? 3 : 4;
+          for (const type of ["mousedown", "mouseup", "auxclick"]) {
+            const event = new Event(type, { cancelable: true });
+            Object.assign(event, { button, buttons: type === "mousedown" ? (button === 3 ? 8 : 16) : 0, clientX: 20, clientY: 20 });
+            popup.dispatchEvent(event);
+          }
+          expect(router.route()).toMatchObject({ kind: "page", name: `Popup history ${direction === "back" ? 2 - i : i + 1}` });
+        }
+      }
+    } finally {
+      unregister();
+      dispose();
+    }
+  });
+
+  it.each([
+    ...["windows", "linux"].flatMap(platform => ["partial", "paired", "native-first", "native-only"].map(delivery => ({ platform, delivery }))),
+    ...["macos", "ios", "android"].map(platform => ({ platform, delivery: "paired" })),
+  ])("$platform $delivery accepts every rapid history press once, matching keyboard steps (GH #948)", async ({ platform, delivery }) => {
+    mousePlatform.mac = platform === "macos";
+    mousePlatform.mobile = platform === "ios" || platform === "android";
+    const native = platform === "windows" || platform === "linux";
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 6; i++) router.openPage(`History ${i}`, "page");
+      const step = (direction: "back" | "forward", keyboard: boolean) => {
+        if (keyboard) {
+          fake.dispatchCaptureKeydown(trackedKeyEvent({ key: direction === "back" ? "ArrowLeft" : "ArrowRight", altKey: true }).event);
+        } else {
+          const button = direction === "back" ? 3 : 4;
+          const nativeRelease = () => {
+            nativeHistory.listener?.({ payload: { direction, target: "other-window" } });
+            nativeHistory.listener?.({ payload: { direction, target: "main" } });
+          };
+          if (native && delivery === "native-first") nativeRelease();
+          if (delivery !== "native-only") {
+            if (delivery !== "partial") fake.dispatchMouse("mousedown", button, button === 3 ? 8 : 16);
+            fake.dispatchMouse("mouseup", button);
+            fake.dispatchAuxClick(button);
+          }
+          if (native && delivery !== "native-first") nativeRelease();
+        }
+        return router.route();
+      };
+      for (const direction of ["back", "forward"] as const) {
+        const mouse = Array.from({ length: 6 }, (_, i) => {
+          const route = step(direction, false);
+          expect(route).toMatchObject({ kind: "page", name: `History ${direction === "back" ? 5 - i : i + 1}` });
+          return route;
+        });
+        for (let i = 0; i < 6; i++) step(direction === "back" ? "forward" : "back", true);
+        expect(Array.from({ length: 6 }, () => step(direction, true))).toEqual(mouse);
+      }
+    } finally {
+      dispose();
+      mousePlatform.mac = false;
+      mousePlatform.mobile = false;
+    }
+  });
+
+  it.each(["windows", "linux"])("%s native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Gesture ${i}`, "page");
+      const back = () => { nativeHistory.listener?.({ payload: { direction: "back", target: "main" } }); return router.route(); };
+      const at = (i: number) => ({ kind: "page", name: `Gesture ${i}` });
+      fake.dispatchMouse("mousedown", 0, 1);
+      expect(back()).toMatchObject(at(3));
+      fake.dispatchMouse("mouseup", 0);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragstart", 0, 1);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragend", 0);
+      expect(back()).toMatchObject(at(1));
+      // A primary release the webview never delivered must not block later presses.
+      fake.dispatchMouse("mousedown", 0, 1);
+      fake.dispatchMouse("mousemove", 0, 0);
+      expect(back()).toMatchObject(at(0));
+      router.goForward(); router.goForward();
+      // A side-button press that moved is a drag, whichever of DOM release and native release arrives first.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      // The cancelled gestures leave nothing behind: the next presses step, in either order.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mouseup", 3);
+      expect(back()).toMatchObject(at(1));
+      fake.dispatchMouse("mousedown", 3, 8);
+      expect(back()).toMatchObject(at(0));
+      fake.dispatchMouse("mouseup", 3);
+      router.goForward(); router.goForward();
+      // A cancelled press whose DOM release never arrives vetoes only its own native release.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      expect(back()).toMatchObject(at(1));
+      expect(back()).toMatchObject(at(0));
+    } finally {
+      dispose();
+    }
+  });
+
   it("routes the macOS Wry down/up events into page history (GH #780)", () => {
     const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
     const fake = installFakeWindow();
@@ -643,15 +798,16 @@ describe("block-selection commands", () => {
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
 
-    // Defaults are selected-only + strip-collapsed, exactly as before CB1.
+    // Defaults are selected-only + strip-collapsed; a selected COLLAPSED parent still
+    // carries the children it hides in the public text (GH #943, D-20261112-SU941).
     expect(write).toHaveBeenCalledWith(
-      "- Parent",
-      "<ul><li>Parent</li></ul>",
+      "- Parent\n\t- Child",
+      "<ul><li>Parent<ul><li>Child</li></ul></li></ul>",
     );
     expect(peekClipboardPayload()).toMatchObject({
       op: "copy",
       graph: "/plugin-test",
-      text: "- Parent",
+      text: "- Parent\n\t- Child",
       blocks: [{
         raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111",
         sourceFormat: "md",
@@ -800,6 +956,22 @@ describe("pane-select Esc cascade", () => {
 
     expect(paneSel()).toBeNull();
     dispose();
+  });
+
+  it("a folded selected subtree survives the Escape round trip through pane-select (GH #941 review F3)", () => {
+    loadSingle({ name: "Fold", kind: "page", title: "Fold", pre_block: null, blocks: [
+      { id: "parent", raw: "Parent", collapsed: true, children: [{ id: "child", raw: "Child", collapsed: false, children: [] }] },
+    ] });
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    try {
+      selectBlock("parent");
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+      expect(paneSel()).not.toBeNull();
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+      expect(paneSel()).toBeNull();
+      expect(selectedIds()).toEqual(["parent", "child"]);
+    } finally { exitPaneSelect(); clearSelection(); dispose(); }
   });
 
   it("never intercepts keys while a text field has focus (stale mode)", () => {
@@ -1306,5 +1478,88 @@ describe("webview reload chords (GH #797)", () => {
     fake.dispatchCaptureKeydown(tracked.event);
     expect(reload).toHaveBeenCalledTimes(2);
     again();
+  });
+});
+
+// GH #928: two remappable commands that park a page in the right sidebar, unbound by default.
+describe("open in right sidebar commands (GH #928)", () => {
+  const ids = ["sidebar/open-current-page", "sidebar/open-today"];
+  const reset = () => applySidebarSession({ right: false, items: [] });
+  afterEach(reset);
+
+  it("are listed with English labels, global scope and no default binding", () => {
+    const rows = commandDefaults();
+    expect(rows.find((c) => c.id === "sidebar/open-current-page")).toMatchObject({ english: "Open current page in right sidebar", binding: "", scope: "global" });
+    expect(rows.find((c) => c.id === "sidebar/open-today")).toMatchObject({ english: "Open today's journal in right sidebar", binding: "", scope: "global" });
+  });
+
+  it("open today's journal in the sidebar even though that day has no file or loaded page yet", () => {
+    reset();
+    paletteCommands().find((c) => c.id === "sidebar/open-today")!.run();
+    expect(rightSidebarOpen()).toBe(true);
+    expect(rightSidebar()).toEqual([{ kind: "page", name: journalTitle(appNow()), pageKind: "journal", path: undefined }]);
+    // Again: the same slot comes to the top, it is not duplicated.
+    paletteCommands().find((c) => c.id === "sidebar/open-today")!.run();
+    expect(rightSidebar()).toHaveLength(1);
+  });
+
+  it("open the focused pane's page exactly as the page menu's Open in sidebar does, file owner included", () => {
+    reset();
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "page", name: "Notes", pageKind: "page", path: "pages/Notes.md" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    paletteCommands().find((c) => c.id === "sidebar/open-current-page")!.run();
+    const viaCommand = rightSidebar();
+    reset();
+    openPageInSidebar({ name: "Notes", pageKind: "page", path: "pages/Notes.md" }); // the menu's call
+    expect(viaCommand).toEqual(rightSidebar());
+    expect(viaCommand).toMatchObject([{ kind: "page", name: "Notes", pageKind: "page", path: "pages/Notes.md" }]);
+  });
+
+  it("open a journal page as a journal", () => {
+    reset();
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Nov 3rd, 2026", pageKind: "journal" }], pos: 0, pinned: false }], activeIndex: 0 });
+    paletteCommands().find((c) => c.id === "sidebar/open-current-page")!.run();
+    expect(rightSidebar()).toMatchObject([{ kind: "page", name: "Nov 3rd, 2026", pageKind: "journal" }]);
+  });
+
+  it("offer Open current page only where a page is shown (not in the journals feed), and do nothing otherwise", () => {
+    reset();
+    expect(paletteCommands().some((c) => c.id === "sidebar/open-current-page")).toBe(false);
+    expect(paletteCommands().some((c) => c.id === "sidebar/open-today")).toBe(true);
+    expect(runGlobalCommand("sidebar/open-current-page")).toBe(true);
+    expect(rightSidebar()).toEqual([]);
+    expect(rightSidebarOpen()).toBe(false);
+    resetPaneLayoutToSingle(pageSnapshot("Notes"));
+    expect(paletteCommands().some((c) => c.id === "sidebar/open-current-page")).toBe(true);
+  });
+
+  it("can be bound to a key from config.edn and then fire on it, while editing too", () => {
+    reset();
+    resetPaneLayoutToSingle(pageSnapshot("Notes"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "sidebar/open-current-page": "alt+shift+d", "sidebar/open-today": "alt+shift+j" });
+    const press = (key: string, code: string) => {
+      const tracked = trackedKeyEvent({ key, code, altKey: true, shiftKey: true });
+      fake.dispatchCaptureKeydown(tracked.event);
+      return tracked.prevented();
+    };
+    expect(press("D", "KeyD")).toBe(true);
+    expect(rightSidebar()).toMatchObject([{ name: "Notes", pageKind: "page" }]);
+    expect(press("J", "KeyJ")).toBe(true);
+    expect(rightSidebar()).toMatchObject([{ name: journalTitle(appNow()), pageKind: "journal" }, { name: "Notes" }]);
+    dispose();
+  });
+
+  it("do nothing on those keys when unbound (no default)", () => {
+    reset();
+    resetPaneLayoutToSingle(pageSnapshot("Notes"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({});
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "J", code: "KeyJ", altKey: true, shiftKey: true }).event);
+    expect(rightSidebar()).toEqual([]);
+    dispose();
+    for (const id of ids) expect(commandDefaults().find((c) => c.id === id)!.binding).toBe("");
   });
 });

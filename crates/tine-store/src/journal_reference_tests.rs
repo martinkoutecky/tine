@@ -6,8 +6,7 @@ use std::path::{Path, PathBuf};
 use tine_store::{EditKind, OpenOptions, PageId, Resolved, SaveBase, Store};
 
 fn scratch(tag: &str, config: &str, notes: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("tine-481-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-481-{tag}-"));
     for dir in ["journals", "pages", "logseq"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();
     }

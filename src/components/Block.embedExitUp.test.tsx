@@ -5,6 +5,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
+import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
 import { pageByName, resetStore, selectedIds, node, indentSelection, outdentSelection } from "../document";
 import { loadFeed, loadSingle } from "../document/workingSet";
@@ -95,27 +96,38 @@ describe("Up arrow at the top of an embedded block (GH #415)", () => {
       expect(editingId()).toBeNull();
     } finally { dispose(); }
   });
-  it("selects the embedding block from a nested embedded source (GH #641)", async () => {
+  it.each(["command", "escape", "shift-up", "select-all"])("%s selects the embedding block and keeps that selection across a host move (GH #641)", async entry => {
+    const stopKeys = installKeybindings();
     loadFixture();
     const root = document.createElement("div"); document.body.appendChild(root);
     const dispose = render(() => <For each={pageByName("HostPage")?.roots ?? []}>{id => <Block id={id} />}</For>, root);
     try {
+      const id = entry === "command" ? "target-child" : "target";
       const content = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLElement>('.embed-block [data-block-id="target-child"] .block-content');
+        const el = root.querySelector<HTMLElement>(`.embed-block [data-block-id="${id}"] > .block-main .block-content`);
         expect(el).not.toBeNull(); return el!;
       });
       mouseDownAndUp(content);
-      await vi.waitFor(() => expect(editingId()).toBe("target-child"));
-      expect(dispatchFocusedEditorCommand("editor/select-embedding-block")).toBe(true);
+      const editor = await vi.waitFor(() => {
+        expect(editingId()).toBe(id);
+        const editor = maybeEditorIn(root, id); expect(editor).not.toBeNull(); return editor!;
+      });
+      if (entry === "command") expect(dispatchFocusedEditorCommand("editor/select-embedding-block")).toBe(true);
+      else {
+        editor.select(0, entry === "select-all" ? editor.value().length : 0);
+        editor.keydown({ key: entry === "escape" ? "Escape" : entry === "select-all" ? "a" : "ArrowUp",
+          shiftKey: entry === "shift-up", ctrlKey: entry === "select-all" });
+      }
       expect(editingId()).toBeNull();
       expect(selectedIds()).toEqual(["host"]);
       expect(root.querySelector(".embed-block")).not.toBeNull();
       indentSelection();
       expect(node("host").parent).toBe("above");
       expect(node("target-child").parent).toBe("target");
+      expect(selectedIds()).toEqual(["host"]);
       outdentSelection();
       expect(node("host").parent).toBeNull();
-    } finally { dispose(); }
+    } finally { dispose(); stopKeys(); }
   });
   it("selects the containing macro from a page embed too", async () => {
     const source: PageDto & { id: string } = { id: "pages/SourcePage.md", name: "SourcePage", title: "SourcePage", kind: "page", pre_block: null, blocks: [leaf("source", "source text", [leaf("kid", "kid text")])] };

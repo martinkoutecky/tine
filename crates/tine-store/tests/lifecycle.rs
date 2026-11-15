@@ -7,12 +7,7 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new(label: &str) -> Self {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let root = std::env::temp_dir().join(format!(
-            "tine-lifecycle-{label}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        ));
+        let root = crate::test_support::fresh_dir(&format!("tine-lifecycle-{label}-"));
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
         Self(std::fs::canonicalize(root).unwrap())

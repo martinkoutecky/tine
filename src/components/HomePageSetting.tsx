@@ -1,13 +1,14 @@
 import { settingLabel, settingAttributes, settingDescription } from "./settingsField";
 import { settings } from "./settingDefinitions";
 import { msg, t } from "../i18n";
-import { For, Show, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pinyinMatchingEnabled } from "../launcherRanking";
-import { graphEpoch, graphMeta, setGraphMeta } from "../graphSession";
+import { graphMeta, setGraphMeta } from "../graphSession";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { readOr } from "../resourceRead";
+import { createGraphResource } from "../graphResource";
 
 /** Settings picker for an existing ordinary page as graph home. Search is
  * bounded to eight graph pages; one selected name is written through the
@@ -15,8 +16,7 @@ import { readOr } from "../resourceRead";
 export function HomePageSetting(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [picking, setPicking] = createSignal(false);
-  // The epoch retires an outstanding owned read; keying on it asks again.
-  const [matchesResource] = createResource(() => ({ text: query(), epoch: graphEpoch() }), async ({ text }) => {
+  const [matchesResource] = createGraphResource(query, async (text) => {
     const owner = graphOwner();
     if (!owner()) return [];
     const result = await readOwned(owner, backend().quickSwitch(text, 8, undefined, pinyinMatchingEnabled()));

@@ -3,7 +3,7 @@ use tine_store::FaultPoint;
 
 #[test]
 fn conflict_read_refuses_malformed_sidecar_instead_of_reporting_empty_disk() {
-    let root = std::env::temp_dir().join(format!("tine-pdf-conflict-read-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-pdf-conflict-read-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     std::fs::write(root.join("assets/paper.edn"), "not edn").unwrap();
@@ -20,11 +20,7 @@ fn conflict_read_refuses_malformed_sidecar_instead_of_reporting_empty_disk() {
 
 #[test]
 fn failed_sidecar_crop_can_be_rolled_back_to_recoverable_trash() {
-    let root = std::env::temp_dir().join(format!(
-        "tine-pdf-crop-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let root = crate::test_support::fresh_dir("tine-pdf-crop-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
@@ -52,7 +48,7 @@ fn failed_sidecar_crop_can_be_rolled_back_to_recoverable_trash() {
 
 #[test]
 fn crop_rollback_refuses_a_current_sidecar_reference_or_malformed_sidecar() {
-    let root = std::env::temp_dir().join(format!("tine-pdf-crop-guard-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-pdf-crop-guard-");
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let rel = write_pdf_area_image(&store, "paper.pdf", 1, "crop-id", 42, b"png").unwrap();
@@ -76,7 +72,7 @@ fn crop_rollback_refuses_a_current_sidecar_reference_or_malformed_sidecar() {
 
 #[test]
 fn crop_rollback_keeps_crop_when_sidecar_changes_at_transaction_guard() {
-    let root = std::env::temp_dir().join(format!("tine-pdf-crop-race-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-pdf-crop-race-");
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
     let rel = write_pdf_area_image(&store, "paper.pdf", 1, "crop-id", 42, b"png").unwrap();
@@ -90,7 +86,7 @@ fn crop_rollback_keeps_crop_when_sidecar_changes_at_transaction_guard() {
 
 #[test]
 fn highlight_deletion_retires_its_crop_through_the_guarded_sidecar_path() {
-    let root = std::env::temp_dir().join(format!("tine-pdf-delete-crop-{}", std::process::id()));
+    let root = crate::test_support::fresh_dir("tine-pdf-delete-crop-");
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
@@ -127,7 +123,7 @@ fn highlight_deletion_retires_its_crop_through_the_guarded_sidecar_path() {
 
 #[test]
 fn optional_page_checks_org_headline_depth_and_preserves_sidecar_reads() {
-    let dir = std::env::temp_dir().join(format!("tine-pdf-org-depth-{}", std::process::id()));
+    let dir = crate::test_support::fresh_dir("tine-pdf-org-depth-");
     std::fs::create_dir_all(dir.join("pages")).unwrap();
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::write(
@@ -155,12 +151,7 @@ const B: &str = "6a5604f8-a337-4336-a711-2ba6bc14fb0b";
 const C: &str = "6a5604f8-a337-4336-a711-2ba6bc14fb0c";
 
 fn c3u_graph(tag: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "tine-pdf-c3u-{tag}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::test_support::fresh_dir(&format!("tine-pdf-c3u-{tag}-"));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets")).unwrap();
     root
