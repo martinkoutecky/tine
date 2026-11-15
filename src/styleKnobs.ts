@@ -85,6 +85,19 @@ export const KNOBS: readonly StyleKnob[] = [
       { label: msg("settings-guides-one-color"), value: "single" },
     ],
   },
+  {
+    // GH #892. Default "tint" = today's look (no class); "thread" adds `tine-author-marks-thread`, which
+    // comments.css answers with a line through the author chips instead of the tint.
+    id: "author-marks",
+    type: "class-select",
+    title: msg("settings-author-mark-style"),
+    description: msg("settings-author-mark-style-hint"),
+    default: "tint",
+    options: [
+      { label: msg("settings-author-mark-tint"), value: "tint" },
+      { label: msg("settings-author-mark-thread"), value: "thread" },
+    ],
+  },
   { id: "knobs-links", type: "heading", level: 2, title: msg("settings-links") },
   {
     id: "external-link-underline",

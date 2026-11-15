@@ -118,7 +118,7 @@ it("the Show/Hide author marks switch turns the tint off and leaves the chips an
 it("GH #893: no gutter-line rule or element survives in the stylesheet or the components", () => {
   const css = readFileSync("src/styles/comments.css", "utf8");
   expect(css).not.toMatch(/\.author-mark\b/);
-  expect(css).toMatch(/:where\(:root:not\(\.tine-author-thread\)\) \.ls-block\.author-tinted > \.block-main > \.block-content-wrapper \{[^}]*padding-inline: var\(--author-tint-bleed\);[^}]*margin-inline: calc\(-1 \* var\(--author-tint-bleed\)\)/);
+  expect(css).toMatch(/:where\(:root:not\(\.tine-author-marks-thread\)\) \.ls-block\.author-tinted > \.block-main > \.block-content-wrapper \{[^}]*padding-inline: var\(--author-tint-bleed\);[^}]*margin-inline: calc\(-1 \* var\(--author-tint-bleed\)\)/);
 });
 
 it("child outlines, comment threads and embeds bound runs; no inheritance", () => {
@@ -278,7 +278,7 @@ it("renders every public authorship hook the contract's section 8 table promises
   // The two names that are not elements: the window class is in the stylesheet, and `--author-color` is defined
   // for every tint class an authored row carries (jsdom loads no stylesheet, so read the rule).
   const css = readFileSync("src/styles/comments.css", "utf8");
-  expect(css).toContain(".tine-author-thread {");
+  expect(css).toContain(".tine-author-marks-thread {");
   for (const id of ["a", "b", "c"]) {
     const tint = [...row(root, id).classList].find(name => /^author-tint-\d$/.test(name));
     expect(tint, `${id} carries a tint class`).toBeDefined();

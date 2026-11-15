@@ -85,7 +85,28 @@ async function newPage(width, theme, dsf = 2) {
   return { ctx, page };
 }
 const shoot = (page, file) => page.locator(".page-blocks").first().screenshot({ path: `${out}/${file}` });
-const setThreadClass = (page, on) => page.evaluate(on => document.documentElement.classList.toggle("tine-author-thread", on), on);
+/** The thread look the way a user gets it: Settings > Appearance > Advanced > Fine-tuning > Author marks. The class
+ *  `tine-author-marks-thread` on <html> is what the knob produces; assert it, never set it by hand. */
+async function setThreadClass(page, on) {
+  await page.locator('button.icon-btn[title^="Settings"], .mobile-drawer-settings, [aria-label^="Settings"]').first().click();
+  await page.waitForSelector(".settings-modal", { timeout: 5000 });
+  const appearance = page.locator(".settings-modal").getByText("Appearance", { exact: true }).first();
+  if (await appearance.count()) await appearance.click();
+  const advanced = page.locator(".settings-advanced-toggle");
+  if (await advanced.count()) await advanced.first().click();
+  const knob = page.locator('select[aria-label="Author marks"]');
+  await knob.waitFor({ timeout: 5000 });
+  await knob.evaluate(el => el.scrollIntoView({ block: "center" }));
+  await knob.selectOption(on ? "thread" : "tint");
+  await page.locator(".settings-modal").press("Escape");
+  await page.locator(".settings-modal").waitFor({ state: "detached", timeout: 3000 }).catch(async () => {
+    await page.keyboard.press("Escape");
+    await page.locator(".settings-modal").waitFor({ state: "detached", timeout: 5000 });
+  });
+  const has = await page.evaluate(() => document.documentElement.classList.contains("tine-author-marks-thread"));
+  assert.equal(has, on, `Author marks = ${on ? "Thread" : "Tint"} must ${on ? "add" : "remove"} html.tine-author-marks-thread`);
+  await page.mouse.move(0, 0);
+}
 const addCss = (page, css) => page.addStyleTag({ content: css });
 
 try {

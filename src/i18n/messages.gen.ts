@@ -2528,6 +2528,10 @@ export interface MessageArgs {
   "settings-appearance": {};
   "settings-asset-trash-confirmation": { "count": number; "size": string | number };
   "settings-asset-trash-emptied": { "count": number };
+  "settings-author-mark-style": {};
+  "settings-author-mark-style-hint": {};
+  "settings-author-mark-thread": {};
+  "settings-author-mark-tint": {};
   "settings-author-marks": {};
   "settings-author-marks-hint": {};
   "settings-auto-embed-video-links": {};

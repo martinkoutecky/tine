@@ -2055,6 +2055,8 @@ mod customize_look_guide_tests {
             "data-author",
             // GH #892: the authorship hooks, the thread example and the icon tokens.
             ".author-run-continued",
+            "**Author marks**",
+            "**Thread**",
             "--author-color",
             "--tine-author-icon",
             "--tine-author-icon-size",

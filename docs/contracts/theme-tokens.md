@@ -282,7 +282,7 @@ same run and the same "you". The stored text is never rewritten.
 | `--author-color` | The author's colour, one of eight chosen from the name's key and defined on every authored row and on its chip. Read it as `var(--author-color, var(--accent))`. A rule sets it per author, on the row and its chip: `.ls-block[data-author="Claude"], .ls-block[data-author="Claude"] .author-chip { --author-color: #d97757; }` |
 | `.ls-block > .block-main > .block-content-wrapper` | The row's own box: its text and its chip, never its children. The one structural path promised here, because a thread or any other row-level drawing needs it; the chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`) |
 | `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With the icon tokens (section 2) set on it, it shows the icon instead of the name |
-| `html.tine-author-thread` | Tine's own thread look, below. A class on `<html>`, not a token: a Fine-tuning row or a theme package sets it when one is offered; there is none yet and `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how) |
+| `html.tine-author-marks-thread` | Tine's own thread look, below. A class on `<html>`, not a token: Settings > Appearance > Fine-tuning > **Author marks** (Tint, the default, or Thread; the class `tine-<id>-<option>` of the class knob `author-marks`) sets it. `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how); a theme package cannot set it |
 
 The tint's own join classes (`author-card-continued`, `author-card-continues`,
 sibling rows only, so a card never bends around a child) and the eight
@@ -306,7 +306,7 @@ O(1) per row for the parent, the first child and the next sibling, plus the
 last-child chain of the previous sibling (each row lies on at most one such
 chain, so a page costs O(rows) in all); unauthored rows compute nothing.
 
-**Thread look (`html.tine-author-thread`).** Instead of the tint: a 2px line in
+**Thread look (`html.tine-author-marks-thread`).** Instead of the tint: a 2px line in
 the author's colour runs through the author chips in a 16px gutter at the end of
 each authored row's content (the phone's 44px fold area stays to the right of it).
 The line starts under the chip of a run's first row, crosses the two pixels
@@ -340,7 +340,7 @@ Tine ships no icon of its own.
 - src/themes/typography.test.ts (the typography vocabulary: every accepted and rejected fixture, judged by both the app parser and `tine-theme.mjs check`; the CSS built from parsed families only)
 - src/themeGallery.typography.test.tsx and src/components/Settings.themeTypography.test.tsx (the third composition role: apply, revert, uninstall, revoke, persistence; the Settings actions and the not-installed hint)
 - src/themeTokens.guard.test.ts (the token tables against the shipped CSS, the code and the Guide page)
-- src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control)
+- src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control, the Author marks row's class on `<html>`)
 - src/customCss.test.tsx (live reload, transient read failures keep the last sheet, latest read wins, safe mode, the palette command, the Settings affordances)
 - src/styles/themes/soft.test.ts (the Soft palette's contrast on every real text/surface pair, including on-accent, links on the selection overlay and markers, GH #649)
 - crates/tine-store/src/watch/custom_css.rs (the lane's own tests, including the metadata shortcut that skips hashing an unchanged file)

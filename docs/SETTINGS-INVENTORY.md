@@ -53,6 +53,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `knob.embed-breadcrumbs` | `settings-embed-breadcrumbs` | Block embed breadcrumbs | Advanced |
 | `knob.embed-shading` | `settings-embedded-blocks` | Embedded blocks | Advanced |
 | `knob.guide-colors` | `settings-color-indent-guides-by-level` | Color indent guides by level | Advanced |
+| `knob.author-marks` | `settings-author-mark-style` | Author marks | Advanced |
 | `knob.external-link-underline` | `settings-links-to-the-web-or-a-file` | Links to the web or a file | Advanced |
 | `knob.missing-page-color` | `settings-links-to-pages-that-do-not-exist` | Links to pages that do not exist yet | Advanced |
 

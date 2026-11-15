@@ -15,7 +15,7 @@ it("a name's key is trimmed, space-collapsed and case-folded; the stored text is
 
 it("the thread look is one class on <html>, drawn with logical sides and the public run classes", () => {
   expect(threadLook.length).toBeGreaterThan(500);
-  expect(threadLook).toMatch(/^\.tine-author-thread \{/m);
+  expect(threadLook).toMatch(/^\.tine-author-marks-thread \{/m);
   for (const hook of [".author-run-continued", ".author-run-continues", "inset-inline-end", "float: inline-end", "margin-inline-end", "--author-thread-clear: 44px"])
     expect(threadLook, hook).toContain(hook);
   expect(threadLook).not.toMatch(/(^|[\s;{])(left|right|margin-left|margin-right|padding-left|padding-right|float: right|float: left):/m);
@@ -24,7 +24,7 @@ it("the thread look is one class on <html>, drawn with logical sides and the pub
 
 it("the tint steps aside for the thread look and uses the card classes, not the run classes", () => {
   const tint = css.slice(css.indexOf("GH #893: another author's block"), css.indexOf("GH #892: the thread look"));
-  expect(tint).toContain(":where(:root:not(.tine-author-thread))");
+  expect(tint).toContain(":where(:root:not(.tine-author-marks-thread))");
   expect(tint).toContain("author-card-continued");
   expect(tint).not.toContain("author-run-");
 });

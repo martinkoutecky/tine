@@ -36,9 +36,11 @@ internal). The public run classes `author-run-continued` and `author-run-continu
 follow reading order through depth, for the thread look and for theme authors
 (GH #892): a run goes from a parent into its first drawn child and out of the
 last descendant to the next block, and a folded block ends where it is drawn.
-Their definition, the `html.tine-author-thread` look, the author icon tokens and
+Their definition, the `html.tine-author-marks-thread` look, the author icon tokens and
 the `data-author` hooks are in `docs/contracts/theme-tokens.md` section 8. Nothing
-here changes the default look; the thread look has no switch yet.
+here changes the default look: the thread look is the **Author marks** row in
+Settings > Appearance > Fine-tuning (Tint by default, Thread), and applies only
+while author marks are shown.
 
 **Remove author** is a palette command and bindable shortcut, without a default
 key. It acts on the complete block selection (folded descendants included), or

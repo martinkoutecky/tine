@@ -36,7 +36,7 @@ describe("the knob table (K1)", () => {
   });
 
   it("every shipped variable default is what the stylesheet already does (K3: an untouched knob changes nothing)", () => {
-    const css = ["app.css", "guideLevels.css"].map((file) => readFileSync(`src/styles/${file}`, "utf8")).join("\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
+    const css = ["app.css", "guideLevels.css", "comments.css"].map((file) => readFileSync(`src/styles/${file}`, "utf8")).join("\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
     for (const k of KNOBS) {
       if (k.type === "variable-select") {
         expect(css, `the app stylesheets must read var(--tine-${k.id}, <default>) with the knob's default as the fallback`).toContain(`var(--tine-${k.id}, ${k.default})`);
