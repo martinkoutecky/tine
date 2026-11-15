@@ -48,10 +48,9 @@ export interface DocumentPort {
   holdsPush(name: string): boolean;
   /** The page was deleted in this window (delete tombstone). */
   tombstoned(name: string): boolean;
-  /** The host took this instance's text at `rev` (a took answer's revision):
-   * the page's baseline for later reads. Took means the host has custody of
-   * it, not that it is published on disk (that is `needed`/`waited`). */
-  took(name: string, rev: string): void;
+  /** This instance's submitted text at `rev` has published: advance the disk
+   * ancestor used by conflict review. Custody alone never advances it. */
+  published(name: string, rev: string): void;
 }
 
 export interface AssetWrites {
@@ -95,6 +94,8 @@ interface Page {
   held: { content: Content; version: number } | null;
   /** The latest version the host took from this window: what must publish (S1). */
   needed: number | null;
+  /** Latest nonconflicted input awaiting publication, bounded to one revision. */
+  pendingBase: { instance: number; version: number; rev: string } | null;
   /** The highest taken version a publication wait answered true for (J6). */
   waited: number | null;
   /** The taken version a publication wait is running for (J6). */
@@ -548,7 +549,14 @@ export class HostClient {
       if (result) {
         for (const { key, version } of needs) {
           const page = this.byKey.get(key);
-          if (page) page.waited = Math.max(page.waited ?? version, version);
+          if (page) {
+            page.waited = Math.max(page.waited ?? version, version);
+            const base = page.pendingBase;
+            if (base && base.version <= version) {
+              if (base.instance === this.instanceOf(page)) this.doc.published(page.name, base.rev);
+              page.pendingBase = null;
+            }
+          }
         }
         this.onChange();
       }
@@ -607,7 +615,8 @@ export class HostClient {
       page.needed = answer.version;
       const rev = mail.page.text.kind === "unchanged" ? mail.page.text.rev : undefined;
       this.remember(page, rev, answer.version);
-      if (rev) this.doc.took(page.name, rev);
+      if (rev && !mail.page.conflict && instance !== null)
+        page.pendingBase = { instance, version: answer.version, rev };
     } else if (answer.took) {
       page.needed = answer.version;
     }
@@ -667,7 +676,7 @@ export class HostClient {
     let page = this.pages.get(name);
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
-        baseline: null, observed: null, notice: null, held: null, needed: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
+        baseline: null, observed: null, notice: null, held: null, needed: null, pendingBase: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
         kinds: [], timer: null, burst: null, waiters: [], answered: [] };
       this.pages.set(name, page);
     }
@@ -749,6 +758,7 @@ export class HostClient {
     this.doc.install(page.name, content);
     page.version = version;
     page.held = null;
+    page.pendingBase = null;
     this.remember(page, content.kind === "no-file" ? null : content.dto.rev ?? undefined, version);
   }
 

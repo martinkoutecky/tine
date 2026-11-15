@@ -8,6 +8,12 @@ replace that file between the final comparison and rename; mandatory cross-proce
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
+Live conflict review uses the revision the editor loaded or last proved
+published as its disk ancestor. A host acknowledgment takes custody of input;
+it does not advance that ancestor before publication. Review is three-way when
+the optional Concord ledger still holds the ancestor's bytes; otherwise it
+keeps both sides for a two-way review.
+
 A failed config read opens the graph read-only: existing files remain readable,
 page DTOs carry read-only, and transactions reject every mutation before disk
 steps. Repair `config.edn` externally and refresh/reopen to resume writes using

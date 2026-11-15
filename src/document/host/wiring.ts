@@ -148,7 +148,7 @@ const documentPort: DocumentPort = {
     return true;
   },
   tombstoned: (name) => deletedPages.has(name),
-  took: (name, rev) => { baseRev.set(name, rev); },
+  published: (name, rev) => { baseRev.set(name, rev); },
 };
 
 /** The document port for one binding's client: a client the binding has
@@ -160,7 +160,7 @@ function portFor(current: () => boolean): DocumentPort {
     ...documentPort,
     install: (name, content) => { if (current()) documentPort.install(name, content); },
     holdsPush: (name) => current() && documentPort.holdsPush(name),
-    took: (name, rev) => { if (current()) documentPort.took(name, rev); },
+    published: (name, rev) => { if (current()) documentPort.published(name, rev); },
   };
 }
 

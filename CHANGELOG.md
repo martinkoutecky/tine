@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Conflict review keeps the last known saved ancestor when typed changes could not be saved, instead of looking for an unpublished draft in its history (#964).
+
 ## [0.9.0-beta.14] - 2026-11-15
 
 ### Fixed

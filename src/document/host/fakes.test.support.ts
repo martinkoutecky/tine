@@ -182,9 +182,9 @@ export class FakeDoc implements DocumentPort {
   holds(name: string): boolean { return this.held.has(name); }
   holdsPush(name: string): boolean { return this.pushHeld.has(name); }
   tombstoned(name: string): boolean { return this.tombs.has(name); }
-  /** Took answers' revisions, in order. */
-  readonly tookRevs: [string, string][] = [];
-  took(name: string, rev: string): void { this.tookRevs.push([name, rev]); }
+  /** Proven publications' revisions, in order. */
+  readonly publishedRevs: [string, string][] = [];
+  published(name: string, rev: string): void { this.publishedRevs.push([name, rev]); }
 }
 
 export class FakeAssets implements AssetWrites {
