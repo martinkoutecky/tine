@@ -4,6 +4,7 @@
 // A third isolated transclusion covers structural Arrow navigation and deletion.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { editorSelector, selectEditor, withEditor } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -117,19 +118,15 @@ async function exerciseDisclosure(id, childText) {
 async function exerciseEnter(id, inserted, file) {
   const root = rootSelector(id);
   await browser.$(`${root} > .block-main .block-content`).click();
-  const editor = await browser.$(`${root} textarea.block-editor`);
+  const editor = await browser.$(editorSelector(root));
   await editor.waitForExist({ timeout: 5000 });
-  await browser.execute((selector) => {
-    const input = document.querySelector(selector);
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-  }, `${root} textarea.block-editor`);
+  await withEditor(browser, root, editor => editor.select(editor.value.length));
   await browser.keys(["Enter"]);
-  const focus = await browser.execute((sourceId) => {
+  const focus = await withEditor(browser, "", (editor, sourceId) => {
     const active = document.activeElement;
     const row = active?.closest?.(".ls-block");
     return {
-      editor: active instanceof HTMLTextAreaElement && active.classList.contains("block-editor"),
+      editor: editor?.focused === true,
       inEmbed: Boolean(active?.closest?.(".embed-block")),
       id: row?.getAttribute("data-block-id") ?? null,
       ref: row?.getAttribute("data-block-ref") ?? null,
@@ -147,15 +144,15 @@ async function exerciseEnter(id, inserted, file) {
 }
 
 async function activeEditor() {
-  return browser.execute(() => {
+  return withEditor(browser, "", editor => {
     const active = document.activeElement;
     const row = active?.closest?.(".ls-block");
     return {
-      editor: active instanceof HTMLTextAreaElement && active.classList.contains("block-editor"),
+      editor: editor?.focused === true,
       inEmbed: Boolean(active?.closest?.(".embed-block")),
       id: row?.getAttribute("data-block-id") ?? null,
       ref: row?.getAttribute("data-block-ref") ?? null,
-      value: active instanceof HTMLTextAreaElement ? active.value : null,
+      value: editor?.focused ? editor.value : null,
     };
   });
 }
@@ -173,28 +170,16 @@ async function waitForEmbedEditor(id, value) {
 async function exerciseArrowAndDelete() {
   const childRoot = rootSelector(NAV_CHILD);
   await browser.$(`${childRoot} > .block-main .block-content`).click();
-  await browser.execute((selector) => {
-    const input = document.querySelector(selector);
-    input.focus();
-    input.setSelectionRange(0, 0);
-  }, `${childRoot} textarea.block-editor`);
+  await selectEditor(browser, 0, 0, childRoot);
   await browser.keys(["ArrowUp"]);
   await waitForEmbedEditor(NAV);
 
   const parentRoot = rootSelector(NAV);
-  await browser.execute((selector) => {
-    const input = document.querySelector(selector);
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-  }, `${parentRoot} textarea.block-editor`);
+  await withEditor(browser, parentRoot, editor => editor.select(editor.value.length));
   await browser.keys(["ArrowDown"]);
   await waitForEmbedEditor(NAV_CHILD);
 
-  await browser.execute((selector) => {
-    const input = document.querySelector(selector);
-    input.focus();
-    input.setSelectionRange(0, input.value.length);
-  }, `${childRoot} textarea.block-editor`);
+  await withEditor(browser, childRoot, editor => editor.select(0, editor.value.length));
   await browser.keys(["Delete"]);
   await waitForEmbedEditor(NAV_CHILD, "");
   await browser.keys(["Backspace"]);

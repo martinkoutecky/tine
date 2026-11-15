@@ -9,6 +9,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.join(ROOT, "artifacts/og-pdf-area-ref-869");
@@ -97,7 +98,7 @@ try {
     stage = `${name}: native paste`;
     await openPageByName(browser, name);
     await browser.$(".page-blocks .ls-block .block-content-wrapper").click();
-    await browser.$("textarea.block-editor").waitForExist({ timeout: 10000 });
+    await browser.$(editorSelector()).waitForExist({ timeout: 10000 });
     await browser.keys(["End"]);
     await browser.performActions([{ type: "key", id: "paste-reference", actions: [
       { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "v" }, { type: "keyUp", value: "v" }, { type: "keyUp", value: "\uE009" }] }]);

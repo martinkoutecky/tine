@@ -18,6 +18,7 @@ import {
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -719,7 +720,7 @@ async function reopenCurrentPagePdf(filename, label, id) {
 
 async function uploadOnCurrentPage(source, stored, expectedMarkup, receiptKey) {
   await nativeClickSelector(".page-blocks .ls-block .block-content-wrapper", `${receiptKey}-editor`);
-  const editor = await browser.$(".page-blocks textarea.block-editor");
+  const editor = await browser.$(editorSelector(".page-blocks"));
   await editor.waitForExist({ timeout: 5000 });
   await browser.keys(["End"]);
   await typeKeys(" /upload");
@@ -755,11 +756,11 @@ async function uploadOnCurrentPage(source, stored, expectedMarkup, receiptKey) {
       timeoutMsg: `${receiptKey} page did not render its exact uploaded PDF link`,
     });
   } catch (error) {
-    const diagnostic = await browser.execute(() => ({
+    const diagnostic = await withEditor(browser, "", editor => ({
       title: document.querySelector("h1.page-title")?.textContent,
       blocks: [...document.querySelectorAll(".page-blocks")].map((page) => page.innerHTML.slice(0, 4000)),
       links: [...document.querySelectorAll(".page-blocks .pdf-link")].map((link) => link.outerHTML),
-      editor: document.querySelector("textarea.block-editor")?.value,
+      editor: editor?.value,
     }));
     fs.writeFileSync(path.join(ARTIFACTS, `${receiptKey}-upload-render-diagnostic.json`), JSON.stringify(diagnostic, null, 2));
     throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`, { cause: error });
@@ -1157,7 +1158,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   await closePdfWithNativePointer("org-close-for-clipboard-paste");
   await routeToPage("PDF Paste");
   await nativeClickSelector(".page-blocks .ls-block .block-content-wrapper", "pdf-ref-paste-editor");
-  const pasteEditor = await browser.$(".page-blocks textarea.block-editor");
+  const pasteEditor = await browser.$(editorSelector(".page-blocks"));
   await pasteEditor.waitForExist({ timeout: 5_000 });
   await browser.keys(["End"]);
   await nativeKeyChord("\uE009", "v", "pdf-generated-ref-native-paste");

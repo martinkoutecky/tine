@@ -6,6 +6,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { remote } from "webdriverio";
+import { editorSelector as blockEditorSelector, withEditor, blurEditor } from "./lib/e2e-block-editor.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
@@ -72,7 +73,7 @@ async function focusSource() {
     const el = document.querySelector(".right-sidebar .block-content-wrapper");
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   });
-  await browser.$(`${scope} textarea.block-editor`).waitForExist();
+  await browser.$(blockEditorSelector(scope)).waitForExist();
   await browser.keys(["Control", "End"]);
 }
 async function calls() { return browser.execute(() => window.__queryIpc); }
@@ -83,7 +84,7 @@ async function liveGroupEditing() {
   // One physical click, with no retry: the page-open handshake used to drop it.
   const body = await browser.$('.main-content .query-block .ls-block:not(.page-property-reference) .block-content');
   await body.click();
-  const editorSelector = ".main-content .query-block textarea.block-editor";
+  const editorSelector = blockEditorSelector(".main-content .query-block");
   await browser.$(editorSelector).waitForExist();
   await browser.execute(selector => {
     const editor = document.querySelector(selector);
@@ -101,20 +102,17 @@ async function liveGroupEditing() {
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelector('.main-content .query-block')?.getAttribute("aria-busy") !== "true"),
   { timeout: 15000, timeoutMsg: "query publication did not settle after typing" });
-  assert(await browser.execute(expected => !window.__groupEditorRetired
-    && document.activeElement === window.__groupEditor && window.__groupEditor.value === expected, groupBody + suffix),
+  assert(await withEditor(browser, ".main-content .query-block", (editor, expected) => !window.__groupEditorRetired
+    && editor?.focused && editor.element === window.__groupEditor && editor.value === expected, groupBody + suffix),
   "first-click editor retains focus, identity and every character through its own save");
-  await browser.execute(() => {
+  await withEditor(browser, ".main-content .query-block", editor => {
     window.__groupEditorObserver.disconnect();
-    const editor = window.__groupEditor;
     const split = editor.value.indexOf("tail");
-    editor.setSelectionRange(split, split);
+    editor.select(split);
   });
   await browser.keys("Enter");
-  await browser.waitUntil(() => browser.execute(selector => {
-    const editor = document.querySelector(selector);
-    return editor === document.activeElement && editor.value.startsWith("tail");
-  }, editorSelector), { timeout: 15000, timeoutMsg: "Enter must leave the split result live and editing" });
+  await browser.waitUntil(() => withEditor(browser, ".main-content .query-block", editor =>
+    editor?.focused && editor.value.startsWith("tail")), { timeout: 15000, timeoutMsg: "Enter must leave the split result live and editing" });
   for (const character of "split ") await browser.keys(character);
   await waitForFileText(pageFile("Query group source"), text =>
     text.includes("- Group ordinary [[Query group target]]")
@@ -122,17 +120,13 @@ async function liveGroupEditing() {
   // A held answer's old epoch keeps aria-busy until editing ends. The host's
   // published event, with these exact saved bytes, proves publication meanwhile.
   await groupPublication();
-  assert(await browser.execute(selector => {
-    const editor = document.querySelector(selector);
-    return editor === document.activeElement && editor.value === "split tail [[Query group target]] typed";
-  }, editorSelector), "the new block remains editable after the structural edit and save");
+  assert(await withEditor(browser, ".main-content .query-block", editor =>
+    editor?.focused && editor.value === "split tail [[Query group target]] typed"), "the new block remains editable after the structural edit and save");
   for (const character of "ok ") await browser.keys(character);
   await waitForFileText(pageFile("Query group source"), text => text.includes("\n\t- split ok tail [[Query group target]] typed"));
   await groupPublication();
-  assert(await browser.execute(selector => {
-    const editor = document.querySelector(selector);
-    return editor === document.activeElement && editor.value === "split ok tail [[Query group target]] typed";
-  }, editorSelector), "typing after publication remains focused and durable in the new block");
+  assert(await withEditor(browser, ".main-content .query-block", editor =>
+    editor?.focused && editor.value === "split ok tail [[Query group target]] typed"), "typing after publication remains focused and durable in the new block");
   await browser.keys("Escape");
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelector('.main-content .query-block')?.getAttribute("aria-busy") !== "true"),
@@ -221,7 +215,7 @@ try {
   const pasted = await browser.executeAsync(done => window.__TAURI_INTERNALS__.invoke("plugin:clipboard-manager|write_text", { text: "TODO [[Query target]] matching native result" }).then(() => done(true), () => done(false)));
   assert(pasted, "native clipboard preparation");
   await browser.keys(["Control", "a"]); await browser.keys(["Control", "v"]);
-  await browser.execute(() => document.querySelector(".right-sidebar textarea.block-editor")?.blur());
+  await blurEditor(browser, ".right-sidebar");
   await waitForFileText(pageFile("Query unrelated"), text => text.includes("matching native result"));
   await shown(".main-content .query-block", "matching native result");
   await browser.waitUntil(async () => (await calls()).some(c => c.command === "query_run" && c.args.query?.source?.kind === "tql"), { timeout: 30000 });

@@ -11,6 +11,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+import { editorSelector, editorText } from "./lib/e2e-block-editor.mjs";
 
 ensurePrivateSessionBus();
 
@@ -157,13 +158,13 @@ try {
   await openPageByName(browser, "Survey test");
   await visible("GH905 real content");
   await browser.waitUntil(async () => {
-    if (await browser.$(".main-content textarea.block-editor").isExisting()) return true;
+    if (await browser.$(editorSelector(".main-content")).isExisting()) return true;
     await browser.$(".main-content .page-blocks .block-content [data-so]").click();
-    return browser.$(".main-content textarea.block-editor").isExisting();
+    return browser.$(editorSelector(".main-content")).isExisting();
   }, { timeout: 10_000, timeoutMsg: "clicking the real page text did not enter editing" });
-  const editor = await browser.$(".main-content textarea");
+  const editor = await browser.$(editorSelector(".main-content"));
   await editor.waitForExist({ timeout: 10_000 });
-  const raw = await editor.getValue();
+  const raw = await editorText(browser, ".main-content");
   await browser.keys(["Control", "a"]);
   await browser.keys(raw.replace("GH905 real content", "GH905 saved real content"));
   await browser.keys(["Escape"]);

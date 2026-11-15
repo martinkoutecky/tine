@@ -1,6 +1,6 @@
 // GH #532 / og 11c: when the local day changes while the user is typing in the
 // Journals feed, the new day appears at the top of the feed and the open editor
-// keeps its textarea, unsaved text, selection and focus; the text then saves to
+// keeps its editor, unsaved text, selection and focus; the text then saves to
 // the day it was typed in.
 //
 // The native app, its WebKit web process and the backend `journalFeedPage` day
@@ -12,6 +12,7 @@
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { FEED_LOAD_FAILURE, watchErrorToasts } from "./lib/e2e-toasts.mjs";
 
@@ -90,18 +91,17 @@ async function main() {
   let browser;
   let step = "launch";
   const sameEditor = (actual, wanted) => actual !== null && Object.keys(wanted).every((key) => actual[key] === wanted[key]);
-  const feedState = () => browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor");
+  const feedState = () => withEditor(browser, "", editor => {
     return {
       now: new Date().toISOString(),
       titles: [...document.querySelectorAll(".page-section h1.journal-title")].map((node) => node.textContent?.trim() ?? ""),
       editor: editor ? {
-        mark: editor.dataset.rolloverMark ?? null,
+        mark: editor.element.dataset.rolloverMark ?? null,
         value: editor.value,
-        start: editor.selectionStart,
-        end: editor.selectionEnd,
-        focused: document.activeElement === editor,
-        day: editor.closest(".page-section")?.querySelector("h1.journal-title")?.textContent?.trim() ?? null,
+        start: editor.start,
+        end: editor.end,
+        focused: editor.focused,
+        day: editor.element.closest(".page-section")?.querySelector("h1.journal-title")?.textContent?.trim() ?? null,
       } : null,
       toasts: [...document.querySelectorAll(".toast")].map((node) => node.textContent),
     };
@@ -128,14 +128,13 @@ async function main() {
     const block = await browser.$(`//div[contains(concat(' ', normalize-space(@class), ' '), ' block-content ') and normalize-space(.) = '${TODAY_TEXT}']`);
     await block.waitForExist({ timeout: 10_000 });
     await block.click();
-    await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+    await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
     await browser.keys(["End"]);
     await browser.keys(TYPED);
-    const marked = await browser.execute(() => {
-      const editor = document.querySelector("textarea.block-editor");
-      if (!(editor instanceof HTMLTextAreaElement)) return false;
-      editor.dataset.rolloverMark = "before-midnight";
-      editor.setSelectionRange(2, 9);
+    const marked = await withEditor(browser, "", editor => {
+      if (!editor) return false;
+      editor.element.dataset.rolloverMark = "before-midnight";
+      editor.select(2, 9);
       return true;
     });
     if (!marked) throw new Error("no editor to mark");
@@ -159,7 +158,7 @@ async function main() {
     if (!sameEditor(settled.editor, expected)) {
       throw new Error(`the open editor did not survive the rollover: ${JSON.stringify(settled.editor)} (expected ${JSON.stringify(expected)})`);
     }
-    console.log("PASS: the same textarea kept its unsaved text, selection and focus");
+    console.log("PASS: the same editor kept its unsaved text, selection and focus");
 
     step = "the edit saves to the day it was typed in";
     await browser.keys(["Escape"]);

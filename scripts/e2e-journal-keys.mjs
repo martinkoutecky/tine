@@ -9,6 +9,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector, blurEditor } from "./lib/e2e-block-editor.mjs";
 
 const out = path.resolve(process.env.JOURNAL_OUT || "artifacts/gx4-s5/native-after");
 const graph = path.resolve(process.env.JOURNAL_GRAPH || "artifacts/gx4-s5/graph");
@@ -87,7 +88,7 @@ try {
   stage = "continuous native typing beside a journal";
   await browser.execute(() => document.querySelector(".right-sidebar .block-content-wrapper")
     .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })));
-  await browser.$(".right-sidebar textarea.block-editor").waitForExist();
+  await browser.$(editorSelector(".right-sidebar")).waitForExist();
   await browser.keys(["Control", "End"]);
   await browser.execute(() => { window.__journalIpc = []; });
   const loadBefore = execFileSync("uptime", { encoding: "utf8" }).trim();
@@ -97,7 +98,7 @@ try {
   await browser.performActions([{ type: "key", id: "journal-typing", actions }]); await browser.releaseActions();
   const stoppedAt = Date.now(), during = await calls();
   assert(during.some(c => c.command === "page_submit"), "native typing must persist through the host");
-  await browser.execute(() => document.querySelector(".right-sidebar textarea.block-editor")?.blur());
+  await blurEditor(browser, ".right-sidebar");
   await waitForFileText(pageFile("S5 typing"), text => text.includes("xxxxxxxx"));
   await delay(3500);
   const all = await calls();

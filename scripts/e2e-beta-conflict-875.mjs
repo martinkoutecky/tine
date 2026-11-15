@@ -11,6 +11,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const artifacts = path.join(root, "artifacts/fix-beta-conflict-875");
@@ -53,7 +54,7 @@ const edit = async text => {
     return Boolean(block);
   }), { timeout: 10000 });
   await browser.$(".main-content .ls-block .block-content-wrapper").click();
-  const input = await browser.$(".main-content textarea.block-editor");
+  const input = await browser.$(editorSelector(".main-content"));
   await input.waitForExist({ timeout: 5000 });
   await browser.keys(["Control", "a"]);
   await browser.keys(text);

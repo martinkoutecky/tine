@@ -16,6 +16,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { currentPageTitle, openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -86,7 +87,7 @@ try {
       return Boolean(el);
     }, target), { timeout: 15000, timeoutMsg: "the block near the end of the page never rendered" });
     await browser.$("[data-review-target]").click();
-    await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 5000 });
+    await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 5000 });
     await browser.keys(["End"]);
     await browser.keys(" MINE");
     fs.writeFileSync(file, `- line 1 of the trip plan DISK${attempt}\n` + lines.slice(1).map(line => `- ${line}\n`).join(""));

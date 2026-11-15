@@ -12,6 +12,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { installAccountHome, assertAppLease } from "./lib/e2e-account-home.mjs";
+import { editorSelector, blurEditor } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const out = path.join(root, "target/artifacts/arrival-small/differential");
@@ -110,14 +111,14 @@ try {
           return block.querySelector(".block-content-wrapper");
         }
       }, ids[index]);
-      const editor = await browser.$(".right-sidebar textarea.block-editor");
+      const editor = await browser.$(editorSelector(".right-sidebar"));
       await editor.waitForExist();
       const copied = await browser.executeAsync((text, done) => window.__TAURI_INTERNALS__.invoke("plugin:clipboard-manager|write_text", { text })
         .then(() => done(true), () => done(false)), `${text}\nid:: ${ids[index]}`);
       assert(copied, "native clipboard preparation");
       await browser.keys(["Control", "a"]);
       await browser.keys(["Control", "v"]);
-      await browser.execute(() => document.querySelector(".right-sidebar textarea.block-editor")?.blur());
+      await blurEditor(browser, ".right-sidebar");
       await waitForFileText(pageFile(`Source ${index}`), bytes => bytes.includes(text));
       model[index] = text;
       stage = "settled frontend";

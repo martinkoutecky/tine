@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import { openJournals } from "./e2e-navigation.mjs";
 import { waitForFileText } from "../e2e-file-poll.mjs";
+import { editorSelector, editorText, withEditor } from "./e2e-block-editor.mjs";
 
 const dayKey = date => `${date.getFullYear()}_${String(date.getMonth() + 1).padStart(2, "0")}_${String(date.getDate()).padStart(2, "0")}`;
 const ROOT = "A journal comment";
@@ -77,12 +78,12 @@ export async function checkJournalMargin(browser, fixture, shot, proof) {
   for (const [index, body] of [ROOT, REPLY].entries()) {
     const tap = await browser.execute(syntheticTap, body);
     if (tap.gesturePlatform !== "ios") throw new Error("The iOS touch-gesture injection was not enabled");
-    const editor = await browser.$("textarea.block-editor");
+    const editor = await browser.$(editorSelector());
     await editor.waitForExist({ timeout: 5000 });
-    if (await editor.getValue() !== body) throw new Error(`Comment editor exposed metadata after tap: ${await editor.getValue()}`);
+    if (await editorText(browser) !== body) throw new Error(`Comment editor exposed metadata after tap: ${await editorText(browser)}`);
     proof.steps.push({ outcome: `${body}: iOS gesture injection edits only words`, ...tap });
     await shot(`07-${index}-ios-comment-editor`);
-    await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+    await withEditor(browser, "", editor => editor.select(editor.value.length));
     await browser.keys(" revised"); await browser.keys(["Escape"]);
     const saved = await waitForFileText(fixture.file, text => text.includes(`${body} revised`), { timeoutMs: 20_000 });
     if (saved.split(AUTHOR).length !== 3 || saved.split(FUTURE).length !== 3 || !saved.includes("tine.quote:: journal passage  \t\n")) {

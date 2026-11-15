@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
+import { editorSelector, editorText } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 
@@ -55,10 +56,10 @@ try {
   const task = await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'DOING']");
   await task.waitForDisplayed({ timeout: 10_000 });
   await task.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 10_000 });
   await browser.keys(["Control", "Home"]); await browser.keys(["Control"]);
   await browser.keys(["End"]); await browser.keys([..." work"]);
-  const edited = await browser.$("textarea.block-editor").getValue();
+  const edited = await editorText(browser);
   if (edited !== "DOING work") throw new Error(`wrong task buffer: ${edited}`);
   await browser.keys(["Escape"]);
   await waitForFileText(running, text => text.includes("DOING work"));

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const OUT = path.join(ROOT, "artifacts/og-dup-id-row-resolve");
@@ -72,14 +73,14 @@ try {
     content.click();
   }, surface);
   if (!receipt.before.readOnly) {
-    const editor = await browser.$("textarea.block-editor");
+    const editor = await browser.$(editorSelector());
     await editor.waitForExist({ timeout: 8000 });
     await editor.click();
     await browser.keys(["End", " edited through B", "Escape"]);
     await browser.waitUntil(() => [A, B].some(file => fs.readFileSync(file, "utf8").includes("edited through B")), { timeout: 15000 });
     receipt.edited = true;
   } else {
-    assert.equal(await browser.$("textarea.block-editor").isExisting(), false, "read-only B row opened an editor");
+    assert.equal(await browser.$(editorSelector()).isExisting(), false, "read-only B row opened an editor");
     receipt.edited = false;
   }
   stage = "verify source files and visible identity";

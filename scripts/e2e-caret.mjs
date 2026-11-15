@@ -19,6 +19,7 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { withEditor, withEditors } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -254,10 +255,9 @@ const log = (line) => {
 
 let traceRows = [];
 const probe = async (tag) => {
-  const s = await browser.execute(() => {
+  const s = await withEditor(browser, "", editor => {
     const ae = document.activeElement;
-    const isEd =
-      ae instanceof HTMLTextAreaElement && ae.classList.contains("block-editor");
+    const isEd = editor?.focused === true;
     const blocks = [...document.querySelectorAll(".ls-block")];
     const closest = isEd && ae.closest ? ae.closest(".ls-block") : null;
     const idx = closest ? blocks.indexOf(closest) : -1;
@@ -275,9 +275,9 @@ const probe = async (tag) => {
       : null;
     return {
       isEditor: isEd,
-      sel: isEd ? ae.selectionStart : null,
-      val: isEd ? ae.value.slice(0, 34) : null,
-      value: isEd ? ae.value : null,
+      sel: isEd ? editor.start : null,
+      val: isEd ? editor.value.slice(0, 34) : null,
+      value: isEd ? editor.value : null,
       idx,
       editingId: editingId ? editingId.slice(0, 12) : null,
       editingIdx,
@@ -300,12 +300,12 @@ const probe = async (tag) => {
 
 // Dump the full block map (idx → text, deferred, block-id, collapsed).
 const dumpBlockMap = async (label) => {
-  const map = await browser.execute(() => {
+  const map = await withEditors(browser, "", editors => {
     const blocks = [...document.querySelectorAll(".ls-block")];
     return blocks.map((b, i) => {
       const main = b.querySelector(":scope > .block-main");
       const deferred = main ? !!main.querySelector(".ast-deferred") : false;
-      const ta = b.querySelector(":scope > .block-main textarea.block-editor");
+      const ta = editors.find(editor => editor.element.closest(".ls-block") === b);
       let text = "";
       if (ta) text = ta.value.slice(0, 40);
       else {
@@ -343,11 +343,10 @@ const clickBlock = async (blockIdx, selStart) => {
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
   }, blockIdx);
   await sleep(500);
-  await browser.execute((s) => {
-    const ae = document.activeElement;
-    if (!(ae instanceof HTMLTextAreaElement)) return;
-    const pos = s === "end" ? ae.value.length : Number(s);
-    ae.setSelectionRange(pos, pos);
+  await withEditor(browser, "", (editor, s) => {
+    if (!editor?.focused) return;
+    const pos = s === "end" ? editor.value.length : Number(s);
+    editor.select(pos);
   }, selStart === "end" ? "end" : String(selStart));
   await sleep(120);
 };
@@ -380,15 +379,15 @@ async function runAgendaScenario() {
   };
 
   const state = async (targetId = null, aboveId = null) =>
-    browser.execute(
-      (targetTextArg, aboveTextArg, targetIdArg, aboveIdArg) => {
+    withEditors(browser, "",
+      (drivers, targetTextArg, aboveTextArg, targetIdArg, aboveIdArg) => {
         const inAgenda = (el) => !!el.closest(".agenda-block, .query-block");
         const textOf = (b) => {
-          const ta = b.querySelector(":scope > .block-main textarea.block-editor");
+          const ta = drivers.find(editor => editor.element.closest(".ls-block") === b);
           return ta ? ta.value : (b.textContent || "");
         };
         const blockInfo = (b) => {
-          const ta = b.querySelector(":scope > .block-main textarea.block-editor");
+          const ta = drivers.find(editor => editor.element.closest(".ls-block") === b);
           const main = b.querySelector(":scope > .block-main");
           return {
             id: b.getAttribute("data-block-id"),
@@ -402,13 +401,13 @@ async function runAgendaScenario() {
         const byText = (t) => blocks.filter((b) => textOf(b).includes(t)).map(blockInfo);
         const byId = (id) =>
           id ? blocks.filter((b) => b.getAttribute("data-block-id") === id).map(blockInfo) : [];
-        const editors = [...document.querySelectorAll("textarea.block-editor")].map((ta) => {
-          const block = ta.closest(".ls-block");
+        const editors = drivers.map((ta) => {
+          const block = ta.element.closest(".ls-block");
           return {
             id: block ? block.getAttribute("data-block-id") : null,
             inAgenda: block ? inAgenda(block) : false,
-            active: ta === document.activeElement,
-            sel: ta.selectionStart,
+            active: ta.focused,
+            sel: ta.start,
             value: ta.value,
           };
         });
@@ -420,10 +419,7 @@ async function runAgendaScenario() {
           };
         });
         const active = document.activeElement;
-        const activeEditor =
-          active instanceof HTMLTextAreaElement && active.classList.contains("block-editor")
-            ? editors.find((e) => e.active) ?? null
-            : null;
+        const activeEditor = editors.find((e) => e.active) ?? null;
         return {
           hasAgenda: !!document.querySelector(".agenda-block"),
           agendaCopies: document.querySelectorAll(".agenda-block .ls-block, .query-block .ls-block").length,
@@ -495,12 +491,11 @@ async function runAgendaScenario() {
       id
     );
     await sleep(450);
-    await browser.execute(
-      (wantedCaret) => {
-        const ae = document.activeElement;
-        if (!(ae instanceof HTMLTextAreaElement)) return false;
-        const pos = wantedCaret === "end" ? ae.value.length : Number(wantedCaret);
-        ae.setSelectionRange(pos, pos);
+    await withEditor(browser, "",
+      (editor, wantedCaret) => {
+        if (!editor?.focused) return false;
+        const pos = wantedCaret === "end" ? editor.value.length : Number(wantedCaret);
+        editor.select(pos);
         return true;
       },
       caret === "end" ? "end" : String(caret)
@@ -524,7 +519,7 @@ async function runAgendaScenario() {
         ` sel=${s.activeEditor?.sel} scrollTop=${s.scrollTop}` +
         ` val=${JSON.stringify((s.activeEditor?.value ?? "").slice(0, 42))}`
     );
-    expect(!!s.activeEditor, `${tag}: activeElement is not textarea.block-editor`);
+    expect(!!s.activeEditor, `${tag}: activeElement is not the block editor`);
     expect(s.editors.length === 1, `${tag}: expected exactly one mounted block editor, saw ${s.editors.length}`);
     expect(s.editingMains.length === 1, `${tag}: expected exactly one .block-main.editing, saw ${s.editingMains.length}`);
     expect(s.activeEditor?.id === expectedId, `${tag}: active editor id ${s.activeEditor?.id} != ${expectedId}`);

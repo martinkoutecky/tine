@@ -1,6 +1,7 @@
 // Semantic extension of the #868 outline journey: real source and embed, guarded
 // autosave bytes, guide and arrow folds, Enter, and indent/outdent visibility.
 import fs from "node:fs";
+import { withEditor } from "./e2e-block-editor.mjs";
 import path from "node:path";
 import assert from "node:assert/strict";
 
@@ -78,11 +79,7 @@ export async function embedFoldJourney({ browser, scope, expected, sourceOutline
 
   await clickContent(branch.id);
   await browser.keys(["Control", "End"]); await browser.keys("Enter"); await pause();
-  const added = await browser.execute(selector => {
-    const editor = document.activeElement;
-    if (!(editor instanceof HTMLTextAreaElement) || !editor.matches("textarea.block-editor") || !document.querySelector(selector)?.contains(editor)) return null;
-    return editor.closest(".ls-block")?.dataset.blockId;
-  }, scope);
+  const added = await withEditor(browser, scope, editor => editor?.focused ? editor.blockId : null);
   check(!!added && added !== branch.id, "Enter must leave a visible new block editor inside the embed");
   const entered = await capture("11-enter-after-folded-branch");
   if (added) check(entered.find(row => row.id === added)?.depth === entered.find(row => row.id === branch.id)?.depth,

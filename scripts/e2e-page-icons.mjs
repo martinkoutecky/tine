@@ -3,6 +3,7 @@ import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { remote } from "webdriverio";
+import { editorSelector, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { saveJourneyScreenshot } from "./lib/e2e-screenshot.mjs";
@@ -70,15 +71,10 @@ try {
   console.log(journey);
   await openPageByName(browser, "Live");
   await browser.$(".page-section .block-content-wrapper").click();
-  const editor = await browser.$("textarea.block-editor");
+  const editor = await browser.$(editorSelector());
   await editor.waitForExist();
-  // WebKitWebDriver drops this supplementary-plane emoji from sendKeys. Send
-  // the Unicode editor input event, through the app's ordinary typing handler.
-  await browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor");
-    editor.value = "icon:: 🚩";
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "🚩" }));
-  });
+  // WebKitWebDriver drops supplementary-plane emoji from sendKeys.
+  await pasteEditorText(browser, "icon:: 🚩");
   await expectIcon("Live", "🚩");
   await browser.keys("Escape");
   const file = path.join(graph, "pages/Live.md");

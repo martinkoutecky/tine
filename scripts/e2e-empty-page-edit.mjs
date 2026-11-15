@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+import { editorSelector, editorState } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -55,14 +56,12 @@ async function clickLastBulletAndType(scope, text) {
   }, scope);
   if (!wrapper) throw new Error(`no body bullet rendered in ${scope}`);
   await browser.$(`${scope} [data-block-id="${wrapper}"] .block-content-wrapper`).click();
-  await browser.$(`${scope} textarea.block-editor`).waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector(scope)).waitForExist({ timeout: 10_000 });
   // The reported failure: the caret appears, then vanishes. Typing into the
   // focused element is the user's outcome either way.
   await browser.keys(text);
-  const typed = await browser.execute(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLTextAreaElement ? active.value : `<focus on ${active?.tagName ?? "nothing"}>`;
-  });
+  const active = await editorState(browser, scope);
+  const typed = active?.focused ? active.value : "<focus outside block editor>";
   await browser.keys("Escape");
   return typed;
 }
@@ -97,7 +96,7 @@ try {
   await scenario("emptied in Tine", async () => {
     await openPageByName(browser, "Emptied here");
     await browser.$(".main-content [data-block-id] .block-content-wrapper").click();
-    await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 10_000 });
+    await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 10_000 });
     await browser.keys(["Control", "a"]);
     await browser.keys("Backspace");
     await browser.keys("Escape");

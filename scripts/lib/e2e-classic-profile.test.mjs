@@ -3,7 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { APP_ID, ROOT } from "./app-identity.mjs";
-import { seedClassicEditorProfile } from "./e2e-classic-profile.mjs";
+import { defaultClassicEditorProfile, seedClassicEditorProfile } from "./e2e-classic-profile.mjs";
+
+test("native shared-driver journeys use the fresh default; older harnesses retain their fallback", () => {
+  assert.equal(defaultClassicEditorProfile('import { editorText } from "./lib/e2e-block-editor.mjs";'), "0");
+  assert.equal(defaultClassicEditorProfile('import {\n editorText, editorState\n} from "./lib/e2e-block-editor.mjs";'), "0");
+  assert.equal(defaultClassicEditorProfile('// import the e2e-block-editor.mjs helper later\nimport fs from "node:fs";'), "1");
+  assert.equal(defaultClassicEditorProfile('import { chooseEditor } from "./lib/e2e-editor-choice.mjs";'), "1");
+});
 
 test("classic runner profile preserves explicit engines and unrelated device settings", () => {
   const out = path.join(ROOT, "target/artifacts/cm6-default-1114/profile-tests");

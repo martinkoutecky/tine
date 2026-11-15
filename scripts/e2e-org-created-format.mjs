@@ -12,6 +12,7 @@ import { remote } from "webdriverio";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { currentPageTitle } from "./lib/e2e-navigation.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");
@@ -66,13 +67,13 @@ try {
   proof.steps.push(journey);
 
   mark("type into the fresh page's block");
-  await browser.waitUntil(() => browser.execute(() => {
+  await browser.waitUntil(() => browser.execute(selector => {
     const surface = document.querySelector(".main-content .page-blocks .block-content-wrapper");
     if (!(surface instanceof HTMLElement)) return false;
     surface.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
     surface.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
-    return !!document.querySelector(".main-content textarea.block-editor");
-  }), { timeout: 10_000, interval: 200, timeoutMsg: "the fresh page's block did not open an editor" });
+    return !!document.querySelector(selector);
+  }, editorSelector(".main-content")), { timeout: 10_000, interval: 200, timeoutMsg: "the fresh page's block did not open an editor" });
   await browser.keys("Fresh target block");
   await browser.keys(["Escape"]);
   await waitForFileText(file, (text) => text.includes("Fresh target block"));

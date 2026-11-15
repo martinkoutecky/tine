@@ -1,6 +1,7 @@
 // GH #891 / #110, DESIGN §1. A routed synthetic page, literal native keys and
 // pointer gestures, and saved outline semantics. No application test hooks.
 import fs from "node:fs";
+import { editorState, withEditor } from "./e2e-block-editor.mjs";
 import { saveJourneyScreenshot } from "./e2e-screenshot.mjs";
 import { openPageByName } from "./e2e-navigation.mjs";
 import { waitForFileText } from "../e2e-file-poll.mjs";
@@ -41,11 +42,8 @@ export async function checkCommentStructure(browser, pageFile, artifacts) {
     await clearPaneMode();
     const id = await rowId(text);
     await browser.$(`[data-block-id="${id}"] > .block-main .block-content`).click();
-    await browser.waitUntil(() => browser.execute(id => document.querySelector("textarea.block-editor")?.closest(".ls-block")?.dataset.blockId === id, id), { timeout: 5_000 });
-    await browser.execute(() => {
-      const ta = document.querySelector("textarea.block-editor");
-      ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
-    });
+    await browser.waitUntil(async () => (await editorState(browser))?.blockId === id, { timeout: 5_000 });
+    await withEditor(browser, "", editor => editor.select(editor.value.length));
   };
   const threadBytes = "  - Thread remark\n    tine.quote:: Merge parent\n    - Reply stays\n      - Deep stays\n";
   await editEnd("Merge parent");

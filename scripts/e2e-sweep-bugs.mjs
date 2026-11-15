@@ -1,6 +1,7 @@
 // Native semantic proof for the sweep lane. All fixtures and logs stay in its artifacts directory.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { editorSelector, editorText, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { remote } from "webdriverio";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
@@ -44,14 +45,14 @@ try {
   console.log(journey);
   await openPageByName(browser, "Duplicate");
   await browser.$(".block-content").click();
-  await browser.$("textarea.block-editor").waitForExist();
-  await browser.waitUntil(() => browser.execute(() => document.querySelector("textarea.block-editor")?.value === "Original"), { timeout: 5000 });
-  console.log("Before duplicate", await browser.execute(() => ({ value: document.querySelector("textarea.block-editor")?.value,
+  await browser.$(editorSelector()).waitForExist();
+  await browser.waitUntil(async () => await editorText(browser) === "Original", { timeout: 5000 });
+  console.log("Before duplicate", await withEditor(browser, "", editor => ({ value: editor?.value,
     rows: [...document.querySelectorAll("[data-block-id]")].map(el => ({ id: el.dataset.blockId, text: el.innerText })) })));
   await browser.keys(["Alt", "Shift", "u"]);
-  console.log("Duplicate action state", await browser.execute(() => ({
+  console.log("Duplicate action state", await withEditor(browser, "", editor => ({
     texts: [...document.querySelectorAll(".block-content")].map(el => el.textContent),
-    editor: document.querySelector("textarea.block-editor")?.value,
+    editor: editor?.value,
     toasts: [...document.querySelectorAll(".toast-msg")].map(el => el.textContent),
     banners: [...document.querySelectorAll(".conflict-bar, .page-readonly-banner")].map(el => el.textContent),
   })));
@@ -67,7 +68,7 @@ try {
   await openPageByName(browser, "Icon");
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-properties")?.textContent.includes("icon")), { timeout: 10000 });
   await browser.$(".page-properties .prop-row").click();
-  await browser.waitUntil(() => browser.execute(() => document.querySelector("textarea.block-editor")?.value.includes("tine.icon:: 🚩")), { timeout: 5000 });
+  await browser.waitUntil(async () => (await editorText(browser)).includes("tine.icon:: 🚩"), { timeout: 5000 });
   await browser.keys("Escape");
   proof.steps.push(journey);
 

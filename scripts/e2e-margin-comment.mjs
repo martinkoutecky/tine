@@ -9,6 +9,7 @@
 // with the composer both carry `tine.author:: <name>`.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { editorSelector, editorText, withEditor } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -119,21 +120,21 @@ try {
   const following = await blockWith("A following sentinel");
   const before = (await following.getLocation()).y;
   await authored.$(".block-content").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
-  if (await browser.$("textarea.block-editor").getValue() !== "Authored note") throw new Error("Ordinary author metadata is visible in the editor");
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
+  if (await editorText(browser) !== "Authored note") throw new Error("Ordinary author metadata is visible in the editor");
   if (!await authored.$(".author-chip").isDisplayed()) throw new Error("Author chip disappeared during editing");
   const after = (await following.getLocation()).y;
   if (Math.abs(after - before) > 1) throw new Error(`Opening the authored block moved the following row: ${before} -> ${after}`);
   proof.steps.push({ outcome: "author hidden; mark and chip visible; following row stable", before, after });
   await shot("01-hidden-author-editor");
-  await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(ta.value.length, ta.value.length); });
+  await withEditor(browser, "", editor => editor.select(editor.value.length));
   await browser.keys(" revised");
   await browser.keys(["Escape"]);
   await waitForFileText(PAGE_FILE, text => text.includes("Authored note revised\n  tine.author:: Ada Marks  \t\n"), { timeoutMs: 20_000 });
   await quote.$(".block-content").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
-  if (await browser.$("textarea.block-editor").getValue() !== "> A quoted passage") throw new Error("Quote editor exposes its author property");
-  await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); const at = ta.value.indexOf("quoted"); ta.setSelectionRange(at, at + 6); });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
+  if (await editorText(browser) !== "> A quoted passage") throw new Error("Quote editor exposes its author property");
+  await withEditor(browser, "", editor => { const at = editor.value.indexOf("quoted"); editor.select(at, at + 6); });
   await browser.keys("revised"); await browser.keys(["Escape"]);
   await waitForFileText(PAGE_FILE, text => text.includes("> A revised passage") && text.includes("tine.author:: Quote Agent  \t"), { timeoutMs: 20_000 });
   await browser.refresh(); await ensureMainWindow(browser); await openPageByName(browser, PAGE_NAME);
@@ -142,8 +143,8 @@ try {
   proof.steps.push("quote author never rendered as prose; retained author bytes survive an edit and reload");
   const reopened = await blockWith("Authored note revised");
   await reopened.$(".block-content").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
-  await browser.execute(() => { const ta = document.querySelector("textarea.block-editor"); ta.setSelectionRange(ta.value.length, ta.value.length); });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
+  await withEditor(browser, "", editor => editor.select(editor.value.length));
   await browser.keys(" pending");
   await reopened.$(".author-chip").click();
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".ctx-item")].some(b => b.textContent.trim() === "Remove author")), { timeout: 5000 });
@@ -159,21 +160,18 @@ try {
   const agent = await browser.$(`.page-blocks .ls-block.authored`);
   await agent.waitForExist({ timeout: 10_000 });
   await (await agent.$(".block-content")).click();
-  const editor = await browser.$(".page-blocks textarea.block-editor");
+  const editor = await browser.$(editorSelector(".page-blocks"));
   await editor.waitForExist({ timeout: 5_000 });
 
   // A marker that a webview reload would erase.
   await browser.execute(() => { window.__marginE2E = "alive"; });
   // Select the phrase in the editor, as a mouse or Shift+arrow selection would.
-  const selected = await browser.execute((phrase) => {
-    const ta = document.querySelector(".page-blocks textarea.block-editor");
+  const selected = await withEditor(browser, ".page-blocks", (ta, phrase) => {
     const at = ta.value.indexOf(phrase);
-    ta.focus();
-    ta.setSelectionRange(at, at + phrase.length);
-    return ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    ta.select(at, at + phrase.length);
+    return ta.value.slice(ta.start, ta.end);
   }, PHRASE);
   if (selected !== PHRASE) throw new Error(`selection was ${JSON.stringify(selected)}`);
-  await browser.execute(() => document.querySelector("textarea.block-editor").dispatchEvent(new Event("select", { bubbles: true })));
   const toolbar = await browser.execute(() => {
     const button = document.querySelector('[data-selection-action="comment"]');
     return !!button?.querySelector("svg") && button === button.closest(".sel-toolbar").querySelector(":scope > button:last-of-type")
@@ -198,9 +196,8 @@ try {
   if (deviceSettings().comment_name_prompt_declined) throw new Error("saving a name recorded a decline");
 
   // The caret moves into the new comment's empty body line.
-  await browser.waitUntil(() => browser.execute(() => {
-    const ta = document.querySelector(".comment-thread-popup textarea.block-editor");
-    return !!ta && ta.closest(".comment-in-thread") && ta.value === "" && ta.selectionStart === 0 && document.activeElement === ta;
+  await browser.waitUntil(() => withEditor(browser, ".comment-thread-popup", ta => {
+    return !!ta && ta.element.closest(".comment-in-thread") && ta.value === "" && ta.start === 0 && ta.focused;
   }), { timeout: 5_000, timeoutMsg: "Ctrl+R did not open an empty body editor on the new comment" });
   if ((await browser.execute(() => window.__marginE2E)) !== "alive") throw new Error("Ctrl+R reloaded the webview");
 
@@ -278,13 +275,10 @@ try {
   await browser.$(".margin-thread .comment-card").waitForExist({ timeout: 5000 });
   const content = await browser.$(".comment-card > .block-main .block-content");
   await content.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
-  await browser.execute(() => {
-    const ta = document.querySelector("textarea.block-editor");
-    ta.focus(); ta.setSelectionRange(0, 1);
-  });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
+  await withEditor(browser, "", editor => editor.select(0, 1));
   await browser.keys(["Control", "r"]);
-  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor") && document.activeElement.value === ""), { timeout: 5000 });
+  await browser.waitUntil(() => withEditor(browser, "", editor => editor?.focused && editor.value === ""), { timeout: 5000 });
   await browser.keys("A quoted child");
   await browser.keys(["Escape"]);
   await waitForFileText(PAGE_FILE, text => text.includes("A quoted child") && text.includes("tine.quote:: I"), { timeoutMs: 20_000 });
@@ -296,7 +290,7 @@ try {
   await browser.keys("A draft worth thought");
   await browser.execute(() => document.querySelector(".comment-reply-draft").setSelectionRange(2, 7));
   await browser.keys(["Control", "r"]);
-  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("textarea.block-editor") && document.activeElement.value === ""), { timeout: 5000 });
+  await browser.waitUntil(() => withEditor(browser, "", editor => editor?.focused && editor.value === ""), { timeout: 5000 });
   await browser.keys("A nested draft remark");
   await browser.keys(["Escape"]);
   await waitForFileText(PAGE_FILE, text => text.includes("A draft worth thought") && text.includes("A nested draft remark") && text.includes("tine.quote:: draft"), { timeoutMs: 20_000 });

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
+import { editorSelector, editorText, pasteEditorText } from "./lib/e2e-block-editor.mjs";
 import { openJournals, openPageByLink } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 
@@ -48,11 +49,11 @@ try {
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".right-sidebar")?.textContent.includes("Journals, tasks, and scheduling")), { timeout: 20_000, timeoutMsg: "Guide did not open in right sidebar" });
   await browser.$(".main-content .page-trailing-block-target").scrollIntoView({ block: "center" });
   await browser.$(".main-content .page-trailing-block-target").click();
-  await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 10_000 });
+  await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 10_000 });
   // Send literal text through the editor's input path; key-by-key brace
   // pairing can consume a closing brace in WebKit's synthetic key stream.
-  await browser.$(".main-content textarea.block-editor").addValue("{{upcoming}}");
-  if (await browser.$(".main-content textarea.block-editor").getValue() !== "{{upcoming}}") throw new Error("Harness did not enter the literal Upcoming macro");
+  await pasteEditorText(browser, "{{upcoming}}");
+  if (await editorText(browser, ".main-content") !== "{{upcoming}}") throw new Error("Harness did not enter the literal Upcoming macro");
   await browser.$(".main-content h1.page-title").click();
   const sectionsFile = fs.readdirSync(path.join(GRAPH, "pages")).find(file => file.toLowerCase() === "journal sections.md");
   await waitForFileText(path.join(GRAPH, "pages", sectionsFile), text => text.split("\n").includes("- {{upcoming}}"));
@@ -81,7 +82,7 @@ try {
     for (const close of document.querySelectorAll(".toast-sticky .toast-close")) close.click();
   });
   await browser.$(".main-content .page-section .block-content-wrapper").click();
-  const editor = await browser.$(".main-content textarea.block-editor");
+  const editor = await browser.$(editorSelector(".main-content"));
   await editor.waitForExist({ timeout: 10_000 });
   await browser.keys("first future entry");
   await browser.$(".main-content h1.page-title").click();

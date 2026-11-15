@@ -24,6 +24,7 @@
 // compilation, not here.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
+import { withEditor } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -136,9 +137,9 @@ async function withApp(index, fn, { appEnv = env, whileLaunching } = {}) {
   }
 }
 
-const blockTexts = (browser) => browser.execute(() =>
+const blockTexts = (browser) => withEditor(browser, "", editor =>
   [...document.querySelectorAll(".ls-block[data-block-id]")].map((row) =>
-    (row.querySelector("textarea.block-editor")?.value ?? row.querySelector(".block-content-wrapper")?.textContent ?? "").trim()));
+    (editor && row.contains(editor.element) ? editor.value : row.querySelector(".block-content-wrapper")?.textContent ?? "").trim()));
 
 /** Enter the editor on the block whose text is `text`, caret at its end. */
 async function editBlock(browser, text) {
@@ -154,7 +155,7 @@ async function editBlock(browser, text) {
     { type: "pointerDown", button: 0 }, { type: "pointerUp", button: 0 },
   ] }]);
   await browser.releaseActions();
-  await until(() => browser.execute(() => !!document.querySelector("textarea.block-editor")), 5_000, `clicking ${JSON.stringify(text)} did not open its editor`);
+  await until(() => withEditor(browser, "", editor => !!editor), 5_000, `clicking ${JSON.stringify(text)} did not open its editor`);
   await browser.keys(["End"]);
 }
 

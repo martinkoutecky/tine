@@ -1,5 +1,6 @@
 // GH #891 / #110: routed-page proof for anchoring, flat threads and wide layout.
 import fs from "node:fs";
+import { editorSelector, selectEditor, withEditor } from "./e2e-block-editor.mjs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { openPageByName } from "./e2e-navigation.mjs";
@@ -126,19 +127,15 @@ export async function checkMarginThreads(browser, graph, artifact) {
     // Comment on a deeply nested response through its editor. The quote remains
     // compact, but the newly persisted response must be a direct root child.
     await browser.$('.ls-block[data-block-ref="' + IDS.deep + '"] > .block-main .block-content').click();
-    await browser.$(".margin-column textarea.block-editor").waitForExist({ timeout: 5000 });
-    await browser.execute(() => {
-      const ta = document.querySelector(".margin-column textarea.block-editor");
-      ta.focus(); ta.setSelectionRange(0, 4);
-    });
+    await browser.$(editorSelector(".margin-column")).waitForExist({ timeout: 5000 });
+    await selectEditor(browser, 0, 4, ".margin-column");
     await browser.keys(["Control", "r"]);
-    await browser.waitUntil(() => browser.execute(() =>
-      !!document.querySelector(".comment-name-prompt") || document.querySelector(".margin-column textarea.block-editor")?.value === ""),
+    await browser.waitUntil(() => withEditor(browser, ".margin-column", editor =>
+      !!document.querySelector(".comment-name-prompt") || editor?.value === ""),
     { timeout: 5000, timeoutMsg: "in-thread Comment opened neither a name prompt nor an empty editor" });
     if (await browser.$(".comment-name-prompt").isExisting()) await browser.$(".comment-name-prompt .export-btn-secondary").click();
-    await browser.waitUntil(() => browser.execute(() => {
-      const ta = document.querySelector(".margin-column textarea.block-editor");
-      return ta?.value === "" && document.activeElement === ta;
+    await browser.waitUntil(() => withEditor(browser, ".margin-column", ta => {
+      return ta?.value === "" && ta.focused;
     }), { timeout: 5000, timeoutMsg: "the new quoted reply did not receive editor focus" });
     // WebKitWebDriver drops adjacent repeated keys ("oo" becomes "o").
     const body = "New flat reply";

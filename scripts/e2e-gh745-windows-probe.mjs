@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
@@ -91,12 +92,11 @@ try {
       const el = [...document.querySelectorAll(".ls-block > .block-main .block-content")].reverse().find((e) => e.textContent.includes(n));
       el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); el.click();
     }, v.needle);
-    await browser.waitUntil(() => browser.execute(() => !!document.querySelector("textarea.block-editor")), { timeout: 5000 });
+    await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
     await sleep(300);
-    await browser.execute((caret) => {
-      const t = document.querySelector("textarea.block-editor");
+    await withEditor(browser, "", (t, caret) => {
       const at = caret === "start" ? 0 : Math.floor(t.value.length / 2);
-      t.setSelectionRange(at, at);
+      t.select(at);
     }, v.caret);
     await sleep(300);
     } else {
@@ -104,11 +104,11 @@ try {
       // Shift+Tab, then press Tab without navigation or setup scrolling.
       start = before = await top();
     }
-    const pre = await browser.execute(() => {
-      const sc = document.querySelector(".main-content"); const t = document.querySelector("textarea.block-editor");
-      return { st: sc.scrollTop, edTop: Math.round(t.getBoundingClientRect().top - sc.getBoundingClientRect().top), h: sc.clientHeight };
+    const pre = await withEditor(browser, "", t => {
+      const sc = document.querySelector(".main-content");
+      return { st: sc.scrollTop, edTop: Math.round(t.element.getBoundingClientRect().top - sc.getBoundingClientRect().top), h: sc.clientHeight };
     });
-    await browser.execute(() => {
+    await browser.execute(selector => {
       const sc = document.querySelector(".main-content");
       window.__frames = []; window.__focus = []; const t0 = performance.now();
       const foc = HTMLElement.prototype.focus;
@@ -124,18 +124,18 @@ try {
       }
       window.__t0 = t0;
       const tick = () => {
-        const ed = document.querySelector("textarea.block-editor");
+        const ed = document.querySelector(selector);
         window.__frames.push([Math.round(performance.now() - t0), Math.round(sc.scrollTop), sc.scrollHeight, ed ? Math.round(ed.getBoundingClientRect().top - sc.getBoundingClientRect().top) : null, document.querySelectorAll(".inline-image-missing").length]);
         if (performance.now() - t0 < 2500) requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
-    });
+    }, editorSelector());
     await browser.keys(v.key);
     await sleep(2800);
-    const rec = await browser.execute(() => {
-      const sc = document.querySelector(".main-content"); const t = document.querySelector("textarea.block-editor");
+    const rec = await browser.execute(selector => {
+      const sc = document.querySelector(".main-content"); const t = document.querySelector(selector);
       return { frames: window.__frames, focus: window.__focus, st: sc.scrollTop, h: sc.clientHeight, edTop: t ? Math.round(t.getBoundingClientRect().top - sc.getBoundingClientRect().top) : null, edBottom: t ? Math.round(t.getBoundingClientRect().bottom - sc.getBoundingClientRect().top) : null };
-    });
+    }, editorSelector());
     const frames = []; let last = "";
     for (const f of rec.frames) { const k = f.slice(1).join("|"); if (k !== last) { frames.push(f.join("/")); last = k; } }
     const jumped = Math.abs(rec.st - pre.st) > 40 && Math.abs((rec.edTop ?? 1e6) - pre.edTop) > 120;

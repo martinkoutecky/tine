@@ -4,6 +4,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { editorSelector, withEditor } from "./lib/e2e-block-editor.mjs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -54,17 +55,17 @@ try {
     const older = await browser.$(`//*[contains(@class,"main-content")]//*[contains(@class,"page-section")][.//h1[contains(@class,"journal-title")][normalize-space()="${title(date(4))}"]]//*[contains(@class,"block-content-wrapper")][contains(.,"GF4 body 4 row 0")]`);
     await older.scrollIntoView({ block: "center" });
     await older.click();
-    const editor = await browser.$(".main-content textarea.block-editor");
+    const editor = await browser.$(editorSelector(".main-content"));
     await editor.waitForExist({ timeout: 10000 });
-    await browser.execute(() => {
+    await withEditor(browser, ".main-content", driver => {
       window.__gf4OpeningSettled = false;
-      const editor = document.querySelector(".main-content textarea.block-editor");
+      const editor = driver.element;
       const scroller = editor.closest(".main-content");
       let previous, stable = 0;
       const sample = () => {
         if (!editor.isConnected) return;
         const signature = `${editor.getBoundingClientRect().top}|${scroller.scrollTop}|${scroller.scrollHeight}|${editor.clientHeight}`;
-        stable = signature === previous && document.activeElement === editor && editor.value === "GF4 body 4 row 0" ? stable + 1 : 0;
+        stable = signature === previous && driver.focused && driver.value === "GF4 body 4 row 0" ? stable + 1 : 0;
         previous = signature;
         if (stable >= 2) window.__gf4OpeningSettled = true;
         else requestAnimationFrame(sample);
@@ -73,8 +74,8 @@ try {
     });
     await browser.waitUntil(() => browser.execute(() => window.__gf4OpeningSettled),
       { timeout: 10000, interval: 50, timeoutMsg: "the known journal editor did not finish opening" });
-    const before = await browser.execute(() => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
+    const before = await withEditor(browser, ".main-content", driver => {
+      const editor = driver.element;
       window.__gf4Editor = editor;
       const scroller = editor.closest(".main-content");
       window.__gf4Frames = [];
@@ -85,7 +86,7 @@ try {
         if (editor.isConnected) requestAnimationFrame(sample);
       };
       requestAnimationFrame(sample);
-      return { value: editor.value, top: editor.getBoundingClientRect().top, days: document.querySelectorAll("h1.journal-title").length };
+      return { value: driver.value, top: editor.getBoundingClientRect().top, days: document.querySelectorAll("h1.journal-title").length };
     });
     proof.before = before;
     if (before.days !== 3 || before.value !== "GF4 body 4 row 0") throw new Error(`merge setup was not held: ${JSON.stringify(before)}`);
@@ -99,13 +100,11 @@ try {
     // single read can catch the editor mid-restore (a transient jump, under load). The contract is that the
     // viewport position survives: wait until the same editor is back within the same 2px tolerance, then
     // run the unchanged assertion below on that settled read. A position that never returns still fails.
-    await browser.waitUntil(() => browser.execute((top) => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
-      return !!editor && Math.abs(editor.getBoundingClientRect().top - top) <= 2;
+    await browser.waitUntil(() => withEditor(browser, ".main-content", (editor, top) => {
+      return !!editor && Math.abs(editor.element.getBoundingClientRect().top - top) <= 2;
     }, before.top), { timeout: 5000, interval: 50, timeoutMsg: "viewport did not settle back to the editor's position" });
-    const after = await browser.execute(() => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
-      return { sameEditor: editor === window.__gf4Editor, focused: document.activeElement === editor, value: editor?.value, top: editor?.getBoundingClientRect().top,
+    const after = await withEditor(browser, ".main-content", editor => {
+      return { sameEditor: editor?.element === window.__gf4Editor, focused: editor?.focused, value: editor?.value, top: editor?.element.getBoundingClientRect().top,
         titles: [...document.querySelectorAll("h1.journal-title")].map(el => el.textContent.trim()) };
     });
     proof.viewportFrames = await browser.execute(() => window.__gf4Frames);
@@ -131,10 +130,9 @@ try {
   proof.observed = String(error); proof.classification = "ambiguous; inspect screenshot and driver log";
   if (browser) {
     proof.viewportFrames = await browser.execute(() => window.__gf4Frames).catch(() => []);
-    proof.editorAtFailure = await browser.execute(() => {
-      const editor = document.querySelector(".main-content textarea.block-editor");
-      return { sameEditor: editor === window.__gf4Editor, focused: document.activeElement === editor,
-        value: editor?.value, top: editor?.getBoundingClientRect().top };
+    proof.editorAtFailure = await withEditor(browser, ".main-content", editor => {
+      return { sameEditor: editor?.element === window.__gf4Editor, focused: editor?.focused,
+        value: editor?.value, top: editor?.element.getBoundingClientRect().top };
     }).catch(() => null);
     await browser.saveScreenshot(path.join(trial, "failure.png")).catch(() => {});
     fs.writeFileSync(path.join(trial, "failure-dom.html"), await browser.execute(() => document.body.innerHTML).catch(() => ""));

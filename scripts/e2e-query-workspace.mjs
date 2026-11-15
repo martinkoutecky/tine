@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, editorState, withEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { dismissToasts } from "./lib/e2e-notifications.mjs";
@@ -691,14 +692,12 @@ await withApp(2, async (browser) => {
     // block-content box itself lands on an embedded [[page link]] at its center,
     // which correctly navigates instead of entering edit mode.
     await clickTarget.click();
-    const editor = await browser.$(`${root} textarea.block-editor`);
+    const editor = await browser.$(editorSelector(root));
     await editor.waitForExist({ timeout: 5_000 });
-    await browser.execute((selector) => {
-      const input = document.querySelector(selector);
-      if (!(input instanceof HTMLTextAreaElement)) throw new Error("missing linked-reference editor");
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-    }, `${root} textarea.block-editor`);
+    await withEditor(browser, root, input => {
+      if (!input) throw new Error("missing linked-reference editor");
+      input.select(input.value.length);
+    });
     await editor.addValue(` ${marker}`);
     // Do not use the page title to commit the edit: it is a navigation control,
     // so clicking it remounts the page and legitimately resets an off-viewport
@@ -861,14 +860,9 @@ await withApp(2, async (browser) => {
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Unlinked source", {
     timeout: 10_000, timeoutMsg: "occurrence jump did not open its source page",
   });
-  const editor = await browser.$("textarea.block-editor");
+  const editor = await browser.$(editorSelector());
   await editor.waitForExist({ timeout: 10_000 });
-  const caret = await browser.execute(() => {
-    const textarea = document.querySelector("textarea.block-editor");
-    return textarea instanceof HTMLTextAreaElement
-      ? { value: textarea.value, start: textarea.selectionStart, end: textarea.selectionEnd }
-      : null;
-  });
+  const caret = await editorState(browser);
   const expectedOffset = unlinkedRaw.lastIndexOf("Query parity");
   const expectedEnd = expectedOffset + "Query parity".length;
   if (!caret || caret.value !== unlinkedRaw || caret.start !== expectedOffset || caret.end !== expectedEnd) {

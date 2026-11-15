@@ -15,6 +15,7 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const artifacts = path.join(root, "target/artifacts/gh800");
@@ -82,7 +83,7 @@ try {
       return Boolean(el);
     }), "the alpha block is missing");
     await browser.$("[data-gh800-target]").click();
-    await browser.$(".main-content textarea.block-editor").waitForExist({ timeout: 5000 });
+    await browser.$(editorSelector(".main-content")).waitForExist({ timeout: 5000 });
     await browser.keys(["End"]);
     await browser.keys(" MINE");
     fs.writeFileSync(file, `- alpha\n- beta\n- gamma DISK${attempt}\n`);

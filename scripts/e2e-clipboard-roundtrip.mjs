@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
+import { BLOCK_EDITOR, editorSelector } from "./lib/e2e-block-editor.mjs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -117,14 +118,14 @@ try {
 
   const target = await browser.$(".page-blocks .ls-block .block-content, .ls-block .block-content");
   await target.click();
-  const editor = await browser.$("textarea.block-editor");
+  const editor = await browser.$(editorSelector());
   await editor.waitForExist({ timeout: 5_000 });
-  const instrumentation = await browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor");
-    if (!editor) return { ok: false, error: "block editor textarea not found" };
+  const instrumentation = await browser.execute(selector => {
+    const editor = document.querySelector(selector);
+    if (!editor) return { ok: false, error: "block editor not found" };
     globalThis.__tineClipboardRoundtripCapture = null;
     const listener = (event) => {
-      if (!(event.target instanceof HTMLTextAreaElement) || !event.target.matches("textarea.block-editor")) return;
+      if (!event.target.closest?.(selector)) return;
       globalThis.__tineClipboardRoundtripCapture = {
         observed: event.clipboardData?.getData("text/plain") ?? null,
         types: event.clipboardData ? [...event.clipboardData.types] : [],
@@ -137,7 +138,7 @@ try {
     };
     document.addEventListener("paste", listener, true);
     return { ok: true };
-  });
+  }, BLOCK_EDITOR);
   if (!instrumentation.ok) throw new Error(instrumentation.error);
 
   for (const fixture of fixtures) {

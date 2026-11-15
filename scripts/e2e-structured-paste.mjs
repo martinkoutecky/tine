@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import { editorSelector, editorState, withEditor } from "./lib/e2e-block-editor.mjs";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,20 +83,19 @@ try {
   await openPageByName(browser, "Paste");
   const target = await browser.$(".ls-block .block-content");
   await target.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
-  const result = await browser.execute(() => {
-    const editor = document.querySelector("textarea.block-editor");
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys("Backspace");
+  const result = await withEditor(browser, "", editor => {
     if (!editor) return { ok: false, error: "no editor" };
     if (typeof DataTransfer !== "function" || typeof ClipboardEvent !== "function") {
       return { ok: false, error: "browser clipboard constructors unavailable" };
     }
-    editor.value = "";
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContent", data: null }));
     const clipboard = new DataTransfer();
     clipboard.setData("text/plain", "Parent\nChild bold\nSibling");
     clipboard.setData("text/html", "<ul><li>Parent<ul><li>Child <strong>bold</strong></li></ul></li><li>Sibling</li></ul>");
     const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: clipboard });
-    editor.dispatchEvent(event);
+    editor.element.dispatchEvent(event);
     return { ok: event.defaultPrevented, types: [...clipboard.types] };
   });
   if (!result.ok || !result.types.includes("text/html") || !result.types.includes("text/plain")) {
@@ -127,11 +127,11 @@ try {
     const content = await browser.$(`//div[contains(concat(' ', normalize-space(@class), ' '), ' block-content ') and normalize-space(.) = '${text}']`);
     await content.waitForExist({ timeout: 10_000, timeoutMsg: `block ${JSON.stringify(text)} is not rendered` });
     await content.click();
-    await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+    await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
     await browser.keys(["Escape"]);
-    await browser.waitUntil(() => browser.execute((wanted, count) => {
+    await browser.waitUntil(() => withEditor(browser, "", (editor, wanted, count) => {
       const selected = [...document.querySelectorAll(".block-main.selected")];
-      return selected.length === count && !document.querySelector("textarea.block-editor")
+      return selected.length === count && !editor
         && selected[0].querySelector(".block-content")?.textContent?.trim() === wanted;
     }, text, visibleCount), { timeout: 5000, interval: 100, timeoutMsg: `Escape did not select the subtree of ${JSON.stringify(text)}` });
   };
@@ -177,7 +177,7 @@ try {
   stage = "GH941 Shift+Down and subtree Copy";
   await openPageByName(browser, "Selection Units");
   await browser.$("//div[contains(@class, 'block-content') and normalize-space(.) = 'B']").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   await browser.keys(["End"]);
   const selectedText = () => browser.execute(() => [...document.querySelectorAll(".main-content .block-main.selected")]
     .map(row => row.querySelector(".block-content")?.textContent.trim()));
@@ -236,10 +236,10 @@ try {
   const first = await browser.$(`//div[contains(concat(' ', normalize-space(@class), ' '), ' block-content ') and normalize-space(.) = 'target first']`);
   await first.waitForExist({ timeout: 10_000 });
   await first.click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   await browser.keys(["End"]);
   await browser.keys(["Enter"]);
-  await browser.waitUntil(() => browser.execute(() => document.querySelector("textarea.block-editor")?.value === ""), {
+  await browser.waitUntil(async () => (await editorState(browser))?.value === "", {
     timeout: 5000, timeoutMsg: "Enter did not open an empty sibling editor",
   });
   await browser.keys(["Control", "v"]);

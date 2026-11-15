@@ -6,6 +6,7 @@ import path from "node:path";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { editorSelector } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const out = process.env.E2E_ARTIFACT_DIR ?? path.join(root, "artifacts", `panes-keys-native-${process.pid}`);
@@ -92,12 +93,12 @@ try {
   journey = "GH #428 selection to editing";
   await search(names[0]);
   await browser.$(":is(.pane-focused, .main-content-shell) .block-content").click();
-  await browser.$(":is(.pane-focused, .main-content-shell) textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector(":is(.pane-focused, .main-content-shell)")).waitForExist({ timeout: 5000 });
   await browser.keys("Escape");
   await browser.$(":is(.pane-focused, .main-content-shell) .block-main.selected").waitForExist({ timeout: 5000 });
   await browser.keys("Escape");
-  await browser.$(":is(.pane-focused, .main-content-shell) textarea.block-editor").waitForExist({ timeout: 5000 });
-  report("second remapped Escape returns the selected block to its textarea");
+  await browser.$(editorSelector(":is(.pane-focused, .main-content-shell)")).waitForExist({ timeout: 5000 });
+  report("second remapped Escape returns the selected block to its editor");
 
   journey = "GH #663 scoped searches";
   for (const [key, kind] of [["7", "page"], ["8", "block"]]) {

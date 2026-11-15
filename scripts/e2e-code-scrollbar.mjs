@@ -9,6 +9,7 @@ import { remote } from "webdriverio";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import { withEditor } from "./lib/e2e-block-editor.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const app = process.env.TINE_APP || path.join(root, "target/release/tine");
@@ -46,7 +47,7 @@ const card = () => browser.execute(() => {
     borderBottom: parseFloat(cs.borderBottomWidth) || 0, paddingBottom: parseFloat(cs.paddingBottom) || 0,
     overlay: el.offsetHeight - el.clientHeight - (parseFloat(cs.borderTopWidth) || 0) - (parseFloat(cs.borderBottomWidth) || 0) <= 0.5 };
 });
-const editing = () => browser.execute(() => !!document.querySelector(".main-content textarea.block-editor"));
+const editing = () => withEditor(browser, ".main-content", editor => !!editor);
 const reset = async () => {
   await browser.keys(["Escape"]);
   // Code-body Escape reveals the source (GH #865); the next Escape exits it.

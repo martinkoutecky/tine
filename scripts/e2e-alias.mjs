@@ -10,6 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { editorSelector, editorText } from "./lib/e2e-block-editor.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -70,7 +71,7 @@ try {
 
   const content = await browser.$(".page-blocks .ls-block .block-content-wrapper");
   await content.click();
-  let editor = await browser.$(".page-blocks textarea.block-editor");
+  let editor = await browser.$(editorSelector(".page-blocks"));
   await editor.waitForExist({ timeout: 5000 });
   console.log("alias editor mounted");
   await editor.addValue("alias:");
@@ -80,7 +81,7 @@ try {
 
   // This is the exact old failure boundary: GH #86 hid the property block and
   // destroyed the focused editor before the alias value could be entered.
-  editor = await browser.$(".page-blocks textarea.block-editor");
+  editor = await browser.$(editorSelector(".page-blocks"));
   if (!(await editor.isExisting())) throw new Error("first-bullet editor disappeared after typing alias::");
   console.log("alias editor remained mounted after delimiter");
   await editor.addValue(" book");
@@ -90,19 +91,18 @@ try {
   // property can be typed without creating a separate outline bullet; a second
   // Enter on the trailing blank line exits to an ordinary body bullet.
   await browser.keys(["Enter"]);
-  editor = await browser.$(".page-blocks textarea.block-editor");
-  if ((await editor.getValue()) !== "alias:: book\n") throw new Error("Enter left the first page-property block");
+  editor = await browser.$(editorSelector(".page-blocks"));
+  if ((await editorText(browser, ".page-blocks")) !== "alias:: book\n") throw new Error("Enter left the first page-property block");
   await editor.addValue("tags:: blah，foobar");
   await browser.keys(["Enter"]);
-  if ((await editor.getValue()) !== "alias:: book\ntags:: blah，foobar\n") {
-    throw new Error(`second property did not stay in one block: ${JSON.stringify(await editor.getValue())}`);
+  if ((await editorText(browser, ".page-blocks")) !== "alias:: book\ntags:: blah，foobar\n") {
+    throw new Error(`second property did not stay in one block: ${JSON.stringify(await editorText(browser, ".page-blocks"))}`);
   }
   await browser.keys(["Enter"]);
-  await browser.waitUntil(async () => (await browser.$$(".page-blocks textarea.block-editor")).length === 1, {
+  await browser.waitUntil(async () => (await browser.$$(editorSelector(".page-blocks"))).length === 1, {
     timeout: 5_000, timeoutMsg: "double Enter did not create and focus one body bullet",
   });
-  const bodyEditor = await browser.$(".page-blocks textarea.block-editor");
-  if ((await bodyEditor.getValue()) !== "") throw new Error("double Enter did not focus the empty body bullet");
+  if ((await editorText(browser, ".page-blocks")) !== "") throw new Error("double Enter did not focus the empty body bullet");
 
   await browser.waitUntil(async () => (await browser.$(".page-aliases").getText()).includes("book"), {
     timeout: 5000, timeoutMsg: "completed alias did not render as a page alias",

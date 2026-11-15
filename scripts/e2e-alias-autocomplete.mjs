@@ -2,6 +2,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { remote } from "webdriverio";
 import fs from "node:fs";
+import { editorSelector, editorText, pasteEditorText, selectEditor } from "./lib/e2e-block-editor.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -60,24 +61,20 @@ try {
   await openPageByName(browser, "Tine");
   await browser.$(".ls-block .block-content-wrapper").waitForExist({ timeout: 20000 });
   await browser.$(".ls-block .block-content-wrapper").click();
-  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   if (latency) {
     const measurements = await measureCompletionLatency(browser, path.join(GRAPH, "pages/Tine.md"));
     fs.writeFileSync(path.join(TMP, "latency.json"), JSON.stringify({ testedCommit, binarySha256, candidate, measurements }, null, 2));
     console.log(`Latency samples: ${TMP}`);
     await browser.$(".ls-block .block-content-wrapper").click();
-    await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+    await browser.$(editorSelector()).waitForExist({ timeout: 5000 });
   }
   for (const [typed, choices, selected, inserted] of [
     ["[[tin", ["Tine", "TineOutline", "Tine Outliner"], "TineOutline", "[[TineOutline]]"],
     ["[[sse", ["SSE"], "SSE", "[[SSE]]"],
     ["#tin", ["#Tine", "#TineOutline", "#Tine Outliner"], "#TineOutline", "#TineOutline"],
   ]) {
-    await browser.execute((text) => {
-      const editor = document.querySelector("textarea.block-editor");
-      editor.focus(); editor.value = text; editor.setSelectionRange(text.length, text.length);
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text.at(-1) }));
-    }, typed);
+    await pasteEditorText(browser, typed);
     const labels = () => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")].map((el) => el.textContent.trim()));
     await browser.waitUntil(async () => {
       const current = await labels();
@@ -89,19 +86,16 @@ try {
       const row = [...document.querySelectorAll(".autocomplete .ac-label")].find((el) => el.textContent.trim() === name).parentElement;
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     }, selected);
-    await browser.waitUntil(async () => (await browser.$("textarea.block-editor").getValue()).trim() === inserted, { timeout: 5000 });
+    await browser.waitUntil(async () => (await editorText(browser)).trim() === inserted, { timeout: 5000 });
     observations.push({ typed, choices: actual, inserted });
   }
   // GH #888 (D-20261109-LK): typing inside a complete link searches the whole
   // link text, so the link's own page is the first choice (Logseq searches
   // only up to the caret); picking it leaves one link.
   if (!latency) {
-    await browser.execute(() => {
-      const editor = document.querySelector("textarea.block-editor");
-      const text = "[[Sat, 07.11.2026]]", caret = "[[Sat,".length;
-      editor.focus(); editor.value = text; editor.setSelectionRange(caret, caret);
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "," }));
-    });
+    await pasteEditorText(browser, "[[Sat 07.11.2026]]");
+    await selectEditor(browser, "[[Sat".length);
+    await browser.keys(",");
     const labels = () => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")].map((el) => el.textContent.trim()));
     await browser.waitUntil(async () => (await labels()).includes("Sat, 07.11.2026"), { timeout: 10000 });
     const choices = await labels();
@@ -110,7 +104,7 @@ try {
       const row = document.querySelector(".autocomplete .ac-label").parentElement;
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     });
-    await browser.waitUntil(async () => (await browser.$("textarea.block-editor").getValue()).trim() === "[[Sat, 07.11.2026]]", { timeout: 5000 });
+    await browser.waitUntil(async () => (await editorText(browser)).trim() === "[[Sat, 07.11.2026]]", { timeout: 5000 });
     observations.push({ typed: "[[Sat,| 07.11.2026]]", choices, inserted: "[[Sat, 07.11.2026]]" });
   }
   await browser.saveScreenshot(path.join(TMP, "completion.png"));
