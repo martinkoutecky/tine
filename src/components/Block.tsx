@@ -283,7 +283,12 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // the host's position (`rowHost`). Page embeds and hosts with text keep theirs.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
-  const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
+  const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, {
+    id: () => props.id, neighbours: () => props.authorNeighbors,
+    // A thread runs through the rows drawn: the first child shown, and a prior sibling's last row (fold state as this surface draws it).
+    firstChild: () => (props.forceExpanded || !collapsed()) && sheet().view === null ? outlineChildren()[0] : undefined,
+    folded: id => viewFoldSurface(id, collapseSurface)?.collapsed(id, storedFold(id)) ?? storedFold(id),
+  });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
   // GH #893: the author mark is a faint tint behind the row's own text. Comments, replies and the
   // bulletless host of a whole-block embed keep their own presentation; the source block tints itself.
@@ -443,7 +448,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="block-children-container">
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
               <div class="block-children">
-                <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />)} />
+                <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />,
+                  { head: props.id, after: () => { const sides = props.authorNeighbors?.(); return sides?.results ? undefined : sides?.next ?? sides?.after; } })} />
               </div>
             </div>
           </Match>

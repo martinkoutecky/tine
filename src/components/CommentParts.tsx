@@ -94,6 +94,7 @@ export function AuthorChip(props: { author: string | null; handleOf?: string; me
   return (
     <span
       class="author-chip"
+      data-author={props.author ?? undefined}
       classList={{ agent: props.author !== null, "comment-handle": props.handleOf !== undefined, ...tintClasses(props.author) }}
       title={props.author !== null ? t("comment-written-by", { author: props.author }) : t("comment-written-by-you")}
       onMouseDown={onMouseDown}

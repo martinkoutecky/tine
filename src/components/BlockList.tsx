@@ -23,7 +23,7 @@ import { preserveAboveViewport } from "../scrollContainer";
 import { observeViewportWindow } from "../viewportWindow";
 import { trackRetirementPin } from "../retirementPins";
 import { inPageFindOpen } from "../inpageFind";
-import { authorSiblingNeighbors, type AuthorNeighbors } from "./authorRuns";
+import { authorSiblingNeighbors, type AuthorNeighbors, type ListRun } from "./authorRuns";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -95,8 +95,8 @@ export function stablePartition(ids: readonly string[], sizes: readonly number[]
   return out;
 }
 
-export function BlockList(props: { ids: readonly string[]; render?: (id: string, neighbours: AuthorNeighbors) => JSX.Element }): JSX.Element {
-  return <For {...blockListProps(() => props.ids, props.render)} />;
+export function BlockList(props: { ids: readonly string[]; render?: (id: string, neighbours: AuthorNeighbors) => JSX.Element; results?: boolean }): JSX.Element {
+  return <For {...blockListProps(() => props.ids, props.render, props.results ? { results: true } : undefined)} />;
 }
 
 /** The same renderer as BlockList, as Solid For props for recursive callers.
@@ -104,9 +104,9 @@ export function BlockList(props: { ids: readonly string[]; render?: (id: string,
  * depth. The getter stays reactive; this module owns grouping and rendering.
  * Pass these props intact; destructuring each takes a snapshot. Same costs
  * and lifetime as BlockList, no document mutation. */
-export function blockListProps(idsOf: () => readonly string[], render?: (id: string, neighbours: AuthorNeighbors) => JSX.Element): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
+export function blockListProps(idsOf: () => readonly string[], render?: (id: string, neighbours: AuthorNeighbors) => JSX.Element, run?: ListRun): { readonly each: readonly OutlineEntry[]; children: (entry: OutlineEntry) => JSX.Element } {
   onCleanup(listenForOutlinePrint());
-  const siblings = authorSiblingNeighbors(idsOf);
+  const siblings = authorSiblingNeighbors(idsOf, run);
   const renderRow = (id: string) => render ? render(id, siblings.neighbours(id)) : <Block id={id} authorNeighbors={siblings.neighbours(id)} />;
   const collapseSurface = useContext(CollapseSurfaceContext);
   const [groups, setGroups] = createSignal<readonly WindowGroup[]>([]);

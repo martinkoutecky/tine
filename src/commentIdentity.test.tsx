@@ -159,7 +159,7 @@ describe("what is shown", () => {
 
   it("renders every public comment class promised to custom.css", () => {
     const root = mount([block("p", "A passage", [block("c", "Discuss\ntine.quote:: passage\ntine.author:: claude\ntine.date:: 2026-11-07T13:37Z")])]);
-    const section = readFileSync("docs/contracts/theme-tokens.md", "utf8").split("## 7. Comment styling")[1]?.split("## Tests")[0] ?? "";
+    const section = readFileSync("docs/contracts/theme-tokens.md", "utf8").split("## 7. Comment styling")[1]?.split("## 8. Authorship styling")[0] ?? "";
     const selectors = [...section.matchAll(/^\| `([^`]+)`/gm)].map(match => match[1]);
     expect(selectors.length).toBeGreaterThanOrEqual(9);
     for (const selector of selectors) expect(root.querySelector(selector), `${selector} is a public styling hook`).not.toBeNull();

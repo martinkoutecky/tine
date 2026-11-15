@@ -33,6 +33,8 @@ icon:: 🎨
     | `--tine-highlight-bg` | Background of `^^highlighted^^` text | The theme's highlight color |
     | `--tine-comment-highlight-bg` | Background of the commented passage, including its active highlight | 14% accent, or 30% for the active wide-margin passage |
     | `--tine-comment-card-bg` | Background of comment cards and passage groups | 6% accent; authored cards use 7% author tint, resolved cards the secondary background |
+    | `--tine-author-icon` | An image in an author's chip instead of the name: a `url()` with a `data:` or `https:` address, set on that author's chip (section 5) | `none`: the chip shows the name |
+    | `--tine-author-icon-size` | The chip's width when it shows an icon (up to 16px); set together with `--tine-author-icon` | Unset: the chip keeps its name |
     | `--tine-missing-page-color` | Color of a link to a page that does not exist yet | A dimmed tint of the link color |
     | `--tine-external-link-underline` | The line under a link to a web address or file | `1px solid` (use `none` to remove it) |
     | `--tine-content-width` | Maximum width of the page column | 810px |
@@ -104,14 +106,59 @@ icon:: 🎨
   - ```css
     html[data-theme="light"] { --ls-primary-background-color: #fdf6e3; }
     ```
-- ## 5. Find out what styles an element
+- ## 5. Show who wrote a block
+  - A block someone else wrote (an agent, a collaborator) carries `tine.author:: <name>`. Tine tints it with that author's color and puts the author's name in a chip on the first of a run of their blocks. Each of these is a supported name for your `custom.css`:
+  - | Name | What it is |
+    | --- | --- |
+    | `[data-author="Name" i]` | Every block with that author, with the stored text as the value (the `i` ignores case, so `claude` and `Claude` match; a stray space in the file is kept in the value). Blocks without an author have no attribute |
+    | `.ls-block.authored` | A block by another author. A block you wrote (**Your name** in Settings) is never `authored` |
+    | `.ls-block.author-tinted` | A block by another author that draws the author mark: not a comment, and none while author marks are switched off (**Show/Hide author marks**) |
+    | `--author-color` | That author's color. Override it on the block and on its chip: `.ls-block[data-author="Claude" i], .ls-block[data-author="Claude" i] .author-chip { --author-color: #d97757; }` |
+    | `.author-run-continued`, `.author-run-continues` | The block drawn right above (below) this one is by the same author. A run continues from a parent into its first child, and out of the last child to the next block; a folded block ends where it is drawn. A block you wrote, a comment or an embed ends a run |
+  - A thread instead of a tint: a line down the right edge of the page, through the author chips, with one chip at the start of each run. Your text stays where it was. Paste it, and the tint goes away:
+  - ```css
+    .ls-block.author-tinted > .block-main > .block-content-wrapper {
+      position: relative;
+      padding-inline: 0 16px;
+      margin-inline: 0;
+      background: none;
+    }
+    .ls-block.author-tinted > .block-main > .block-content-wrapper::after {
+      content: "";
+      position: absolute;
+      inset-block: 14px 0;
+      inset-inline-end: 7px;
+      width: 2px;
+      background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
+    }
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: -1px; }
+    .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: -1px; }
+    .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip {
+      position: relative;
+      float: inline-end;
+      margin-inline-end: -16px;
+      background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary));
+    }
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip { display: none; }
+    ```
+  - An icon for one author: set both tokens on that author's chip (`.author-chip` carries the same `data-author`, as the trimmed name). The image must be a `data:` address (it is inside the file, so it works offline) or an `https:` address. A path like `../assets/logo.svg` does not work in `custom.css`: it is read from Tine's own page, not from your graph folder. The name stays in the tooltip. Tine ships no icons; this one is a plain diamond:
+  - ```css
+    .author-chip[data-author="Claude" i] {
+      --tine-author-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l6 7-6 7-6-7z' fill='%23d97757'/%3E%3C/svg%3E");
+      --tine-author-icon-size: 16px;
+    }
+    ```
+  - Set the pair on the chip, as above, not on the block: a block's value would be inherited by the chips of its children, even when someone else wrote them. Add one rule per author that should have an icon.
+  - There is no switch for Tine's own thread look yet (it is a class on the window that `custom.css` cannot add), which is why the thread above is written out. The class names `author-run-continued` and `author-run-continues` are the part that does the hard work: they know which block comes before and after in the outline, so you do not have to guess with selectors.
+  - What you should see: next to a block by that author, a small diamond where the name was, and with the thread rules a colored line running through the chips at the right edge of the column.
+- ## 6. Find out what styles an element
   - 1. Settings → **Appearance** → **Advanced** → **Custom CSS** → **Developer tools** (desktop), or press **Ctrl+Shift+J** (**Cmd+Shift+J** on macOS), opens the inspector. It is part of every desktop build, release builds included. Use its element picker, then read the **Styles** pane.
   - 2. Look for a `var(--tine-…)` or `var(--ls-…)` in the rule that draws what you want to change. Setting that variable in `custom.css` is the stable way to change it.
   - 3. When no variable exists, a class selector such as `.embed-block` works today, but class names and the structure of the page can change between releases, so a rule written that way may need a touch-up after an update. Prefer a token.
   - 4. The `just-toggled` class is a promise to theme authors, because a stylesheet cannot work it out from the page. When you press a task's checkbox or its marker word (also the checkbox of a task shown inside a block reference), Tine adds `just-toggled` to that task's `.block-task-checkbox` and `.block-marker` for about 0.7 seconds, then removes it. It is never there when a page loads, when a row scrolls back into view, or when a sync or another editor changes the task. So `.block-task-checkbox.just-toggled { animation: pop 300ms; }` (with your own `@keyframes pop`) plays on your own toggle and nowhere else, which a bare `animation` on `.block-task-checkbox` cannot do. Put motion inside `@media (prefers-reduced-motion: no-preference)`.
-  - Comments have supported styling classes too: `.comment-group`, `.comment-card`, `.comment-in-thread`, `.comment-quote`, `.comment-quote-anchor`, `.comment-header`, `.author-chip` (and `.author-chip.agent` for another author), `.comment-date`, `.comment-composer` and `.comment-popup-content`. Use `--tine-comment-highlight-bg` for the passage highlight and `--tine-comment-card-bg` for cards. Comments and ordinary blocks carrying `tine.author::` expose its stored value as `data-author`, even if the chip says "you": `[data-author="claude"] { opacity: 0.65; }` dims that agent's blocks, and `.comment-in-thread[data-author="Ada"] { outline: 1px solid steelblue; }` styles Ada's messages. Unsigned blocks have no `data-author` attribute.
+  - Comments have supported styling classes too: `.comment-group`, `.comment-card`, `.comment-in-thread`, `.comment-quote`, `.comment-quote-anchor`, `.comment-header`, `.author-chip` (and `.author-chip.agent` for another author), `.comment-date`, `.comment-composer` and `.comment-popup-content`. Use `--tine-comment-highlight-bg` for the passage highlight and `--tine-comment-card-bg` for cards. Comments and ordinary blocks carrying `tine.author::` expose its stored value as `data-author`, even if the chip says "you" (section 5): `[data-author="claude"] { opacity: 0.65; }` dims that agent's blocks, and `.comment-in-thread[data-author="Ada"] { outline: 1px solid steelblue; }` styles Ada's messages. Unsigned blocks have no `data-author` attribute.
   - What you should see: the inspector opens and highlights the element you point at, with its rules listed in the **Styles** pane.
-- ## 6. If it does not look right
+- ## 7. If it does not look right
   - A token seems to do nothing: check that you set it on `:root` or `html` (or `html[data-theme="dark"]`) and that the page-width Settings fields are reset for the two width tokens.
   - The whole window became unreadable: **Disable custom CSS** in Settings, or restart Tine with the file edited.
   - If a **custom.css could not be read** message appears, fix the file's permissions or size with an external text editor, then try **Edit custom.css** again.

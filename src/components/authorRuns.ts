@@ -1,10 +1,26 @@
 import { createMemo } from "solid-js";
-import { node } from "../document";
+import { blockIsOpaqueSheetView, formatForBlock, node } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
+import { authorKey } from "../commentIdentity";
+import { commentChildOf } from "../commentChildren";
 import { facetsOf, parseBody } from "../render/facets";
 import type { Block, Inline, ListItem } from "../render/ast";
 
-export type AuthorNeighbors = () => readonly [string | undefined, string | undefined];
+/** What a row's renderer knows, in O(1), about the rows drawn next to it. `prev`/`next` are the
+ * neighbours in the row's own list. The first row of a block's child list also gets `head`, the parent
+ * above it; the last gets `after`, the row drawn below the parent's whole subtree. A `results` list
+ * (references, queries, embeds) is a display list, not an outline: its rows are not reading-order
+ * neighbours of one another. */
+export interface RowSides {
+  readonly prev?: string;
+  readonly next?: string;
+  readonly head?: string;
+  readonly after?: string;
+  readonly results?: boolean;
+}
+export type AuthorNeighbors = () => RowSides;
+/** How a list sits in the outline: `head`/`after` are passed down by the parent row that renders it. */
+export interface ListRun { readonly head?: string; readonly after?: () => string | undefined; readonly results?: boolean }
 
 // Inline embeds are boundaries too. Read body AST nodes, so a macro example
 // inside a code fence or hidden author metadata cannot split a run.
@@ -40,26 +56,74 @@ function hasEmbed(raw: string, format: "md" | "org"): boolean {
  * emit equal new arrays: compare just those IDs, without re-reading authors.
  * Reused ID arrays short-circuit. No graph traversal, per-row indexOf, extra
  * context owner or retained page cache. */
-export function authorSiblingNeighbors(ids: () => readonly string[]): { ids: () => readonly string[]; neighbours: (id: string) => AuthorNeighbors } {
+export function authorSiblingNeighbors(ids: () => readonly string[], list: ListRun = {}): { ids: () => readonly string[]; neighbours: (id: string) => AuthorNeighbors } {
   const members = createMemo(ids, undefined, { equals: (before, after) => before === after
     || before.length === after.length && before.every((id, index) => id === after[index]) });
   const positions = createMemo(() => {
-    const list = members();
-    return new Map(list.map((id, i) => [id, [list[i - 1], list[i + 1]] as const]));
+    const rows = members();
+    return new Map(rows.map((id, i) => [id, [rows[i - 1], rows[i + 1]] as const]));
   });
-  return { ids: members, neighbours: id => () => positions().get(id) ?? [undefined, undefined] };
+  return { ids: members, neighbours: id => () => {
+    const [prev, next] = positions().get(id) ?? [undefined, undefined];
+    return { prev, next, head: prev === undefined ? list.head : undefined,
+      after: next === undefined ? list.after?.() : undefined, results: list.results };
+  } };
 }
 
-/** Only the adjacent rendered siblings may connect. Parser facets are cached;
- * typing changes at most this row and the two neighbours, not a page-wide run.
- * Children (including threads) end the preceding line even when folded, so a
- * line never claims authorship across a nesting/comment boundary. */
+// Two rows hold the same author only by one name: trimmed, spaces collapsed, case ignored (the key
+// that also picks the tint). Quoted comments and rows with an inline embed never join a run.
+function sameAuthor(left: string, right: string, format: "md" | "org"): boolean {
+  const a = facetsOf(node(left)!.raw, format).properties, b = facetsOf(node(right)!.raw, format).properties;
+  const by = authorOf(a), other = authorOf(b);
+  if (by === null || other === null || authorKey(by) !== authorKey(other) || quoteSelectorOf(a) !== null || quoteSelectorOf(b) !== null) return false;
+  return !hasEmbed(node(left)!.raw, format) && !hasEmbed(node(right)!.raw, format);
+}
+
+/** The sibling card (the tint's shared card): only adjacent rendered siblings connect. Parser facets are
+ * cached; typing changes at most this row and the two neighbours, not a page-wide run. Children (including
+ * threads) end the preceding card even when folded, so a card never claims authorship across a nesting or
+ * comment boundary. */
 export function authorRunContinues(leftId: string | undefined, rightId: string | undefined, format: "md" | "org"): boolean {
   if (!leftId || !rightId) return false;
   const left = node(leftId), right = node(rightId);
   if (!left || !right || left.parent !== right.parent || left.page !== right.page || left.children.length) return false;
-  const a = facetsOf(left.raw, format).properties, b = facetsOf(right.raw, format).properties;
-  const by = authorOf(a);
-  if (by === null || by !== authorOf(b) || quoteSelectorOf(a) !== null || quoteSelectorOf(b) !== null) return false;
-  return !hasEmbed(left.raw, format) && !hasEmbed(right.raw, format);
+  return sameAuthor(leftId, rightId, format);
+}
+
+/** Two rows that are adjacent in reading order (one directly above the other) and written by one author. */
+export function authorThreadLinks(aboveId: string, belowId: string, format: "md" | "org"): boolean {
+  const above = node(aboveId), below = node(belowId);
+  return !!above && !!below && above.page === below.page && sameAuthor(aboveId, belowId, format);
+}
+
+/** The last row drawn inside `id`'s subtree: follow the last rendered child while the row shows its children.
+ * Rendered children are the stored ones minus margin comments (Block's `outlineChildren`); a sheet host draws
+ * no rows. Each row lies on the spine of at most one previous sibling, so a page of n rows costs O(n) in all. */
+function lastRow(id: string, folded: (id: string) => boolean): string {
+  for (let at = id;;) {
+    const n = node(at);
+    if (!n || folded(at) || blockIsOpaqueSheetView(at)) return at;
+    const format = formatForBlock(at);
+    let last: string | undefined;
+    for (let i = n.children.length - 1; i >= 0 && last === undefined; i--) {
+      const child = node(n.children[i]);
+      if (child && commentChildOf(child.id, child.raw, format) === null) last = child.id;
+    }
+    if (last === undefined) return at;
+    at = last;
+  }
+}
+
+/** Whether `row` joins the row above it and the row below it in a thread (reading order, any depth).
+ * Above: the previous sibling's last row, else the parent. Below: the first rendered child, else the next
+ * sibling, else the row below the parent's subtree. A results list keeps the card rule: childless siblings only. */
+export function authorThreadSides(row: string, sides: RowSides, firstChild: string | undefined, folded: (id: string) => boolean, format: "md" | "org"): { continued: boolean; continues: boolean } {
+  const childless = (id: string) => !node(id)?.children.length;
+  const above = sides.prev === undefined ? sides.head
+    : !sides.results ? lastRow(sides.prev, folded) : childless(sides.prev) ? sides.prev : undefined;
+  const below = firstChild ?? (sides.results ? (childless(row) ? sides.next : undefined) : sides.next ?? sides.after);
+  return {
+    continued: above !== undefined && authorThreadLinks(above, row, format),
+    continues: below !== undefined && authorThreadLinks(row, below, format),
+  };
 }

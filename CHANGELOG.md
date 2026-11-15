@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- **Added:** the authorship marks are a public theming surface, documented in the theme contract and the Guide's "Customize Tine's look": `data-author`, `.ls-block.authored` / `.author-tinted`, `--author-color`, the run classes, a `data-author` on the author chip, and two new tokens, `--tine-author-icon` and `--tine-author-icon-size`, that show an image (a `data:` or `https:` address) in an author's chip instead of the name. Tine also ships a thread look (a line down the right edge through one chip per run) behind a class on the window, for a theme or a future setting; the Guide shows the same thread for `custom.css`. Nothing changes by default (#892).
+- **Changed:** `.author-run-continued` and `.author-run-continues` now follow reading order through depth (a run goes from a parent into its first child and out of the last descendant to the next block) instead of joining siblings only; the tint's shared cards keep joining childless siblings under the internal (undocumented) names `author-card-continued` and `author-card-continues`. A `custom.css` written before these classes were documented may have relied on the old sibling-only meaning (#892).
 - Hierarchy page links follow **Show brackets**, collapsed numbered-list markers stay circular and centered, and bullet threading no longer draws stubs through margin comment messages (#959, #963, #129).
 - Typing in a zoomed block no longer rechecks unrelated descendant rows when its text changes (D-20261115-ZT).
 - Fixed PDF annotation saves changing unrelated sidecar layout, wrapped text and coordinate digits; new highlights use Logseq's multiline EDN layout (GH #954).

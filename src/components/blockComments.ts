@@ -9,7 +9,7 @@ import { marginNext, marginPrev, outlineNext, outlinePrev, threadRootOf } from "
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
-import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
+import { authorRunContinues, authorThreadSides, type AuthorNeighbors, type RowSides } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
@@ -23,11 +23,17 @@ interface CommentNode { id: string; raw: string; parent: string | null; children
 type Props = readonly (readonly [string, string])[];
 const NO_IDS: readonly string[] = [];
 const NO_COMMENT_CLASSES: Record<string, boolean> = {};
+const NO_SIDES: RowSides = {};
+const NO_THREAD = { continued: false, continues: false } as const;
+
+/** What `commentFacts` needs from a row to compare it with its neighbours: its own id, the sides its list gives
+ * it, the first child it renders (none when folded) and whether a row's children are folded away here. */
+export interface RunRow { id: () => string; neighbours: () => AuthorNeighbors | undefined; firstChild: () => string | undefined; folded: (id: string) => boolean }
 
 /** Local facets and a memo for the adjacent authorship pairs. The thread test
  * walks up the parents rather than providing a context per level (128-level
  * outlines must render). Unauthored blocks do no neighbour comparisons. */
-export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org", run?: { id: () => string; neighbours: () => AuthorNeighbors | undefined }) {
+export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org", run?: RunRow) {
   const inThread = () => inCommentThread(node().parent, fmt());
   const commentSelector = () => (node().parent !== null ? quoteSelectorOf(properties()) : null);
   // Carry stored attribution through the memo that already owns adjacent-run comparisons.
@@ -37,30 +43,41 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     const author = written !== null && isOwnAuthor(written) ? null : written;
     // Thread presentation is gated below. Do not read ancestors here: their
     // raw text would make a parent's keystroke recompute every descendant run.
-    if (author === null || commentSelector() !== null) return { stored, author, continued: false, continues: false };
-    const neighbours = run?.neighbours()?.();
-    return { stored, author, continued: authorRunContinues(neighbours?.[0], run?.id(), fmt()), continues: authorRunContinues(run?.id(), neighbours?.[1], fmt()) };
+    if (author === null || commentSelector() !== null || !run) return { stored, author, continued: false, continues: false };
+    const sides = run.neighbours()?.() ?? NO_SIDES, id = run.id();
+    return { stored, author, continued: authorRunContinues(sides.prev, id, fmt()), continues: authorRunContinues(id, sides.next, fmt()) };
   });
   const storedAuthor = () => authorship().stored;
   const author = () => authorship().author;
   const continued = () => authorship().continued;
   const continues = () => authorship().continues;
+  // The thread's run reaches across depth (the parent above the first child, the last descendant above the next
+  // sibling), so it depends on more rows than the card. It is read where the classes are, not in a memo of its
+  // own: a memo would cost every plain row an owner (Block.loadCost), and keeping it out of the card memo stops
+  // a parent's keystroke from re-running the card comparisons of its children. Plain rows read nothing.
+  const threadSides = () => {
+    if (!run || author() === null || commentSelector() !== null || bulletless()) return NO_THREAD;
+    return authorThreadSides(run.id(), run.neighbours()?.() ?? NO_SIDES, run.firstChild(), run.folded, fmt());
+  };
   const showsAuthor = () => (author() !== null && !continued()) || bulletless();
   // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => (commentSelector() !== null || inThread()) && (!datedThreadRoot(node().id) || hasMessageDate(node().id));
   const commentClasses = () => {
     const by = author();
     const selector = commentSelector();
-    const thread = inThread();
-    if (by === null && selector === null && !thread) return NO_COMMENT_CLASSES;
+    const inReplies = inThread();
+    if (by === null && selector === null && !inReplies) return NO_COMMENT_CLASSES;
+    const thread = threadSides();
     const classes: Record<string, boolean> = {
-      "comment-card": selector !== null && !thread,
-      "comment-resolved": selector !== null && !thread && threadResolved(node().id),
+      "comment-card": selector !== null && !inReplies,
+      "comment-resolved": selector !== null && !inReplies && threadResolved(node().id),
       "comment-in-thread": bulletless(),
       "comment-message": bulletless() && datedThreadRoot(node().id) !== null,
       authored: by !== null,
-      "author-run-continued": !bulletless() && continued(),
-      "author-run-continues": !bulletless() && continues(),
+      "author-card-continued": !bulletless() && continued(),
+      "author-card-continues": !bulletless() && continues(),
+      "author-run-continued": thread.continued,
+      "author-run-continues": thread.continues,
     };
     // Someone else's comment or reply gets its own background, one tint per name
     // (Martin 2026-10-31: the chip alone did not tell them apart).

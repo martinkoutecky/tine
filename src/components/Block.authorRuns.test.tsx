@@ -54,8 +54,51 @@ it("same-author siblings share a chip, while each tinted row names its own autho
   }
   expect(tinted(root, "own")).toBe(false);
   expect(wrapperOf(root, "own").getAttribute("title")).toBeNull();
-  // A run is one card: its members carry the join classes the tint's corners and overlap follow.
-  expect([...row(root, "b").classList].filter(name => name.startsWith("author-run-"))).toEqual(["author-run-continued", "author-run-continues"]);
+  // A run is one card: its members carry the join classes the tint's corners and overlap follow (card),
+  // and the public run classes the thread follows (run).
+  expect([...row(root, "b").classList].filter(name => /^author-(card|run)-/.test(name)).sort())
+    .toEqual(["author-card-continued", "author-card-continues", "author-run-continued", "author-run-continues"]);
+});
+
+/** The two public run classes of a row, as the contract's section 8 names them. */
+const runOf = (root: ParentNode, id: string) => [row(root, id).classList.contains("author-run-continued") ? "up" : "", row(root, id).classList.contains("author-run-continues") ? "down" : ""].filter(Boolean).join("+");
+const cardOf = (root: ParentNode, id: string) => [row(root, id).classList.contains("author-card-continued") ? "up" : "", row(root, id).classList.contains("author-card-continues") ? "down" : ""].filter(Boolean).join("+");
+
+it("a run crosses depth: parent into its first child, out of the last descendant to the next block; the tint's card does not", () => {
+  const root = mount([b("p", "Ada", [b("k1", "Ada", [b("g")]), b("k2")]), b("n"), b("x", "Bo")]);
+  expect(["p", "k1", "g", "k2", "n", "x"].map(id => runOf(root, id))).toEqual(["down", "up+down", "up+down", "up+down", "up", ""]);
+  // Cards join siblings only, and only childless ones: nothing bends around a child.
+  expect(["p", "k1", "g", "k2", "n", "x"].map(id => cardOf(root, id))).toEqual(["", "", "", "", "", ""]);
+});
+
+it("a run ends at a block of someone else, at your own block and at a comment; a folded block ends where it is drawn", () => {
+  const folded = { ...b("f", "Ada", [b("hidden")]), collapsed: true };
+  const root = mount([b("a", "Ada", [b("mine", null)]), b("a2"), folded, b("f2"),
+    b("c", "Ada", [b("thread", "Bo", [], "reply\ntine.quote:: c")]), b("c2"),
+    b("p", "Ada", [b("other", "Bo")]), b("p2")]);
+  // a: its first child is yours, so no run down; a2 follows a's last row (yours), so none up.
+  expect([runOf(root, "a"), runOf(root, "a2")]).toEqual(["", "down"]);
+  // A folded block hides its child: the run goes on to its next sibling.
+  expect([runOf(root, "f"), runOf(root, "f2")]).toEqual(["up+down", "up+down"]);
+  // A margin comment is not a row of the outline.
+  expect([runOf(root, "c"), runOf(root, "c2")]).toEqual(["up+down", "up+down"]);
+  // A first child by someone else ends the run below p, and p2 follows that child.
+  expect([runOf(root, "p"), runOf(root, "other"), runOf(root, "p2")]).toEqual(["up", "", ""]);
+});
+
+it("names compare by key (case, spaces), data-author keeps the stored text", () => {
+  const root = mount([b("a", "Ada  Lovelace"), b("b", "ada lovelace"), b("c", "Bo")]);
+  expect([runOf(root, "a"), runOf(root, "b"), runOf(root, "c")]).toEqual(["down", "up", ""]);
+  expect([row(root, "a"), row(root, "b")].map(r => r.getAttribute("data-author"))).toEqual(["Ada  Lovelace", "ada lovelace"]);
+  // The chip carries the trimmed name, so an icon rule can name it (and a run's one chip is the first row's).
+  expect([...root.querySelectorAll(".author-chip")].map(c => c.getAttribute("data-author"))).toEqual(["Ada  Lovelace", "Bo"]);
+});
+
+it("a results list keeps hits apart, and the outline rules apply inside one hit", () => {
+  loadSingle({ name: "Runs", title: "Runs", kind: "page", format: "md", pre_block: null, blocks: [b("a", "Ada", [b("k")]), b("b")] });
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => <BlockList ids={pageByName("Runs")!.roots} results />, root);
+  expect([runOf(root, "a"), runOf(root, "k"), runOf(root, "b")]).toEqual(["down", "up", ""]);
 });
 
 it("the Show/Hide author marks switch turns the tint off and leaves the chips and the file alone", () => {
@@ -75,7 +118,7 @@ it("the Show/Hide author marks switch turns the tint off and leaves the chips an
 it("GH #893: no gutter-line rule or element survives in the stylesheet or the components", () => {
   const css = readFileSync("src/styles/comments.css", "utf8");
   expect(css).not.toMatch(/\.author-mark\b/);
-  expect(css).toMatch(/\.ls-block\.author-tinted > \.block-main > \.block-content-wrapper \{[^}]*padding-inline: var\(--author-tint-bleed\);[^}]*margin-inline: calc\(-1 \* var\(--author-tint-bleed\)\)/);
+  expect(css).toMatch(/:where\(:root:not\(\.tine-author-thread\)\) \.ls-block\.author-tinted > \.block-main > \.block-content-wrapper \{[^}]*padding-inline: var\(--author-tint-bleed\);[^}]*margin-inline: calc\(-1 \* var\(--author-tint-bleed\)\)/);
 });
 
 it("child outlines, comment threads and embeds bound runs; no inheritance", () => {
@@ -198,4 +241,47 @@ it.each([8, 32])("a view re-emitting the same %i sibling IDs does not recompute 
   setRaw(`row${middle}`, "edited words\ntine.author:: Ada");
   expect(comparisons.mock.calls.length).toBeGreaterThan(0);
   expect(comparisons.mock.calls.length).toBeLessThanOrEqual(12);
+});
+
+it.each([8, 32])("typing in one of %i siblings revisits only the thread sides of its two neighbours", count => {
+  mount(Array.from({ length: count }, (_, i) => b(`row${i}`)));
+  const sides = vi.spyOn(runs, "authorThreadSides");
+  const middle = count / 2;
+  setRaw(`row${middle}`, `edited words\ntine.author:: Ada`);
+  const touched = new Set(sides.mock.calls.map(([id]) => id));
+  expect(sides.mock.calls.length).toBeGreaterThan(0);
+  expect(sides.mock.calls.length).toBeLessThanOrEqual(12);
+  for (const id of touched) expect(Math.abs(Number(id.slice(3)) - middle)).toBeLessThanOrEqual(1);
+});
+
+it.each([1, 2, 3].flatMap(depth => [8, 32].map(count => [depth, count] as const)))("editing an ancestor at depth %i revisits its first child's thread sides, not its %i descendants'", (depth, count) => {
+  let children = Array.from({ length: count }, (_, i) => b(`child${i}`));
+  for (let level = 1; level < depth; level++) children = [b(`nested${level}`, "Ada", children)];
+  mount([b("parent", "Ada", children)]);
+  const sides = vi.spyOn(runs, "authorThreadSides");
+  setRaw("parent", "edited parent words\ntine.author:: Ada");
+  const touched = new Set(sides.mock.calls.map(([id]) => id));
+  expect(sides.mock.calls.length).toBeGreaterThan(0);
+  expect(sides.mock.calls.length).toBeLessThanOrEqual(12);
+  expect([...touched].sort()).toEqual(["parent", depth === 1 ? "child0" : `nested${depth - 1}`].sort());
+});
+
+it("renders every public authorship hook the contract's section 8 table promises", () => {
+  const root = mount([b("a", "Ada", [b("k")]), b("b", "Ada"), b("c", "Bo")]);
+  const section = readFileSync("docs/contracts/theme-tokens.md", "utf8").split("## 8. Authorship styling")[1]?.split("## Tests")[0] ?? "";
+  const cells = [...section.matchAll(/^\| (.+?) \|/gm)].map(m => m[1]).filter(cell => cell.includes("`"));
+  const selectors = cells.flatMap(cell => [...cell.matchAll(/`([^`]+)`/g)].map(m => m[1]))
+    .filter(sel => !sel.startsWith("--") && !sel.startsWith("html."))
+    .map(sel => sel.replace(/^data-author="<name>"$/, "[data-author]"));
+  expect(selectors.length).toBeGreaterThanOrEqual(7);
+  for (const selector of selectors) expect(root.querySelector(selector), `${selector} is a public authorship hook`).not.toBeNull();
+  // The two names that are not elements: the window class is in the stylesheet, and `--author-color` is defined
+  // for every tint class an authored row carries (jsdom loads no stylesheet, so read the rule).
+  const css = readFileSync("src/styles/comments.css", "utf8");
+  expect(css).toContain(".tine-author-thread {");
+  for (const id of ["a", "b", "c"]) {
+    const tint = [...row(root, id).classList].find(name => /^author-tint-\d$/.test(name));
+    expect(tint, `${id} carries a tint class`).toBeDefined();
+    expect(css).toContain(`.${tint} { --author-color:`);
+  }
 });

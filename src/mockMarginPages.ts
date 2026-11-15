@@ -84,6 +84,23 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[], co
     ],
     ["Author mark refs", [b("This page is mentioned by an agent block.")]],
     [
+      // GH #892: runs across depth, a break by your own block, a second author, a folded authored block.
+      "Author thread", [
+        b("You wrote the introduction."),
+        b("Claude drafted this section.\ntine.author:: Claude", [
+          b("First point, one level in.\ntine.author:: Claude", [b("A detail under the first point.\ntine.author:: Claude")]),
+          b("Second point.\ntine.author:: Claude"),
+        ]),
+        b("Claude's closing line for the section, after its children.\ntine.author:: Claude"),
+        b("Your reply, which ends the thread."),
+        b("Mira reviewed the draft.\ntine.author:: Mira", [
+          b("Mira's note on the second point.\ntine.author:: Mira"),
+          b("A folded note by Mira.\ntine.author:: Mira\ncollapsed:: true\nid:: 89200000-0000-4000-8000-000000000001", [b("Hidden child")], true),
+        ]),
+        b("Mira's last word.\ntine.author:: Mira"),
+      ],
+    ],
+    [
       // GH #893: an authored block that also carries a margin comment on a passage of its text.
       "Author tint comment", [
         b("You wrote the line above."),
