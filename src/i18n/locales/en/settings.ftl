@@ -1,5 +1,6 @@
 ## Settings › Editor › Advanced
-settings-cm6-label = Experimental: CodeMirror editor
+settings-cm6-label = Use classic editor
+settings-cm6-description = CodeMirror is the default. If you switch back because of an issue, please report it ({ settings-ui-about } → { about-report-an-issue }); the classic editor is planned to be retired.
 settings-pinyin-label = Match Chinese page names by Pinyin
 settings-pinyin-description = Find Han titles and aliases with Mandarin Pinyin or syllable initials. Native name matches come first. This preference stays on this device.
 settings-pinyin-reset = Reset Pinyin matching to language default
@@ -560,7 +561,7 @@ toast-save-gallery-theme-failed = Could not save gallery theme.
 toast-save-automatic-updates-failed = Could not save automatic update preference.
 toast-save-comment-author-failed = Could not save comment author name.
 toast-save-comment-prompt-failed = Could not save comment name prompt.
-toast-save-codemirror-failed = Could not save CodeMirror editor.
+toast-save-codemirror-failed = Could not save editor choice.
 toast-save-link-autocomplete-failed = Could not save link autocomplete policy.
 toast-save-capture-enter-failed = Could not save capture Enter preference.
 toast-save-file-watcher-failed = Could not save file watcher mode.

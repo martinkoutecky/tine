@@ -14,7 +14,7 @@ import { backend } from "../backend";
 
 let dispose: (() => void) | undefined;
 beforeEach(() => {
-  // These directly mount CM6 even in the default-off suite. jsdom has no
+  // These directly mount CM6 even in the classic-editor suite. jsdom has no
   // Range layout; match the empty geometry used by the switch-on census.
   if (!Range.prototype.getClientRects) Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
   if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = () => new DOMRect();

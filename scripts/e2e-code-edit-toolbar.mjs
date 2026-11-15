@@ -48,11 +48,11 @@ try {
     page.on("pageerror", error => errors.push(String(error)));
     await page.goto(`http://127.0.0.1:${port}/?regressions`);
     await page.locator(".ls-block").first().waitFor();
-    if (engine === "cm6") {
+    if (engine === "textarea") {
       await page.keyboard.press("Control+,");
       await page.locator(".settings-search-input").fill("CodeMirror");
       await page.locator(".settings-search-result").first().click();
-      await page.locator(".settings-field").filter({ hasText: "Experimental: CodeMirror editor" }).getByRole("switch").click();
+      await page.locator('[data-setting-id="settings-cm6-label"]').getByRole("switch").click();
       await page.keyboard.press("Escape");
     }
     for (const surface of ["page", "journal"]) {

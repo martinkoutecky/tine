@@ -14,7 +14,7 @@ import { waitForFileText } from "./e2e-file-poll.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const DRIVER = process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOME ?? "", "bin/tauri-driver");
-const ARTIFACT = path.join(ROOT, "artifacts/gh689/native");
+const ARTIFACT = process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/gh689/native");
 fs.mkdirSync(ARTIFACT, { recursive: true });
 const TMP = fs.mkdtempSync(path.join(ARTIFACT, "journey-"));
 const GRAPH = path.join(TMP, "graph");

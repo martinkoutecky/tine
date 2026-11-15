@@ -32,7 +32,9 @@ export function groupsContainEdit(groups: RefGroup[], id: string): boolean {
  * Tine keeps the rendered answer/position until editing ends and the final save
  * revision settles, then coalesces suppressed invalidations into one request.
  * Identity changes always retire retention; an in-flight read cannot replace an
- * answer underneath its editor or land in a different graph/route (I-20). */
+ * answer underneath its editor or land in a different graph/route (I-20).
+ * A deferred load (`undefined`) or rejected adoption keeps the same scope's
+ * previous answer; an accepted empty collection replaces it. No extra read. */
 export function createMembershipResource<S, T>(
   source: Accessor<S | undefined | null | false>,
   identity: Accessor<string>,
@@ -131,7 +133,8 @@ export function createMembershipResource<S, T>(
       if (result.kind === "stale") return request().scope === started.scope && request().held ? snapshot : undefined;
       if (request().held) return snapshot;
       if (runnable() !== started) return undefined;
-      if (started.guarded && adoptResults(result.value, ticket) === undefined) return undefined;
+      if (result.value === undefined) return snapshot;
+      if (started.guarded && adoptResults(result.value, ticket) === undefined) return snapshot;
       snapshot = result.value;
       answered = started;
       snapshotEpoch = ticket.epoch;

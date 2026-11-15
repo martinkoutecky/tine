@@ -912,7 +912,11 @@ export function capturePages(names: Iterable<string>): Map<string, PageDto> {
  * transfer are ordinary edits; transfer endpoints run as a planned sequence of
  * host moves (freeze, drain, plan, run), the display showing the edit while the
  * host's text is held apart. A refusal stops it: completed steps stand and each
- * endpoint shows the host's latest text (its undo is dropped). */
+ * endpoint shows the host's latest text (its undo is dropped). `true` means the
+ * host Applied every planned transfer step under its operation draft (crash-safe
+ * custody); with no transfer endpoints, ordinary edits have only been marked
+ * dirty. It does not mean page-published: callers needing publication use
+ * `HostClient.published(needs)`. */
 export function persistTransfer(before: ReadonlyMap<string, PageDto>, kinds: EditKind | EditKinds,
   edges: readonly TransferEdge[] = []): Promise<boolean> {
   const seen = new Set<string>();

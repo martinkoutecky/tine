@@ -103,7 +103,7 @@ The inventory includes gated controls (CM6, desktop, touch, Sharing) even where 
 | `settings-ui-spellcheck-languages` | `settings-ui-spellcheck-languages` | Spellcheck languages | Basic |
 | `settings-reference-previews` | `settings-reference-previews` | Reference previews | Advanced |
 | `settings-hover-preview-delay` | `settings-hover-preview-delay` | Hover preview delay | Advanced |
-| `settings-cm6-label` | `settings-cm6-label` | Experimental: CodeMirror editor | Advanced |
+| `settings-cm6-label` | `settings-cm6-label` | Use classic editor | Advanced |
 | `settings-ui-link-autocomplete-default` | `settings-ui-link-autocomplete-default` | Link autocomplete default | Advanced |
 | `settings-ui-switch-to-an-already-open-tab-when-navigating` | `settings-ui-switch-to-an-already-open-tab-when-navigating` | Switch to an already-open tab when navigating | Advanced |
 | `settings-result-destination-label` | `settings-result-destination-label` | Search results open in | Advanced |

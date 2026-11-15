@@ -26,6 +26,7 @@ import crypto from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
+import { chooseEditor } from "./lib/e2e-editor-choice.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
@@ -241,14 +242,7 @@ try {
   await assertAppLease(fixture);
   mainWindowId = (await waitActive(isMain, "the application's window never took native focus at launch", 20_000)).id;
   stage = "Choose editor through Settings";
-  await browser.$('button[title^="Settings"]').click();
-  await browser.$(".settings-search-input").setValue("CodeMirror");
-  await browser.$(".settings-search-result").click();
-  const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
-  await toggle.waitForDisplayed();
-  if (await toggle.getAttribute("aria-checked") !== String(mode === "cm6")) await toggle.click();
-  await browser.waitUntil(async () => await toggle.getAttribute("aria-checked") === String(mode === "cm6"));
-  await keys("Escape");
+  await chooseEditor(browser, mode);
 
   await journey("click");
   await journey("window");

@@ -21,8 +21,9 @@ stable after a soak with no open severe regression.
 ## 0.10: in development
 
 - **The CodeMirror editor becomes the default.** It shows formatting as you type; Martin has used it daily
-  since early November. The plain text editor stays as a setting. If you switch back because something in the
-  new editor is wrong, please report it: the plan is to retire the plain editor.
+  since early November. The classic editor stays: **Settings → Editor → Advanced → Use classic editor**. If you
+  switch back because something in the new editor is wrong, please report it: the plan is to retire the
+  classic editor.
 - **Margin comments, second round**: threads that collapse, next and previous comment, an "on click" mode,
   and layouts for narrow windows and phones.
 - **Right-to-left languages**, Persian first ([#823](https://github.com/martinkoutecky/tine/issues/823)).

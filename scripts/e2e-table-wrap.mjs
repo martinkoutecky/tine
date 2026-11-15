@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { remote } from "webdriverio";
+import { chooseEditor } from "./lib/e2e-editor-choice.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
 import { accountHomeFixture, assertAppLease } from "./lib/e2e-account-home.mjs";
@@ -93,14 +94,7 @@ try {
   for (const mode of ["textarea", "cm6"]) {
     await browser.setWindowSize(1600, 1000);
     stage = `choose ${mode}`;
-    await browser.$('button[title^="Settings"]').click();
-    await browser.$(".settings-search-input").setValue("CodeMirror");
-    await browser.$(".settings-search-result").click();
-    const toggle = await browser.$('[data-setting-label="Experimental: CodeMirror editor"] [role="switch"]');
-    await toggle.waitForDisplayed();
-    if (await toggle.getAttribute("aria-checked") !== String(mode === "cm6")) await toggle.click();
-    await browser.waitUntil(async () => await toggle.getAttribute("aria-checked") === String(mode === "cm6"));
-    await browser.keys(["Escape"]);
+    await chooseEditor(browser, mode);
     await openPageByName(browser, "Table reading");
     await checkReading(".main-content", `${mode}-page`);
     // Dismissing the mobile drawer in the prior iteration also closes the

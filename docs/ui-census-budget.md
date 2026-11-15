@@ -34,6 +34,11 @@ Logseq revert (#941).
 
 ## Failure modes
 
+FHj1Y R1 (2026-11-14) pins `settings.sharing.open` at 1 (Connect GitHub,
+enabled quick share with no connected account or shares). The census measures
+every declared Settings tab with Sharing enabled; `settings.tabs` keeps its
+ordinary gate-off count of 11. All existing budgets stay unchanged.
+
 H9TvA (D-20261113-CO/CO2) adds the approved **Include comments** checkbox to
 the existing Graph publication controls. `settings.graph.open` is 8 (was 7),
 accounting for that one export content choice. Other surface and performance
