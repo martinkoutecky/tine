@@ -26,6 +26,7 @@
  * fired. */
 import { createEffect, createRoot, createSignal, on } from "solid-js";
 import { installResultsPendingGate } from "../queryResultsEpoch";
+import { onGraphRewriteThaw } from "./graphRewriteState";
 import type { GraphChange } from "../backend";
 import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "../binding";
 import { editingId } from "../editorController";
@@ -90,6 +91,7 @@ export function replayDeferredExternalReloads(): void {
 }
 
 clearOnBindingInvalidated(() => { deferred.clear(); waiters.clear(); setDeferredCount(0); });
+onGraphRewriteThaw(replayDeferredExternalReloads);
 
 // Editing ending (or moving to another block), a move settling, a save
 // settling (the data revision) and the page host letting go of a page (its

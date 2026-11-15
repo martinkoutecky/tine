@@ -9,7 +9,7 @@ import { doc, pageByName } from "./model";
 import type { PageRead } from "../types";
 import * as pageIdentity from "../pageIdentity";
 import { tryFreezeGraphRewrite } from "./graphRewriteState";
-import { replayDeferredExternalReloads } from "./deferredReload";
+import { replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 
 beforeAll(() => initParser());
 afterEach(() => { resetStore(); setConflictPolicyAlwaysAsk(false); vi.restoreAllMocks(); });
@@ -56,13 +56,26 @@ it.each(["before read", "during read"])("a publication waits for a graph rewrite
     expect(shown()).toEqual(["stray"]);
     expect(leave).not.toHaveBeenCalled();
     expect(read).toHaveBeenCalledTimes(timing === "before read" ? 0 : 1);
+    if (timing === "before read") read.mockReset().mockResolvedValue(null);
   } finally { release?.(); }
-  // A failed rewrite leaves the old owner loaded: replay must still remove it.
-  if (timing === "before read") read.mockReset().mockResolvedValue(null);
-  replayDeferredExternalReloads();
+  // A failed rewrite leaves the old owner loaded: the release's replay must still remove it.
   await vi.waitFor(() => expect(pageByName("Loaded")).toBeUndefined());
   expect(leave).toHaveBeenCalledExactlyOnceWith("Loaded");
   expect(read).toHaveBeenCalledTimes(timing === "before read" ? 1 : 2);
+});
+
+it("any graph freeze, not only a rename, wakes deferred work when it releases", async () => {
+  ensurePageLoaded(page("A"));
+  const waiter = vi.fn();
+  // Graph opening, backup restore and root recovery take the same freeze and may fail, leaving this graph open.
+  const release = tryFreezeGraphRewrite();
+  try {
+    whenPageReplaceable("Loaded", "probe", waiter);
+    replayDeferredExternalReloads();
+    expect(waiter).not.toHaveBeenCalled();
+  } finally { release?.(); }
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(waiter).toHaveBeenCalledOnce();
 });
 
 it("an unloaded own publication costs zero page reads, feed restarts and loaded-page renders", async () => {

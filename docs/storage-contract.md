@@ -208,7 +208,8 @@ defers the same publication until release. A different file returned for an
 exact-path read cannot replace or retire the loaded owner.
 During a graph rewrite, own-publication text and removal handling defer through
 the same gate until the rewrite has refreshed the working set and navigation
-(or failed). Replay resolves the current loaded owner and route, so a rename's
+(or failed). Every release of the freeze (rename, graph open, backup restore,
+root recovery) replays the deferred work and waiters. Replay resolves the current loaded owner and route, so a rename's
 vanished old path cannot navigate away before its renamed identity is followed.
 An own publication deferred for a physical path applies only while that path
 still owns the loaded name. It retains its original UI snapshot, so removal

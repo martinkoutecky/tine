@@ -10,7 +10,6 @@ import { doc, pageByName } from "./model";
 import { invalidateUndoForPage } from "./history";
 import { toLoadablePage } from "./convert";
 import { graphRewriteFrozen, tryFreezeGraphRewrite } from "./graphRewriteState";
-import { replayDeferredExternalReloads } from "./deferredReload";
 import { pushToast } from "../toasts";
 import { pageIdentityKey } from "../ui";
 import type { RenameDone, RenamedPage, RenameProbeText, RenameTouchedPage } from "../types";
@@ -90,7 +89,6 @@ export async function renamePageOnDisk(
     return result.value.outcome;
   } finally {
     release();
-    replayDeferredExternalReloads();
   }
 }
 
