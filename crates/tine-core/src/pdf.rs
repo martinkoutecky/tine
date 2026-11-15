@@ -9,6 +9,7 @@
 
 use crate::doc::{DocBlock, Document};
 use crate::edn::{self, Edn};
+mod sidecar;
 use crate::model::Format;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -197,12 +198,12 @@ fn highlight_from(e: &Edn) -> Option<Highlight> {
 
 fn highlight_to(h: &Highlight) -> Edn {
     let position = Edn::Map(vec![
-        (kw("page"), Edn::Int(h.position.page)),
         (kw("bounding"), rect_to(&h.position.bounding)),
         (
             kw("rects"),
             Edn::List(h.position.rects.iter().map(rect_to).collect()),
         ),
+        (kw("page"), Edn::Int(h.position.page)),
     ]);
     let mut content_pairs = Vec::new();
     if let Some(t) = &h.text {
@@ -341,26 +342,26 @@ fn merge_highlight(existing: Option<&Edn>, h: &Highlight) -> Edn {
     Edn::Map(merged)
 }
 
-/// Serialize highlights to `assets/<key>.edn`, PRESERVING the foreign content of the
-/// existing file: only the `:highlights` Tine owns are replaced (each deep-merged onto
-/// its prior map), while root `:extra`, any other root keys, and unknown per-highlight
-/// fields round-trip untouched. Rebuilding from our model alone dropped all of it (audit
-/// C#4: Logseq's `:extra`/metadata was silently erased on every highlight edit).
+/// Serialize highlights to `assets/<key>.edn`, deep-merging each edited record onto
+/// its prior map. Preserve foreign root keys, `:extra` and per-highlight metadata.
+/// Unchanged records retain their authored bytes, including strings, numeric tokens
+/// and layout; new records use Logseq's Fipp layout. No I/O is performed here;
+/// the feature layer owns validation and the guarded revision-checked write.
 pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String {
     let root = edn::parse_strict(existing_edn);
-    let existing_by_id: HashMap<String, Edn> = root
+    let existing_by_id: HashMap<&str, &Edn> = root
         .as_ref()
         .and_then(|r| r.get("highlights"))
         .and_then(Edn::as_vec)
         .map(|v| {
             v.iter()
-                .filter_map(|h| Some((highlight_id(h.get("id")?)?.to_string(), h.clone())))
+                .filter_map(|h| Some((highlight_id(h.get("id")?)?, h)))
                 .collect()
         })
         .unwrap_or_default();
     let mut hl_items: Vec<Edn> = highlights
         .iter()
-        .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
+        .map(|h| merge_highlight(existing_by_id.get(h.id.as_str()).copied(), h))
         .collect();
     // An entry this model cannot read (reversed rect, missing position, a
     // foreign shape) was never shown to the user, so no caller can have
@@ -386,8 +387,8 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
 
     // Keep every existing root key; replace only `:highlights`; ensure `:extra` exists
     // (OG canonical). A new/empty/unparseable file yields the canonical skeleton.
-    let mut pairs: Vec<(Edn, Edn)> = match root {
-        Some(Edn::Map(p)) => p,
+    let mut pairs: Vec<(Edn, Edn)> = match root.as_ref() {
+        Some(Edn::Map(p)) => p.clone(),
         _ => Vec::new(),
     };
     let mut had_highlights = false;
@@ -408,9 +409,7 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
     if !had_extra {
         pairs.push((kw("extra"), Edn::Map(vec![])));
     }
-    let mut s = edn::to_string(&Edn::Map(pairs));
-    s.push('\n');
-    s
+    sidecar::write(&Edn::Map(pairs), root.as_ref(), existing_edn)
 }
 
 // ----------------------------------------------------------------- hls__ page

@@ -413,7 +413,21 @@ fn other_census_writers_with_a_host_write_their_changes() {
             (
                 "assets/paper.edn",
                 Some(
-                    "{:highlights [{:id \"h1\" :page 1 :position {:page 1 :bounding {:top 1 :left 1 :width 2 :height 2} :rects ({:top 1 :left 1 :width 2 :height 2})} :content {:text \"quoted\"} :properties {:color \"yellow\"}}] :extra {}}\n",
+                    r#"{:highlights [{:id "h1",
+               :page 1,
+               :position {:bounding {:top 1,
+                                     :left 1,
+                                     :width 2,
+                                     :height 2},
+                          :rects ({:top 1,
+                                   :left 1,
+                                   :width 2,
+                                   :height 2}),
+                          :page 1},
+               :content {:text "quoted"},
+               :properties {:color "yellow"}}],
+ :extra {}}
+"#,
                 ),
             ),
             (

@@ -200,7 +200,7 @@ fn highlight_writes_with_a_host_write_their_changes() {
         changes,
         BTreeMap::from([(
             "assets/paper.edn".to_owned(),
-            Some("{:highlights [] :extra {}}\n".to_owned())
+            Some("{:highlights [],\n :extra {}}\n".to_owned())
         )])
     );
 

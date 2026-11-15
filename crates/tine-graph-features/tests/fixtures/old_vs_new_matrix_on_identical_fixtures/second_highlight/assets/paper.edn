@@ -1,1 +1,20 @@
-{:highlights [{:id "a" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text "a"} :properties {:color "yellow"}} {:id "b" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text "b"} :properties {:color "yellow"}}] :extra {:page 3 :scale 1.5}}
+{:highlights [{:id "a",
+               :page 1,
+               :position {:bounding {:top 0,
+                                     :left 0,
+                                     :width 1,
+                                     :height 1},
+                          :rects (),
+                          :page 1},
+               :content {:text "a"},
+               :properties {:color "yellow"}}
+              {:id "b",
+               :page 1,
+               :position {:bounding {:top 0,
+                                     :left 0,
+                                     :width 1,
+                                     :height 1},
+                          :rects (),
+                          :page 1},
+               :content {:text "b"},
+               :properties {:color "yellow"}}] :extra {:page 3 :scale 1.5}}

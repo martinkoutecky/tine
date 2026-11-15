@@ -63,8 +63,26 @@ for (const graph of [GRAPH, OTHER]) {
   fs.writeFileSync(path.join(graph, "pages/Multiview.md"), "- ![Shared PDF](../assets/shared.pdf)\n");
 }
 fs.writeFileSync(path.join(GRAPH, "assets/shared.pdf"), fixturePdf());
-const rect = "{:x1 72 :y1 88 :x2 225 :y2 104 :width 612 :height 792}";
-fs.writeFileSync(SIDECAR, `{:highlights [{:id #uuid "${ID}" :page 1 :position {:bounding ${rect} :rects (${rect}) :page 1} :content {:text "Existing shared highlight"} :properties {:color "yellow"}}] :extra {:page 1 :scale 1.0}}\n`);
+// Synthetic Logseq/Fipp layout with wrapped text and a sensitive coordinate.
+const existingRecord = `{:id #uuid "${ID}",
+               :page 1,
+               :position {:bounding {:x1 72,
+                                     :y1 88,
+                                     :x2 225.00000000000003,
+                                     :y2 104,
+                                     :width 612,
+                                     :height 792},
+                          :rects ({:x1 72,
+                                   :y1 88,
+                                   :x2 225.00000000000003,
+                                   :y2 104,
+                                   :width 612,
+                                   :height 792}),
+                          :page 1},
+               :content {:text "Existing shared\\nhighlight"},
+               :properties {:color "yellow"}}`;
+const originalSidecar = `{:highlights [${existingRecord}],\n :extra {:page 1, :scale 1}}\n`;
+fs.writeFileSync(SIDECAR, originalSidecar);
 fs.writeFileSync(NOTES, `${NOTES_HEADER}\n- Existing shared highlight\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: ${ID}\n`);
 const xdg = path.join(ARTIFACTS, "xdg");
 for (const dir of ["data", "config", "cache", "state", "home"]) fs.mkdirSync(path.join(xdg, dir), { recursive: true });
@@ -239,13 +257,15 @@ try {
   journey = "recolor A propagates to B and disk";
   const green = await editExisting(a, ID, 1);
   await overlay(ID, green);
-  await waitForFileText(SIDECAR, (t) => t.includes(':color "green"'));
+  const recolored = await waitForFileText(SIDECAR, (t) => t.includes(':color "green"'));
+  check(recolored === originalSidecar.replace(':color "yellow"', ':color "green"'), "#954: recolor changed unrelated sidecar bytes");
   await assertViews(expected, "recolor");
 
   journey = "create text in B propagates once to A and paired files";
   await selectText(b);
   const purple = await chooseColor(b, 4);
   const written = await waitForFileText(SIDECAR, (t) => t.includes(`:text "${TEXT}"`));
+  check(written.includes(existingRecord.replace(':color "yellow"', ':color "green"')), "#954: adding a highlight changed the existing record's layout, text or coordinates");
   const ids = [...written.matchAll(/:id #uuid "([^"]+)"/g)].map((m) => m[1]);
   const newId = ids.find((id) => id !== ID);
   check(newId && ids.length === 2 && count(written, newId) === 1, "sidecar did not contain each highlight once");
