@@ -2216,5 +2216,2311 @@
       "verb": "block.edit"
     },
     "text": "tine: uncertain: no answer from the page host in time; the write may still complete. Read the page before retrying"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n\t- moving\n\t\t- child\n\t\t  status:: ready\n\t\t  line one\n\t\t  line two\n\t\t  :LOGBOOK:\n\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t  :END:\n\t\t\t- grandchild\n\t\t- sibling\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "f205679a64f76f11",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev f205679a64f76f11\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n\t\t- moving\n\t\t\t- child\n\t\t\t  status:: ready\n\t\t\t  line one\n\t\t\t  line two\n\t\t\t  :LOGBOOK:\n\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t  :END:\n\t\t\t\t- grandchild\n\t\t\t- sibling\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "b794a4b8935db7a7",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev b794a4b8935db7a7\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- moving\n\t- child\n\t  status:: ready\n\t  line one\n\t  line two\n\t  :LOGBOOK:\n\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t  :END:\n\t\t- grandchild\n\t- sibling\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "b1839ae9cc1cec0b",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev b1839ae9cc1cec0b\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n\t- moving\n\t\t- child\n\t\t  status:: ready\n\t\t  line one\n\t\t  line two\n\t\t  :LOGBOOK:\n\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t  :END:\n\t\t\t- grandchild\n\t\t- sibling\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "f205679a64f76f11",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev f205679a64f76f11\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n\t\t- moving\n\t\t\t- child\n\t\t\t  status:: ready\n\t\t\t  line one\n\t\t\t  line two\n\t\t\t  :LOGBOOK:\n\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t  :END:\n\t\t\t\t- grandchild\n\t\t\t- sibling\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "b794a4b8935db7a7",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev b794a4b8935db7a7\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- moving\n\t- child\n\t  status:: ready\n\t  line one\n\t  line two\n\t  :LOGBOOK:\n\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t  :END:\n\t\t- grandchild\n\t- sibling\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "982e9a16d31a1427",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 982e9a16d31a1427\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- moving\n\t\t- child\n\t\t  status:: ready\n\t\t  line one\n\t\t  line two\n\t\t  :LOGBOOK:\n\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t  :END:\n\t\t\t- grandchild\n\t\t- sibling\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "6f0f93bdd059852b",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 6f0f93bdd059852b\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "- source\n\t- parent\n\t\t- branch\n\t\t- untouched\n- target\n\t- nested target\n\t\t- moving\n\t\t\t- child\n\t\t\t  status:: ready\n\t\t\t  line one\n\t\t\t  line two\n\t\t\t  :LOGBOOK:\n\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t  :END:\n\t\t\t\t- grandchild\n\t\t\t- sibling\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "case": "md-tabs-lf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n\t- parent\n\t\t- branch\n\t\t\t- moving\n\t\t\t\t- child\n\t\t\t\t  status:: ready\n\t\t\t\t  line one\n\t\t\t\t  line two\n\t\t\t\t  :LOGBOOK:\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\n\t\t\t\t  :END:\n\t\t\t\t\t- grandchild\n\t\t\t\t- sibling\n\t\t- untouched\n- target\n\t- nested target\n\t\t- deep target\n\t\t\t- existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "285061f9ea8f8313",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 285061f9ea8f8313\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n\t- moving\r\n\t\t- child\r\n\t\t  status:: ready\r\n\t\t  line one\r\n\t\t  line two\r\n\t\t  :LOGBOOK:\r\n\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t  :END:\r\n\t\t\t- grandchild\r\n\t\t- sibling\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "921f54549e105f4e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 921f54549e105f4e\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n\t\t- moving\r\n\t\t\t- child\r\n\t\t\t  status:: ready\r\n\t\t\t  line one\r\n\t\t\t  line two\r\n\t\t\t  :LOGBOOK:\r\n\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t  :END:\r\n\t\t\t\t- grandchild\r\n\t\t\t- sibling\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "a2672f57adbfea04",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev a2672f57adbfea04\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- moving\r\n\t- child\r\n\t  status:: ready\r\n\t  line one\r\n\t  line two\r\n\t  :LOGBOOK:\r\n\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t  :END:\r\n\t\t- grandchild\r\n\t- sibling\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "05e33281bb51dff8",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 05e33281bb51dff8\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n\t- moving\r\n\t\t- child\r\n\t\t  status:: ready\r\n\t\t  line one\r\n\t\t  line two\r\n\t\t  :LOGBOOK:\r\n\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t  :END:\r\n\t\t\t- grandchild\r\n\t\t- sibling\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "921f54549e105f4e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 921f54549e105f4e\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n\t\t- moving\r\n\t\t\t- child\r\n\t\t\t  status:: ready\r\n\t\t\t  line one\r\n\t\t\t  line two\r\n\t\t\t  :LOGBOOK:\r\n\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t  :END:\r\n\t\t\t\t- grandchild\r\n\t\t\t- sibling\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "a2672f57adbfea04",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev a2672f57adbfea04\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- moving\r\n\t- child\r\n\t  status:: ready\r\n\t  line one\r\n\t  line two\r\n\t  :LOGBOOK:\r\n\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t  :END:\r\n\t\t- grandchild\r\n\t- sibling\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "9df48278bb3a5e1c",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 9df48278bb3a5e1c\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- moving\r\n\t\t- child\r\n\t\t  status:: ready\r\n\t\t  line one\r\n\t\t  line two\r\n\t\t  :LOGBOOK:\r\n\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t  :END:\r\n\t\t\t- grandchild\r\n\t\t- sibling\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "11097482d122c476",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 11097482d122c476\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- moving\r\n\t\t\t- child\r\n\t\t\t  status:: ready\r\n\t\t\t  line one\r\n\t\t\t  line two\r\n\t\t\t  :LOGBOOK:\r\n\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t  :END:\r\n\t\t\t\t- grandchild\r\n\t\t\t- sibling\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "case": "md-tabs-crlf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n\t- parent\r\n\t\t- branch\r\n\t\t\t- moving\r\n\t\t\t\t- child\r\n\t\t\t\t  status:: ready\r\n\t\t\t\t  line one\r\n\t\t\t\t  line two\r\n\t\t\t\t  :LOGBOOK:\r\n\t\t\t\t  CLOCK: [2026-11-15 Sun 08:00:00]\r\n\t\t\t\t  :END:\r\n\t\t\t\t\t- grandchild\r\n\t\t\t\t- sibling\r\n\t\t- untouched\r\n- target\r\n\t- nested target\r\n\t\t- deep target\r\n\t\t\t- existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "7fab72c30ade8024",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 7fab72c30ade8024\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n  - moving\n    - child\n      status:: ready\n      line one\n      line two\n      :LOGBOOK:\n      CLOCK: [2026-11-15 Sun 08:00:00]\n      :END:\n      - grandchild\n    - sibling\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "696a0fdbd3b2c3ca",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 696a0fdbd3b2c3ca\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n    - moving\n      - child\n        status:: ready\n        line one\n        line two\n        :LOGBOOK:\n        CLOCK: [2026-11-15 Sun 08:00:00]\n        :END:\n        - grandchild\n      - sibling\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "63e20d1ede8b6a62",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 63e20d1ede8b6a62\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- moving\n  - child\n    status:: ready\n    line one\n    line two\n    :LOGBOOK:\n    CLOCK: [2026-11-15 Sun 08:00:00]\n    :END:\n    - grandchild\n  - sibling\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "5d0f659aef5d36f2",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 5d0f659aef5d36f2\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n  - moving\n    - child\n      status:: ready\n      line one\n      line two\n      :LOGBOOK:\n      CLOCK: [2026-11-15 Sun 08:00:00]\n      :END:\n      - grandchild\n    - sibling\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "696a0fdbd3b2c3ca",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 696a0fdbd3b2c3ca\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n    - moving\n      - child\n        status:: ready\n        line one\n        line two\n        :LOGBOOK:\n        CLOCK: [2026-11-15 Sun 08:00:00]\n        :END:\n        - grandchild\n      - sibling\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "63e20d1ede8b6a62",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 63e20d1ede8b6a62\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- moving\n  - child\n    status:: ready\n    line one\n    line two\n    :LOGBOOK:\n    CLOCK: [2026-11-15 Sun 08:00:00]\n    :END:\n    - grandchild\n  - sibling\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "2bb876f469053dca",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 2bb876f469053dca\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - moving\n    - child\n      status:: ready\n      line one\n      line two\n      :LOGBOOK:\n      CLOCK: [2026-11-15 Sun 08:00:00]\n      :END:\n      - grandchild\n    - sibling\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "7b9b083e1f808b28",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 7b9b083e1f808b28\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "- source\n  - parent\n    - branch\n    - untouched\n- target\n  - nested target\n    - moving\n      - child\n        status:: ready\n        line one\n        line two\n        :LOGBOOK:\n        CLOCK: [2026-11-15 Sun 08:00:00]\n        :END:\n        - grandchild\n      - sibling\n    - deep target\n      - existing child\n- tail\n",
+    "case": "md-spaces-lf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\n  - parent\n    - branch\n      - moving\n        - child\n          status:: ready\n          line one\n          line two\n          :LOGBOOK:\n          CLOCK: [2026-11-15 Sun 08:00:00]\n          :END:\n          - grandchild\n        - sibling\n    - untouched\n- target\n  - nested target\n    - deep target\n      - existing child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "52f078cdabdb2558",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 52f078cdabdb2558\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n  - moving\r\n    - child\r\n      status:: ready\r\n      line one\r\n      line two\r\n      :LOGBOOK:\r\n      CLOCK: [2026-11-15 Sun 08:00:00]\r\n      :END:\r\n      - grandchild\r\n    - sibling\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "6731fd413133d3cf",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 6731fd413133d3cf\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n    - moving\r\n      - child\r\n        status:: ready\r\n        line one\r\n        line two\r\n        :LOGBOOK:\r\n        CLOCK: [2026-11-15 Sun 08:00:00]\r\n        :END:\r\n        - grandchild\r\n      - sibling\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "bdf96b9ffdda5f7f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev bdf96b9ffdda5f7f\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- moving\r\n  - child\r\n    status:: ready\r\n    line one\r\n    line two\r\n    :LOGBOOK:\r\n    CLOCK: [2026-11-15 Sun 08:00:00]\r\n    :END:\r\n    - grandchild\r\n  - sibling\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "0b3245f324cf801f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 0b3245f324cf801f\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n  - moving\r\n    - child\r\n      status:: ready\r\n      line one\r\n      line two\r\n      :LOGBOOK:\r\n      CLOCK: [2026-11-15 Sun 08:00:00]\r\n      :END:\r\n      - grandchild\r\n    - sibling\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "6731fd413133d3cf",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 6731fd413133d3cf\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n    - moving\r\n      - child\r\n        status:: ready\r\n        line one\r\n        line two\r\n        :LOGBOOK:\r\n        CLOCK: [2026-11-15 Sun 08:00:00]\r\n        :END:\r\n        - grandchild\r\n      - sibling\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "bdf96b9ffdda5f7f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev bdf96b9ffdda5f7f\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- moving\r\n  - child\r\n    status:: ready\r\n    line one\r\n    line two\r\n    :LOGBOOK:\r\n    CLOCK: [2026-11-15 Sun 08:00:00]\r\n    :END:\r\n    - grandchild\r\n  - sibling\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "6891b8f94eb641c7",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 6891b8f94eb641c7\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - moving\r\n    - child\r\n      status:: ready\r\n      line one\r\n      line two\r\n      :LOGBOOK:\r\n      CLOCK: [2026-11-15 Sun 08:00:00]\r\n      :END:\r\n      - grandchild\r\n    - sibling\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "96dc3bb2557b4d07",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 96dc3bb2557b4d07\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "- source\r\n  - parent\r\n    - branch\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - moving\r\n      - child\r\n        status:: ready\r\n        line one\r\n        line two\r\n        :LOGBOOK:\r\n        CLOCK: [2026-11-15 Sun 08:00:00]\r\n        :END:\r\n        - grandchild\r\n      - sibling\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "case": "md-spaces-crlf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- source\r\n  - parent\r\n    - branch\r\n      - moving\r\n        - child\r\n          status:: ready\r\n          line one\r\n          line two\r\n          :LOGBOOK:\r\n          CLOCK: [2026-11-15 Sun 08:00:00]\r\n          :END:\r\n          - grandchild\r\n        - sibling\r\n    - untouched\r\n- target\r\n  - nested target\r\n    - deep target\r\n      - existing child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "4483cd3af09e46e5",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 4483cd3af09e46e5\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n** moving\n*** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n**** grandchild\n*** sibling\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "cac8a8f92b3a459a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev cac8a8f92b3a459a\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n*** moving\n**** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n***** grandchild\n**** sibling\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "70e5e3558ce5af4a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 70e5e3558ce5af4a\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* moving\n** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n*** grandchild\n** sibling\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "fa073a06f63dd4c2",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev fa073a06f63dd4c2\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n** moving\n*** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n**** grandchild\n*** sibling\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "cac8a8f92b3a459a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev cac8a8f92b3a459a\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n*** moving\n**** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n***** grandchild\n**** sibling\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "70e5e3558ce5af4a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 70e5e3558ce5af4a\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* moving\n** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n*** grandchild\n** sibling\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "61ef72ce7ac72a38",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 61ef72ce7ac72a38\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** moving\n*** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n**** grandchild\n*** sibling\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "f810f88040c7da6e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev f810f88040c7da6e\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** moving\n**** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n***** grandchild\n**** sibling\n*** deep target\n**** existing child\n* tail\n",
+    "case": "org-tabs-lf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n\t:PROPERTIES:\n\t:status: ready\n\t:END:\n\tline one\n\tline two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "5d728a9749fffea2",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 5d728a9749fffea2\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n** moving\r\n*** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n**** grandchild\r\n*** sibling\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "62219347419c1f42",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 62219347419c1f42\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n*** moving\r\n**** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n***** grandchild\r\n**** sibling\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "4a9f0d13c201603a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 4a9f0d13c201603a\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* moving\r\n** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n*** grandchild\r\n** sibling\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "381d3590064494e2",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 381d3590064494e2\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n** moving\r\n*** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n**** grandchild\r\n*** sibling\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "62219347419c1f42",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 62219347419c1f42\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n*** moving\r\n**** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n***** grandchild\r\n**** sibling\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "4a9f0d13c201603a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 4a9f0d13c201603a\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* moving\r\n** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n*** grandchild\r\n** sibling\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "3e6f9b226140f69e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 3e6f9b226140f69e\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** moving\r\n*** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n**** grandchild\r\n*** sibling\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "3fa997a23c6f978e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 3fa997a23c6f978e\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** moving\r\n**** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n***** grandchild\r\n**** sibling\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "case": "org-tabs-crlf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n\t:PROPERTIES:\r\n\t:status: ready\r\n\t:END:\r\n\tline one\r\n\tline two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "ae10585339495cda",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev ae10585339495cda\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n** moving\n*** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n**** grandchild\n*** sibling\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "05d030c7cc9590cd",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 05d030c7cc9590cd\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n*** moving\n**** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n***** grandchild\n**** sibling\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "e52ec425afd1f81d",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev e52ec425afd1f81d\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* moving\n** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n*** grandchild\n** sibling\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "33b5b2557539d3ed",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 33b5b2557539d3ed\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n** moving\n*** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n**** grandchild\n*** sibling\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "05d030c7cc9590cd",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 05d030c7cc9590cd\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n*** moving\n**** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n***** grandchild\n**** sibling\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "e52ec425afd1f81d",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev e52ec425afd1f81d\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* moving\n** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n*** grandchild\n** sibling\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "10b29f3ab2432c49",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 10b29f3ab2432c49\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** moving\n*** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n**** grandchild\n*** sibling\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "f8435a20246335bf",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev f8435a20246335bf\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "* source\n** parent\n*** branch\n*** untouched\n* target\n** nested target\n*** moving\n**** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n***** grandchild\n**** sibling\n*** deep target\n**** existing child\n* tail\n",
+    "case": "org-spaces-lf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\n** parent\n*** branch\n**** moving\n***** child\n  :PROPERTIES:\n  :status: ready\n  :END:\n  line one\n  line two\n****** grandchild\n***** sibling\n*** untouched\n* target\n** nested target\n*** deep target\n**** existing child\n* tail\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "93a651deff323a05",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 93a651deff323a05\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n** moving\r\n*** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n**** grandchild\r\n*** sibling\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-1-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "02824446eee07249",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 02824446eee07249\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n*** moving\r\n**** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n***** grandchild\r\n**** sibling\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-2-under",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--under",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "33b6d82ef5381dfd",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 33b6d82ef5381dfd\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* moving\r\n** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n*** grandchild\r\n** sibling\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-0-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/3~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "a80985afe1bdbd55",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev a80985afe1bdbd55\nproof/3~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n** moving\r\n*** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n**** grandchild\r\n*** sibling\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-1-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "02824446eee07249",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 02824446eee07249\nproof/2.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n*** moving\r\n**** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n***** grandchild\r\n**** sibling\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-2-after",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--after",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "33b6d82ef5381dfd",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 33b6d82ef5381dfd\nproof/2.1.2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* moving\r\n** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n*** grandchild\r\n** sibling\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-0-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2~c3z6iy",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "f660b7464308a6eb",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2~c3z6iy"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev f660b7464308a6eb\nproof/2~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** moving\r\n*** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n**** grandchild\r\n*** sibling\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-1-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1~37wlw5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "170499e2c09eef3f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1~37wlw5"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 170499e2c09eef3f\nproof/2.1~cgse7q\n"
+  },
+  {
+    "after": "* source\r\n** parent\r\n*** branch\r\n*** untouched\r\n* target\r\n** nested target\r\n*** moving\r\n**** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n***** grandchild\r\n**** sibling\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "case": "org-spaces-crlf-move-3-to-2-before",
+    "command": [
+      "tine",
+      "move",
+      "proof/1.1.1.1~cgse7q",
+      "--before",
+      "proof/2.1.1~osnkgk",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* source\r\n** parent\r\n*** branch\r\n**** moving\r\n***** child\r\n  :PROPERTIES:\r\n  :status: ready\r\n  :END:\r\n  line one\r\n  line two\r\n****** grandchild\r\n***** sibling\r\n*** untouched\r\n* target\r\n** nested target\r\n*** deep target\r\n**** existing child\r\n* tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/2.1.1~cgse7q"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "56d6999be4d4b125",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "before",
+        "handle": "proof/1.1.1.1~cgse7q",
+        "to": "proof/2.1.1~osnkgk"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 56d6999be4d4b125\nproof/2.1.1~cgse7q\n"
+  },
+  {
+    "after": "- root!\n\t- parent\n\t\t- inner\n  \t\t- child\n  \t\t\t- grandchild\n  \t\t- second child\n- tail\n",
+    "case": "md-mixed-prefix-lf-edit-neighbor",
+    "command": [
+      "tine",
+      "edit",
+      "proof/1~unkp2h",
+      "root!",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- root\n\t- parent\n\t\t- inner\n  \t\t- child\n  \t\t\t- grandchild\n  \t\t- second child\n- tail\n",
+    "json": {
+      "blocks": [
+        "proof/1~jxjacr"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "e45f1713dc20f383",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/1~unkp2h",
+        "text": "root!"
+      },
+      "verb": "block.edit"
+    },
+    "text": "written proof rev e45f1713dc20f383\nproof/1~jxjacr\n"
+  },
+  {
+    "after": "- root!\r\n\t- parent\r\n\t\t- inner\r\n  \t\t- child\r\n  \t\t\t- grandchild\r\n  \t\t- second child\r\n- tail\r\n",
+    "case": "md-mixed-prefix-crlf-edit-neighbor",
+    "command": [
+      "tine",
+      "edit",
+      "proof/1~unkp2h",
+      "root!",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- root\r\n\t- parent\r\n\t\t- inner\r\n  \t\t- child\r\n  \t\t\t- grandchild\r\n  \t\t- second child\r\n- tail\r\n",
+    "json": {
+      "blocks": [
+        "proof/1~jxjacr"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "7620234d7ea1a3c4",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/1~unkp2h",
+        "text": "root!"
+      },
+      "verb": "block.edit"
+    },
+    "text": "written proof rev 7620234d7ea1a3c4\nproof/1~jxjacr\n"
   }
 ]

@@ -174,6 +174,79 @@ fn indent_and_outdent_rebase_only_the_moved_subtree() {
 }
 
 #[test]
+fn reindenting_a_parent_carries_its_original_descendants() {
+    let _integration_guard = crate::integration_lock();
+    for unit in ["\t", "  "] {
+        for newline in ["\n", "\r\n"] {
+            let source = "- source\n\t- parent\n\t\t- moving\n\t\t\t- child\n\t\t\t  status:: ready\n\t\t\t  body\n\t\t\t\t- grandchild\n- target\n\t- existing\n- tail\n"
+                .replace('\t', unit).replace('\n', newline);
+            for kind in [EditKind::MoveBlocks, EditKind::InsertBlocks] {
+                let outdented = saved(&source, kind, |doc| {
+                    let moving = doc.blocks[0].children[0].children.remove(0);
+                    doc.blocks[1].children.push(moving);
+                });
+                let expected = "- source\n\t- parent\n- target\n\t- existing\n\t- moving\n\t\t- child\n\t\t  status:: ready\n\t\t  body\n\t\t\t- grandchild\n- tail\n"
+                    .replace('\t', unit).replace('\n', newline);
+                assert_eq!(outdented, expected);
+            }
+
+            let pasted = saved(&source, EditKind::InsertBlocks, |doc| {
+                let moving = doc.blocks[0].children[0].children[0].clone();
+                doc.blocks[1].children.push(moving);
+            });
+            let copy =
+                "\t- moving\n\t\t- child\n\t\t  status:: ready\n\t\t  body\n\t\t\t- grandchild\n"
+                    .replace('\t', unit)
+                    .replace('\n', newline);
+            assert_eq!(pasted, source.replace("- tail", &format!("{copy}- tail")));
+
+            // Existing depth jumps inside an indented subtree move with it.
+            let source =
+                "- target\n\t- existing\n- moving\n\t\t- child\n\t\t\t- grandchild\n- tail\n"
+                    .replace('\t', unit)
+                    .replace('\n', newline);
+            let indented = saved(&source, EditKind::MoveBlocks, |doc| {
+                let moving = doc.blocks.remove(1);
+                doc.blocks[0].children.push(moving);
+            });
+            let expected =
+                "- target\n\t- existing\n\t- moving\n\t\t\t- child\n\t\t\t\t- grandchild\n- tail\n"
+                    .replace('\t', unit)
+                    .replace('\n', newline);
+            assert_eq!(indented, expected);
+        }
+    }
+}
+
+#[test]
+fn reindenting_a_parent_does_not_shift_a_newly_adopted_child() {
+    let _integration_guard = crate::integration_lock();
+    let source = "- target\n\t- existing\n- moving\n\t- original\n- donor\n\t\t- adopted\n- tail\n";
+    let written = saved(source, EditKind::MoveBlocks, |doc| {
+        let adopted = doc.blocks[2].children.remove(0);
+        let mut moving = doc.blocks.remove(1);
+        moving.children.push(adopted);
+        doc.blocks[0].children.push(moving);
+    });
+    assert_eq!(
+        written,
+        "- target\n\t- existing\n\t- moving\n\t\t- original\n\t\t- adopted\n- donor\n- tail\n"
+    );
+}
+
+#[test]
+fn an_unchanged_parent_keeps_mixed_child_prefixes_verbatim() {
+    let _integration_guard = crate::integration_lock();
+    for newline in ["\n", "\r\n"] {
+        let source = "- root\n\t- parent\n\t\t- inner\n  \t\t- child\n  \t\t\t- grandchild\n  \t\t- second child\n- tail\n".replace('\n', newline);
+        let edited = saved(&source, EditKind::SaveBlock, |doc| {
+            doc.blocks[0].raw.push('!');
+        });
+        assert_eq!(edited, source.replacen("root", "root!", 1));
+    }
+}
+
+#[test]
 fn page_property_and_multi_block_edits_keep_other_lines() {
     let _integration_guard = crate::integration_lock();
     let props = saved(SOURCE, EditKind::SaveBlock, |doc| {

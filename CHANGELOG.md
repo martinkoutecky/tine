@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Moving or reindenting a block carries its children's indentation with it, including multiline bodies and drawers ([discussion #960](https://github.com/martinkoutecky/tine/discussions/960)).
+
 ## [0.9.0] - 2026-11-16
 
 Tine 0.9.0 makes the 0.9 Beta line stable. It is Tine Beta 0.9.0-beta.14 (the

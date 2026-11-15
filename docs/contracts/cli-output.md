@@ -289,6 +289,9 @@ or is killed while its write stands in line does not cancel it: the write can la
   The CLI currently permits explicit history replacement without `--rev`; the revision requirement is a client
   concurrency obligation, not an enforced refusal.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
+  When the moved block's indentation changes, its descendants' indentation changes with it; their relative
+  indentation, continuation text and properties are preserved. Markdown uses whitespace before bullets;
+  Org headline stars follow the new depth.
   A move to another page is refused `cross-page` in this version.
 - **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
   part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
