@@ -212,7 +212,8 @@ fn patch<'a>(
             out.push('}');
             out.into()
         }
-        (Edn::Vec(old), Edn::Vec(new)) => {
+        // A list-valued collection keeps its own delimiters.
+        (Edn::Vec(old) | Edn::List(old), Edn::Vec(new) | Edn::List(new)) => {
             let by_id: HashMap<_, _> = old
                 .iter()
                 .enumerate()
@@ -231,7 +232,7 @@ fn patch<'a>(
             }
             let indent = column + 1;
             let separator = format!("{newline}{}", " ".repeat(indent));
-            let mut out = String::from("[");
+            let mut out = String::from(&source[form.span.start..form.span.start + 1]);
             let first = form
                 .children
                 .first()
@@ -273,7 +274,7 @@ fn patch<'a>(
             if let Some(last) = form.children.last() {
                 out.push_str(&source[last.span.end..form.span.end - 1]);
             }
-            out.push(']');
+            out.push_str(&source[form.span.end - 1..form.span.end]);
             out.into()
         }
         _ => pretty(new, column, newline).into(),
@@ -376,6 +377,47 @@ mod tests {
                 &out[new_vec.span.end - 1..],
                 &source[old_vec.span.end - 1..]
             );
+            assert_eq!(parse_highlights(&out), highlights);
+        }
+    }
+
+    #[test]
+    fn a_comment_ended_by_a_bare_cr_is_trivia_for_both_readers() {
+        for source in [
+            fixture().replace("{:highlights", "{; note\r:highlights"),
+            fixture().replace("{:color", "{; note\r:color"),
+            fixture().replace("[{:id", "[; note\r{:id"),
+        ] {
+            let mut highlights = parse_highlights(&source);
+            assert_eq!(highlights.len(), 1, "{source:?}");
+            highlights[0].color = "blue".into();
+            let out = write_highlights(&highlights, &source);
+            assert_eq!(out, source.replace("\"yellow\"", "\"blue\""));
+        }
+    }
+
+    #[test]
+    fn a_list_valued_highlights_collection_keeps_its_records_and_delimiters() {
+        for newline in ["\n", "\r\n"] {
+            let source = fixture()
+                .replace(":highlights [", ":highlights (")
+                .replace("}],\n :extra", "}),\n :extra")
+                .replace('\n', newline);
+            let mut highlights = parse_highlights(&source);
+            assert_eq!(write_highlights(&highlights, &source), source);
+            highlights[0].color = "blue".into();
+            let out = write_highlights(&highlights, &source);
+            assert_eq!(out, source.replace("\"yellow\"", "\"blue\""));
+            highlights[0].color = "yellow".into();
+            let mut added = highlights[0].clone();
+            added.id = "new".into();
+            highlights.push(added);
+            let out = write_highlights(&highlights, &source);
+            assert!(
+                out.contains(&format!(":highlights ({}", RECORD.replace('\n', newline))),
+                "{out}"
+            );
+            assert!(out.contains(&format!("}}),{newline} :extra")), "{out}");
             assert_eq!(parse_highlights(&out), highlights);
         }
     }

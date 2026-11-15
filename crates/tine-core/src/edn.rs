@@ -129,7 +129,9 @@ impl<'a> Parser<'a> {
             if c == b',' || c.is_ascii_whitespace() {
                 self.i += 1;
             } else if c == b';' {
-                while self.i < self.s.len() && self.s[self.i] != b'\n' {
+                // Clojure's reader ends a comment at CR or LF, as the span
+                // reader (`query_edn`) does: both must see the same members.
+                while self.i < self.s.len() && !matches!(self.s[self.i], b'\n' | b'\r') {
                     self.i += 1;
                 }
             } else if c == b'#' && self.s.get(self.i + 1) == Some(&b'_') {
