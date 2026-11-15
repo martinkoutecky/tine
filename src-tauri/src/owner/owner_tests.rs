@@ -695,6 +695,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             "git_autocommit_tests",
             include_str!("git_autocommit_tests.rs"),
         ),
+        ("git_commit_cadence", include_str!("git_commit_cadence.rs")),
         ("git_identity", include_str!("git_identity.rs")),
         ("git_ignore_setup", include_str!("git_ignore_setup.rs")),
         ("git_lifecycle", include_str!("git_lifecycle.rs")),
@@ -762,7 +763,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 37, "scan every owner/*.rs file");
+    assert_eq!(files, 38, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

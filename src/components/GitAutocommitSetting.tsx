@@ -89,8 +89,12 @@ export function GitAutocommitSetting(): JSX.Element {
   const problem = () => syncing() || status()?.setup_pending ? gitSyncProblem(status()?.last?.sync, graphMeta()?.root) : null;
   const conversionProblem = () => gitLineEndingsProblem(status()?.line_endings);
   return <Field setting={settings["git-settings-label"]} hint={<>
-    <Show when={status()?.available !== false}>{settingDescription(settings["git-settings-label"])}</Show>
+    <Show when={status()?.available !== false}>
+      <h4 class="settings-section">{t("git-settings-commits-heading")}</h4>
+      <div>{settingDescription(settings["git-settings-label"])}</div>
+    </Show>
     <Show when={status()}>{(s) => <>
+      <div class="settings-value" role="status">
       <Show when={!s().available}><div>{t("git-settings-not-available")}</div></Show>
       <Show when={s().available && (!s().repository || s().setup_pending)}>
         <Show when={!s().repository}><div>{t("git-settings-not-a-repository")}</div></Show>
@@ -101,17 +105,29 @@ export function GitAutocommitSetting(): JSX.Element {
         <button class="settings-btn" data-git-init disabled={initializing()} onClick={() => void initGraph()}>{initializing() ? t("git-setup-working") : s().setup_pending ? t("git-init-finish") : t("git-init-label")}</button>
       </Show>
       <Show when={s().branch}>{(branch) => <div>{t("git-settings-branch", { branch: branch() })}</div>}</Show>
-      <Show when={s().remote}>{(remote) => <div data-git-remote={remote().name}>{t("git-settings-remote", { name: remote().name, url: remote().url })}</div>}</Show>
       <Show when={s().unusable}>{(why) => <div data-git-unusable={why()[0]}>{t("git-settings-unusable", { message: why()[1] })}</div>}</Show>
+      <Show when={s().last?.commit && s().last?.committed_at}>
+        <div data-git-last-commit={s().last!.commit!}>{t("git-settings-last-commit", { commit: s().last!.commit!.slice(0, 8), time: at(s().last!.committed_at!) })}</div>
+      </Show>
+      <Show when={!s().unusable && s().last?.refused}>{(why) => <div>{t("git-settings-last-refused", { message: why()[1] })}</div>}</Show>
+      <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
+      <Show when={gitStaleLockProblem(s().last?.stale_lock_offer)}>{(p) => <div data-git-stale-lock>
+        {p().text}
+        <GitSyncFixes problem={p()} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
+      </div>}</Show>
+      <Show when={s().last?.repack_deferred}><div>{t("git-settings-repack-deferred")}</div></Show>
+      </div>
+      <Show when={s().available}>
+        <h4 class="settings-section">{t("git-settings-sync-heading")}</h4>
+        <div>{t("git-settings-sync-hint")}</div>
+      </Show>
+      <div class="settings-value" role="status">
+      <Show when={s().remote}>{(remote) => <div data-git-remote={remote().name}>{t("git-settings-remote", { name: remote().name, url: remote().url })}</div>}</Show>
       <Show when={!s().unusable && s().repository && s().sync_unusable}>{(why) => <div data-git-sync-unusable={why()[0]}>{t("git-settings-sync-unusable", { message: why()[1] })}</div>}</Show>
       <Show when={conversionProblem()}>{(p) => <div role="status" data-git-line-endings>
         {p().text}
         <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
       </div>}</Show>
-      <Show when={s().last?.commit && s().last?.committed_at}>
-        <div data-git-last-commit={s().last!.commit!}>{t("git-settings-last-commit", { commit: s().last!.commit!.slice(0, 8), time: at(s().last!.committed_at!) })}</div>
-      </Show>
-      <Show when={!s().unusable && s().last?.refused}>{(why) => <div>{t("git-settings-last-refused", { message: why()[1] })}</div>}</Show>
       <Show when={syncing()}>
         <div class="git-sync-fixes">
           <Show when={gitSyncResult(s().last?.sync)}>{(line) => <span data-git-sync-result={s().last?.sync?.running ? "running" : s().last?.sync?.code ?? ""}>{line()}</span>}</Show>
@@ -123,14 +139,6 @@ export function GitAutocommitSetting(): JSX.Element {
         {/* Sync now has its own button above. */}
         <GitSyncFixes problem={{ ...p(), fixes: p().fixes.filter((fix) => fix !== "sync-now") }} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
       </div>}</Show>
-      <Show when={s().last?.stale_lock}>{(path) => <div>{t("git-settings-stale-lock", { path: path() })}</div>}</Show>
-      <Show when={gitStaleLockProblem(s().last?.stale_lock_offer)}>{(p) => <div role="status" data-git-stale-lock>
-        {p().text}
-        <GitSyncFixes problem={p()} onSignIn={() => setSigningIn(true)} onSyncNow={syncNow} onRepaired={(value) => setStatus(value)} />
-      </div>}</Show>
-      <Show when={s().last?.gitignore_added}>{(path) => <div role="status">{t("git-settings-ignore-added", { path: path(), which: ignoreLines(s().last) })}</div>}</Show>
-      <Show when={s().last?.gitignore_failed}><div role="status">{t("git-settings-ignore-failed", { which: ignoreLines(s().last) })}</div></Show>
-      <Show when={s().last?.repack_deferred}><div role="status">{t("git-settings-repack-deferred")}</div></Show>
       <Show when={s().remote?.https_origin}>{(origin) => <div data-git-sign-in>
         <Show when={s().signed_in} fallback={<>{t("git-settings-not-signed-in", { origin: origin() })}{" "}
           <Show when={!signingIn()}><button class="settings-btn" data-git-sign-in-open onClick={() => setSigningIn(true)}>{t("git-settings-sign-in")}</button></Show>
@@ -150,6 +158,15 @@ export function GitAutocommitSetting(): JSX.Element {
           </form>
         </Show>
       </div>}</Show>
+      </div>
+      <Show when={s().available}>
+        <h4 class="settings-section">{t("git-settings-ignore-heading")}</h4>
+        <div>{t("git-settings-ignore-hint")}</div>
+      </Show>
+      <div class="settings-value" role="status">
+        <Show when={s().last?.gitignore_added}>{(path) => <div>{t("git-settings-ignore-status", { path: path(), which: ignoreLines(s().last) })}</div>}</Show>
+        <Show when={s().last?.gitignore_failed}><div>{t("git-settings-ignore-failed", { which: ignoreLines(s().last) })}</div></Show>
+      </div>
     </>}</Show>
     <Show when={error()}>{(e) => <div role="alert">{e()}</div>}</Show>
   </>}>

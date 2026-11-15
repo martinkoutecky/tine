@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Clicking code edits just the code; clicking elsewhere in its bullet opens source with the fences visible. Moving the caret keeps that source view, with or without surrounding text, in both editors (#879).
 - Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
 - Adding PDF highlights preserves existing asset-link labels and joins wrapped selections like Logseq; annotation properties stay together so block references survive in Logseq (#953).
+- Automatic git commits also attempt a recovery point during continuous editing, after an hour or the configured interval if longer (#951).
+- Git Settings separates commit timing, sync and ignored-file explanations from this device's status (#952).
 - Our Flatpak bundle enables quick share when the deployed viewer passes the same compatibility check as other builds (IqKXo).
 - Bullet threading keeps parent stubs and child connectors aligned at fractional display scaling, with clean branch junctions in All nested outlines (GH #129).
 - `tine export query` accepts inline `--query` text or the first query on `--page`, with the same export and `--force` recovery as UUID selection (#588).
@@ -108,6 +110,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Block deep links still open the physical file holding the block, including a losing twin. External edits to a losing twin leave graph views quiet unless the opening file changes; promotion refreshes the page from its new opening file (REG-CM-ACTIVE-TWINS).
 
 ### Fixed
+- Saving or externally changing one open page no longer makes keyboard navigation revisit every unchanged journal page in the feed; on a 129-page feed the update drops from ~117 ms to ~55 ms (IllLE).
 
 - A page whose properties cannot be parsed is refused consistently while opening, including during startup, and an edit cannot overwrite its unreadable bytes (internal: REG-READABLE-OWNER-COLD; HbcTw).
 - The sidebar keeps workspace creation and menu controls within reach instead of clipping them into the editor (IcYyc).
