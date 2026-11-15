@@ -116,6 +116,25 @@ impl std::fmt::Display for ParseInputTooLarge {
 }
 impl std::error::Error for ParseInputTooLarge {}
 
+/// Bytes that are not UTF-8. Every reader of parse input reports this one error,
+/// so the refusal reads the same whichever reader meets the bytes first, and
+/// callers classify it by type (`Refusal::Undecodable`), never by its text.
+#[derive(Debug)]
+pub(crate) struct NotUtf8;
+
+impl std::fmt::Display for NotUtf8 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("stream did not contain valid UTF-8")
+    }
+}
+impl std::error::Error for NotUtf8 {}
+
+/// [`NotUtf8`] as the `io::Error` the read paths return; feature readers outside
+/// the store build theirs here too.
+pub fn not_utf8() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, NotUtf8)
+}
+
 /// A read whose parse (or a projection the indexes read) panicked: the page
 /// is unreadable to Tine, not undecodable. A page open reports it as
 /// `StoreError::Unparseable` for that page only.
@@ -148,7 +167,7 @@ pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoErro
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     let bytes = read_parse_bytes(path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
-    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    String::from_utf8(bytes).map_err(|_| not_utf8())
 }
 
 /// One classification boundary for automatic unreadable-file rows. A missing
@@ -229,8 +248,7 @@ fn validate_parse_bytes_format(bytes: &[u8], org: bool) -> io::Result<()> {
             },
         ));
     }
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let text = std::str::from_utf8(bytes).map_err(|_| not_utf8())?;
     if !parse_input_depth_within_limit(text) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

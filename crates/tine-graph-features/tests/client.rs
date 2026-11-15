@@ -537,6 +537,25 @@ fn config_invalid_utf8_error_keeps_its_cause_in_the_typed_config_family() {
 }
 
 #[test]
+fn config_invalid_utf8_seen_at_open_has_the_same_cause_as_one_read_at_save() {
+    // The store's own config read (at open, or when the watcher delivers the
+    // file) and the settings save's read are two producers of one refusal:
+    // the text must not depend on which saw the file first.
+    let _integration_guard = crate::integration_lock();
+    let root = crate::test_support::fresh_dir("tine-client-config-invalid-utf8-open-");
+    fs::create_dir_all(root.join("logseq")).unwrap();
+    fs::write(root.join("logseq/config.edn"), b"\xff").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let error = config::set_start_of_week(&store, 1).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(
+        error.to_string(),
+        "config-unreadable: stream did not contain valid UTF-8"
+    );
+    assert_eq!(fs::read(root.join("logseq/config.edn")).unwrap(), b"\xff");
+}
+
+#[test]
 fn conflict_clients_match_legacy_values_and_disk_bytes() {
     let _integration_guard = crate::integration_lock();
     let (new_root, store) = fixture("conflict-matrix-new");
