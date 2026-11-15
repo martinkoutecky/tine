@@ -18,7 +18,8 @@ import { openPage, openPageInNewTab, openPageTarget, openPageTargetInNewTab, ope
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
 import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
-import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
+import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer } from "../ui";
+import { PageReferenceLabel } from "./PageReferenceLabel";
 import { graphEpoch, graphMeta } from "../graphSession";
 import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
@@ -392,7 +393,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           <span class="page-icon page-ref-icon"><PageIcon value={icon()!} name={targetName()} /></span>
         </Show>
         <Show when={props.tag} fallback={
-          <Show when={props.alias} fallback={<><Show when={showBrackets()}><span class="bracket">[[</span></Show>{props.name}<Show when={showBrackets()}><span class="bracket">]]</span></Show></>}>
+          <Show when={props.alias} fallback={<PageReferenceLabel>{props.name}</PageReferenceLabel>}>
             {props.alias}
           </Show>
         }>

@@ -3,14 +3,28 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { paneRouter, resetPaneLayoutToSingle } from "../panes";
-import { InlineText } from "./inline";
+import { InlineText, PageRef } from "./inline";
 import { itemKind } from "../favoritesLayout";
 import type { PageInventoryEntry } from "../types";
 import { PageView } from "../components/Page";
 import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
+import { setGraphMeta } from "../graphSession";
+import type { GraphMeta } from "../types";
 
-afterEach(() => { resetPageIndex(); resetStore(); vi.restoreAllMocks(); document.body.replaceChildren(); });
+afterEach(() => { setGraphMeta(null); resetPageIndex(); resetStore(); vi.restoreAllMocks(); document.body.replaceChildren(); });
+
+it("GH #959: inline and list page references share bracket visibility while aliases and tags keep their labels", () => {
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <><PageRef name="Target" /><PageRef name="Target" alias="Custom label" /><PageRef name="Target" tag /></>, host);
+  try {
+    const labels = () => [...host.querySelectorAll("a")].map(link => link.textContent);
+    setGraphMeta({ show_brackets: true } as GraphMeta);
+    expect(labels()).toEqual(["[[Target]]", "Custom label", "#Target"]);
+    setGraphMeta({ show_brackets: false } as GraphMeta);
+    expect(labels()).toEqual(["Target", "Custom label", "#Target"]);
+  } finally { dispose(); }
+});
 
 it.each([
   ["Oct 26th, 2026", false, "page"],

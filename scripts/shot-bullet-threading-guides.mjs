@@ -1,4 +1,5 @@
 // GH #129: ordinary guides, elbow geometry and palette on real Block rows.
+// All nested outlines pins "downward extension that follows child-level indentation" (comment 15).
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

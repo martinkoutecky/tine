@@ -13,6 +13,7 @@ import { allPageNames } from "../pages";
 import { allPageNameKeys, entityOpening, isNamespaceName, isNamespacePage, namespaceTarget } from "../pageIndex";
 import { isPublishedExport } from "../publishedBackend";
 import { EmojiText } from "../render/emoji";
+import { PageReferenceLabel } from "../render/PageReferenceLabel";
 import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -425,9 +426,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                             class="page-ref"
                             {...nsLink(target().name, undefined, true, target().kind)}
                           >
-                            <span class="bracket">[[</span>
-                            {seg}
-                            <span class="bracket">]]</span>
+                            <PageReferenceLabel>{seg}</PageReferenceLabel>
                           </a>
                         </>
                       );

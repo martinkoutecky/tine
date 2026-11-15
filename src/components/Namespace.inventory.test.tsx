@@ -38,8 +38,11 @@ import { resetReferenceSectionState } from "../referenceSectionState";
 import { refreshPageIndex, resetPageIndex } from "../pageIndex";
 import { route } from "../router";
 import { setJournalFormats } from "../journal";
+import { setGraphMeta } from "../graphSession";
+import type { GraphMeta } from "../types";
 
 afterEach(() => {
+  setGraphMeta(null);
   resetReferenceSectionState();
   document.body.innerHTML = "";
 });
@@ -58,6 +61,23 @@ describe("{{namespace a/b}}", () => {
 });
 
 describe("GH #229 reference-only namespace descendants", () => {
+  it("GH #959: follows Show brackets in every Hierarchy segment, including a live setting change", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    setGraphMeta({ show_brackets: false } as GraphMeta);
+    const dispose = render(() => <NamespaceHierarchy name="test" />, root);
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".ns-hier-row")).toHaveLength(3));
+      const labels = () => [...root.querySelectorAll(".ns-hier-row .page-ref")].map(link => link.textContent);
+      const inventoryReads = backendMock.pageInventory.mock.calls.length;
+      expect(labels()).toEqual(["test", "testy test", "test", "testy test", "another", "test", "testy tester"]);
+      setGraphMeta({ show_brackets: true } as GraphMeta);
+      expect(labels()).toEqual(["[[test]]", "[[testy test]]", "[[test]]", "[[testy test]]", "[[another]]", "[[test]]", "[[testy tester]]"]);
+      setGraphMeta({ show_brackets: false } as GraphMeta);
+      expect(root.querySelector(".bracket")).toBeNull();
+      expect(backendMock.pageInventory).toHaveBeenCalledTimes(inventoryReads);
+    } finally { dispose(); }
+  });
   it("GH #738: folds by title, retains the page choice across navigation/remount and resets with the graph", async () => {
     const root = document.createElement("div");
     document.body.append(root);
