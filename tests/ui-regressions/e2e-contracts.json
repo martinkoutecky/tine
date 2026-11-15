@@ -264,6 +264,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-popup-relaunch-809.mjs": {
+      "variants": ["POPUP_SIZE_1115=1: Linux X11 resizes a popup, closes it, checks a fresh popup takes that size, quits and relaunches, then checks another fresh popup retains it (D-20261114-PG)."],
       "setup": "Synthetic one-page graph, scratch HOME/XDG/APPDATA and per-launch WebView2 profiles, account-home shim on Linux; two launches on the same app data; no network.",
       "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K > page result > right-click > Open in new window renders the page in a separate window, then Quit exits cleanly and the saved window state names main but no workspace popup (ws-*). With a saved, on-screen, non-default geometry added for the first popup labels (the state an earlier Tine could leave), a relaunch on the same app data reopens launch 1's popup from the session and then opens another the same way: each renders the page, every native build returns, and main answers with no unrecovered native main-thread stall. GH809_ROOT_CAUSE=1 lets a pre-fix build continue past the saved-state check.","blocking":false,"authority":"GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK"}],
       "acceptableVariations": ["Window geometry, native decoration, which monitor the OS chooses, popup label numbers and timing may vary. The contextmenu event is dispatched to the visible result row."],

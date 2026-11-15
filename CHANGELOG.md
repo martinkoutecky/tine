@@ -70,6 +70,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- New windows open at the size of the last one you resized, as in Logseq (UI-POPUP-SIZE-1115).
 - All Pages stays fast while you type: panes share timestamps and backlink counts, updated from publication deltas (internal: REG-ALLPAGES-METRICS-PUBLICATION-COST).
 - Pages open with less work when checking whether a tag table is available (REG-TAG-TABLE-AVAILABILITY).
 - Page merges use the selected page's spelling consistently in aliases, links, namespace children and queries, including when selected through an alias or another date spelling (REG-CM-B4-CHOSEN-ALIAS, REG-CM-B4-CHOSEN-NAMESPACE, REG-CM-B4-CHOSEN-DATE).

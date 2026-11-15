@@ -32,6 +32,7 @@ icon:: 📌
   - 6. Prefer staged control? **Esc** climbs from editing to block selection into pane-select mode — a hint pill at the bottom tells you when it's on (the command palette's **Pane select mode** enters it directly). Arrows step between panes, seams, and window edges; **Enter** on a seam makes a mirror split; typing opens the new pane with the search box pre-filled. Another **Esc** backs out.
   - What you should see: two note panes that scroll, navigate, and keep tabs independently — source and draft side by side, never fighting over one cursor.
 - ## Open a page in its own window
+  - New windows use the size of the last page window you resized, including after restarting Tine. Their position is chosen by the system; windows restored with your session keep their saved places.
   - 1. Desktop only: right-click a page link or a page in the left sidebar and choose **Open in new window** — the page title's ⋯ menu has it too, and so does the command palette (**Ctrl+Shift+P**) as **Open current page in new window**. The page opens in a separate OS window you can move to another monitor.
   - 2. The window is a full workspace of its own: its own tabs, splits, and back/forward history. Links, **Ctrl+K**, and search results you use there open there. It has no left or right sidebar.
   - 3. Edits made in the window save exactly like edits in the main window, show up in the main window as you type, and **Ctrl+Z** undoes them from either place. Up to 8 windows can be open at once.

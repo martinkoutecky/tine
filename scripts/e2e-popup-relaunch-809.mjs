@@ -31,6 +31,9 @@ const graph = path.join(run, "synthetic-graph");
 const app = path.resolve(process.env.TINE_APP || path.join(root, "target/debug", process.platform === "win32" ? "tine.exe" : "tine"));
 const port = Number(process.env.E2E_DRIVER_PORT || 4692);
 const nativePort = Number(process.env.E2E_NATIVE_PORT || 4693);
+const checkSize = process.env.POPUP_SIZE_1115 === "1";
+if (checkSize && process.platform !== "linux") throw new Error("The size variant needs the Linux X11 resize driver");
+const resized = { width: 780, height: 540 };
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["home", "data", "config", "cache", "state", "appdata", "localappdata", "webview"]) fs.mkdirSync(path.join(run, dir), { recursive: true });
 const pageName = "Popup probe";
@@ -54,7 +57,8 @@ const stateFile = process.platform === "win32"
   : path.join(run, "config", APP_ID, ".window-state.json");
 const report = { testedCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   journey: "scripts/e2e-popup-relaunch-809.mjs", platform: process.platform, app, stage: "launch-1", steps: [], status: "running",
-  expected: "A clean quit saves no workspace-popup geometry; on relaunch with a saved popup geometry, Open in new window renders the page and main stays responsive" };
+  expected: "A clean quit saves no workspace-popup geometry; on relaunch with a saved popup geometry, Open in new window renders the page and main stays responsive"
+    + (checkSize ? "; a resized, closed popup supplies the size of fresh popups before and after relaunch" : "") };
 const write = () => fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(report, null, 2) + "\n");
 const step = (stage, detail) => { report.stage = stage; report.steps.push({ stage, at: Date.now(), detail }); write(); console.log(`ok: ${stage}`); };
 write();
@@ -95,9 +99,9 @@ async function launch(name) {
     }
     return false;
   }, { timeout: 30_000, timeoutMsg: "No window labelled main" });
+  mainHandle = await browser.getWindowHandle();
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await assertAppLease(fixture);
-  mainHandle = await browser.getWindowHandle();
 }
 async function diagnostics() {
   const result = await browser.executeAsync(done => {
@@ -210,6 +214,31 @@ function activateMain() {
 function readState() {
   return JSON.parse(fs.readFileSync(stateFile, "utf8"));
 }
+function popupGeometry() {
+  const { xdo, geometry } = x11Tools(env);
+  const ids = xdo("search", "--onlyvisible", "--name", pageName).split(/\s+/).filter(Boolean);
+  const windows = ids.map(id => ({ id, ...geometry(id) }))
+    .sort((a, b) => b.WIDTH * b.HEIGHT - a.WIDTH * a.HEIGHT);
+  if (!windows.length) throw new Error("No visible page popup");
+  return windows[0];
+}
+async function assertPopupSize(name) {
+  await browser.waitUntil(() => {
+    const actual = popupGeometry();
+    return actual.WIDTH === resized.width && actual.HEIGHT === resized.height;
+  }, { timeout: 5000, timeoutMsg: "New popup did not retain the last resized popup's size" }).catch(error => {
+    report.classification = "product";
+    step(`${name}-wrong-size`, { expected: resized, actual: popupGeometry() });
+    throw error;
+  });
+  step(`${name}-remembered-size`, popupGeometry());
+}
+async function closePopup(label) {
+  const count = (await browser.getWindowHandles()).length;
+  await browser.execute(label => window.__TAURI_INTERNALS__.invoke("plugin:window|close", { label }), label);
+  await browser.waitUntil(async () => (await browser.getWindowHandles()).length === count - 1,
+    { timeout: 5000, timeoutMsg: "Page popup did not close" });
+}
 async function quitCleanly(name) {
   const previous = fs.existsSync(stateFile) ? fs.statSync(stateFile).mtimeMs : 0;
   // The tray/keyboard Quit path: close requests, frontend flush, orderly exit.
@@ -244,7 +273,16 @@ try {
   }
   await launch("launch-1");
   step("launch-1-ready");
-  await openPopup("launch-1");
+  const first = await openPopup("launch-1");
+  if (checkSize) {
+    const { xdo } = x11Tools(env);
+    xdo("windowsize", "--sync", popupGeometry().id, String(resized.width), String(resized.height));
+    await assertPopupSize("launch-1-resized");
+    await closePopup(first);
+    activateMain();
+    await openPopup("launch-1-replacement");
+    await assertPopupSize("launch-1-replacement");
+  }
   await quitCleanly("launch-1");
   const saved = readState();
   fs.writeFileSync(path.join(out, "launch-1-window-state.json"), JSON.stringify(saved, null, 2) + "\n");
@@ -284,9 +322,13 @@ try {
   await browser.switchToWindow(mainHandle);
   const restored = await popupRendered(notPopups);
   step("launch-2-restored-popup-rendered", { label: restored });
+  if (checkSize) {
+    await closePopup(restored);
+  }
   step("launch-2-main-activated", { x11: activateMain() ?? null,
     focused: await browser.execute(() => document.hasFocus()) });
   await openPopup("launch-2");
+  if (checkSize) await assertPopupSize("launch-2-fresh");
   fs.writeFileSync(path.join(out, "launch-2-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
   fixture.verify(); report.status = "passed"; write();
 } catch (error) {
@@ -295,6 +337,9 @@ try {
   try {
     if (browser && mainHandle) {
       await browser.switchToWindow(mainHandle);
+      fs.writeFileSync(path.join(out, "failure-window.json"), JSON.stringify(await browser.execute(() => ({
+        url: location.href, title: document.title, text: document.body.textContent,
+      })), null, 2));
       await sleep(12_000); // let liveness probes and open stages reach the recorder
       fs.writeFileSync(path.join(out, "failure-diagnostics.json"), JSON.stringify(await diagnostics(), null, 2));
     }
