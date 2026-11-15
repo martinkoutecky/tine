@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0-beta.14] - 2026-11-15
+
 ### Fixed
 
 - Skipping a new code block's language picker keeps the caret after typed or composed text, so typing `123` no longer produces `231` (#879).
