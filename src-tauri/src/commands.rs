@@ -43,7 +43,7 @@ fn store_error(error: StoreError) -> String {
         StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
             "invalid page path".into()
         }
-        StoreError::Undecodable => "stream did not contain valid UTF-8".into(),
+        StoreError::Undecodable => tine_store::not_utf8().to_string(),
         StoreError::Unparseable(reason) => reason,
         StoreError::TooLarge { .. } => "asset-too-large".into(),
         StoreError::Io(error) => error.to_string(),

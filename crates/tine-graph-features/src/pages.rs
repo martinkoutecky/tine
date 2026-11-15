@@ -1136,7 +1136,7 @@ fn unwritable(store: &Store, page: &PageId) -> io::Error {
     }
     error(
         io::ErrorKind::InvalidData,
-        &format!("{}: stream did not contain valid UTF-8", file.as_str()),
+        &format!("{}: {}", file.as_str(), tine_store::not_utf8()),
     )
 }
 
