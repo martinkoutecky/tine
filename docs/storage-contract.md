@@ -10,9 +10,13 @@ on every refusal and offers conflict resolution or retry.
 
 Live conflict review uses the revision the editor loaded or last proved
 published as its disk ancestor. A host acknowledgment takes custody of input;
-it does not advance that ancestor before publication. Overlapping saves retain
-the newest revision proved published on the same loaded instance, even when
-publication replies arrive out of order or a newer save conflicts. Review is
+it does not advance that ancestor before publication. The existing publication
+wait returns the host's actual own-publication revision and version, including
+when a newer save covers a skipped version. Overlapping replies install that
+evidence on the same loaded instance without regressing an installed disk
+revision, including reloads whose parsed content is identical. The wait keeps
+its bounded timeout and session checks and does O(requested pages) bookkeeping;
+it adds no file reads or IPC calls. Review is
 three-way when the optional Concord ledger still holds the ancestor's bytes;
 otherwise it keeps both sides for a two-way review.
 

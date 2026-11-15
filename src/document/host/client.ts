@@ -50,9 +50,9 @@ export interface DocumentPort {
   tombstoned(name: string): boolean;
   /** Retire read applicability when the host takes this instance's text. */
   took(name: string): void;
-  /** This instance's submitted text at `rev` has published: advance the disk
+  /** The host witnessed publication at `rev`: advance the disk
    * ancestor used by conflict review. Custody alone never advances it. */
-  published(name: string, rev: string): void;
+  published(name: string, rev: string | null): void;
   /** Retire read applicability when the host releases this window's page. */
   released(name: string): void;
 }
@@ -98,9 +98,9 @@ interface Page {
   held: { content: Content; version: number } | null;
   /** The latest version the host took from this window: what must publish (S1). */
   needed: number | null;
-  /** Latest nonconflicted input awaiting publication, bounded to one revision. */
-  pendingBase: { instance: number; version: number; rev: string } | null;
-  /** Last publication applied to review ancestry on a loaded instance. */
+  /** Latest nonconflicted input's loaded instance and authoring version. */
+  pendingBase: { instance: number; version: number } | null;
+  /** Last installed or witnessed-publication version on a loaded instance. */
   reviewBase: { instance: number; version: number } | null;
   /** The highest taken version a publication wait answered true for (J6). */
   waited: number | null;
@@ -548,33 +548,38 @@ export class HostClient {
    * discharges the publication debt it covers (J6). */
   async published(needs: readonly PublishedNeed[]): Promise<boolean> {
     const session = this.session;
-    const covered = needs.map(({ key, version }) => {
+    const covered = new Map(needs.map(({ key, version }) => {
       const page = this.byKey.get(key);
-      const base = page?.pendingBase;
-      return { key, version, page, base: base && base.version <= version ? base : null };
-    });
+      return [key, { version, page, base: page?.pendingBase }];
+    }));
     while (!this.retired) {
       const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
       if (this.retired || this.session !== session) return false;
       if (result === null) continue;
       if (result) {
-        for (const { key, version, page, base } of covered) {
+        for (const [key, { version, page }] of covered) {
           if (page && this.byKey.get(key) === page) {
             page.waited = Math.max(page.waited ?? version, version);
-            // Review keeps the newest revision proved published on this loaded
-            // instance. Overlapping waits retain their own eligible revision;
-            // late older proofs cannot regress it or consume newer pending input.
-            if (base && base.instance === this.instanceOf(page)
-              && (page.reviewBase?.instance !== base.instance || page.reviewBase.version < base.version)) {
-              this.doc.published(page.name, base.rev);
-              page.reviewBase = { instance: base.instance, version: base.version };
-            }
-            if (base && page.pendingBase === base) page.pendingBase = null;
           }
+        }
+        for (const { key, version, rev } of result) {
+          const saved = covered.get(key);
+          if (!saved) continue;
+          const { page, base } = saved;
+          // Review uses the newest revision the host witnessed published on this
+          // loaded instance, never an unpublished submission or an ancestor older
+          // than installed disk content (including an identical-content reload).
+          if (page && this.byKey.get(key) === page && base && base.instance === this.instanceOf(page)
+            && base.version <= version
+            && (page.reviewBase?.instance !== base.instance || page.reviewBase.version < version)) {
+            this.doc.published(page.name, rev);
+            page.reviewBase = { instance: base.instance, version };
+          }
+          if (page && base && page.pendingBase === base && base.version <= version) page.pendingBase = null;
         }
         this.onChange();
       }
-      return result;
+      return result !== false;
     }
     return false;
   }
@@ -632,7 +637,7 @@ export class HostClient {
       if (rev) {
         this.doc.took(page.name);
         if (!mail.page.conflict && instance !== null)
-          page.pendingBase = { instance, version: answer.version, rev };
+          page.pendingBase = { instance, version: answer.version };
       }
     } else if (answer.took) {
       page.needed = answer.version;
@@ -776,7 +781,8 @@ export class HostClient {
     page.version = version;
     page.held = null;
     page.pendingBase = null;
-    page.reviewBase = null;
+    const instance = this.instanceOf(page);
+    page.reviewBase = instance === null ? null : { instance, version };
     this.remember(page, content.kind === "no-file" ? null : content.dto.rev ?? undefined, version);
   }
 

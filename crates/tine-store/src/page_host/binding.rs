@@ -333,6 +333,17 @@ pub enum PageOperation {
     Superseded,
 }
 
+/// The newest indexed own publication of a requested page, witnessed by the host.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PublishedRevision {
+    /// Graph-relative page key.
+    pub(crate) key: String,
+    /// The host version actually published, possibly newer than the wait's need.
+    pub(crate) version: u64,
+    /// Revision of the published bytes; None for a published deletion.
+    pub(crate) rev: Option<FileRev>,
+}
+
 /// Derived data a request carries (R8): its serialized bytes, the Document
 /// they were serialized from (runtime block ids) and its edit kinds.
 struct Handoff {
@@ -449,8 +460,8 @@ pub(super) struct Book {
     /// candidates. A blocked one stays until it is evicted or held again.
     orphans: BTreeSet<PageKey>,
     /// Each owned key's last indexed bytes and index watermark: the newest
-    /// own save version the index has applied (§4.4).
-    index: BTreeMap<PageKey, (Text, u64)>,
+    /// own save version the index has applied and that save's revision (§4.4).
+    index: BTreeMap<PageKey, (Text, u64, Option<FileRev>)>,
     retry: BTreeMap<PageKey, Retry>,
     /// Keys whose file read failed a third time, until a read succeeds.
     pub observe_errors: BTreeSet<PageKey>,
@@ -773,10 +784,13 @@ impl Book {
             match indexing {
                 Indexing::Indexed => {
                     self.retry.remove(&key);
-                    let watermark = self.index.get(&key).map_or(0, |(_, v)| *v);
                     let own = publication.own.as_ref().map_or(0, |(v, _)| *v);
-                    self.index
-                        .insert(key, (publication.bytes, watermark.max(own)));
+                    let indexed = self.index.entry(key).or_default();
+                    if own > 0 && own >= indexed.1 {
+                        indexed.1 = own;
+                        indexed.2 = publication.bytes.as_deref().map(FileRev::from_bytes);
+                    }
+                    indexed.0 = publication.bytes;
                 }
                 Indexing::Failed => {
                     let failures = failures.saturating_add(1);

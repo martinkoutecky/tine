@@ -42,6 +42,7 @@ it.each([false, true])("review keeps the disk ancestor when a submit is taken wi
 });
 
 it("a proved publication advances the ancestor for the next conflict", async () => {
+  vi.spyOn(backend(), "pageWait").mockResolvedValue([{ key: KEY, version: 4, rev: "disk-1" }]);
   const { host, flushed, id } = await submitted();
   host.deliver({ key: KEY, answer: { id, version: 4, took: true, outcome: { kind: "applied" } },
     page: { version: 4, conflict: false, risk: false, disk: { kind: "file", rev: "disk-0" },
@@ -55,7 +56,9 @@ it("a proved publication advances the ancestor for the next conflict", async () 
 
 it("a late publication cannot change the ancestor of a replacement page instance", async () => {
   let finish!: (published: boolean) => void;
-  const wait = vi.spyOn(backend(), "pageWait").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const wait = vi.spyOn(backend(), "pageWait").mockReturnValue(new Promise(resolve => {
+    finish = published => resolve(published ? [{ key: KEY, version: 4, rev: "disk-1" }] : false);
+  }));
   const { host, flushed, id } = await submitted();
   host.deliver({ key: KEY, answer: { id, version: 4, took: true, outcome: { kind: "applied" } },
     page: { version: 4, conflict: false, risk: false, disk: { kind: "file", rev: "disk-0" },
@@ -75,8 +78,10 @@ it.each(["newer waiting", "newer later conflicts", "newer acknowledged conflicte
   const results = new Map<number, boolean>();
   vi.spyOn(backend(), "pageWait").mockImplementation((_session, needs) => {
     const version = needs[0].version;
-    return results.has(version) ? Promise.resolve(results.get(version)!)
-      : new Promise(resolve => { waits.push({ version, finish: resolve }); });
+    const proof = (published: boolean) => published
+      ? [{ key: KEY, version, rev: version === 4 ? "disk-1" : "disk-2" }] : false;
+    return results.has(version) ? Promise.resolve(proof(results.get(version)!))
+      : new Promise(resolve => { waits.push({ version, finish: published => resolve(proof(published)) }); });
   });
   const finish = (version: number, published: boolean) => {
     results.set(version, published);

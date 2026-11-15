@@ -858,6 +858,22 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
     assert_eq!(live.disk(&key), "- target\n- more\n");
     let barrier = |version| vec![(key.clone(), version, Some(ID.to_string()))];
     assert!(live.host.pages_published(&[(key.clone(), v2, None)]));
+    assert_eq!(
+        live.host.wait_published(
+            live.host.session(),
+            &[(key.clone(), v2, None)],
+            Duration::from_secs(20)
+        ),
+        (
+            PageOperation::Applied,
+            vec![PublishedRevision {
+                key: key.clone(),
+                version: v3,
+                rev: Some(FileRev::from_bytes(b"- target\n- more\n")),
+            }]
+        ),
+        "a skipped version returns the revision actually published"
+    );
     assert!(
         !live.host.pages_published(&barrier(v2)),
         "Q2: no publication of the target held the id"
@@ -869,6 +885,9 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
     assert!(live.host.pages_published(&barrier(v2)));
     // Typing on: the page is dirty again, and v4's completed publication
     // (the index watermark) still answers the barrier.
+    // Hold the next index result so the driver cannot prove the newer input
+    // while the wait is in flight.
+    live.index_faults(u32::MAX);
     let more = format!("{stamped}- typing\n");
     let id = live.submit(&key, &more, v4, None).unwrap();
     live.answer(&key, id);
@@ -876,7 +895,79 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
         live.host.pages_published(&barrier(v4)),
         "§4.4: a completed publication at v4 satisfies a v4 barrier"
     );
+    assert_eq!(
+        live.host
+            .wait_published(live.host.session(), &barrier(v4), Duration::from_secs(20))
+            .1,
+        vec![PublishedRevision {
+            key: key.clone(),
+            version: v4,
+            rev: Some(FileRev::from_bytes(stamped.as_bytes()))
+        }],
+        "newer unproved input does not replace the publication evidence"
+    );
+    live.index_faults(0);
     live.host.stop();
+}
+
+#[test]
+fn gh964_publication_evidence_survives_observations_and_failed_indexing() {
+    let mut book = Book::default();
+    let publication = |version: Option<u64>, bytes: &[u8]| Publication {
+        key: "a.md".into(),
+        spelling: "a.md".into(),
+        bytes: Some(Arc::from(bytes)),
+        own: version.map(|v| (v, None)),
+        stamp: None,
+    };
+    book.record(
+        vec![(publication(Some(3), b"- saved\n"), Indexing::Indexed)],
+        0,
+    );
+    book.record(
+        vec![(publication(None, b"- external\n"), Indexing::Indexed)],
+        0,
+    );
+    assert_eq!(book.index["a.md"].1, 3);
+    assert_eq!(
+        book.index["a.md"].2,
+        Some(FileRev::from_bytes(b"- saved\n"))
+    );
+    book.record(
+        vec![(publication(Some(4), b"- not indexed\n"), Indexing::Failed)],
+        0,
+    );
+    assert_eq!(book.index["a.md"].1, 3);
+    assert_eq!(
+        book.index["a.md"].2,
+        Some(FileRev::from_bytes(b"- saved\n"))
+    );
+    book.record(
+        vec![(publication(Some(5), b"- latest\n"), Indexing::Indexed)],
+        0,
+    );
+    assert_eq!(book.index.len(), 1);
+    assert_eq!(book.index["a.md"].1, 5);
+    assert_eq!(
+        book.index["a.md"].2,
+        Some(FileRev::from_bytes(b"- latest\n"))
+    );
+    book.record(
+        vec![(
+            Publication {
+                bytes: None,
+                ..publication(Some(6), b"")
+            },
+            Indexing::Indexed,
+        )],
+        0,
+    );
+    assert_eq!(book.index["a.md"].1, 6);
+    assert_eq!(book.index["a.md"].2, None);
+    println!(
+        "gh964 retained revision inline bytes: {}",
+        std::mem::size_of::<(Text, u64, Option<FileRev>)>() - std::mem::size_of::<(Text, u64)>()
+    );
 }
 
 /// Q5 (REVIEW-3): an untouched opened page owes no save. Once its Open
@@ -1834,6 +1925,7 @@ fn f1_publication_queries_never_answer_for_another_session() {
         let wait = scope.spawn(|| {
             live.host
                 .wait_published(first, &unpublished, Duration::from_secs(20))
+                .0
         });
         std::thread::sleep(Duration::from_millis(200));
         live.host.window_reloaded();
@@ -1849,12 +1941,14 @@ fn f1_publication_queries_never_answer_for_another_session() {
     let now = live.host.session();
     assert_eq!(
         live.host
-            .wait_published(now, &published, Duration::from_secs(20)),
+            .wait_published(now, &published, Duration::from_secs(20))
+            .0,
         PageOperation::Applied
     );
     assert_eq!(
         live.host
-            .wait_published(first, &published, Duration::from_secs(20)),
+            .wait_published(first, &published, Duration::from_secs(20))
+            .0,
         PageOperation::Refused,
         "F1: never success for an earlier session"
     );
@@ -1870,7 +1964,8 @@ fn f1_publication_queries_never_answer_for_another_session() {
         "F1: a relaunched host refuses it too"
     );
     assert_eq!(
-        host.wait_published(now, &published, Duration::from_secs(1)),
+        host.wait_published(now, &published, Duration::from_secs(1))
+            .0,
         PageOperation::Refused
     );
     host.stop();
@@ -2000,7 +2095,7 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let long = Duration::from_secs(20);
     let session = live.host.session();
     let wait = |needs: &[(String, u64, Option<String>)], bound| {
-        live.host.wait_published(session, needs, bound)
+        live.host.wait_published(session, needs, bound).0
     };
     assert_eq!(
         wait(&[(key.clone(), version, None)], long),
@@ -2054,7 +2149,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     ended.host.driver.join();
     assert!(ended.host.driver.shared.ended());
     assert_eq!(
-        ended.host.wait_published(session, &needs, bound),
+        ended.host.wait_published(session, &needs, bound).0,
         PageOperation::Refused,
         "an ended driver publishes nothing"
     );
@@ -2067,7 +2162,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
         .shared
         .with_state_for_tests(|state| state.progress.host.stop());
     assert_eq!(
-        down.host.wait_published(session, &needs, bound),
+        down.host.wait_published(session, &needs, bound).0,
         PageOperation::Refused,
         "a host that is down publishes nothing"
     );
@@ -2083,7 +2178,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     });
     assert!(poisoner.join().is_err());
     let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        poisoned.host.wait_published(session, &needs, bound)
+        poisoned.host.wait_published(session, &needs, bound).0
     }));
     // Torn down before the assertion: a failure's unwind would meet the
     // failed host's panicking teardown and abort the binary.
@@ -2124,7 +2219,8 @@ fn q_p2b_4_a_deletion_in_flight_is_owed_and_unpublished_until_its_file_is_gone()
         let needs = [(owed[0].0.clone(), owed[0].1, None)];
         assert_eq!(
             live.host
-                .wait_published(session, &needs, Duration::from_millis(300)),
+                .wait_published(session, &needs, Duration::from_millis(300))
+                .0,
             PageOperation::Pending
         );
         assert!(live.root.join("pages/a.md").exists());
@@ -2136,7 +2232,8 @@ fn q_p2b_4_a_deletion_in_flight_is_owed_and_unpublished_until_its_file_is_gone()
         );
         assert_eq!(
             live.host
-                .wait_published(session, &needs, Duration::from_secs(20)),
+                .wait_published(session, &needs, Duration::from_secs(20))
+                .0,
             PageOperation::Applied
         );
     });
@@ -2183,7 +2280,8 @@ fn q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk() {
     let needs: Vec<_> = owed.into_iter().map(|(k, v)| (k, v, None)).collect();
     assert_eq!(
         live.host
-            .wait_published(session, &needs, Duration::from_millis(300)),
+            .wait_published(session, &needs, Duration::from_millis(300))
+            .0,
         PageOperation::Pending
     );
     assert_eq!(live.disk(&key), "- one\n");
@@ -2198,7 +2296,8 @@ fn q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk() {
         let needs: Vec<_> = owed.into_iter().map(|(k, v)| (k, v, None)).collect();
         assert_eq!(
             live.host
-                .wait_published(session, &needs, Duration::from_secs(20)),
+                .wait_published(session, &needs, Duration::from_secs(20))
+                .0,
             PageOperation::Applied
         );
     }

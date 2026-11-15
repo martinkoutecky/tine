@@ -82,7 +82,9 @@ fn todays_journal_created_on_the_host_while_loading_waits_for_no_graph_build() {
     host.submit(session, id + 1, &key, &doc, version, None, &kinds)
         .unwrap();
     let version = answer(&mail, id + 1)["answer"]["version"].as_u64().unwrap();
-    let published = host.wait_published(session, &[(key, version, None)], Duration::from_secs(10));
+    let published = host
+        .wait_published(session, &[(key, version, None)], Duration::from_secs(10))
+        .0;
     assert_eq!(published, PageOperation::Applied, "published");
     assert!(fs::read_to_string(root.join(&rel))
         .unwrap()

@@ -59,7 +59,9 @@ it("custody invalidates a delayed read before publication is proved", async () =
   answerOpensFromDocument(host);
   const submit = vi.spyOn(backend(), "pageSubmit").mockResolvedValue(null);
   let publish!: (published: boolean) => void;
-  const wait = vi.spyOn(backend(), "pageWait").mockReturnValue(new Promise(resolve => { publish = resolve; }));
+  const wait = vi.spyOn(backend(), "pageWait").mockReturnValue(new Promise(resolve => {
+    publish = published => resolve(published ? [{ key: "pages/Fresh.md", version: 4, rev: "B" }] : false);
+  }));
   setRaw("fresh-block", "B", { timetracking: false });
   const flushed = flushPage("Fresh");
   await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce());

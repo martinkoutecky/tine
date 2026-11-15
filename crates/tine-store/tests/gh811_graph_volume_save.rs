@@ -253,11 +253,14 @@ fn todays_journal_saves(client: bool) {
         host.submit(session, id, &key, &doc, version, None, &kinds)
             .unwrap();
         version = answer(id)["answer"]["version"].as_u64().unwrap();
-        outcomes.push(host.wait_published(
-            session,
-            &[(key.clone(), version, None)],
-            Duration::from_secs(10),
-        ));
+        outcomes.push(
+            host.wait_published(
+                session,
+                &[(key.clone(), version, None)],
+                Duration::from_secs(10),
+            )
+            .0,
+        );
     }
     stop.store(true, Ordering::Relaxed);
     if let Some(worker) = worker {
@@ -396,11 +399,13 @@ fn same_size_saves_and_the_page_mtime_another_process_sees() {
         )
         .unwrap();
         version = answer(id)["answer"]["version"].as_u64().unwrap();
-        let outcome = host.wait_published(
-            session,
-            &[(key.clone(), version, None)],
-            Duration::from_secs(10),
-        );
+        let outcome = host
+            .wait_published(
+                session,
+                &[(key.clone(), version, None)],
+                Duration::from_secs(10),
+            )
+            .0;
         let now = other_process_stat(&page);
         println!("GH811-MTIME save {edit} {outcome:?}: {now}");
         assert_eq!(outcome, PageOperation::Applied, "save {edit} published");

@@ -184,11 +184,13 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
         .unwrap();
         version = answer_version(&mail, id);
     }
-    let published = host.wait_published(
-        session,
-        &[(key.clone(), version, None)],
-        Duration::from_secs(10),
-    );
+    let published = host
+        .wait_published(
+            session,
+            &[(key.clone(), version, None)],
+            Duration::from_secs(10),
+        )
+        .0;
     let counts = cost_counters::snapshot();
     assert_eq!(
         format!("{published:?}"),

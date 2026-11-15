@@ -15,7 +15,7 @@ import { settle } from "./settle";
 import { runSequence } from "./planner";
 import { createMemo, createRoot } from "solid-js";
 import type { PageDto } from "../../types";
-import type { PageMail, PageRefusal } from "./protocol";
+import type { PageMail, PageRefusal, PublishedRevision } from "./protocol";
 import { buildPeer, NativePeer, random, semantics, TARGET, type NativeImage, type NativeReply } from "./nativeConformance.test.support";
 
 // Only the warm-start signal is supplied by the harness. No host, document,
@@ -85,7 +85,7 @@ beforeAll(async () => {
   vi.spyOn(b, "pageDiscard").mockImplementation((session, id, key) => enqueue({ op: "discard", session, id, key }));
   vi.spyOn(b, "pageSaveNow").mockImplementation(async (session, keys) => { await peer.rpc({ op: "save", session, keys }); });
   vi.spyOn(b, "pageWait").mockImplementation((session, needs) => new Promise(resolve => {
-    const start = () => { void peer.rpc<boolean | null>({ op: "wait", session, needs }).then(resolve); };
+    const start = () => { void peer.rpc<PublishedRevision[] | false | null>({ op: "wait", session, needs }).then(resolve); };
     if (holdWaits) waits.push(start); else start();
   }));
   vi.spyOn(b, "pageOwed").mockImplementation(session => peer.rpc({ op: "owed", session }));

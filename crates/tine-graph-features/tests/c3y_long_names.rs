@@ -151,7 +151,7 @@ fn y2_trashing_a_long_asset_and_page_keeps_a_recoverable_copy() {
         .collect();
     let bound = std::time::Duration::from_secs(20);
     assert_eq!(
-        host.wait_published(session, &needs, bound),
+        host.wait_published(session, &needs, bound).0,
         tine_store::PageOperation::Applied
     );
     drop(host);

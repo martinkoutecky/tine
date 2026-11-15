@@ -29,7 +29,7 @@ fn published(state: &State<ProductionIo, SystemClock>, pages: &Needs) -> Option<
             Logical::Absent => continue,
             Logical::Settled(page) => page,
         };
-        let (indexed, watermark) = state.book.index.get(key)?;
+        let (indexed, watermark, _) = state.book.index.get(key)?;
         let clean = page.clean() && page.version >= *version && *indexed == page.buf;
         if !clean && *watermark < *version {
             return None;
@@ -44,7 +44,7 @@ fn published(state: &State<ProductionIo, SystemClock>, pages: &Needs) -> Option<
 /// What a barrier wait's step found (§4.4).
 enum Barrier {
     /// Published, once these witnesses hold.
-    Check(Witnesses),
+    Check(Witnesses, Vec<PublishedRevision>),
     Refused,
     Pending,
 }
@@ -120,12 +120,15 @@ impl PageHost {
     /// the driver whether the session is still current and the host alive,
     /// with a new `bound` of its own. No test holds that second wait, so the
     /// call's whole length is not promised to be `bound`.
+    /// On success, also returns the actual indexed own revision/version for each
+    /// need that has one, captured with the publication check. O(needs) retained
+    /// output; no filesystem reads beyond an explicitly requested block witness.
     pub fn wait_published(
         &self,
         session: u64,
         needs: &Needs,
         bound: std::time::Duration,
-    ) -> PageOperation {
+    ) -> (PageOperation, Vec<PublishedRevision>) {
         let deadline = std::time::Instant::now() + bound;
         // After a witness that did not hold, the next ask waits for a step.
         let mut again = false;
@@ -139,7 +142,18 @@ impl PageHost {
                 let now = std::time::Instant::now();
                 if !std::mem::take(&mut first) {
                     if let Some(witnesses) = published(state, &needs) {
-                        return Wait::Ready(Barrier::Check(witnesses));
+                        let revisions = needs
+                            .iter()
+                            .filter_map(|(key, ..)| {
+                                let (_, version, rev) = state.book.index.get(key)?;
+                                (*version > 0).then(|| PublishedRevision {
+                                    key: key.clone(),
+                                    version: *version,
+                                    rev: rev.clone(),
+                                })
+                            })
+                            .collect();
+                        return Wait::Ready(Barrier::Check(witnesses, revisions));
                     }
                     let progress = &state.progress;
                     let stuck = needs.iter().any(|(key, ..)| {
@@ -158,7 +172,7 @@ impl PageHost {
                 Wait::Until(Some(pause.min(deadline)))
             };
             match self.driver.shared.wait(Deadline::At(deadline), step) {
-                Ok(Barrier::Check(witnesses)) => {
+                Ok(Barrier::Check(witnesses, revisions)) => {
                     if !self.witnessed(witnesses) {
                         again = true;
                         continue;
@@ -170,13 +184,15 @@ impl PageHost {
                     // the driver does not answer within it is pending.
                     let by = Deadline::At(std::time::Instant::now() + bound);
                     return match self.driver.shared.read_by(by, live) {
-                        Ok(true) => PageOperation::Applied,
-                        Ok(false) | Err(Unanswered::Ended) => PageOperation::Refused,
-                        Err(_) => PageOperation::Pending,
+                        Ok(true) => (PageOperation::Applied, revisions),
+                        Ok(false) | Err(Unanswered::Ended) => (PageOperation::Refused, Vec::new()),
+                        Err(_) => (PageOperation::Pending, Vec::new()),
                     };
                 }
-                Ok(Barrier::Refused) | Err(Unanswered::Ended) => return PageOperation::Refused,
-                Ok(Barrier::Pending) | Err(_) => return PageOperation::Pending,
+                Ok(Barrier::Refused) | Err(Unanswered::Ended) => {
+                    return (PageOperation::Refused, Vec::new())
+                }
+                Ok(Barrier::Pending) | Err(_) => return (PageOperation::Pending, Vec::new()),
             }
         }
     }
@@ -224,7 +240,7 @@ impl PageHost {
             let held = logical.iter().filter_map(|key| match host.logical(key) {
                 Logical::Settled(page) => {
                     let indexed = book.index.get(key);
-                    let published = indexed.is_some_and(|(bytes, watermark)| {
+                    let published = indexed.is_some_and(|(bytes, watermark, _)| {
                         (page.clean() && *bytes == page.buf) || *watermark >= page.version
                     });
                     (!published).then(|| (key.clone(), page.version))
