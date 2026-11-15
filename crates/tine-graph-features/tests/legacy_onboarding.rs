@@ -589,6 +589,9 @@ fn guide_says_the_launch_backup_waits_for_a_quiet_start() {
         files.contains("once opening has gone quiet") && files.contains("at most three minutes")
     );
     assert!(!files.contains("about a second after opening"));
+    assert!(files.contains("Even while you keep editing"));
+    assert!(files.contains("only a successful commit does"));
+    assert!(files.contains("this device's status below each explanation"));
 }
 
 #[test]

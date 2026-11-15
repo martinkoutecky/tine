@@ -6,7 +6,13 @@ git-settings-policy-sync-automatically = 提交并自动同步
 git-settings-interval = 最多每隔
 git-settings-interval-aria = 两次自动提交之间的分钟数
 git-settings-minutes = 分钟
-git-settings-hint = 当图谱位于 git 仓库中时，Tine 会在一分钟没有编辑后提交图谱的更改（每个间隔最多一次），并在重命名、合并、删除或恢复备份的前后各提交一次。git 忽略的文件不会被提交。同步选项还会拉取并推送当前分支的上游：按需同步在你点击“立即同步”时进行，自动同步还会在每次提交后以及每个间隔进行一次。Tine 从不合并、变基或强制推送。
+git-settings-commits-heading = Tine 何时提交
+git-settings-hint = 当图谱位于 git 仓库中时，Tine 会在一分钟没有编辑后提交，并在重命名、合并、删除或恢复备份的前后各提交一次。即使你一直在编辑，已等待一小时（若所设间隔更长，则为该间隔）的更改也会被提交。
+git-settings-sync-heading = 同步
+git-settings-sync-hint = 同步会拉取并推送当前分支的上游：按需同步通过“立即同步”进行，自动同步在每次提交后以及每个间隔进行一次。Tine 从不合并、变基或强制推送。
+git-settings-ignore-heading = 忽略的文件
+git-settings-search-hint = { git-settings-sync-hint } { git-settings-ignore-hint }
+git-settings-ignore-hint = Tine 的提交不包含 git 忽略的文件。Tine 会在每台设备上向图谱的 .gitignore 添加一次 .syncthing.* 和 logseq/.tine-*，并将这些文件的副本从 git 中移除（不会从磁盘删除）。如果你删除其中一行，Tine 不会在此设备上再次添加。Syncthing 的冲突副本仍会被提交，除非你自己的规则将其忽略。
 git-settings-not-available = 本设备暂不支持 git。
 git-settings-not-a-repository = 此图谱不在 git 仓库中。你可以在这里创建仓库，保留图谱的历史记录。
 
@@ -37,6 +43,12 @@ git-settings-ignore-added =
         [tine] Tine 已将 logseq/.tine-* 添加到 { $path }，以免将 Tine 在本设备上的自有文件（例如其回收站）提交到 git，这样同步同一仓库的多台设备不会在删除页面后停止同步。已在 git 中的副本会在一次单独的 Tine 提交中从 git 移除，但不会从磁盘删除。你可以删除这一行；Tine 不会在本设备上再次添加它，并且仍会将这些文件排除在其提交之外。
         [both] Tine 已将 .syncthing.* 和 logseq/.tine-* 添加到 { $path }，以免将 Syncthing 的临时文件和 Tine 在本设备上的自有文件（例如其回收站）提交到 git。已在 git 中的副本会在一次单独的 Tine 提交中从 git 移除，但不会从磁盘删除。你可以删除这些行；Tine 不会在本设备上再次添加它们。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
        *[syncthing] Tine 已将 .syncthing.* 添加到 { $path }，以免将 Syncthing 的临时文件提交到 git。你可以删除这一行；Tine 不会在本设备上再次添加它。除非你自己的规则将其忽略，否则冲突副本仍会被提交。
+    }
+git-settings-ignore-status =
+    { $which ->
+        [tine] Tine 已将 logseq/.tine-* 添加到 { $path }。
+        [both] Tine 已将 .syncthing.* 和 logseq/.tine-* 添加到 { $path }。
+       *[syncthing] Tine 已将 .syncthing.* 添加到 { $path }。
     }
 git-settings-ignore-failed =
     { $which ->

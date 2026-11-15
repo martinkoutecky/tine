@@ -5,6 +5,69 @@ use super::*;
 use git2::{Repository, Signature};
 use std::fs;
 
+#[test]
+fn continuous_saves_commit_within_61_minutes() {
+    let f = fixture(&[("pages/a.md", "- initial\n")]);
+    let start = Instant::now();
+    let mut cadence = CommitCadence::default();
+    let mut last_commit = Some(start);
+    let mut commits = 0;
+    for seconds in (30..=61 * 60).step_by(15) {
+        let now = start + Duration::from_secs(seconds);
+        if seconds % 30 == 0 {
+            write(&f.work, "pages/a.md", &format!("- saved at {seconds}\n"));
+            cadence.changed(now);
+        }
+        if cadence.due(now, last_commit, minutes(10)) {
+            assert!(matches!(
+                commit_now(&f.work, MESSAGE),
+                Ok(Outcome::Committed(_))
+            ));
+            cadence.succeeded(true);
+            last_commit = Some(now);
+            commits += 1;
+        }
+    }
+    assert_eq!(
+        commits, 1,
+        "continuous saves must receive one recovery commit"
+    );
+    assert_eq!(
+        at_head(&f.repo, "pages/a.md").as_deref(),
+        Some("- saved at 3630\n")
+    );
+}
+
+#[test]
+fn a_deadline_commit_still_refuses_a_held_git_lock_and_retries_after_another_save() {
+    let f = fixture(&[("pages/a.md", "- initial\n")]);
+    let start = Instant::now();
+    let deadline = start + minutes(60);
+    let mut cadence = CommitCadence::default();
+    cadence.changed(start);
+    cadence.changed(deadline);
+    assert!(cadence.due(deadline, None, minutes(10)));
+    write(&f.work, "pages/a.md", "- pending\n");
+    let before = head(&f.repo).id();
+    let lock = f.repo.path().join("index.lock");
+    fs::write(&lock, "another git command").unwrap();
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Busy));
+    assert_eq!(head(&f.repo).id(), before);
+    fs::remove_file(lock).unwrap();
+    cadence.changed(deadline + TICK);
+    assert!(cadence.due(deadline + TICK, None, minutes(10)));
+    assert!(matches!(
+        commit_now(&f.work, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    cadence.succeeded(true);
+    assert_eq!(
+        at_head(&f.repo, "pages/a.md").as_deref(),
+        Some("- pending\n")
+    );
+    assert!(!cadence.due(deadline + TICK, Some(deadline + TICK), minutes(10)));
+}
+
 /// Each substitution happens after open_checked and all earlier boundaries,
 /// so an opening refusal cannot stand in for a later mutation guard.
 #[cfg(unix)]
