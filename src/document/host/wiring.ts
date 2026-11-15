@@ -5,7 +5,7 @@
 // module that issues `page_*` commands (guard: boundary.guard.test.ts); every
 // page write is the host's (the audited save path).
 
-import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
+import { createComputed, createEffect, createRoot, createSignal, on, untrack } from "solid-js";
 import { backend } from "../../backend";
 import { captureTransferRollback } from "../history";
 import { benchEvent } from "../../benchEvents";
@@ -627,10 +627,34 @@ export function transferInProgress(): boolean {
   return transferPages.size > 0;
 }
 
-/** A page whose input is frozen for a transition (a delete, transfer or freeze). */
+const frozenPageReads = new WeakMap<object, { name: string; value: () => boolean }>();
+/** A page whose input is frozen for a transition (a delete, transfer or freeze).
+ * Loaded pages share one boolean derivation: save-status changes cannot wake
+ * every row's write gate. O(1); the page's removal/replacement disposes it. */
 export function pageFrozen(name: string): boolean {
-  hostRevision();
-  return deletedPages.has(name) || transferPages.has(name) || !!client?.isFrozen(name);
+  const read = () => {
+    hostRevision();
+    return deletedPages.has(name) || transferPages.has(name) || !!client?.isFrozen(name);
+  };
+  const page = pageByName(name);
+  if (!page) return read();
+  let frozen = frozenPageReads.get(page);
+  if (!frozen || frozen.name !== name) {
+    const entry = { name, value: () => false };
+    entry.value = createRoot(dispose => {
+      const [value, publish] = createSignal(false);
+      createComputed(() => {
+        if (pageByName(name) !== page) {
+          if (frozenPageReads.get(page) === entry) frozenPageReads.delete(page);
+          dispose(); return;
+        }
+        publish(read());
+      });
+      return () => { publish(untrack(read)); return value(); };
+    }, null);
+    frozenPageReads.set(page, frozen = entry);
+  }
+  return frozen.value();
 }
 
 export function refuseConflictedMove(pages: Iterable<string>): boolean {

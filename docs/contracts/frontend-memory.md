@@ -4,6 +4,17 @@ Backend facets belong to loaded document nodes. Removing or replacing an owner
 releases its seed; identical text shared by loaded nodes retains one entry until
 the final owner leaves. A loaded page of any size keeps every shipped facet.
 
+Thread ancestry shares a boolean comment-membership derivation for each queried
+non-root parent and format. Ordinary body edits update that one derivation;
+descendant readers react only when membership changes. Leaves and top-level
+blocks allocate none. The derivations follow their live nodes through weak keys,
+retain no text history, and are not a second tree or page index.
+Loaded pages likewise share one boolean input-freeze derivation, so busy/save
+status changes do not invalidate every row's write gate. Both derivations
+dispose their reactive owners when the live node or page is replaced or removed.
+Their roots have no view owner, so retaining a source fact cannot retain the view
+that first queried it.
+
 Read applicability and own-publication delivery follow
 [`storage-contract.md`](../storage-contract.md). An applicable unchanged-revision
 read keeps the loaded nodes without comparing the page body.

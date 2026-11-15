@@ -178,6 +178,18 @@ async function mountJournals(n: number): Promise<{ host: HTMLElement; dispose: (
 }
 
 const surfaces: Surface[] = [
+  ...(["root", "nested root", "descendant"] as const).map(edit => ({
+    name: `large routed zoom, edit ${edit}`,
+    sizes: [12, 48],
+    mount: async (n: number) => {
+      const leaves = Array.from({ length: n - 1 }, (_, i) => blk(`zoom-${i}`, `Nested row ${i}`));
+      const root = blk("zoom-root", "Zoom target", leaves);
+      const m = await mountPage("Window", pageDto("Window", [edit === "nested root" ? blk("outside", "Outside zoom", [root]) : root]));
+      mainPaneRouter.focusBlock("zoom-root");
+      await vi.waitFor(() => expect(m.host.querySelector(".zoomed-page")).not.toBeNull());
+      return { ...m, editId: edit === "descendant" ? "zoom-0" : "zoom-root" };
+    },
+  })),
   {
     name: "routed page",
     mount: async (n) => {
@@ -578,6 +590,9 @@ for (const view of ["table", "board", "grid"] as const) {
 
 /** Former R1-02 / C3-01 growers: guard both text reads and computation runs. */
 const FIXED_RESIDUE = new Set([
+  "large routed zoom, edit root",
+  "large routed zoom, edit nested root",
+  "large routed zoom, edit descendant",
   "journals feed (today) with compact task summary",
   "TodayTaskSummary component alone (page edited elsewhere)",
   "in-page find open with a query (routed page)",
@@ -590,6 +605,9 @@ const FIXED_RESIDUE = new Set([
 const GROWS = new Set<string>();
 /** The default (fast) set: zoom/plain-page controls, compact summary, and the fixed large-subtree window. */
 const FAST = new Set([
+  "large routed zoom, edit root",
+  "large routed zoom, edit nested root",
+  "large routed zoom, edit descendant",
   "routed page",
   "zoomed block (routed), edit the zoom root",
   "TodayTaskSummary component alone (page edited elsewhere)",
@@ -651,9 +669,8 @@ async function edit(m: Mounted, via: "setDoc" | "input"): Promise<Measurement> {
   const ta = maybeEditorIn(document);
   if (!ta) throw new Error("no editor textarea");
   return measure(id, () => {
-    ta.replaceText(ta.value() + "x");
     ta.select(ta.value().length, ta.value().length);
-    ta.reportInput({ bubbles: true, inputType: "insertText", data: "x" });
+    ta.type("x");
   });
 }
 
@@ -679,7 +696,8 @@ async function run(surface: Surface, n: number, via: "setDoc" | "input") {
     return {
       first: summary(first),
       steady: { foreignRaw: median(steady.map(s => s.foreignRaw)), foreignAny: median(steady.map(s => s.foreignAny)),
-        foreignRawNodes: median(steady.map(s => s.foreignRawNodes)), runs: median(steady.map(s => s.runs)), ms: median(steady.map(s => s.ms)) },
+        foreignRawNodes: median(steady.map(s => s.foreignRawNodes)), runs: median(steady.map(s => s.runs)),
+        notifications: median(steady.map(s => s.notifications)), ms: median(steady.map(s => s.ms)) },
       sites: [...last.bySite.entries()]
         .filter(([, s]) => s.rawReads > 0 || s.anyReads > 0)
         .sort((a, b) => b[1].rawReads - a[1].rawReads || b[1].anyReads - a[1].anyReads).slice(0, 10)
@@ -689,7 +707,8 @@ async function run(surface: Surface, n: number, via: "setDoc" | "input") {
     };
   } finally { m.dispose(); endEdit("page-navigation"); resetStore(); document.body.replaceChildren(); }
 }
-const summary = (s: Measurement) => ({ foreignRaw: s.foreignRaw, foreignAny: s.foreignAny, foreignRawNodes: s.foreignRawNodes, runs: s.runs, ms: s.ms });
+const summary = (s: Measurement) => ({ foreignRaw: s.foreignRaw, foreignAny: s.foreignAny, foreignRawNodes: s.foreignRawNodes,
+  runs: s.runs, notifications: s.notifications, ms: s.ms });
 
 describe("keystroke scaling", () => {
   for (const surface of surfaces) {
@@ -697,11 +716,25 @@ describe("keystroke scaling", () => {
     for (const via of (surface.edit === "setDoc" || !fullSweep ? ["setDoc"] : ["setDoc", "input"]) as ("setDoc" | "input")[]) {
       it(`${surface.name} / ${via}`, async () => {
         const out: Record<string, unknown> = {};
-        const sizes = envSizes ?? (fullSweep ? surface.sizes ?? SIZES : [200, 1000]);
+        const sizes = envSizes ?? surface.sizes ?? (fullSweep ? SIZES : [200, 1000]);
         for (const n of sizes) out[String(n)] = await run(surface, n, via);
         results[`${surface.name} / ${via}`] = out; flush();
         const small = (out[String(sizes[0])] as { steady: { foreignRaw: number; runs: number } }).steady;
         const big = (out[String(sizes[1])] as { steady: { foreignRaw: number; runs: number } }).steady;
+        if (surface.name.startsWith("large routed zoom")) {
+          for (const result of Object.values(out) as { first: { foreignRaw: number; foreignAny: number; notifications: number }; steady: { foreignRaw: number; foreignAny: number; notifications: number } }[]) {
+            for (const work of [result.first, result.steady]) {
+              expect(work.foreignRaw, "typing must not reread unrelated zoom rows").toBe(0);
+              expect(work.foreignAny, "only the edited block's ancestry may be read").toBeLessThanOrEqual(17);
+              expect(work.notifications, "per-keystroke scheduler work").toBeLessThanOrEqual(88);
+            }
+          }
+          for (const phase of ["first", "steady"] as const) {
+            const notifications = Object.values(out).map(result => (result as Record<typeof phase, { notifications: number }>)[phase].notifications);
+            expect(Math.max(...notifications), "scheduler notifications must stay independent of zoom size")
+              .toBeLessThanOrEqual(Math.min(...notifications) + 8);
+          }
+        }
         console.log(`${surface.name} / ${via}: foreignRaw ${small.foreignRaw} -> ${big.foreignRaw}; runs ${small.runs} -> ${big.runs}`);
         if (GROWS.has(surface.name)) {
           expect(big.foreignRaw, `${surface.name} no longer grows (${small.foreignRaw} -> ${big.foreignRaw}): fixed? remove it from GROWS`)

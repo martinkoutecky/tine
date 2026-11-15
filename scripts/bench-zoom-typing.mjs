@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
@@ -36,6 +37,12 @@ async function measure(browser, size, surface) {
   await browser.$(`${scope} ${editorSelector}`).waitForExist({ timeout: 10000 });
   await browser.keys(["End"]);
   const original = await editorText(browser, scope);
+  const maxLoad = Number(process.env.BENCH_MAX_LOAD);
+  const waiting = Date.now();
+  while (maxLoad > 0 && os.loadavg()[0] > maxLoad && Date.now() - waiting < 600000) await sleep(10000);
+  const hostBefore = { load: os.loadavg(), maxLoad: maxLoad > 0 ? maxLoad : null, waitedMs: Date.now() - waiting };
+  if (maxLoad > 0 && hostBefore.load[0] > maxLoad) throw new Error(`Load gate exceeded: ${JSON.stringify(hostBefore)}`);
+  console.log(JSON.stringify({ size, surface, hostBefore }));
   const calibration = process.env.BENCH_CALIBRATE === "1" ? await nativeCalibration(browser) : undefined;
   if (process.env.BENCH_PROFILE === "1") await startNativeProfile(browser);
   await startTyping(browser);
@@ -50,7 +57,7 @@ async function measure(browser, size, surface) {
   fs.writeFileSync(path.join(out, String(size), `${surface}-raw.json`), JSON.stringify({ original, restored, ...samples }, null, 2));
   // CM's Backspace keymap edits its state directly, without a DOM input event.
   if (!samples.focused || samples.keys.length !== 60 || samples.inputs.length < 30 || samples.paint.length !== 60 || restored !== original) throw new Error(`native typing lost focus, samples or original editor bytes: ${JSON.stringify({ focused: samples.focused, keys: samples.keys.length, inputs: samples.inputs.length, paint: samples.paint.length, original, restored })}`);
-  results.push({ editor: editorKind, size, surface, calibration, profile, keyToPaintMs: summary(samples.paint), framesOver50Ms: samples.frames.filter(n => n > 50).length,
+  results.push({ editor: editorKind, size, surface, hostBefore, calibration, profile, keyToPaintMs: summary(samples.paint), framesOver50Ms: samples.frames.filter(n => n > 50).length,
     framesOver100Ms: samples.frames.filter(n => n > 100).length, raw: samples });
   console.log(JSON.stringify({ ...results.at(-1), raw: undefined }));
   await browser.saveScreenshot(path.join(out, String(size), `${surface}.png`));

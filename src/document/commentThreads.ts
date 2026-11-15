@@ -1,18 +1,40 @@
 // Thread membership is shared by body structure, navigation and pointer paths.
 // OG sees ordinary child bullets on disk; in Tine every descendant of a comment
 // belongs to that annotation, even when an external editor nested it by hand.
-import { doc, formatForBlock, blockIsOpaqueSheetView } from "./model";
+import { doc, formatForBlock, blockIsOpaqueSheetView, onBlockRawChanged } from "./model";
 import { isCommentBlock, COMMENT_DATE_KEY } from "../comments";
 import { facetsOf } from "../render/facets";
+import { parserReady } from "../render/parse";
 import type { Format } from "../types";
+import { createComputed, createRoot, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 
 // Screen only the key; the parser owns which separators/layout are accepted.
 const MAY_QUOTE = /tine\.quote/i;
+const parentComments = new WeakMap<object, Partial<Record<Format, Accessor<boolean>>>>();
 
-/** A quoted comment block, as distinct from an unquoted reply in its thread. */
+/** A quoted comment block, as distinct from an unquoted reply in its thread.
+ * Parents publish only membership changes to descendants; body typing does not
+ * invalidate their ancestry checks. One boolean signal per queried non-root parent
+ * and format, bound to that live node. Leaves need no shared derivation. */
 export function isCommentId(id: string, format: Format = formatForBlock(id)): boolean {
   const n = doc.byId[id];
-  return !!n && MAY_QUOTE.test(n.raw) && isCommentBlock(facetsOf(n.raw, format).properties, n.parent !== null);
+  if (!n || n.parent === null) return false;
+  const read = () => MAY_QUOTE.test(n.raw) && isCommentBlock(facetsOf(n.raw, format).properties, true);
+  if (!n.children.length) return read();
+  let shared = parentComments.get(n);
+  if (!shared) parentComments.set(n, shared = {});
+  const membership = shared[format] ??= createRoot(dispose => {
+    const [value, publish] = createSignal(false);
+    const refresh = () => publish(n.parent !== null && read());
+    onCleanup(onBlockRawChanged(refresh, [id]));
+    createComputed(() => {
+      if (doc.byId[id] !== n) { dispose(); return; }
+      n.parent; parserReady();
+      untrack(refresh);
+    });
+    return value;
+  }, null);
+  return membership();
 }
 
 /** The comment whose thread holds `id`: itself or its outermost quoted comment

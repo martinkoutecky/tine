@@ -194,7 +194,7 @@ it.each([
         scanReads: typingWork.scanReads, childEvaluations: typingWork.childEvaluations, views: commentViews.runs };
       console.log(JSON.stringify({ measurement: "typing work counts", kind, width, comments, key, counts }));
       expect(document.querySelector(`[data-block-id="${id}"]`)?.textContent).toContain(`Typed ordinary text ${key}`);
-      expect(counts).toEqual({ scans: 0, childReads: kind === "folded" ? 2 : 0,
+      expect(counts).toEqual({ scans: 0, childReads: 0,
         scanReads: 0, childEvaluations: 0, views: 0 });
     }
   } finally { typingWork.active = false; }
