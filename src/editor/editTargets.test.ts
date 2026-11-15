@@ -73,3 +73,12 @@ describe("forbidsEditEntry: portalled surfaces (GH #619, master 2617ff194)", () 
     expect(forbidsEditEntry(press(host, text, 5, 5))).toBe(false);
   });
 });
+
+describe("forbidsEditEntry: mounted CodeMirror editors", () => {
+  it.each(["cm-content", "cm-line", "cm-scroller"])("leaves a press on %s with its live editor", className => {
+    const host = document.createElement("div");
+    host.innerHTML = '<div data-block-editor="cm6"><div class="cm-scroller"><div class="cm-content" contenteditable="true"><div class="cm-line">task</div></div></div></div>';
+    document.body.append(host);
+    expect(forbidsEditEntry(press(host, host.querySelector(`.${className}`)!, 5, 5))).toBe(true);
+  });
+});
