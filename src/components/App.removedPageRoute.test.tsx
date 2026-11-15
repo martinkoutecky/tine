@@ -6,6 +6,8 @@ import { ensurePageLoaded, resetStore } from "../document/workingSet";
 import { mainPaneRouter, resetTabsToJournals } from "../router";
 import type { PageRead } from "../types";
 import "../App"; // The application's removal/navigation handler.
+import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
+import { replayDeferredExternalReloads } from "../document/deferredReload";
 
 beforeAll(() => initParser());
 afterEach(() => { resetStore(); resetTabsToJournals(); vi.restoreAllMocks(); });
@@ -14,6 +16,21 @@ const removed: PageRead = { name: "Removed", title: "Removed", kind: "page", id:
   pre_block: null, blocks: [{ id: "removed-block", raw: "gone", collapsed: false, children: [] }] };
 const publication = (rev: string, pages: string[]): GraphAnswersChange => ({ rev, inventoryChanged: false, blockRefCounts: {},
   summary: { rev, pages, blocks: [], linksTo: [], props: {}, inventoryChanged: false, full: false } });
+
+it("a publication deferred during a rewrite keeps a reader who moved to a same-named file", async () => {
+  ensurePageLoaded(removed);
+  mainPaneRouter.openFile(removed.id!, "Removed", "page");
+  const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+  const release = tryFreezeGraphRewrite();
+  try {
+    await applyGraphChangesBulk({ changes: [], answers: publication("1", ["removed"]) });
+    mainPaneRouter.openFile("pages/keeper.md", "Removed", "page");
+  } finally { release?.(); }
+  replayDeferredExternalReloads();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Removed", path: "pages/keeper.md" });
+});
 
 // Load-freshness review HOLD on c64fb2fad: the removal handler navigated panes from a route snapshot taken before the
 // read, so a reader who had already left the removed page was sent back (goBack) onto it.

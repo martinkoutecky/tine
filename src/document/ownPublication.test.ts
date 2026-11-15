@@ -8,6 +8,8 @@ import { ensurePageLoaded, loadFeed, pinPageWhileDrafting, resetStore } from "./
 import { doc, pageByName } from "./model";
 import type { PageRead } from "../types";
 import * as pageIdentity from "../pageIdentity";
+import { tryFreezeGraphRewrite } from "./graphRewriteState";
+import { replayDeferredExternalReloads } from "./deferredReload";
 
 beforeAll(() => initParser());
 afterEach(() => { resetStore(); setConflictPolicyAlwaysAsk(false); vi.restoreAllMocks(); });
@@ -17,6 +19,51 @@ const publication = (rev: string, pages: string[]): GraphAnswersChange => ({ rev
   summary: { rev, pages, blocks: [], linksTo: [], props: {}, inventoryChanged: false, full: false } });
 const publish = (rev: string, pages: string[]) => applyGraphChangesBulk({ changes: [], answers: publication(rev, pages) });
 const shown = () => pageByName("Loaded")?.roots.map(id => doc.byId[id].raw);
+
+it("a publication deferred by a rewrite cannot retire a different file opened under the old name", async () => {
+  ensurePageLoaded(page("old owner"));
+  const read = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+  const leave = vi.fn();
+  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage: leave, restartJournalFeed: () => {} }));
+  const release = tryFreezeGraphRewrite();
+  try {
+    await publish("1", ["loaded"]);
+    ensurePageLoaded({ ...page("new owner"), id: "journals/other.md" });
+  } finally { release?.(); }
+  replayDeferredExternalReloads();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(shown()).toEqual(["new owner"]);
+  expect(read).not.toHaveBeenCalled();
+  expect(leave).not.toHaveBeenCalled();
+});
+
+it.each(["before read", "during read"])("a publication waits for a graph rewrite started %s, then still retires a genuinely removed page", async timing => {
+  ensurePageLoaded(page("stray"));
+  let deliver!: (value: null) => void;
+  const read = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; })).mockResolvedValue(null);
+  const leave = vi.fn();
+  installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage: leave, restartJournalFeed: () => {} }));
+  let release: (() => void) | null = null;
+  try {
+    if (timing === "before read") release = tryFreezeGraphRewrite();
+    const pending = publish("1", ["loaded"]);
+    if (timing === "during read") {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+      release = tryFreezeGraphRewrite();
+      deliver(null);
+    }
+    await pending;
+    expect(shown()).toEqual(["stray"]);
+    expect(leave).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(timing === "before read" ? 0 : 1);
+  } finally { release?.(); }
+  // A failed rewrite leaves the old owner loaded: replay must still remove it.
+  if (timing === "before read") read.mockReset().mockResolvedValue(null);
+  replayDeferredExternalReloads();
+  await vi.waitFor(() => expect(pageByName("Loaded")).toBeUndefined());
+  expect(leave).toHaveBeenCalledExactlyOnceWith("Loaded");
+  expect(read).toHaveBeenCalledTimes(timing === "before read" ? 1 : 2);
+});
 
 it("an unloaded own publication costs zero page reads, feed restarts and loaded-page renders", async () => {
   ensurePageLoaded(page("A"));
