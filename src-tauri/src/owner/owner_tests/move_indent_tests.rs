@@ -140,3 +140,46 @@ pub(super) fn shallower_move_transcripts() -> Vec<Value> {
 fn cli_move_to_shallower_depth_keeps_descendant_file_indentation() {
     shallower_move_transcripts();
 }
+
+/// Review F1 of #960, through the CLI verbs with positional handles and
+/// `--rev`: two parents share their text. Moving the first, or adding a
+/// subtree with that text before it, leaves the other parent's child bytes
+/// alone, and the moved child keeps its offset from its parent.
+#[test]
+fn cli_move_and_add_beside_a_repeated_parent_keep_each_parents_children() {
+    for newline in ["\n", "\r\n", "\r"] {
+        let input = "- dup\n\t\t- childA\n- dup\n\t\t\t- childB\n- target\n".replace('\n', newline);
+        // A position without its fingerprint, which `--rev` pins.
+        let handle = |read: &Value, i: usize| {
+            let handle = read["page"]["blocks"][i]["handle"].as_str().unwrap();
+            format!("proof/{}", handle.split('~').next().unwrap())
+        };
+        for at in ["under", "after", "before"] {
+            let (graph, slot, path) = fixture(&input, false);
+            let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+            let args = json!({"handle": handle(&read, 0), "to": handle(&read, 2), "at": at, "rev": read["rev"]});
+            verb(&slot, "block.move", args).unwrap();
+            let expected = match at {
+                "under" => "- dup\n\t\t\t- childB\n- target\n\t- dup\n\t\t\t- childA\n",
+                "after" => "- dup\n\t\t\t- childB\n- target\n- dup\n\t\t- childA\n",
+                _ => "- dup\n\t\t\t- childB\n- dup\n\t\t- childA\n- target\n",
+            };
+            let after = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(after, expected.replace('\n', newline), "{at} {newline:?}");
+            drop(graph);
+        }
+        let (_graph, slot, path) = fixture(&input, false);
+        let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let args = json!({"before": handle(&read, 0), "content": "- dup\n\t- new-child", "rev": read["rev"], "no_author": true});
+        verb(&slot, "block.add", args).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        let id = after
+            .split(['\n', '\r'])
+            .find_map(|line| line.strip_prefix("  id:: "))
+            .unwrap_or_else(|| panic!("no id:: in {after:?}"));
+        let expected = format!(
+            "- dup\n\t- new-child\n- dup\n  id:: {id}\n\t\t- childA\n- dup\n\t\t\t- childB\n- target\n"
+        );
+        assert_eq!(after, expected.replace('\n', newline), "add {newline:?}");
+    }
+}
