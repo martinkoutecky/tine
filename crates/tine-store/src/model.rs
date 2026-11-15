@@ -116,9 +116,10 @@ impl std::fmt::Display for ParseInputTooLarge {
 }
 impl std::error::Error for ParseInputTooLarge {}
 
-/// Bytes that are not UTF-8. Every reader of parse input reports this one error,
-/// so the refusal reads the same whichever reader meets the bytes first, and
-/// callers classify it by type (`Refusal::Undecodable`), never by its text.
+/// Bytes that are not UTF-8: the one error the store's and tine-graph-features'
+/// readers and refusal adapters report, so the refusal reads the same whichever
+/// reader meets the bytes first. The store classifies it by type
+/// (`Refusal::Undecodable`), never by its text.
 #[derive(Debug)]
 pub(crate) struct NotUtf8;
 

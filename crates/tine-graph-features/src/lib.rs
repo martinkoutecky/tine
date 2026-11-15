@@ -49,7 +49,7 @@ fn store_error(error: StoreError) -> io::Error {
             io::ErrorKind::InvalidInput,
             format!("symlink:{}", file.as_str()),
         ),
-        StoreError::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
+        StoreError::Undecodable => tine_store::not_utf8(),
         StoreError::Unparseable(message) => io::Error::new(io::ErrorKind::InvalidData, message),
         StoreError::TooLarge { .. } => io::Error::new(io::ErrorKind::InvalidData, "file too large"),
         StoreError::Io(error) => error.into(),
@@ -178,7 +178,7 @@ fn why_error(why: Why) -> io::Error {
                 io::Error::new(io::ErrorKind::InvalidInput, message)
             }
             Refusal::Twin { .. } => io::Error::new(io::ErrorKind::AlreadyExists, "twin page"),
-            Refusal::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
+            Refusal::Undecodable => tine_store::not_utf8(),
             Refusal::ConfigUnreadable(cause) => config_unreadable(cause),
             Refusal::RepeatedFile(_) => {
                 io::Error::new(io::ErrorKind::InvalidInput, "repeated file")

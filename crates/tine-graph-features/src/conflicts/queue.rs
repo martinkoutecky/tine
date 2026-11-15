@@ -107,8 +107,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     if !tine_core::concord_queue::has_vcs_anchor(&bytes) {
         return Ok(None);
     }
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| tine_store::not_utf8())?;
     let markers = vcs_conflict_markers(text, format(file));
     Ok((!markers.is_empty()).then(|| VcsMarkerConflict {
         path: file.as_str().to_owned(),
