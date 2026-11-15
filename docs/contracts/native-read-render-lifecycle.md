@@ -32,6 +32,13 @@ the warm-cache probe) or page-inventory reads there. Page/tag completion uses
 the dedicated bounded capture query. `capture.graphReaders.test.tsx` exercises
 the capture entry point with native-equivalent refusals for general reads.
 
+CodeMirror is the default editor on every channel and platform. An absent
+device-local `experimental_cm6_editor` preference means enabled; explicit true
+or false choices are preserved. **Settings → Editor → Advanced → Use classic
+editor** selects the alternative. The editor gate waits up to five seconds for
+a pending stored choice read; Quick Capture's show activation awaits that read.
+The engine asset remains lazy and a cold activation can use classic while it loads.
+
 CM6 input transactions own completion refresh. The matching platform input
 notification does not start another read or invalidate the first reply; a
 notification before DOM reconciliation waits for that reconciliation. Standalone

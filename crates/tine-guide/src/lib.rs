@@ -928,6 +928,20 @@ mod search_guide_tests {
 #[cfg(test)]
 mod rename_guide_tests {
     #[test]
+    fn default_editor_and_classic_opt_out_are_taught_in_the_guide() {
+        let tips = include_str!("templates/tips.md");
+        for outcome in [
+            "**CodeMirror is the default editor** on desktop and mobile",
+            "**Settings → Editor → Advanced → Use classic editor**",
+            "Your choice is saved on this device",
+            "[report it](https://github.com/martinkoutecky/tine/issues)",
+            "the classic editor is planned to be retired",
+        ] {
+            assert!(tips.contains(outcome), "Guide must explain {outcome}");
+        }
+    }
+
+    #[test]
     fn editor_gestures_are_documented_in_the_bundled_guide() {
         // Family 19: the code-block editor, nested drop and property autocomplete.
         let tips = include_str!("templates/tips.md");
@@ -935,7 +949,8 @@ mod rename_guide_tests {
         assert!(tips.contains("only the code itself is in the text box"));
         assert!(tips.contains("clicking a code region edits only that region"));
         assert!(tips.contains("Click or tap the language label"));
-        assert!(tips.contains("edit the whole bullet as source; surrounding text stays intact"));
+        assert!(tips.contains("the whole bullet opens as source, including its fences"));
+        assert!(tips.contains("Moving the caret keeps source visible until you leave the bullet"));
         assert!(
             tips.contains("**Drag a bullet onto another bullet and move a little to the right**")
         );

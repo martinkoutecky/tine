@@ -26,15 +26,17 @@
  * fired. */
 import { createEffect, createRoot, createSignal, on } from "solid-js";
 import { installResultsPendingGate } from "../queryResultsEpoch";
+import { onGraphRewriteThaw } from "./graphRewriteState";
 import type { GraphChange } from "../backend";
 import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "../binding";
 import { editingId } from "../editorController";
 import { changed } from "../changeKeys";
 import { isBlockMoving } from "./edits/moves";
 import { hostState } from "./host/wiring";
+import type { ExternalChangeUi } from "./external";
 
-interface Deferred { change: GraphChange; binding: Binding; own: boolean }
-interface Replay { ready(page: string): boolean; run(change: GraphChange, own: boolean): void }
+interface Deferred { change: GraphChange; binding: Binding; own: boolean; ui?: ExternalChangeUi }
+interface Replay { ready(page: string): boolean; run(change: GraphChange, own: boolean, ui?: ExternalChangeUi): void }
 
 const deferred = new Map<string, Deferred>();
 const [deferredCount, setDeferredCount] = createSignal(0);
@@ -46,9 +48,10 @@ let replay: Replay | null = null;
  * replaced. Installed once by the module that applies watcher changes. */
 export function installDeferredReloadReplay(next: Replay): void { replay = next; }
 
-/** Record `change` for replay once loaded page `page` is replaceable. */
-export function deferExternalReload(page: string, change: GraphChange, own = false): void {
-  deferred.set(page, { change, binding: captureBinding(), own });
+/** Record `change` for replay once loaded page `page` is replaceable. Own
+ * publications retain their observed UI route guards through replay. */
+export function deferExternalReload(page: string, change: GraphChange, own = false, ui?: ExternalChangeUi): void {
+  deferred.set(page, { change, binding: captureBinding(), own, ui: own ? ui : undefined });
   setDeferredCount(deferred.size);
   watchTransitions();
 }
@@ -82,12 +85,13 @@ export function replayDeferredExternalReloads(): void {
     if (!replay.ready(name)) continue;
     deferred.delete(name);
     // Fire and forget like a live watcher event; a decline re-defers.
-    replay.run(entry.change, entry.own);
+    replay.run(entry.change, entry.own, entry.ui);
   }
   setDeferredCount(deferred.size);
 }
 
 clearOnBindingInvalidated(() => { deferred.clear(); waiters.clear(); setDeferredCount(0); });
+onGraphRewriteThaw(replayDeferredExternalReloads);
 
 // Editing ending (or moving to another block), a move settling, a save
 // settling (the data revision) and the page host letting go of a page (its

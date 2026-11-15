@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 const identity = JSON.parse(fs.readFileSync(new URL("../../src-tauri/app-identity.json", import.meta.url), "utf8"));
 
-export const editorKind = process.env.BENCH_EDITOR || "textarea";
+export const editorKind = process.env.BENCH_EDITOR || "cm6";
 if (!["textarea", "cm6"].includes(editorKind)) throw new Error("BENCH_EDITOR must be textarea or cm6");
 export const editorSelector = editorKind === "cm6" ? '.cm-content[contenteditable="true"]' : "textarea.block-editor";
 export const summary = xs => {

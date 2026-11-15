@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Clicking code edits just the code; clicking elsewhere in its bullet opens source with the fences visible. Moving the caret keeps that source view, with or without surrounding text, in both editors (#879).
 - Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
 - Adding PDF highlights preserves existing asset-link labels and joins wrapped selections like Logseq; annotation properties stay together so block references survive in Logseq (#953).
 - Automatic git commits also attempt a recovery point during continuous editing, after an hour or the configured interval if longer (#951).
@@ -17,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - `tine export query` accepts inline `--query` text or the first query on `--page`, with the same export and `--force` recovery as UUID selection (#588).
 - `tine export query --page` skips large prose and code blocks before the query while retaining the query size limit (#588).
 - Simple query lists offer **View → Show breadcrumbs** to hide ancestor trails and source page headings, saved with the query (#881).
+- CodeMirror is now the default editor on every platform. To switch back, enable **Settings → Editor → Advanced → Use classic editor** (DkyqG).
 
 - Comments copied or exported from Linked and Unlinked References, and comments embedded in a published reader's exports, are labelled as comments and follow **Include comments** (Iif8k).
 - Journal feeds and page readers recover from repeated changes during loading without reporting a false read failure (IllHs).

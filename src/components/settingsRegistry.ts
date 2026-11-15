@@ -5,14 +5,13 @@ import { installedThemes } from "../themes/manager";
 import { galleryThemes } from "../themeGallery";
 import { COMMUNITY_REGISTRY_ENABLED, communityThemes } from "../plugins/registry";
 import { installedPlugins } from "../plugins/manager";
-import { cm6EditorAvailable } from "../editor/cm6Setting";
 import { communityThemeSetting, galleryThemeSetting, installedThemeSetting, knobSetting, mediaEditorSetting, pluginSetting, type SettingDescriptor } from "./settingsDescriptor";
 
 /** Reactive registry snapshot. These are the same registries and descriptor
  * adapters consumed by their controls, including installs made while open. */
 export function settingEntries(): SettingDescriptor[] {
   return [
-    ...Object.values(settings).filter(entry => cm6EditorAvailable || entry.id !== "settings-cm6-label"),
+    ...Object.values(settings),
     ...KNOBS.flatMap(knob => knob.type === "heading" ? [] : [knobSetting(knob)]),
     ...MEDIA_EDITORS.map(mediaEditorSetting),
     ...galleryThemes.map(galleryThemeSetting),

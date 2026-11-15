@@ -5,7 +5,6 @@
 // someone else's comment has its own background. On a narrow pane a block's
 // comments show right under it, before its other children (GH #110).
 // Usage: npm run build && node scripts/shot-margin-position.mjs [outDir]
-// CM6=1 also turns on the experimental CodeMirror editor where the build has one.
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";

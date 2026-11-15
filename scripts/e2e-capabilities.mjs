@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
+import { seedClassicEditorProfile } from "./lib/e2e-classic-profile.mjs";
 
 export function tauriCapabilities(
   application,
@@ -95,6 +96,7 @@ export async function startWebdriverApplication(
   { appOwnsUserDataFolder = false } = {},
 ) {
   if (platform !== "win32") return { env, applicationProcess: undefined, debuggerAddress: undefined };
+  seedClassicEditorProfile(env, platform);
 
   // A journey about where the app keeps its WebView2 data (GH #719) lets the
   // app choose; every other journey gets an isolated per-session folder.
