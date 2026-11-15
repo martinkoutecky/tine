@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 // A sidecar is user-controlled input opened by the native process. These limits
 // are intentionally far above any realistic highlight file, but keep malformed
 // or hostile EDN from consuming unbounded native memory or stack.
-const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DEPTH: usize = 128;
 const MAX_NODES: usize = 1_000_000;
 const MAX_COLLECTION_ITEMS: usize = 250_000;

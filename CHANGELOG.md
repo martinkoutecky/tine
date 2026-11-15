@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Fixed PDF annotation saves changing unrelated sidecar layout, wrapped text and coordinate digits; new highlights use Logseq's multiline EDN layout (GH #954).
 - Clicking code edits just the code; clicking elsewhere in its bullet opens source with the fences visible. Moving the caret keeps that source view, with or without surrounding text, in both editors (#879).
 - Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).
 - Adding PDF highlights preserves existing asset-link labels and joins wrapped selections like Logseq; annotation properties stay together so block references survive in Logseq (#953).

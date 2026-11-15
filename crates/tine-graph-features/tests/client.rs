@@ -1432,7 +1432,7 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     let h = highlight("one");
     fs::write(
         a.join("assets").join(format!("{legacy}.edn")),
-        tine_core::pdf::write_highlights(&[h.clone()], ""),
+        include_bytes!("fixtures/legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration/after_migration/assets/My Paper.edn"),
     )
     .unwrap();
     let page = tine_core::pdf::hls_page_document_for_format(
@@ -1449,7 +1449,7 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     store.refresh(tine_store::Depth::Stamps).unwrap();
     pdf::open_pdf(&store, pdf_name, "My Paper").unwrap();
     assert!(!a.join("assets").join(format!("{key}.edn")).exists());
-    assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), b"{:highlights [{:id \"one\" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text \"one\"} :properties {:color \"yellow\"}}] :extra {}}\n");
+    assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), include_bytes!("fixtures/legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration/after_migration/assets/My Paper.edn").as_slice());
     pdf::write_highlights(
         &store,
         &host,
