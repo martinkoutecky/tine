@@ -1,5 +1,5 @@
 import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model";
-import { createRoot, createMemo } from "solid-js";
+import { createRoot, createMemo, createComputed, createSignal, mapArray, untrack } from "solid-js";
 import { isEditorEmpty, BUILTIN_HIDE } from "../editor/properties";
 import { outlineMaxDepth } from "../editor/outline";
 import { visibleChildren } from "./commentOrder";
@@ -42,22 +42,38 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
   }
 }
 
-/** Visible blocks in the MAIN view, in display order (drives editor arrow-nav),
- *  plus an id→index map. Memoized: it's recomputed only when the feed, a
- *  collapsed/children state, or a block's opaque-sheet answer changes — plain
- *  typing reruns only that block's node-scoped sheet memo, never this walk
- *  (`visibleOrderCost.test.ts`). Shared across the many callers in one tick.
- *  Scoped to the feed so navigation stays within the main content area, not
- *  satellite pages loaded for the sidebar/queries. */
-export const visibleData = createRoot(() =>
-  createMemo(() => {
-    const order: string[] = [];
-    const index = new Map<string, number>();
-    const append = (id: string) => { index.set(id, order.length); order.push(id); };
-    for (const p of mainPages()) visitVisible(p.roots, append);
-    return { order, index };
-  })
-);
+/** Main-view navigation order and id→index map; no I/O. Each feed page owns its
+ * visible traversal, so a node replacement/fold walks only that page. Plain
+ * typing observes only the node's opaque-sheet answer. Page owners are disposed
+ * on feed departure; satellite pages never participate.
+ * The flat O(visible feed blocks) answer is materialized only on request after
+ * an order/membership change, and shared until the next such change. Delivery
+ * with no navigation reader never assembles the unchanged pages' rows. */
+export const visibleData = createRoot(() => {
+  let cached: { order: string[]; index: Map<string, number> } | undefined;
+  const [revision, setRevision] = createSignal(0);
+  const invalidate = () => { cached = undefined; setRevision(v => v + 1); };
+  const pages = mapArray(mainPages, page => {
+    const order = createMemo((previous: string[] | undefined) => {
+      const next: string[] = [];
+      visitVisible(page.roots, id => next.push(id));
+      return previous && previous.length === next.length && previous.every((id, i) => id === next[i]) ? previous : next;
+    });
+    createComputed(() => { order(); invalidate(); });
+    return order;
+  });
+  createComputed(() => { pages(); invalidate(); });
+  return () => {
+    revision();
+    return cached ??= untrack(() => {
+      const order: string[] = [], index = new Map<string, number>();
+      for (const page of pages()) for (const id of page()) {
+        index.set(id, order.length); order.push(id);
+      }
+      return { order, index };
+    });
+  };
+});
 export function visibleOrder(): string[] {
   return visibleData().order;
 }
