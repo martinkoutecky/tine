@@ -142,6 +142,14 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
 const OG_ORG_PAGE_REF_MEDIA_SUFFIX = /\.(?:gif|svg|jpeg|ico|png|jpg|bmp|webp|mp3|ogg|mpeg|wav|m4a|flac|wma|aac|mp4|webm|mov|flv|avi|mkv)(?:\?[^#]*)?(?:#.*)?$/i;
 const OG_ORG_PAGE_REF_IMAGE_EXCLUSIONS = new Set(["pdf", "mp4", "ogg", "webm"]);
 
+/** OG `search-link-cp` (block.cljs:1082-1101): Org `[[Page][label]]` and Markdown
+ * `[label](Page)` parse as a bare search target, and a target without a `.` is a
+ * page reference, unless it is blank, an anchor (`#x`, `*x`) or a block ref. */
+function searchTargetIsPage(v: string): boolean {
+  if (!v.trim() || v[0] === "#" || (v[0] === "*" && v[v.length - 1] !== "*") || v.includes(".")) return false;
+  return !/^\(\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\)$/i.test(v);
+}
+
 function isOgOrgPageRefImageTarget(target: string): boolean {
   const isLocalAsset = /^[./]*assets/.test(target);
   return (isLocalAsset || OG_ORG_PAGE_REF_MEDIA_SUFFIX.test(target))
@@ -430,11 +438,14 @@ function renderLink(
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
   const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
-  if (url.type === "page_ref") {
-    if (format === "org" && isOgOrgPageRefImageTarget(url.v)) {
+  if (url.type === "page_ref" || (url.type === "search" && searchTargetIsPage(url.v))) {
+    if (url.type === "page_ref" && format === "org" && isOgOrgPageRefImageTarget(url.v)) {
       return <AssetImage url={url.v} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     }
-    const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode, macroExpansion, format) : undefined;
+    // OG `page-reference` brackets a labelled link like a bare one (GH #966).
+    const alias = s.label && s.label.length
+      ? <PageReferenceLabel>{renderInlines(s.label, blockId, spanMode, macroExpansion, format)}</PageReferenceLabel>
+      : undefined;
     return <PageRef name={url.v} alias={alias} blockId={blockId} spanAttrs={spanAttrs} />;
   }
   if (url.type === "block_ref") {
