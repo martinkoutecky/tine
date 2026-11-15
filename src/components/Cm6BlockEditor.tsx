@@ -489,6 +489,9 @@ export function Cm6BlockEditor(props: { id: string; surface: string; scope: Outl
       }
       else if (want && "edge" in want) {
         const edge = want.edge === "first" ? 0 : view.state.doc.length;
+        // Reveal the destination source before measuring its row: a concealed
+        // planning line otherwise shares the header's visual line box.
+        view.dispatch({ selection: { anchor: edge } });
         const row = view.moveToLineBoundary(EditorSelection.cursor(edge), false).head;
         const end = view.moveToLineBoundary(EditorSelection.cursor(edge), true).head;
         anchor = head = Math.min(row + want.col, end);
