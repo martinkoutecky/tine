@@ -85,7 +85,7 @@ it.each(["numeric", "range"] as const)("CM6 maps a %s caret into a mixed code bo
   const sidebar = host.querySelector("[data-sidebar-surface]")!;
   await clickBlock(sidebar, "a");
   const start = raw.indexOf("code") + 1;
-  startEditing("b", kind === "numeric" ? start : { start, end: start + 2, direction: "backward" });
+  startEditing("b", kind === "numeric" ? start : { start: 1, end: 3, direction: "backward", codeBodyStart: raw.indexOf("code") });
   await flush();
   const focused = editorIn(sidebar.querySelector('[data-block-id="b"]')!);
   const main = editorIn(host.querySelector('[data-caret-main] [data-block-id="b"]')!);

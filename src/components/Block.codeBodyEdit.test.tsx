@@ -11,9 +11,9 @@ import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 
-// GH #412/#413 body-only code editor contract: while the whole visible block
-// is entered INSIDE one complete code wrapper (markdown fence or org #+BEGIN_SRC/EXAMPLE,
-// ```calc excluded, mixed/incomplete excluded), the block editor shows ONLY
+// GH #412/#413 body-only code editor contract: a code click enters a complete
+// parser-owned wrapper (Markdown fence or Org #+BEGIN_SRC/EXAMPLE;
+// incomplete wrappers stay raw and calc has its own mode). The editor shows ONLY
 // the payload between the wrapper lines, and commits re-attach the exact raw
 // wrapper bytes. Consequences pinned here:
 //   - fences stay out of the editing surface (GH #413's second complaint);
@@ -139,7 +139,7 @@ describe("body-only code editor (GH #412/#413)", () => {
     }
   });
 
-  it("keeps raw editing for mixed and incomplete wrappers and the calc mode", () => {
+  it("keeps source entry and incomplete wrappers separate from the calc mode", () => {
     const mixed = mountPage("intro\n```js\nx\n```");
     try {
       expect(mixed.textarea.value()).toContain("```js");
@@ -149,9 +149,9 @@ describe("body-only code editor (GH #412/#413)", () => {
     }
     const typing = mountPage("```python\nx = 1");
     try {
-      // An unclosed fence is still being authored: raw editing, code-card metrics.
+      // An unclosed fence is still being authored as ordinary raw source.
       expect(typing.textarea.value()).toContain("```python");
-      expect(typing.textarea.element.classList.contains("code-edit")).toBe(true);
+      expect(typing.textarea.element.classList.contains("code-edit")).toBe(false);
     } finally {
       typing.dispose();
     }

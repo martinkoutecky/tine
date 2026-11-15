@@ -1,6 +1,6 @@
 import { msg } from "./i18n";
 import { hasSelection, topSelected, node as docNode } from "./document";
-import { captureHistoryEditorContext, editingId, startEditing } from "./editorController";
+import { captureHistoryEditorContext, editingId, restoreHistoryEditorContext, type HistoryEditorContext } from "./editorController";
 import { commandTargetIds } from "./blockRefActions";
 import { focusedRouter, mainRouter, paneRouter } from "./panes";
 import { resolveRouteBlock, type PaneRouter } from "./router";
@@ -27,9 +27,9 @@ function paneSurface(router: PaneRouter): string {
   return router.paneId === "main" ? "main" : `pane:${router.paneId}`;
 }
 
-function keepEditing(id: string, offset: number, router: PaneRouter): void {
+function keepEditing(id: string, context: HistoryEditorContext, router: PaneRouter): void {
   // OG re-opens the editor on the block after the page navigation (setTimeout 0).
-  setTimeout(() => { if (docNode(id)) startEditing(id, offset, null, paneSurface(router)); }, 0);
+  setTimeout(() => { const n = docNode(id); if (n) restoreHistoryEditorContext({ ...context, blockId: id, selectionEnd: context.selectionStart, owner: null, surface: paneSurface(router) }, n.raw.length); }, 0);
 }
 
 /** Zoom into the selected block, else the block being edited (the last one when
@@ -45,7 +45,7 @@ export function zoomInOnTarget(): boolean {
   const context = wasEditing ? captureHistoryEditorContext() : null;
   const router = zoomRouter(context?.surface);
   router.focusBlock(id);
-  if (context) keepEditing(id, context.selectionStart, router);
+  if (context) keepEditing(id, context, router);
   return true;
 }
 
@@ -61,6 +61,6 @@ export function zoomOutOneLevel(): boolean {
   const parent = zoomed ? docNode(zoomed)?.parent ?? null : null;
   router.focusBlock(parent);
   // Only an edit inside this pane continues; a sidebar editor is left alone.
-  if (context && context.surface === paneSurface(router)) keepEditing(context.blockId, context.selectionStart, router);
+  if (context && context.surface === paneSurface(router)) keepEditing(context.blockId, context, router);
   return true;
 }

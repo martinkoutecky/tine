@@ -82,6 +82,7 @@ try {
   if (status) throw new Error(`work tree not clean after the rename commit: ${status}`);
   console.log("PASS: rename commits the pending external edit, then the rename, and leaves the tree clean");
 } catch (error) {
+  console.error("Observed pane titles:", await browser?.execute(() => [...document.querySelectorAll("h1.page-title")].map(node => node.textContent)));
   await browser?.saveScreenshot(path.join(run, "failure.png")).catch(() => {});
   fs.writeFileSync(path.join(run, "failure.json"), JSON.stringify({ journey: "git autocommit", expected: "Settings enables autocommit; a rename is bracketed by commits", observed: String(error), classification: "ambiguous", commit: process.env.TESTED_COMMIT || "working tree" }, null, 2));
   throw error;

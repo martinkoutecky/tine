@@ -11,14 +11,62 @@ import "../App"; // Use the application's removal/navigation/feed handler.
 import { localDayKey } from "../journal";
 import { setChangeSummaryBaseline } from "../changeSummary";
 import { Settings } from "./Settings";
-import { openSettings, closeSettings, setJournalConflicts } from "../ui";
+import { openSettings, closeSettings, setJournalConflicts, openPageContextMenu, closeContextMenu } from "../ui";
+import { PaneContext, paneRouter, splitPane, resetPaneLayoutToSingle } from "../panes";
+import { ContextMenu } from "./ContextMenu";
 import { setConflictInventory } from "../conflictQueue";
 import type { PageRead, ConflictObject, SyncConflictDiff } from "../types";
 
 afterEach(() => {
   resetStore(); resetTabsToJournals(); setGraphMeta(null); setConflictPolicyAlwaysAsk(false);
   closeSettings(); setJournalConflicts([]); setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
+  closeContextMenu(); resetPaneLayoutToSingle();
   vi.restoreAllMocks(); document.body.replaceChildren();
+});
+
+it.each(["title", "menu", "split", "moved"] as const)("%s rename preserves the reader's page when its publication precedes the rename answer", async entry => {
+  const opened = await backend().loadGraph("");
+  if (opened.kind === "focused_existing") throw new Error("missing graph");
+  setGraphMeta({ ...opened.meta, root: "/synthetic-title-rename" });
+  setChangeSummaryBaseline("0");
+  const before: PageRead = { name: "Alpha", title: "Alpha", kind: "page", id: "pages/Alpha.md", rev: "A",
+    pre_block: null, blocks: [{ id: "alpha-body", raw: "alpha body", collapsed: false, children: [] }] };
+  const after: PageRead = { ...before, name: "Gamma", title: "Gamma", id: "pages/Gamma.md", rev: "B" };
+  let moved = false;
+  vi.spyOn(backend(), "getPage").mockImplementation(async name => name === "Elsewhere" ? { ...before, name, title: name, id: "pages/Elsewhere.md" } : name === "Gamma" ? after : moved ? null : before);
+  const exact = vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => moved ? null : before);
+  vi.spyOn(backend(), "renameOffer").mockResolvedValue({ kind: "rename" });
+  vi.spyOn(backend(), "renamePage").mockImplementation(async () => {
+    moved = true;
+    if (entry === "moved") router.openPage("Elsewhere", "page");
+    await applyGraphChangesBulk({ changes: [], answers: { rev: "1", inventoryChanged: true, blockRefCounts: {},
+      summary: { rev: "1", pages: ["alpha", "gamma"], blocks: [], linksTo: [], props: {}, inventoryChanged: true, full: false } } });
+    return { outcome: "renamed", renamed: [{ from: "Alpha", to: "Gamma", path: before.id }], touched: [{ path: before.id!, moved: true }] };
+  });
+  loadSingle(before);
+  const paneId = entry === "split" ? splitPane("main", "row")! : "main";
+  const router = paneRouter(paneId);
+  router.openPage("Alpha", "page");
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <PaneContext.Provider value={{ paneId, router }}><PageView /><ContextMenu /></PaneContext.Provider>, root);
+  try {
+    await vi.waitFor(() => expect(root.querySelector("h1.page-title")?.textContent).toBe("Alpha"));
+    exact.mockClear();
+    if (entry === "menu") {
+      openPageContextMenu(10, 10, "Alpha", "page", true);
+      await vi.waitFor(() => expect(document.querySelector('[data-page-action-id="rename-page"]')).not.toBeNull());
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="rename-page"]')!.click();
+    } else root.querySelector("h1.page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    const selector = entry === "menu" ? ".ctx-rename-name" : ".page-title-input";
+    await vi.waitFor(() => expect(document.querySelector(selector)).not.toBeNull());
+    const input = document.querySelector<HTMLInputElement>(selector)!;
+    input.value = "Gamma";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector("h1.page-title")?.textContent).toBe(entry === "moved" ? "Elsewhere" : "Gamma"));
+    expect(root.querySelector(".page-blocks")?.textContent).toContain("alpha body");
+    expect(exact).not.toHaveBeenCalled();
+  } finally { dispose(); }
 });
 
 it.each(["route", "feed"] as const)("Settings Merge replaces the visible stray's text with the keeper in the %s", async surface => {

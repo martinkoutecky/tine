@@ -13,6 +13,7 @@ import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { readLoadedPublicationPages, loadedPageByPath, pageByName } from "./model";
 import { admitRead, invalidatePageRead, invalidatePageReadKey } from "./readAdmission";
+import { graphRewriteFrozen } from "./graphRewriteState";
 import { acceptHeldPush, hostHolds, isConflicted } from "./host/wiring";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
 import { forgetPage, rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
@@ -30,8 +31,8 @@ export interface ExternalChangeUi {
 // `applyGraphChange`, so the disposition is re-decided with whatever state holds
 // then (deferredReload.ts; GH #337).
 installDeferredReloadReplay({
-  ready: (page) => reloadDisposition(page) === "reload",
-  run: (change, own) => void (own ? applyObservedChange(change, captureExternalChangeUi?.(), true, true) : applyGraphChange(change))
+  ready: (page) => !graphRewriteFrozen() && reloadDisposition(page) === "reload",
+  run: (change, own, ui) => void (own ? applyObservedChange(change, ui ?? captureExternalChangeUi?.(), true, true) : applyGraphChange(change))
     .catch(error => reportUiFailure("page-refresh", error)),
 });
 
@@ -129,12 +130,17 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
 }
 
 async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean, own = false): Promise<void> {
+  if (own && graphRewriteFrozen()) {
+    deferExternalReload(c.name, c, own, ui);
+    return;
+  }
   const restartJournalFeed = () => {
     if (!own && c.kind === "journal") ui?.restartJournalFeed();
   };
   const loadedName = own ? pageByName(c.name)?.name : c.path ? loadedPageByPath(c.path)?.name : undefined;
   const currentName = loadedName ?? c.name;
   const loaded = pageByName(currentName);
+  if (own && c.path && loaded?.id !== c.path) return;
   const owner = latestOwner(loaded ?? c, "publication", bindingOwner(() => pageByName(currentName) === loaded));
   // `c.path` names the loaded file only when `loadedName` was found by it.
   const disp = reloadDisposition(currentName, loadedName ? c.path : undefined);
@@ -144,14 +150,14 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   // a removal waits until the host lets go of the page.
   if (hostHolds(currentName)) {
     if (bypassPolicy) acceptHeldPush(currentName);
-    else if (c.removed) deferExternalReload(currentName, c, own);
+    else if (c.removed) deferExternalReload(currentName, c, own, ui);
     restartJournalFeed();
     return;
   }
   // Input not yet with the host ("conflict") or a hold ("skip"): replayed
   // once the page is replaceable.
   if (disp !== "reload") {
-    deferExternalReload(currentName, c, own);
+    deferExternalReload(currentName, c, own, ui);
     restartJournalFeed();
     return;
   }
@@ -178,10 +184,11 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
     const exact = c.path && loadedName && (own || loadedName !== c.name) ? c.path : null;
     let disappeared = false;
     const result = await admitRead(owner, () => exact ? backend().getPageByPath(exact) : backend().getPage(c.name, c.kind), dto => [currentName, ...(dto ? [dto.name] : [])], dto => {
+      if (own && graphRewriteFrozen()) { deferExternalReload(currentName, c, own, ui); return; }
       if (!dto) { disappeared = !!loaded?.id; return; }
       if (exact && dto.id !== exact) return;
       if (exact && dto.name !== currentName && !rekeyPageIdentityByPath(exact, dto.name, dto.rev ?? null)) return;
-      if (!reloadPageIfStillSafe(dto.name, toLoadablePage(dto, dto.name))) deferExternalReload(currentName, c, own);
+      if (!reloadPageIfStillSafe(dto.name, toLoadablePage(dto, dto.name))) deferExternalReload(currentName, c, own, ui);
     });
     if (result.kind === "stale") return;
     if (disappeared) {
@@ -189,7 +196,7 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
       // Retirement has a stricter gate than a same-file text replacement:
       // input or a draft acquired during the read must keep its loaded owner.
       if (reloadDisposition(currentName) !== "reload") {
-        deferExternalReload(currentName, c, own);
+        deferExternalReload(currentName, c, own, ui);
         return;
       }
       forgetPage(currentName);

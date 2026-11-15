@@ -149,20 +149,28 @@ describe.each<EditorKind>(["textarea", "cm6"])("code language source in %s", kin
         const submits = vi.spyOn(backend(), "pageSubmit");
         const reads = vi.mocked(backend().getPage).mock.calls.length;
         const label = root.querySelector<HTMLButtonElement>("button.code-language");
-        expect(label, "a focusable language control is available even without a language").not.toBeNull();
-        expect(label!.getAttribute("aria-label")).toBe("Edit code language");
-        // Review HOLD on bc643657b: with the window focused, the editor's blur removed the label before activation.
-        vi.spyOn(document, "hasFocus").mockReturnValue(true);
-        label!.focus();
-        expect(document.activeElement).toBe(label);
-        expect(label!.isConnected, "focusing the label keeps the editing session that renders it").toBe(true);
-        if (activation !== "click") {
-          const event = new KeyboardEvent("keydown", { key: activation, bubbles: true, cancelable: true });
-          label!.dispatchEvent(event);
-          expect(event.defaultPrevented, "native activation must remain available").toBe(false);
+        if (editing === "prose") {
+          // Explicit source editing shows the fences themselves, without a
+          // caret-dependent code preview or its language button (CS879).
+          expect(label).toBeNull();
+          expect(editorIn(root).element.textContent).toContain("```" + lang);
+          editorIn(root).select(before.length + 3);
+        } else {
+          expect(label, "a focusable language control is available even without a language").not.toBeNull();
+          expect(label!.getAttribute("aria-label")).toBe("Edit code language");
+          // Review HOLD on bc643657b: with the window focused, the editor's blur removed the label before activation.
+          vi.spyOn(document, "hasFocus").mockReturnValue(true);
+          label!.focus();
+          expect(document.activeElement).toBe(label);
+          expect(label!.isConnected, "focusing the label keeps the editing session that renders it").toBe(true);
+          if (activation !== "click") {
+            const event = new KeyboardEvent("keydown", { key: activation, bubbles: true, cancelable: true });
+            label!.dispatchEvent(event);
+            expect(event.defaultPrevented, "native activation must remain available").toBe(false);
+          }
+          if (activation === "click") label!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+          label!.click(); // jsdom omits keyboard default activation; Chromium exercises it natively.
         }
-        if (activation === "click") label!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
-        label!.click(); // jsdom omits keyboard default activation; Chromium exercises it natively.
         await vi.waitFor(() => expect(editorIn(root).value()).toBe(raw));
         expect(editorIn(root).selection()).toEqual([before.length + 3, before.length + 3]);
         expect(vi.mocked(backend().getPage).mock.calls).toHaveLength(reads);
