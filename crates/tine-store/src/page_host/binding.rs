@@ -394,7 +394,9 @@ pub(super) struct Publication {
 
 /// What became of one publication.
 pub(super) enum Indexing {
-    Indexed,
+    /// Indexed, with the revision of the bytes it published (none for a
+    /// removal), computed once by indexing and carried here.
+    Indexed(Option<FileRev>),
     Failed,
 }
 
@@ -782,13 +784,13 @@ impl Book {
             let key = publication.key.clone();
             let failures = self.retry.get(&key).map_or(0, |retry| retry.failures);
             match indexing {
-                Indexing::Indexed => {
+                Indexing::Indexed(rev) => {
                     self.retry.remove(&key);
                     let own = publication.own.as_ref().map_or(0, |(v, _)| *v);
                     let indexed = self.index.entry(key).or_default();
                     if own > 0 && own >= indexed.1 {
                         indexed.1 = own;
-                        indexed.2 = publication.bytes.as_deref().map(FileRev::from_bytes);
+                        indexed.2 = rev;
                     }
                     indexed.0 = publication.bytes;
                 }

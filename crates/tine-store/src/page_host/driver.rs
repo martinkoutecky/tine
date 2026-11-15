@@ -1143,7 +1143,7 @@ fn deliver<F: HostIo, C: Clock>(
             }
         }
         for (publication, indexing) in &results {
-            if matches!(indexing, Indexing::Indexed) {
+            if matches!(indexing, Indexing::Indexed(_)) {
                 if let Some((version, _)) = &publication.own {
                     state
                         .progress

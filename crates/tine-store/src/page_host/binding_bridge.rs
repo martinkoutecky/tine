@@ -55,11 +55,13 @@ impl Sink for Bridge {
                     #[cfg(feature = "test-faults")]
                     crate::cost_counters::host_publication_probes(1);
                     let started = crate::bench_events::enabled().then(std::time::Instant::now);
-                    let indexing = match owner(&publication.key) {
-                        #[cfg(test)]
-                        _ if self.fault() => Indexing::Failed,
-                        _ if index(store, &publication) => Indexing::Indexed,
-                        _ => Indexing::Failed,
+                    #[cfg(test)]
+                    let fault = self.fault();
+                    #[cfg(not(test))]
+                    let fault = false;
+                    let indexing = match fault {
+                        true => Indexing::Failed,
+                        false => index(store, &publication),
                     };
                     if let Some(started) = started {
                         crate::bench_events::mark("index_us", started.elapsed().as_micros() as u64);
@@ -103,17 +105,18 @@ impl Bridge {
 /// Publish `publication` to the index (§5): the index part of a
 /// transaction's publication (cache, names, references, `GraphChange`),
 /// with the R8 Document when it matched. Bytes the index already holds only
-/// align the watcher's snapshot. The caller holds the writer. False when
-/// the store has closed.
-pub(super) fn index(store: &Store, publication: &Publication) -> bool {
+/// align the watcher's snapshot. The caller holds the writer. Indexed with
+/// the bytes' revision, hashed here once; failed when the store has closed.
+pub(super) fn index(store: &Store, publication: &Publication) -> Indexing {
     if store.is_closed() {
-        return false;
+        return Indexing::Failed;
     }
     let graph = &store.graph;
     let path = graph.root.join(&publication.spelling);
     let id = FileId::from(publication.spelling.clone());
     let bytes = publication.bytes.as_deref();
     let rev = bytes.map(FileRev::from_bytes);
+    let indexed = Indexing::Indexed(rev.clone());
     let cached = graph.cached_rev(&path);
     let text = bytes.and_then(|bytes| std::str::from_utf8(bytes).ok());
     // What a deferred change already says of this file (`store/first_view.rs`).
@@ -145,7 +148,7 @@ pub(super) fn index(store: &Store, publication: &Publication) -> bool {
         graph.transaction_clear_page_marker(&path);
         let raced = store.watch.note_own_observed(&[(id, rev)], &stamps);
         store.watch.reconcile_raced(&raced);
-        return true;
+        return indexed;
     };
     let before = graph.cache_generation();
     let entry = match &owned {
@@ -171,7 +174,7 @@ pub(super) fn index(store: &Store, publication: &Publication) -> bool {
         }
         let raced = store.watch.note_own_observed(&[(id, rev)], &stamps);
         store.watch.reconcile_raced(&raced);
-        return true;
+        return indexed;
     }
     let files = vec![(id.clone(), kind, rev)];
     let mut observations = PublishedObservations {
@@ -196,7 +199,7 @@ pub(super) fn index(store: &Store, publication: &Publication) -> bool {
             .collect();
         store.publish_transaction_change(Origin::External, files, pages, observations);
     }
-    true
+    indexed
 }
 
 fn page_mail(store: &Store, key: PageKey, mail: Mail, facts: MailFacts) -> PageMail {

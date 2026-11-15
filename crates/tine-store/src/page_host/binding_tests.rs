@@ -920,12 +920,14 @@ fn gh964_publication_evidence_survives_observations_and_failed_indexing() {
         own: version.map(|v| (v, None)),
         stamp: None,
     };
+    // Indexing's result carries the revision it hashed (`bridge::index`).
+    let indexed = |bytes: &[u8]| Indexing::Indexed(Some(FileRev::from_bytes(bytes)));
     book.record(
-        vec![(publication(Some(3), b"- saved\n"), Indexing::Indexed)],
+        vec![(publication(Some(3), b"- saved\n"), indexed(b"- saved\n"))],
         0,
     );
     book.record(
-        vec![(publication(None, b"- external\n"), Indexing::Indexed)],
+        vec![(publication(None, b"- external\n"), indexed(b"- external\n"))],
         0,
     );
     assert_eq!(book.index["a.md"].1, 3);
@@ -943,7 +945,7 @@ fn gh964_publication_evidence_survives_observations_and_failed_indexing() {
         Some(FileRev::from_bytes(b"- saved\n"))
     );
     book.record(
-        vec![(publication(Some(5), b"- latest\n"), Indexing::Indexed)],
+        vec![(publication(Some(5), b"- latest\n"), indexed(b"- latest\n"))],
         0,
     );
     assert_eq!(book.index.len(), 1);
@@ -958,7 +960,7 @@ fn gh964_publication_evidence_survives_observations_and_failed_indexing() {
                 bytes: None,
                 ..publication(Some(6), b"")
             },
-            Indexing::Indexed,
+            Indexing::Indexed(None),
         )],
         0,
     );
@@ -1558,7 +1560,7 @@ fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
 /// index failure keeps the restore waiting and a success lets it close.
 #[test]
 fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
-    for (indexing, ready) in [(Indexing::Failed, false), (Indexing::Indexed, true)] {
+    for (failed, ready) in [(true, false), (false, true)] {
         let mut u = Unit::new();
         let version = u.version();
         u.submit("saved", version, None, "saved");
@@ -1577,6 +1579,10 @@ fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
             StopState::Waiting,
             "V5: the restore was ready with a publication in flight"
         );
+        let indexing = match failed {
+            true => Indexing::Failed,
+            false => Indexing::Indexed(publication.bytes.as_deref().map(FileRev::from_bytes)),
+        };
         u.book.record(vec![(publication, indexing)], 0);
         let state = stop_state(&u.progress, &u.book);
         assert_eq!(state == StopState::Ready, ready, "{state:?}");
@@ -1691,7 +1697,10 @@ fn a_publication_of_bytes_no_parse_may_take_costs_that_file_only() {
             own: None,
             stamp: None,
         };
-        assert!(index(&store, &publication), "{tag}");
+        assert!(
+            matches!(index(&store, &publication), Indexing::Indexed(_)),
+            "{tag}"
+        );
         drop(writer);
         let view = store.whole_graph().unwrap();
         let listed: Vec<_> = (view.unreadable_files().iter())
@@ -1727,7 +1736,7 @@ fn a_consumer_publication_names_the_bytes_it_publishes() {
         own: None,
         stamp: None,
     };
-    assert!(index(&store, &publication));
+    assert!(matches!(index(&store, &publication), Indexing::Indexed(_)));
     drop(writer);
     let view = store.whole_graph().unwrap();
     assert!(
@@ -1775,7 +1784,7 @@ fn a_journal_file_delivered_on_a_held_path_during_load_names_its_day() {
         own: None,
         stamp: None,
     };
-    assert!(index(&store, &publication));
+    assert!(matches!(index(&store, &publication), Indexing::Indexed(_)));
     drop(writer);
     assert_eq!(
         store.journal_id(day, false).as_str(),
@@ -1829,7 +1838,10 @@ fn a_filtered_echo_keeps_the_delivery_that_raced_it() {
         let _writer = store.writer.lock().unwrap();
         store.graph.hold_unhosted("pages/c.md");
         fs::write(&path, "- own\n").unwrap();
-        assert!(index(&store, &publication(Some((1, None)))));
+        assert!(matches!(
+            index(&store, &publication(Some((1, None)))),
+            Indexing::Indexed(_)
+        ));
         assert!(store
             .deferred_rev(&FileId::from("pages/c.md".to_owned()))
             .is_some());
@@ -1840,7 +1852,10 @@ fn a_filtered_echo_keeps_the_delivery_that_raced_it() {
             .unwrap()
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
-        assert!(index(&store, &publication(None)));
+        assert!(matches!(
+            index(&store, &publication(None)),
+            Indexing::Indexed(_)
+        ));
     }
     {
         let (state, ready) = &*parsed;
