@@ -318,14 +318,18 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   // parser-owned fence, then map its rendered body to visible-raw coordinates.
   const visible = splitProps(raw, BUILTIN_HIDE, fmt).visible;
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  if (range) {
-    const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
-    const index = cards.findIndex(card => card === range.startContainer || card.contains(range.startContainer));
+  const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
+  const index = cards.findIndex(card => card.parentElement!.contains(e.target as Node));
+  if (index >= 0) {
     const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[index];
     const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
-    const offset = index < 0 ? null : codeCardOffsetFromRange(cards[index].parentElement!, range);
-    if (projection && offset !== null) return projection.open.length + Math.min(offset, projection.body.length);
+    const offset = range && codeCardOffsetFromRange(cards[index].parentElement!, range);
+    // The card chooses body mode even when its caret cannot be mapped (or is
+    // empty). Coordinates choose only the body position, falling back to its end.
+    if (projection) return projection.open.length + Math.min(offset ?? projection.body.length, projection.body.length);
   }
+  // An outside edge can resolve to a nearby code glyph; it still chooses source.
+  if (range && cards.some(card => card === range.startContainer || card.contains(range.startContainer))) return visible.length;
   // GH #465: a click in the empty run-out past the last glyph means "the end",
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click

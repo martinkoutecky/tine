@@ -18,10 +18,10 @@ beforeAll(() => {
 });
 afterEach(() => { dispose?.(); dispose = undefined; endEdit("page-navigation"); resetStore(); document.body.innerHTML = ""; });
 
-function mount(raw: string, format: "md" | "org" = "md") {
+function mount(raw: string, format: "md" | "org" = "md", caret = raw.length) {
   loadSingle({ name: "Reveal", title: "Reveal", kind: "page", format, pre_block: null,
     blocks: [{ id: "reveal", raw, collapsed: false, children: [] }] });
-  startEditing("reveal", raw.length);
+  startEditing("reveal", caret);
   const root = document.createElement("div"); document.body.append(root);
   dispose = render(() => <Cm6BlockEditor id="reveal" surface="main" scope={null} />, root);
   return { root, editor: editorIn(root) };
@@ -45,8 +45,13 @@ it.each(cm6PreviewCases)("$name renders outside, reveals inside/spanning, and pr
   const { from, to } = span!;
   const widget = () => root.querySelector(`[data-cm6-construct="${fixture.kind}"]`);
   editor.select(from > 0 ? 0 : raw.length);
-  expect(widget(), "caret elsewhere renders").not.toBeNull();
-  if (fixture.selector) await vi.waitFor(() => expect(widget()!.querySelector(fixture.selector!), "uses the read renderer").not.toBeNull());
+  if (fixture.kind === "src" || fixture.kind === "example") {
+    expect(widget(), "raw code source keeps its delimiters visible").toBeNull();
+    expect(root.querySelector(".cm-content")!.textContent).toContain(fixture.source.slice(0, fixture.source.indexOf("\n")));
+  } else {
+    expect(widget(), "caret elsewhere renders").not.toBeNull();
+    if (fixture.selector) await vi.waitFor(() => expect(widget()!.querySelector(fixture.selector!), "uses the read renderer").not.toBeNull());
+  }
   expect(editor.value()).toBe(raw);
   expect(node("reveal").raw).toBe(raw);
   editor.select(Math.min(from + 1, to));
@@ -117,7 +122,7 @@ it.each([
   ["Org source", "org", "#+BEGIN_SRC js\ncode\n#+END_SRC", "js"],
   ["calculator", "md", "```calc\n1+1\n```", null],
 ] as const)("conceals the wrapper lines of a projected %s body and keeps their bytes", (_name, format, raw, lang) => {
-  const { root, editor } = mount(raw, format);
+  const { root, editor } = mount(raw, format, raw.indexOf("\n") + 1);
   expect(root.querySelector(".cm6-projected-source")).toBeNull();
   expect(root.querySelector(".cm-content")!.textContent).not.toMatch(/```|#\+(BEGIN|END)/);
   if (lang) expect(root.querySelector(".code-language")!.textContent).toBe(lang);
@@ -128,17 +133,16 @@ it.each([
   expect(node("reveal").raw).toBe(raw.replace(body, "文😀" + body));
 });
 
-it("shows only the body while the caret is in a mixed fence, and the whole source once it leaves", () => {
+it("keeps mixed source and fences visible as the caret enters and leaves code", () => {
   const raw = "before\n```js\ncode\n```\nafter";
   const { root, editor } = mount(raw);
   editor.selectByUser(raw.indexOf("code"));
-  expect(editor.value()).toBe("code");
-  expect(root.querySelector(".cm6-projected-source")).toBeNull();
-  editor.select(0); editor.keydown({ key: "ArrowLeft" });
   expect(editor.value()).toBe(raw);
+  expect(root.querySelector(".cm6-projected-source")).toBeNull();
   expect(root.querySelector('[data-cm6-construct="src"]')).toBeNull();
   editor.select(0);
-  expect(root.querySelector('[data-cm6-construct="src"]')).not.toBeNull();
+  expect(root.querySelector('[data-cm6-construct="src"]')).toBeNull();
+  expect(root.querySelector(".cm-content")!.textContent).toContain("```js");
   expect(node("reveal").raw).toBe(raw);
 });
 

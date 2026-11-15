@@ -1,11 +1,6 @@
 import { codeFences, type LiteralContainer } from "./fences";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
 
-// GH #357: is the WHOLE visible block text one fenced code block?
-// The block editor uses the answer only to stabilize its own visual box
-// (same card + font metrics as the rendered code region); the buffer itself
-// stays the honest raw text, fences included.
-
 export interface CodeFenceShape {
   /** Info-string language id ("" when none). "calc" is excluded — those
    *  blocks have their own specialized editing mode. */
