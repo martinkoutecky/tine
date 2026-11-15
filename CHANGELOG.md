@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- A page link with a label, Org `[[Page][label]]` or Markdown `[label](Page)`, now renders as a page reference with the Show brackets setting, and opens the page, like a plain `[[Page]]` link (#966).
 - Hierarchy page links follow **Show brackets**, collapsed numbered-list markers stay circular and centered, and bullet threading no longer draws stubs through margin comment messages (#959, #963, #129).
 - Typing in a zoomed block no longer rechecks unrelated descendant rows when its text changes (D-20261115-ZT).
 - Fixed PDF annotation saves changing unrelated sidecar layout, wrapped text and coordinate digits; new highlights use Logseq's multiline EDN layout (GH #954).
