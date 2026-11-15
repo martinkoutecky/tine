@@ -184,6 +184,12 @@
   border-end-start-radius: 0;
   border-end-end-radius: 0;
 }
+/* A results list starts every hit with a chip (the thread never links hits). Under the tint a hit that the
+   card joins to the one above keeps no chip, as for siblings in an outline. */
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-card-continued > .block-main > .block-content-wrapper > .block-content > .author-chip,
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-card-continued > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
+  display: none;
+}
 /* The phone layout reserves 44px beside a foldable block's text (app.css); keep that, plus the bleed. */
 @media (max-width: 640px) and (pointer: coarse) {
   :where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted > .block-main:has(> .block-controls > .collapse-toggle.has-children) > .block-content-wrapper {
@@ -196,10 +202,12 @@
 /* GH #892: the thread look, switched on by one class on <html> (`tine-author-marks-thread`, which Settings >
    Appearance > Fine-tuning > "Author marks" sets; a stylesheet cannot add a class, so the Guide also shows a copy for custom.css). Instead of a tint, a line runs down the right edge
    through the author chips (docs/contracts/theme-tokens.md section 8). One line per run (`author-run-*`, any
-   depth), one chip at the start of each run, the text column untouched on the left. The line and its chip sit in a
-   gutter at the end of the row's content, so they never cover text, the reference count (it floats beside the
-   chip) or the phone's 44px fold area (the gutter starts left of it). Everything is logical, so a mirrored layout
-   puts the thread on the left. */
+   depth), one chip at the start of each run, the text column untouched on the left. The gutter belongs to the FULL
+   row (`.block-main`): the row reserves it at its end, and the line (the text box's ::after) and the chip are placed
+   against the row's edge, so the controls after the text (comment markers, the resolved label, a folded block's
+   "N below" chip) sit left of it and never move the thread. It never covers text, the reference count (it floats
+   beside the chip) or the phone's 44px fold area (the gutter starts left of it). Everything is logical, so a
+   mirrored layout puts the thread on the left. */
 .tine-author-marks-thread {
   --author-thread-gutter: 16px;
   --author-thread-clear: 0px;
@@ -207,31 +215,36 @@
 @media (max-width: 640px) and (pointer: coarse) {
   .tine-author-marks-thread { --author-thread-clear: 44px; }
 }
-.tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper {
+.tine-author-marks-thread .ls-block.author-tinted > .block-main {
   position: relative;
   padding-inline-end: calc(var(--author-thread-gutter) + var(--author-thread-clear));
   --author-thread-top: calc(var(--ls-block-content-pad-y) + var(--ls-block-line-height) / 2);
 }
+/* The text keeps what it had: the row's gutter replaces the phone's own 44px reserve beside the text. */
+.tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper { padding-inline-end: 0; }
+/* The line is the text box's ::after, which no other feature draws on (the thread-lines decoration owns the
+   row's own ::before and ::after). The text box is not positioned, so the line is placed against the row. */
 .tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper::after {
   content: "";
   position: absolute;
-  top: var(--author-thread-top);
-  bottom: 0;
+  top: calc(1px + var(--author-thread-top));
+  bottom: 1px;
   inset-inline-end: calc(var(--author-thread-clear) + var(--author-thread-gutter) / 2 - 1px);
   width: 2px;
   background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
   pointer-events: none;
 }
-/* The block-main padding above and below a row is two pixels between rows: the line crosses it. */
-.tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: -1px; }
-.tine-author-marks-thread .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: -1px; }
-/* The chip moves into the gutter and sits on the line; only a run's first row keeps one. */
+/* The row's padding above and below is two pixels between rows: the line crosses it. */
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: 0; }
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: 0; }
+/* The chip sits on the line, against the row's edge (the wrapper is not positioned, so the row is its
+   containing block); only a run's first row keeps one. */
 .tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip,
 .tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
-  position: relative;
+  position: absolute;
   z-index: 1;
-  float: inline-end;
-  margin-inline-end: calc(-1 * var(--author-thread-gutter));
+  inset-inline-end: var(--author-thread-clear);
+  margin-inline-end: 0;
   background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary, transparent));
 }
 .tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip,

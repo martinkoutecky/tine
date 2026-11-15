@@ -16,7 +16,7 @@ it("a name's key is trimmed, space-collapsed and case-folded; the stored text is
 it("the thread look is one class on <html>, drawn with logical sides and the public run classes", () => {
   expect(threadLook.length).toBeGreaterThan(500);
   expect(threadLook).toMatch(/^\.tine-author-marks-thread \{/m);
-  for (const hook of [".author-run-continued", ".author-run-continues", "inset-inline-end", "float: inline-end", "margin-inline-end", "--author-thread-clear: 44px"])
+  for (const hook of [".author-run-continued", ".author-run-continues", "inset-inline-end", "> .block-content-wrapper::after", "position: absolute", "margin-inline-end", "--author-thread-clear: 44px"])
     expect(threadLook, hook).toContain(hook);
   expect(threadLook).not.toMatch(/(^|[\s;{])(left|right|margin-left|margin-right|padding-left|padding-right|float: right|float: left):/m);
   expect(threadLook).not.toMatch(/float: (left|right)/);

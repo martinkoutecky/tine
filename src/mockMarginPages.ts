@@ -101,6 +101,25 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[], co
       ],
     ],
     [
+      // GH #892 review F2: one run of rows whose trailing comment controls differ: a plain row, a stale-quote
+      // marker (phone: the open-comment marker), a resolved label and a folded block's "N below" chip.
+      "Author thread trailing", [
+        b("Claude's plain row.\ntine.author:: Claude"),
+        b("Claude's row with a comment marker.\ntine.author:: Claude", [
+          b("A passage that no longer exists.\ntine.quote:: words that were rewritten\ntine.author:: Ellis"),
+        ]),
+        b("Claude's row with a resolved comment.\ntine.author:: Claude", [
+          b("Settled.\ntine.quote:: resolved comment\ntine.resolved:: true\ntine.author:: Ellis"),
+        ]),
+        b("Claude's folded row with a comment below.\ntine.author:: Claude\ncollapsed:: true\nid:: 89200000-0000-4000-8000-000000000002", [
+          b("A hidden child\ntine.author:: Claude", [
+            b("A hidden comment.\ntine.quote:: hidden child\ntine.author:: Ellis"),
+          ]),
+        ], true),
+        b("Claude's closing row.\ntine.author:: Claude"),
+      ],
+    ],
+    [
       // GH #893: an authored block that also carries a margin comment on a passage of its text.
       "Author tint comment", [
         b("You wrote the line above."),

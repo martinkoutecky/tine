@@ -1,7 +1,7 @@
 // What a Block needs from the margin dialogue (vision §3.7), kept out of
 // Block.tsx so the component only wires it (the size ratchet, PARITY-CAMPAIGN §3).
 
-import { createMemo, useContext } from "solid-js";
+import { createMemo, getOwner, runWithOwner, useContext, type Accessor } from "solid-js";
 import type { OutlineScope } from "../document";
 import { storedAuthorOf, quoteSelectorOf } from "../comments";
 import { authorTint, isOwnAuthor } from "../commentIdentity";
@@ -9,11 +9,11 @@ import { marginNext, marginPrev, outlineNext, outlinePrev, threadRootOf } from "
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
-import { authorRunContinues, authorThreadSides, type AuthorNeighbors, type RowSides } from "./authorRuns";
+import { authorRunContinues, authorThreadSides, lastRow, type AuthorNeighbors, type RowSides } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
-import { createCommentChildren } from "../commentIndex";
+import { createCommentChildren, createCommentIndexFor } from "../commentIndex";
 import { NO_COMMENT_CHILDREN } from "../commentChildren";
 import { createQuoteCoverage } from "../render/quoteHighlight";
 import { datedThreadRoot, hasMessageDate } from "../document";
@@ -55,11 +55,28 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   // sibling), so it depends on more rows than the card. It is read where the classes are, not in a memo of its
   // own: a memo would cost every plain row an owner (Block.loadCost), and keeping it out of the card memo stops
   // a parent's keystroke from re-running the card comparisons of its children. Plain rows read nothing.
+  // The row above is the previous sibling's last drawn row. It is memoized, created on the first authored row's
+  // read (plain rows pay nothing) and under the row's own owner, and it reads comment membership from the
+  // covering index (`isComment`), not from the siblings' text: typing re-runs none of it.
+  const owner = getOwner();
+  let previousLast: Accessor<string | undefined> | undefined;
+  const previousRow = () => (previousLast ??= runWithOwner(owner, () => {
+    // The index that covers the previous sibling covers the whole spine below it.
+    const index = createCommentIndexFor(() => run!.neighbours()?.()?.prev ?? null);
+    return createMemo(() => {
+      const sides = run!.neighbours()?.() ?? NO_SIDES;
+      return sides.prev === undefined || sides.results ? undefined
+        : lastRow(sides.prev, run!.folded, id => index()?.isComment(id) ?? false);
+    });
+  }))!();
   const threadSides = () => {
     if (!run || author() === null || commentSelector() !== null || bulletless()) return NO_THREAD;
-    return authorThreadSides(run.id(), run.neighbours()?.() ?? NO_SIDES, run.firstChild(), run.folded, fmt());
+    return authorThreadSides(run.id(), run.neighbours()?.() ?? NO_SIDES, run.firstChild(), previousRow(), fmt());
   };
-  const showsAuthor = () => (author() !== null && !continued()) || bulletless();
+  // Every hit of a results list starts with its own chip: the tint card may still join adjacent hits (the
+  // stylesheet hides the chip of a joined one under the tint), but the thread never links across hits.
+  const inResults = () => !!run?.neighbours()?.()?.results;
+  const showsAuthor = () => (author() !== null && (!continued() || inResults())) || bulletless();
   // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => (commentSelector() !== null || inThread()) && (!datedThreadRoot(node().id) || hasMessageDate(node().id));
   const commentClasses = () => {

@@ -38,6 +38,9 @@ function measure() {
     const wrapper = row.querySelector(":scope > .block-main > .block-content-wrapper");
     if (!wrapper) continue;
     const chip = wrapper.querySelector(":scope > .block-content > .author-chip");
+    // The thread's line is the text box's ::after (never the row's own, which the thread-lines decoration draws on),
+    // placed against the full row.
+    const main = row.querySelector(":scope > .block-main");
     const after = getComputedStyle(wrapper, "::after");
     const w = wrapper.getBoundingClientRect();
     const text = (() => {
@@ -54,9 +57,31 @@ function measure() {
       up: row.classList.contains("author-run-continued"), down: row.classList.contains("author-run-continues"),
       bg: getComputedStyle(wrapper).backgroundColor, line: hasLine, lineTop: after.top, lineBottom: after.bottom,
       lineColor: after.backgroundColor, lineRight: hasLine ? parseFloat(after.right) : null,
-      wrapperRight: w.right, wrapperTop: w.top, wrapperBottom: w.bottom,
+      rowRight: main.getBoundingClientRect().right, wrapperTop: w.top, wrapperBottom: w.bottom,
       chip: c && { left: c.left, right: c.right, top: c.top, bottom: c.bottom, width: c.width, height: c.height,
         image: getComputedStyle(chip).backgroundImage, author: chip.getAttribute("data-author"), text: chip.textContent } });
+  }
+  return rows;
+}
+/** GH #892 review F2: where the thread's line and chip sit measured from the FULL row's right edge (`.block-main`),
+ *  and the trailing comment controls (marker, resolved label, folded "N below" chip) of each authored row. The
+ *  line's box is the pseudo-element's offset from its containing block (the wrapper before the fix, the row after). */
+function trailing() {
+  const rows = [];
+  for (const row of document.querySelectorAll(".page-blocks .ls-block.author-tinted")) {
+    const main = row.querySelector(":scope > .block-main"), wrapper = main.querySelector(":scope > .block-content-wrapper");
+    // The line is the text box's ::after; its containing block is the nearest positioned ancestor (the full row once
+    // the text box is not itself positioned, the text box before the F2 fix).
+    const after = getComputedStyle(wrapper, "::after");
+    const cb = getComputedStyle(wrapper).position !== "static" ? wrapper : wrapper.offsetParent;
+    const rowRight = main.getBoundingClientRect().right;
+    const lineRight = cb.getBoundingClientRect().right - parseFloat(after.right);
+    const chip = wrapper.querySelector(".author-chip");
+    const controls = [...main.querySelectorAll(":scope > .comment-entry > button, :scope > .comment-below-chip")]
+      .filter(el => el.offsetParent).map(el => ({ kind: el.className.split(" ")[0], left: el.getBoundingClientRect().left, right: el.getBoundingClientRect().right }));
+    const c = chip && chip.offsetParent ? chip.getBoundingClientRect() : null;
+    rows.push({ label: wrapper.querySelector(".block-content")?.textContent.trim().slice(0, 28) ?? "", lineGap: rowRight - lineRight, lineLeft: lineRight - 2,
+      chipGap: c ? rowRight - c.right : null, chipLeft: c?.left ?? null, controls });
   }
   return rows;
 }
@@ -64,7 +89,7 @@ const transparent = bg => bg === "rgba(0, 0, 0, 0)" || bg === "transparent";
 const near = (a, b, tol = 1) => Math.abs(a - b) <= tol;
 const run = async (name, fn) => { try { await fn(); } catch (error) { failures.push(`${name}: ${error.message ?? error}`); } };
 
-async function newPage(width, theme, dsf = 2) {
+async function newPage(width, theme, dsf = 2, pageName = "Author thread", threadLines = false) {
   const ctx = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width === 390, isMobile: width === 390, deviceScaleFactor: dsf });
   const page = await ctx.newPage();
   page.setDefaultTimeout(15_000);
@@ -73,11 +98,17 @@ async function newPage(width, theme, dsf = 2) {
   await page.goto(`${server.resolvedUrls.local[0]}?regressions`);
   await page.locator(".ls-block").first().waitFor();
   await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+  // The thread-lines decoration is a plugin's declarative decoration; switch it on the way its own fixture does.
+  if (threadLines) await page.evaluate(async () => {
+    const { pluginManager } = await import("/src/plugins/manager.ts");
+    pluginManager.hasDeclarativeDecoration = kind => kind === "thread-lines";
+    pluginManager.declarativeDecorationSetting = () => undefined;
+  });
   await page.addStyleTag({ content: ".toast-stack { display: none !important; }" });
   await page.keyboard.press("Control+k");
-  await page.locator(".switcher-input").fill("Author thread");
-  await page.locator(".switcher-row").filter({ hasText: "Author thread" }).first().click();
-  await page.locator(".page-title").filter({ hasText: "Author thread" }).first().waitFor();
+  await page.locator(".switcher-input").fill(pageName);
+  await page.locator(".switcher-row").filter({ hasText: pageName }).first().click();
+  await page.locator(".page-title").filter({ hasText: pageName }).first().waitFor();
   if (await page.locator(".mobile-drawer-scrim").count()) await page.keyboard.press("Escape");
   await page.locator(".ls-block.authored").first().waitFor();
   await page.evaluate(() => document.fonts.ready);
@@ -142,11 +173,12 @@ try {
       for (const r of chips) assert.ok(r.chip.left > r.textX, `"${r.label}": chip is left of its text`);
       // The line is one vertical through the chips: same x on every row of a run, under the chip's centre, joined across rows.
       for (const r of authored) {
-        assert.ok(near(r.wrapperRight, authored[0].wrapperRight, 0.5), `"${r.label}": row edge differs`);
-        assert.equal(r.up ? r.lineTop : "", r.up ? "-1px" : "", `"${r.label}": run-continued line does not reach the row above`);
-        assert.equal(r.down ? r.lineBottom : "", r.down ? "-1px" : "", `"${r.label}": run-continues line does not reach the row below`);
+        assert.ok(near(r.rowRight, authored[0].rowRight, 0.5), `"${r.label}": row edge differs`);
+        // The line is placed against the full row: a continued edge is the row's own edge, which meets the next row's.
+        assert.equal(r.up ? r.lineTop : "", r.up ? "0px" : "", `"${r.label}": run-continued line does not reach the row above`);
+        assert.equal(r.down ? r.lineBottom : "", r.down ? "0px" : "", `"${r.label}": run-continues line does not reach the row below`);
       }
-      for (const r of chips) assert.ok(r.chip.left < r.wrapperRight - 7 && r.chip.right > r.wrapperRight - 8, `"${r.label}": the line is not under its chip`);
+      for (const r of chips) assert.ok(r.chip.left < r.rowRight - 7 && r.chip.right > r.rowRight - 8, `"${r.label}": the line is not under its chip`);
       // The runs cross depth: Claude's five rows are one run (parent, child, grandchild, child, closing line), Mira's four likewise.
       for (const r of authored) assert.ok(near(r.lineRight, authored[0].lineRight, 0.5), `"${r.label}": the line is not at one distance from the right edge`);
       const claude = authored.slice(0, 5), ada = authored.slice(5);
@@ -183,7 +215,7 @@ try {
       assert.deepEqual(authored.filter(r => r.chip).map(r => r.chip.author), ["Claude", "Mira"], "Guide example: one chip per run");
       for (let i = 0; i < thread.length; i++) if (thread[i].authored) {
         assert.equal(guided[i].up, thread[i].up); assert.equal(guided[i].down, thread[i].down);
-        assert.ok(near(guided[i].wrapperRight, thread[i].wrapperRight, 0.5));
+        assert.ok(near(guided[i].rowRight, thread[i].rowRight, 0.5));
       }
     });
     await addCss(page2, guideIcon);
@@ -199,7 +231,67 @@ try {
     const rows = await page.evaluate(measure);
     await shoot(page, `phone-${theme}-b-thread.png`);
     await run(`phone ${theme}`, () => {
-      for (const r of rows.filter(r => r.authored && r.chip)) assert.ok(r.wrapperRight - r.chip.right >= 40, `"${r.label}": chip is ${r.wrapperRight - r.chip.right}px from the edge, under the fold area`);
+      for (const r of rows.filter(r => r.authored && r.chip)) assert.ok(r.rowRight - r.chip.right >= 40, `"${r.label}": chip is ${r.rowRight - r.chip.right}px from the edge, under the fold area`);
+    });
+    await ctx.close();
+  }
+  // GH #892 review F2: trailing comment controls never move the thread. One run of rows, with and without a marker,
+  // a resolved label and a folded "N below" chip: the line and the chip keep one distance from the row's right edge,
+  // and no control sits under either. Phone (tap), tablet and desktop widths.
+  for (const width of [390, 800, 1280]) {
+    const { ctx, page } = await newPage(width, "light", 2, "Author thread trailing");
+    activePage = page;
+    await setThreadClass(page, true);
+    await page.locator(".comment-below-chip").first().waitFor({ timeout: 5000 }).catch(() => {});
+    // The page's "N resolved" control reveals the closed thread; narrower than the margin column it becomes a label.
+    if (await page.locator(".comment-resolved-toggle").count()) await page.locator(".comment-resolved-toggle").first().click();
+    await page.mouse.move(0, 0);
+    const rows = await page.evaluate(trailing);
+    await shoot(page, `trailing-${width}.png`);
+    results[`trailing-${width}`] = rows;
+    await run(`trailing controls at ${width}px`, () => {
+      assert.equal(rows.length, 5, "the five authored rows of the page");
+      const kinds = new Set(rows.flatMap(r => r.controls.map(c => c.kind)));
+      assert.ok(kinds.has("comment-below-chip"), `the folded row's "N below" chip is drawn at ${width}px (saw ${[...kinds]})`);
+      if (width < 1000) for (const kind of ["margin-marker", "comment-resolved-entry"]) assert.ok(kinds.has(kind), `${kind} is drawn at ${width}px (saw ${[...kinds]})`);
+      for (const r of rows) {
+        assert.ok(near(r.lineGap, rows[0].lineGap, 0.5), `"${r.label}": the line is ${r.lineGap}px from the row's edge, the plain row's is ${rows[0].lineGap}px (controls: ${r.controls.map(c => c.kind)})`);
+        if (r.chipGap !== null) assert.ok(near(r.chipGap, rows[0].chipGap, 0.5), `"${r.label}": the chip is ${r.chipGap}px from the row's edge, the plain row's is ${rows[0].chipGap}px`);
+        for (const c of r.controls) assert.ok(c.right <= r.lineLeft + 0.5 && (r.chipLeft === null || c.right <= r.chipLeft + 0.5), `"${r.label}": ${c.kind} (${c.left}..${c.right}) reaches the thread at ${r.lineLeft}`);
+      }
+    });
+    await ctx.close();
+  }
+  // The thread look shares no pseudo-element with the thread-lines decoration, which draws a parent's vertical line on
+  // the row's own ::after and each child's elbow on its ::before: with both on, an authored parent that has children
+  // draws both lines (the decoration's and the author thread's).
+  for (const theme of ["light", "dark"]) {
+    const { ctx, page } = await newPage(1280, theme, 2, "Author thread", true);
+    activePage = page;
+    await setThreadClass(page, true);
+    const facts = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".page-blocks .ls-block.author-tinted.plugin-thread-lines:not(.collapsed)")]
+        .filter(row => row.querySelector(":scope > .block-children-container .ls-block"));
+      return rows.map(row => {
+        const main = row.querySelector(":scope > .block-main"), wrapper = main.querySelector(":scope > .block-content-wrapper");
+        const guide = getComputedStyle(main, "::after"), author = getComputedStyle(wrapper, "::after");
+        const child = row.querySelector(":scope > .block-children-container .ls-block > .block-main");
+        const elbow = getComputedStyle(child, "::before");
+        return { label: wrapper.textContent.trim().slice(0, 28),
+          guide: { content: guide.content, position: guide.position, display: guide.display, width: parseFloat(guide.borderInlineStartWidth) },
+          author: { content: author.content, position: author.position, width: author.width, display: author.display },
+          elbow: { content: elbow.content, display: elbow.display, width: parseFloat(elbow.borderInlineStartWidth) } };
+      });
+    });
+    await shoot(page, `${theme}-thread-with-thread-lines.png`);
+    results[`${theme}-thread-lines`] = facts;
+    await run(`${theme} thread look with thread-lines on`, () => {
+      assert.ok(facts.length >= 2, `expected authored parents drawn with the thread-lines decoration, saw ${facts.length}`);
+      for (const f of facts) {
+        assert.ok(f.guide.content !== "none" && f.guide.content !== "normal" && f.guide.position === "absolute" && f.guide.display !== "none" && f.guide.width > 0, `"${f.label}": the decoration's parent line is not drawn (${JSON.stringify(f.guide)})`);
+        assert.ok(f.elbow.content !== "none" && f.elbow.display !== "none" && f.elbow.width > 0, `"${f.label}": the child's elbow is not drawn (${JSON.stringify(f.elbow)})`);
+        assert.ok(f.author.content !== "none" && f.author.content !== "normal" && f.author.position === "absolute" && f.author.width === "2px" && f.author.display !== "none", `"${f.label}": the author thread line is not drawn (${JSON.stringify(f.author)})`);
+      }
     });
     await ctx.close();
   }

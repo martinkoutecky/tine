@@ -280,7 +280,8 @@ same run and the same "you". The stored text is never rewritten.
 | `.ls-block.author-tinted` | An authored outline row that draws the author mark: not a comment or reply, not the bulletless host of a whole-block embed, and none while Settings' **Show/Hide author marks** is off |
 | `.author-run-continued`, `.author-run-continues` | On an authored outline row (not a comment): the row drawn directly above, respectively below, is by the same author. Defined below |
 | `--author-color` | The author's colour, one of eight chosen from the name's key and defined on every authored row and on its chip. Read it as `var(--author-color, var(--accent))`. A rule sets it per author, on the row and its chip: `.ls-block[data-author="Claude"], .ls-block[data-author="Claude"] .author-chip { --author-color: #d97757; }` |
-| `.ls-block > .block-main > .block-content-wrapper` | The row's own box: its text and its chip, never its children. The one structural path promised here, because a thread or any other row-level drawing needs it; the chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`) |
+| `.ls-block > .block-main` | The full row, never its children: bullet column, text and the controls drawn after the text (comment marker, resolved label, folded "N below" chip). Its right edge is the row's edge, whatever trails the text: anchor a drawing at the row's end here (the thread look does) |
+| `.ls-block > .block-main > .block-content-wrapper` | The row's own text box, which the trailing controls make narrower; never its children. The chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`). These two paths are the only structure promised here, because a thread or any other row-level drawing needs them |
 | `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With the icon tokens (section 2) set on it, it shows the icon instead of the name |
 | `html.tine-author-marks-thread` | Tine's own thread look, below. A class on `<html>`, not a token: Settings > Appearance > Fine-tuning > **Author marks** (Tint, the default, or Thread; the class `tine-<id>-<option>` of the class knob `author-marks`) sets it. `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how); a theme package cannot set it |
 
@@ -304,15 +305,20 @@ inside one hit the outline rules apply. A surface counts only the rows it draws,
 so the same block in an embed starts a run of its own. Computing both sides is
 O(1) per row for the parent, the first child and the next sibling, plus the
 last-child chain of the previous sibling (each row lies on at most one such
-chain, so a page costs O(rows) in all); unauthored rows compute nothing.
+chain, so a page costs O(rows) in all); unauthored rows compute nothing. The
+previous sibling's last row is kept per row from the covering comment index
+(which blocks are comments) and the folds, never from the siblings' text:
+typing in any block, or editing a comment, re-runs none of it.
 
 **Thread look (`html.tine-author-marks-thread`).** Instead of the tint: a 2px line in
 the author's colour runs through the author chips in a 16px gutter at the end of
-each authored row's content (the phone's 44px fold area stays to the right of it).
-The line starts under the chip of a run's first row, crosses the two pixels
+each authored full row (`.block-main`, the phone's 44px fold area stays to the right
+of it). The gutter is the row's, so the controls after the text (comment markers,
+the resolved label, a folded block's "N below" chip) sit left of it and never move
+the line or the chip. The line starts under the chip of a run's first row, crosses the two pixels
 between rows (`author-run-continues`, `author-run-continued`) and ends at the
 bottom of the run's last row. Only a run's first row keeps its chip; the chip
-floats into the gutter, so the reference count sits beside it, not under it.
+sits in the gutter against the row's edge, so the reference count sits beside it, not under it.
 Text starts where it always did. Logical properties throughout: a mirrored layout
 draws the thread on the left.
 

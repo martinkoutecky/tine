@@ -13,6 +13,7 @@ import { editorIn } from "../tests/editorDriver";
 import { backend } from "../backend";
 import type { BlockDto } from "../types";
 import * as runs from "./authorRuns";
+import * as commentChildren from "../commentChildren";
 import { setAuthorMarksHidden } from "../authorMarksPref";
 import { readFileSync } from "node:fs";
 
@@ -284,4 +285,68 @@ it("renders every public authorship hook the contract's section 8 table promises
     expect(tint, `${id} carries a tint class`).toBeDefined();
     expect(css).toContain(`.${tint} { --author-color:`);
   }
+});
+
+// GH #892 review F1: the previous sibling's last drawn row is found from the covering comment index (the one
+// owner of comment membership), never by screening the hidden comments again. Typing costs the same however
+// many hidden comments follow the last visible child.
+const quote = (id: string, parent: string) => b(id, "Bo", [], `note ${id}\ntine.quote:: ${parent}`);
+const screened = () => vi.spyOn(commentChildren, "commentChildOf");
+it.each([8, 32])("typing beside %i hidden comments screens a constant number of blocks for membership", count => {
+  const comments = Array.from({ length: count }, (_, i) => quote(`c${i}`, "p"));
+  const costs = ["p", "last", "c1"].map(edited => {
+    const root = mount([b("p", "Ada", [b("first"), b("last"), ...comments]), b("n")]);
+    // The thread runs from p's last visible row into n: that is the row the walk must find.
+    expect(runOf(root, "n")).toBe("up");
+    const calls = screened();
+    setRaw(edited, edited === "c1" ? "other note\ntine.quote:: p\ntine.author:: Bo" : `${edited} edited\ntine.author:: Ada`);
+    const cost = calls.mock.calls.length;
+    calls.mockRestore(); dispose?.(); resetStore(); document.body.innerHTML = "";
+    return cost;
+  });
+  // The index screens the one edited block; a walk over the tail would add one screen per hidden comment.
+  for (const cost of costs) expect(cost).toBeLessThanOrEqual(4);
+});
+
+// GH #892 review F3: the hits of a results list are independent. No thread link crosses from one hit to the
+// next, so every hit starts with its own chip; the tint's card may still join adjacent leaf hits.
+function mountResults(blocks: BlockDto[], hits: string[]) {
+  loadSingle({ name: "Runs", title: "Runs", kind: "page", format: "md", pre_block: null, blocks });
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => <BlockList ids={hits} results />, root);
+  return root;
+}
+const chipOf = (root: ParentNode, id: string) => row(root, id).querySelector(":scope > .block-main .author-chip");
+it.each([
+  ["sibling leaf hits", () => [b("a"), b("b")]],
+  ["leaf hits under different parents", () => [b("p1", "Ada", [b("a")]), b("p2", "Ada", [b("b")])]],
+  ["a leaf hit followed by an expanded hit", () => [b("a"), b("b", "Ada", [b("k")])]],
+  ["a leaf hit followed by a folded hit", () => [b("a"), { ...b("b", "Ada", [b("k")]), collapsed: true }]],
+])("results: %s are not threaded together and each starts with a chip", (_name, blocks) => {
+  const hits = ["a", "b"];
+  const root = mountResults(blocks(), hits);
+  // The leaf hit has no run class at all; the next hit may continue into its own child, never up into the leaf.
+  expect(runOf(root, "a")).toBe("");
+  expect(runOf(root, "b")).not.toContain("up");
+  for (const id of hits) expect(chipOf(root, id), `${id} starts with its own chip`).not.toBeNull();
+});
+
+it("results: the outline rules still apply inside one hit, and the tint card may join leaf hits", () => {
+  const root = mountResults([b("a", "Ada", [b("k")]), b("b"), b("c")], ["a", "b", "c"]);
+  expect(["a", "k", "b", "c"].map(id => runOf(root, id))).toEqual(["down", "up", "", ""]);
+  expect(["b", "c"].map(id => cardOf(root, id))).toEqual(["down", "up"]);
+});
+
+it("the tint hides the chip of a card-joined hit with the stylesheet, so it keeps its look", () => {
+  const css = readFileSync("src/styles/comments.css", "utf8");
+  expect(css).toMatch(/:where\(:root:not\(\.tine-author-marks-thread\)\) \.ls-block\.author-card-continued > \.block-main > \.block-content-wrapper > \.block-content > \.author-chip/);
+});
+
+it("a block that becomes a comment (or stops being one) moves the row above its next sibling, live", () => {
+  const root = mount([b("p", "Ada", [b("first"), b("last", "Bo")]), b("n")]);
+  expect(runOf(root, "n")).toBe("");   // p's last drawn row is by Bo
+  setRaw("last", "last\ntine.author:: Bo\ntine.quote:: p");
+  expect(runOf(root, "n")).toBe("up");   // a comment is not a row: first (Ada) is
+  setRaw("last", "last\ntine.author:: Bo");
+  expect(runOf(root, "n")).toBe("");
 });

@@ -1,8 +1,7 @@
 import { createMemo } from "solid-js";
-import { blockIsOpaqueSheetView, formatForBlock, node } from "../document";
+import { blockIsOpaqueSheetView, node } from "../document";
 import { authorOf, quoteSelectorOf } from "../comments";
 import { authorKey } from "../commentIdentity";
-import { commentChildOf } from "../commentChildren";
 import { facetsOf, parseBody } from "../render/facets";
 import type { Block, Inline, ListItem } from "../render/ast";
 
@@ -97,31 +96,28 @@ export function authorThreadLinks(aboveId: string, belowId: string, format: "md"
 }
 
 /** The last row drawn inside `id`'s subtree: follow the last rendered child while the row shows its children.
- * Rendered children are the stored ones minus margin comments (Block's `outlineChildren`); a sheet host draws
- * no rows. Each row lies on the spine of at most one previous sibling, so a page of n rows costs O(n) in all. */
-function lastRow(id: string, folded: (id: string) => boolean): string {
+ * Rendered children are the stored ones minus margin comments (membership from the covering comment index,
+ * `isComment`); a sheet host draws no rows. Each row lies on the spine of at most one previous sibling, so a
+ * page of n rows costs O(n) in all. The caller memoizes it per row: the answer changes only when a spine row's
+ * children, a fold or comment membership changes, never when text is typed. */
+export function lastRow(id: string, folded: (id: string) => boolean, isComment: (id: string) => boolean): string {
   for (let at = id;;) {
     const n = node(at);
     if (!n || folded(at) || blockIsOpaqueSheetView(at)) return at;
-    const format = formatForBlock(at);
     let last: string | undefined;
-    for (let i = n.children.length - 1; i >= 0 && last === undefined; i--) {
-      const child = node(n.children[i]);
-      if (child && commentChildOf(child.id, child.raw, format) === null) last = child.id;
-    }
+    for (let i = n.children.length - 1; i >= 0 && last === undefined; i--) if (!isComment(n.children[i])) last = n.children[i];
     if (last === undefined) return at;
     at = last;
   }
 }
 
 /** Whether `row` joins the row above it and the row below it in a thread (reading order, any depth).
- * Above: the previous sibling's last row, else the parent. Below: the first rendered child, else the next
- * sibling, else the row below the parent's subtree. A results list keeps the card rule: childless siblings only. */
-export function authorThreadSides(row: string, sides: RowSides, firstChild: string | undefined, folded: (id: string) => boolean, format: "md" | "org"): { continued: boolean; continues: boolean } {
-  const childless = (id: string) => !node(id)?.children.length;
-  const above = sides.prev === undefined ? sides.head
-    : !sides.results ? lastRow(sides.prev, folded) : childless(sides.prev) ? sides.prev : undefined;
-  const below = firstChild ?? (sides.results ? (childless(row) ? sides.next : undefined) : sides.next ?? sides.after);
+ * Above: `previousLast` (the previous sibling's last row, `lastRow`), else the parent. Below: the first
+ * rendered child, else the next sibling, else the row below the parent's subtree. Hits of a results list never
+ * join one another; inside a hit the outline rules apply (the list passes `results` to its own rows only). */
+export function authorThreadSides(row: string, sides: RowSides, firstChild: string | undefined, previousLast: string | undefined, format: "md" | "org"): { continued: boolean; continues: boolean } {
+  const above = sides.prev === undefined ? sides.head : previousLast;
+  const below = firstChild ?? (sides.results ? undefined : sides.next ?? sides.after);
   return {
     continued: above !== undefined && authorThreadLinks(above, row, format),
     continues: below !== undefined && authorThreadLinks(row, below, format),

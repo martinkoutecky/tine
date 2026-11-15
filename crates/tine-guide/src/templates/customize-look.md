@@ -117,26 +117,28 @@ icon:: 🎨
     | `.author-run-continued`, `.author-run-continues` | The block drawn right above (below) this one is by the same author. A run continues from a parent into its first child, and out of the last child to the next block; a folded block ends where it is drawn. A block you wrote, a comment or an embed ends a run |
   - A thread instead of a tint: a line down the right edge of the page, through the author chips, with one chip at the start of each run. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
   - ```css
-    .ls-block.author-tinted > .block-main > .block-content-wrapper {
+    .ls-block.author-tinted > .block-main {
       position: relative;
-      padding-inline: 0 16px;
+      padding-inline-end: 16px;
+    }
+    .ls-block.author-tinted > .block-main > .block-content-wrapper {
+      padding-inline: 0;
       margin-inline: 0;
       background: none;
     }
     .ls-block.author-tinted > .block-main > .block-content-wrapper::after {
       content: "";
       position: absolute;
-      inset-block: 14px 0;
+      inset-block: 15px 1px;
       inset-inline-end: 7px;
       width: 2px;
       background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
     }
-    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: -1px; }
-    .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: -1px; }
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: 0; }
+    .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: 0; }
     .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip {
-      position: relative;
-      float: inline-end;
-      margin-inline-end: -16px;
+      position: absolute;
+      inset-inline-end: 0;
       background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary));
     }
     .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip { display: none; }
