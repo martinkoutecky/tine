@@ -234,6 +234,133 @@ fn reindenting_a_parent_does_not_shift_a_newly_adopted_child() {
     );
 }
 
+/// Review F1 of #960: equal text is not identity. Two parents with the same
+/// text (prose, an empty bullet, a bulleted or an unbulleted heading) and
+/// differently indented children; the first moves under, after or before
+/// `target`. The untouched second parent's child keeps its bytes, and the moved
+/// child keeps its depth relative to its parent.
+#[test]
+fn a_repeated_parent_text_keeps_each_parents_children() {
+    let _integration_guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    let shapes = [
+        ("- dup", "dup", "- dup"),
+        ("- ", "", "- "),
+        ("- # dup", "# dup", "- # dup"),
+        ("# dup", "# dup", "- # dup"),
+    ];
+    for (line, raw, bulleted) in shapes {
+        for unit in ["\t", "  ", "\x0c", " \t"] {
+            for newline in ["\n", "\r\n", "\r"] {
+                let u = |n: usize| unit.repeat(n);
+                let source = format!(
+                    "{line}\n{}- childA\n{line}\n{}- childB\n- target\n",
+                    u(2),
+                    u(3)
+                )
+                .replace('\n', newline);
+                let kept = format!("{line}\n{}- childB\n", u(3));
+                for at in ["under", "after", "before"] {
+                    let written = saved(&source, EditKind::MoveBlocks, |doc| {
+                        assert_eq!(doc.blocks[0].raw, raw);
+                        let moving = doc.blocks.remove(0);
+                        match at {
+                            "under" => doc.blocks[1].children.push(moving),
+                            "after" => doc.blocks.push(moving),
+                            _ => doc.blocks.insert(1, moving),
+                        }
+                    });
+                    // `target` has no children, so the moved parent takes the
+                    // page's own step below it; its child keeps its offset.
+                    let step = if unit == "  " { "  " } else { "\t" };
+                    let expected = match at {
+                        "under" => {
+                            format!("{kept}- target\n{step}{bulleted}\n{step}{}- childA\n", u(2))
+                        }
+                        "after" => format!("{kept}- target\n{line}\n{}- childA\n", u(2)),
+                        _ => format!("{kept}{line}\n{}- childA\n- target\n", u(2)),
+                    }
+                    .replace('\n', newline);
+                    cases += 1;
+                    if written != expected {
+                        failures.push(format!("{line:?} {unit:?} {newline:?} {at}: expected {expected:?}, got {written:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 144);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Review F1 of #960, insertion: a new subtree with an existing parent's text
+/// lands before it while that parent gains a property (as `tine add --before`
+/// does). The existing parent's child keeps its bytes; add-under and add-after
+/// are controls.
+#[test]
+fn a_new_subtree_with_a_parents_text_does_not_take_its_children() {
+    let _integration_guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    for unit in ["\t", "  ", "\x0c", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            let u = |n: usize| unit.repeat(n);
+            let source = format!(
+                "- dup\n{}- childA\n- dup\n{}- childB\n- target\n",
+                u(2),
+                u(3)
+            )
+            .replace('\n', newline);
+            for at in ["before", "after", "under"] {
+                let written = saved(&source, EditKind::InsertBlocks, |doc| {
+                    let mut new = block("dup");
+                    new.children.push(block("new-child"));
+                    doc.blocks[0]
+                        .raw
+                        .push_str("\nid:: 6f0c1c1e-0000-4000-8000-000000000001");
+                    match at {
+                        "before" => doc.blocks.insert(0, new),
+                        "after" => doc.blocks.insert(1, new),
+                        _ => doc.blocks[0].children.push(new),
+                    }
+                });
+                // The new subtree is rendered in the page's own step.
+                let step = if unit == "  " { "  " } else { "\t" };
+                let original = format!(
+                    "- dup\n  id:: 6f0c1c1e-0000-4000-8000-000000000001\n{}- childA\n",
+                    u(2)
+                );
+                let rest = format!("- dup\n{}- childB\n- target\n", u(3));
+                let expected = match at {
+                    "before" => format!("- dup\n{step}- new-child\n{original}{rest}"),
+                    "after" => format!("{original}- dup\n{step}- new-child\n{rest}"),
+                    _ => format!("{original}{}- dup\n{}{step}- new-child\n{rest}", u(2), u(2)),
+                }
+                .replace('\n', newline);
+                cases += 1;
+                if written != expected {
+                    failures.push(format!(
+                        "{unit:?} {newline:?} {at}: expected {expected:?}, got {written:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 36);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn an_unchanged_parent_keeps_mixed_child_prefixes_verbatim() {
     let _integration_guard = crate::integration_lock();

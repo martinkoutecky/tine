@@ -6,7 +6,8 @@
 //! lines. Rebuilding the whole page from the DTO would rewrite that layout in
 //! blocks the save never touched. Instead, every DTO block whose raw text equals
 //! an old block's raw (matched by a pre-order LCS, then by equal text for moved
-//! blocks) reuses that block's physical lines; only new or changed blocks, and
+//! blocks; a repeated text goes to the old block its children came from)
+//! reuses that block's physical lines; only new or changed blocks, and
 //! the page-property preamble when it changed, are rendered; a changed block
 //! still keeps the bytes of the continuation lines its edit did not touch.
 //! A block staying with its original parent retains its relative indentation.
@@ -322,7 +323,8 @@ fn subtree_len(block: &DocBlock) -> usize {
 
 /// For each new block: the old block whose lines it reuses (equal raw), and
 /// for unmatched ones an old block at the same place whose indentation it
-/// should prefer (a changed block).
+/// should prefer (a changed block). Both are this block's old identity, which
+/// [`follow_children`] reconciles with its children's.
 type Matches = (Vec<Option<usize>>, Vec<Option<usize>>);
 
 fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
@@ -373,7 +375,96 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
             keep[j] = free.get_mut(news[j].raw()).and_then(VecDeque::pop_front);
         }
     }
+    follow_children(olds, news, &mut keep, &mut hint);
     (keep, hint)
+}
+
+/// Equal text is not identity: the matches above pair a repeated text by
+/// position, so a moved or newly inserted block can take the old block whose
+/// children stayed elsewhere. A block's matched children name the old block it
+/// is. When none of them comes from its current match and one comes from old
+/// block `q`, the block becomes `q`. With `q`'s text it reuses `q`'s lines, and
+/// the block that held them takes this block's previous match, unless a child
+/// of that block comes from `q` too. With other text, an unmatched block takes
+/// `q` as its changed-block hint. Children are settled before their parent
+/// (reverse pre-order). Markdown only: Org's old blocks record no parent.
+/// O(old + new blocks).
+fn follow_children(
+    olds: &[OldBlock],
+    news: &[&DocBlock],
+    keep: &mut [Option<usize>],
+    hint: &mut [Option<usize>],
+) {
+    let m = news.len();
+    let mut size = vec![1; m];
+    for j in (0..m).rev() {
+        let mut c = j + 1;
+        for _ in 0..news[j].children.len() {
+            size[j] += size[c];
+            c += size[c];
+        }
+    }
+    let size = &size;
+    // The pre-order indices of new block `j`'s children.
+    let kids = move |j: usize| {
+        let mut c = j + 1;
+        (0..news[j].children.len()).map(move |_| {
+            let kid = c;
+            c += size[kid];
+            kid
+        })
+    };
+    let from = |keep: &[Option<usize>], c: usize| keep[c].and_then(|o| olds[o].parent);
+    let mut holder = vec![None; olds.len()];
+    keep.iter()
+        .enumerate()
+        .for_each(|(j, o)| o.iter().for_each(|&o| holder[o] = Some(j)));
+    let mut anchored: Vec<bool> = (0..m)
+        .map(|j| {
+            let current = keep[j].or(hint[j]);
+            current.is_some() && kids(j).any(|c| from(keep, c) == current)
+        })
+        .collect();
+    for j in (0..m).rev() {
+        let current = keep[j].or(hint[j]);
+        let mut named = None;
+        for c in kids(j) {
+            match from(keep, c) {
+                Some(p) if Some(p) == current => {
+                    named = None;
+                    break;
+                }
+                Some(p) if named.is_none() => named = Some(p),
+                _ => {}
+            }
+        }
+        let Some(q) = named else { continue };
+        if olds[q].raw != news[j].raw() {
+            // A changed block: `q` is the old block it replaces. Another
+            // block may still reuse `q`'s unchanged lines.
+            if keep[j].is_none() {
+                hint[j] = Some(q);
+                anchored[j] = true;
+            }
+            continue;
+        }
+        if holder[q].is_some_and(|k| anchored[k]) {
+            continue;
+        }
+        let previous = keep[j];
+        let k = holder[q].take();
+        if let Some(o) = previous {
+            holder[o] = k;
+        }
+        if let Some(k) = k {
+            // `k` has `q`'s text; `previous`, when set, has this block's, equal to it.
+            keep[k] = previous;
+            anchored[k] = false;
+        }
+        keep[j] = Some(q);
+        holder[q] = Some(j);
+        anchored[j] = true;
+    }
 }
 
 #[cfg(test)]
