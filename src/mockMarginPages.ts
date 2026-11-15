@@ -4,8 +4,25 @@ import type { BlockDto } from "./types";
 
 /** Page names and their blocks; mock.ts wraps them as pages (I-12 keeps page
  * construction in the mock backend and document/convert.ts). */
-export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[]][] {
+export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[], "org"?][] {
   return [
+    ["Org label brackets 966", [b("A [[git]] tool for [[Emacs][my favorite editor]]")], "org"],
+    ["Rendering regression", [
+      b("Numbered fold markers", Array.from({ length: 12 }, (_, i) =>
+        b(`Numbered item ${i + 1}\nlogseq.order-list-type:: number\ncollapsed:: true`, [b("Hidden child")], true))),
+      b("Threaded parent with a passage", [
+        b("First outline child", [b("A deeper branch", [b("Deep leaf")])]),
+        b("Last outline child"),
+        b("A margin message\ntine.quote:: passage\ntine.date:: 2026-11-07T13:37Z", [
+          b("A reply message\ntine.date:: 2026-11-07T13:38Z", [b("An outline within the reply", [b("Reply outline leaf")])]),
+          b("Supporting outline", [b("Supporting leaf")]),
+        ]),
+        b("An undated comment\ntine.quote:: Threaded parent", [
+          b("An undated reply", [b("A nested undated reply")]),
+        ]),
+      ]),
+      b("[[Rendering regression/Child]]"),
+    ]],
     ["Message outlines regression", [
       b("A passage worth discussing.", [
         b("The first message\ntine.quote:: passage\ntine.date:: 2026-11-07T13:37Z", [

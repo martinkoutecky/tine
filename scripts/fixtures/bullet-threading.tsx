@@ -6,6 +6,7 @@ import { Block } from "../../src/components/Block";
 import { pluginManager } from "../../src/plugins/manager";
 import type { PluginSettings } from "../../src/plugins/settings";
 import { galleryThemes } from "../../src/styles/themes";
+import { setCm6EditorEnabled } from "../../src/editor/cm6Setting";
 import "../../src/styles/inter.css";
 import "../../src/styles/theme.css";
 import "../../src/styles/app.css";
@@ -21,6 +22,7 @@ Object.assign(window, { setThreadTheme: (id: string) => {
   style.textContent = galleryThemes.find(theme => theme.id === id)?.css ?? "";
 } });
 await initParser();
+setCm6EditorEnabled(false);
 loadSingle({ name: "Thread", title: "Thread", kind: "page", pre_block: null, format: "md", blocks: [
   { id: "root", raw: "Topmost ancestor", collapsed: false, children: [
     { id: "before", raw: "Unrelated preceding sibling", collapsed: false, children: [] },
