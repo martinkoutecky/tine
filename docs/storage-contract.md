@@ -10,9 +10,11 @@ on every refusal and offers conflict resolution or retry.
 
 Live conflict review uses the revision the editor loaded or last proved
 published as its disk ancestor. A host acknowledgment takes custody of input;
-it does not advance that ancestor before publication. Review is three-way when
-the optional Concord ledger still holds the ancestor's bytes; otherwise it
-keeps both sides for a two-way review.
+it does not advance that ancestor before publication. Overlapping saves retain
+the newest revision proved published on the same loaded instance, even when
+publication replies arrive out of order or a newer save conflicts. Review is
+three-way when the optional Concord ledger still holds the ancestor's bytes;
+otherwise it keeps both sides for a two-way review.
 
 A failed config read opens the graph read-only: existing files remain readable,
 and transactions reject mutations before disk steps. `Store::config().problem`

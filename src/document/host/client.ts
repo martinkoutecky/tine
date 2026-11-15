@@ -100,6 +100,8 @@ interface Page {
   needed: number | null;
   /** Latest nonconflicted input awaiting publication, bounded to one revision. */
   pendingBase: { instance: number; version: number; rev: string } | null;
+  /** Last publication applied to review ancestry on a loaded instance. */
+  reviewBase: { instance: number; version: number } | null;
   /** The highest taken version a publication wait answered true for (J6). */
   waited: number | null;
   /** The taken version a publication wait is running for (J6). */
@@ -546,20 +548,28 @@ export class HostClient {
    * discharges the publication debt it covers (J6). */
   async published(needs: readonly PublishedNeed[]): Promise<boolean> {
     const session = this.session;
+    const covered = needs.map(({ key, version }) => {
+      const page = this.byKey.get(key);
+      const base = page?.pendingBase;
+      return { key, version, page, base: base && base.version <= version ? base : null };
+    });
     while (!this.retired) {
       const result = await Promise.race([this.host.waitPublished(session, needs), this.retirement]);
       if (this.retired || this.session !== session) return false;
       if (result === null) continue;
       if (result) {
-        for (const { key, version } of needs) {
-          const page = this.byKey.get(key);
-          if (page) {
+        for (const { key, version, page, base } of covered) {
+          if (page && this.byKey.get(key) === page) {
             page.waited = Math.max(page.waited ?? version, version);
-            const base = page.pendingBase;
-            if (base && base.version <= version) {
-              if (base.instance === this.instanceOf(page)) this.doc.published(page.name, base.rev);
-              page.pendingBase = null;
+            // Review keeps the newest revision proved published on this loaded
+            // instance. Overlapping waits retain their own eligible revision;
+            // late older proofs cannot regress it or consume newer pending input.
+            if (base && base.instance === this.instanceOf(page)
+              && (page.reviewBase?.instance !== base.instance || page.reviewBase.version < base.version)) {
+              this.doc.published(page.name, base.rev);
+              page.reviewBase = { instance: base.instance, version: base.version };
             }
+            if (base && page.pendingBase === base) page.pendingBase = null;
           }
         }
         this.onChange();
@@ -683,7 +693,7 @@ export class HostClient {
     let page = this.pages.get(name);
     if (!page) {
       page = { name, key: null, on: false, version: null, editSeq: 0, sentSeq: 0, phase: { kind: "idle" }, stash: [],
-        baseline: null, observed: null, notice: null, held: null, needed: null, pendingBase: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
+        baseline: null, observed: null, notice: null, held: null, needed: null, pendingBase: null, reviewBase: null, waited: null, waiting: null, retry: null, refusal: null, refs: new Set(),
         kinds: [], timer: null, burst: null, waiters: [], answered: [] };
       this.pages.set(name, page);
     }
@@ -766,6 +776,7 @@ export class HostClient {
     page.version = version;
     page.held = null;
     page.pendingBase = null;
+    page.reviewBase = null;
     this.remember(page, content.kind === "no-file" ? null : content.dto.rev ?? undefined, version);
   }
 
