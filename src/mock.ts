@@ -481,7 +481,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
         b("Source root two"),
       ],
     },
-    ...[...marginRegressionPages(b), ...guideLevelRegressionPages(b)].map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
+    ...[...marginRegressionPages(b), ...guideLevelRegressionPages(b)].map(([name, blocks, format]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks, ...(format ? { format } : {}) })),
   );
 }
 

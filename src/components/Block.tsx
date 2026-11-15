@@ -250,9 +250,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
   // The children-source sheet this block owns (a query block's table/board is the macro's).
   const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
-  // Only ordinary-outline parents (including folded ones) read plugin decoration.
-  const threadLineDecoration = (): ThreadLineDecoration => {
-    if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
+  // Bulletless comments keep their own presentation instead of outline threading.
+  const threadLineDecoration = (withoutBullet: boolean): ThreadLineDecoration => {
+    if (!(hasChildren() && sheet().view === null) || withoutBullet) return NO_THREAD_LINES;
     return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
       key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
@@ -301,13 +301,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       class="ls-block"
       dir={noteLayoutDirAttr()}
       {...(() => {
-        const thread = threadLineDecoration();
+        const comments = commentClasses(), thread = threadLineDecoration(!!comments["comment-in-thread"]);
         return {
           style: rowDecorationStyle(thread, thread.enabled && thread.levels ? depthOf(props.id) : 0),
           classList: {
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
-            ...commentClasses(),
+            ...comments,
             "author-tinted": authorTinted(),
             // The card of a thread with a message changed since the user last looked (DESIGN §12),
             // also while the thread is folded to "N replies" and its message rows are not drawn.

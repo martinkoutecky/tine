@@ -55,7 +55,7 @@ describe("renderInlines", () => {
       { k: "link", url: { type: "page_ref", v: "/Cafe\u0301/" }, full: "[[/Cafe\u0301/]]" },
     ]);
     expect(host.querySelector('a.tag[data-ref="ai-note"]')?.textContent).toBe("#AI-Note");
-    expect(host.querySelector('a.page-ref[data-ref="parent/elias"]')?.textContent).toBe("writer");
+    expect(host.querySelector('a.page-ref[data-ref="parent/elias"]')?.textContent).toBe("[[writer]]"); // brackets default on, around the label (GH #966)
     expect(host.querySelector('a.page-ref[data-ref="café"]')).not.toBeNull();
   });
 

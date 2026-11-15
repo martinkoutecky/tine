@@ -222,8 +222,8 @@ function inlineText(nodes: Inline[], o: RenderedTextOptions): string {
         const label = s.label && s.label.length ? inlineText(s.label, o) : "";
         if (s.url.type === "page_ref") {
           const name = label || s.url.v;
-          // The renderer shows `[[name]]` (dimmed brackets) for a bare page ref,
-          // the alias text alone when labeled.
+          // Export text keeps `[[name]]` for a bare page ref and the label alone
+          // when labeled (the screen brackets both with Show brackets on, GH #966).
           out += !label && !o.stripLinks ? `[[${name}]]` : name;
         } else if (s.url.type === "block_ref") {
           out += label || resolvedBlockRefText(s.url.v, o);

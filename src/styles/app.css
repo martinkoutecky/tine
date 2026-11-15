@@ -3616,10 +3616,6 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
 }
 
-.bullet-container:hover {
-  background: var(--bullet-ring);
-}
-
 /* zoom breadcrumb */
 .zoom-breadcrumb {
   display: flex;
@@ -3654,8 +3650,9 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.6;
 }
 
+.bullet-container:hover,
 .bullet-container.bullet-closed {
-  background: var(--bullet-ring);
+  background: radial-gradient(circle closest-side, var(--bullet-ring) 100%, transparent 100%);
 }
 
 .bullet {
