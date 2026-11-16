@@ -250,6 +250,9 @@ export interface AliasGroup {
  *  `image`, which the page `page` already holds (O4 capture), or several
  *  files claim a touched name (O4 contested). */
 export type RenameRefusal =
+  | { kind: "taken"; into: string }
+  | { kind: "checkRefused"; guarantee: "P2" | "P3"; file: string }
+  | { kind: "headerChildren" | "hiddenOccurrence" | "survivorIdentity"; file: string }
   | { kind: "ownChild"; old: string; new: string }
   | { kind: "fileTaken"; file: string; page: string }
   | { kind: "notAPage"; name: string }

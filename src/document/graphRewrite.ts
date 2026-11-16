@@ -59,7 +59,7 @@ export type DiskRename = RenameDone["outcome"] | "busy" | { unsaved: string; men
  * through `onRefreshed`. Navigation in that
  * callback shares the refresh batch, so views read only the final route. */
 export async function renamePageOnDisk(
-  from: string, to: string, target?: PageTarget, mergeInto?: string, onRefreshed?: (owner: Owner) => void,
+  from: string, to: string, target?: PageTarget, mergeInto?: string, onRefreshed?: (owner: Owner) => void, saveFirst?: string,
 ): Promise<DiskRename> {
   if (graphRewriteFrozen()) return "busy";
   // Blur is synchronous: commit the current editor buffer before closing the
@@ -77,7 +77,7 @@ export async function renamePageOnDisk(
     if (!owner()) return "stale";
     let result;
     try {
-      result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared));
+      result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared, ...(saveFirst ? [saveFirst] : [])));
     } catch (error) {
       if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
       throw error;

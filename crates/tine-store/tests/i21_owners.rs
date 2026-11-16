@@ -150,7 +150,7 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // -1 dead-code wave: the deleted `publish_html` command (graph export
         // goes through publish_live).
         // -1 CM step 2 batch 12: rename_page moved to commands/rename.rs.
-        36,
+        35,
         "command future",
         "caller awaits blocking result",
     ),
@@ -168,6 +168,13 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // dialog's question (M-Q5): each awaited by its command future.
         2,
         "rename_offer / rename_page command future",
+        "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/commands/file_merge.rs",
+        "spawn_blocking(",
+        1,
+        "merge_pages command future (moved from commands.rs)",
         "caller awaits blocking result",
     ),
     (
@@ -320,6 +327,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/commands/concord.rs",
         "src-tauri/src/commands/journals_feed.rs",
         "src-tauri/src/commands/rename.rs",
+        "src-tauri/src/commands/file_merge.rs",
         "src-tauri/src/commands/templates.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/host_retirement.rs",

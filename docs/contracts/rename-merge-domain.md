@@ -78,6 +78,26 @@ Each failed candidate leaves the transaction unchanged. The following reasons
 describe the frozen boundary, including imported text, incomplete native source
 maps, malformed candidates and concurrent changes:
 
+The window receives named planner, check and merge refusals as typed data,
+localized by its Fluent catalogs. Error toasts stay until dismissed. A P3 refusal
+names the on-disk file and offers **Save it and rename**: on the user's click,
+the page host saves exactly that file without an edit through `PagePlan::save_page`
+(normal preparation, revision guard, lock, temp write, fsync and rename), then
+repeats the original rename or file merge with the same confirmed choices. The
+lower bound is one extra page read and ordinary save, then the existing rename;
+one IPC carries both steps. There is no automatic loop. Another refused file
+requires another click; a failed save prevents the repeat. These are two legal
+operations, not one atomic repair: a successful save remains if the subsequent
+rename refuses, fails, or the app closes between the two steps. P2 says Tine's
+own check failed, names the file, and asks for a bug report without a retry.
+The plain toast surface names files as text; it does not support inline links.
+
+The CLI has no standalone unchanged-save verb. Its P3 human message names the
+file and asks the user to open it in the app, save once and repeat the rename.
+P2 asks for a report. Both keep `code: refused`, `detail.reason: rename-refused`
+and `detail.admitted: false`, and add `detail.guarantee` (`P2` or `P3`) and
+`detail.file` (the graph-relative on-disk path).
+
 | Reason | Refusal boundary |
 | --- | --- |
 | Title identity (`Q-TITLE`) | The actual rebound native title names a different page from its namespace image, including a stationary namespace whose inner reference changes. References in titles alone do not refuse; case-only and unrelated-reference twins are covered. |

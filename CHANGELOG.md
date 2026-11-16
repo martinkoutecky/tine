@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Rename and merge refusals now explain the affected file. When a file needs its first ordinary save, **Save it and rename** saves it safely and retries the same request once per click; an internal check failure asks for a bug report. The command line includes the failed check and file as JSON fields (UI-CM-REFUSAL-HELP).
+
 - Retrying a page rename immediately after crash recovery no longer reports the recovered page missing; explicit refreshes wait for the page host to publish recovered and external edits (#609).
 
 - Page renames and merges leave and report references nested in other page names, including tags glued to following text and tags inside macro arguments, instead of repointing the enclosing reference or refusing the rename as a Tine bug. Renaming an enclosing link to a name containing brackets uses a faithful escaped spelling, or leaves and reports it when its format cannot hold the name. Escaped links, tags, labels and property members continue to follow subsequent renames (REG-CM-NESTED-GLUED-TAG, REG-CM-NESTED-REPOINT, REG-CM-ESCAPED-RENAME-AGAIN, REG-CM-MACRO-TAG-NESTING, REG-CM-ENCLOSING-SPELLING).

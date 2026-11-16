@@ -577,3 +577,17 @@ block-link-copy-copied =
            *[other] Copied block embeds
         }
     }
+rename-refused-first-save = Couldn't rename: Tine would change the layout of { $file } the first time it saves it, so it cannot rewrite that file during a rename. Nothing was renamed. Save that file once, then try the same rename again.
+rename-refused-check-failed = Tine stopped because its own check failed for { $file }. Nothing was changed. Please report this bug using “{ help-report-a-bug-request-a-feature }” in Help.
+rename-save-and-retry = Save it and rename
+rename-recovery-failed = Couldn't finish saving the file and renaming. The rename was not repeated if the save failed. { $error }
+rename-refused-header-children = Couldn't merge: blocks under the header in { $file } would lose their parent. Move them out from under the header, then try again. Nothing was merged.
+rename-refused-hidden-occurrence = Couldn't merge: references in the page properties of { $file } would stop working when moved into the merged page. Move those references into ordinary blocks, then try again. Nothing was merged.
+rename-refused-survivor-identity = Couldn't merge: the title in the first block of { $file } would give the remaining page a different name. Save that file once with its intended page title, then try again. Nothing was merged.
+rename-refused-taken = Couldn't rename: { $file } now owns that name. Start the rename again to review the merge choice.
+rename-refused-unsaved-mention = Couldn't rename: “{ $page }” has changes Tine could not save, and they mention “{ $from }”, so the rename could not update them. Save or discard those changes, then rename again. Your pending edits are still here.
+rename-refused-unsaved = Couldn't rename: “{ $page }” has changes Tine could not save. Save or discard them, then rename again. Your pending edits are still here.
+rename-unchanged-spelling = Nothing renamed: “{ $to }” already has that spelling.
+rename-unchanged-unused = Nothing renamed: no page file or reference uses “{ $from }” yet.
+rename-refused-busy = Another rename is still rewriting the graph. Try again when it finishes.
+rename-uncertain = The graph changed while renaming “{ $from }”. Check whether “{ $to }” exists before trying again.

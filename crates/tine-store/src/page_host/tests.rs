@@ -901,6 +901,7 @@ fn weak_graph_does_not_weaken_app_data_and_power_reverts_only_unsynced_names() {
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
+    "crates/tine-graph-features/src/pages_refusal.rs",
     "crates/tine-graph-features/src/pages_rename_plan.rs",
     // `pages::rename_page_as`, the rename's census-writer entry, split out
     // of pages.rs along the size-ratchet seam (`#[path]` child of `pages`).

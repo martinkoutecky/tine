@@ -147,8 +147,8 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
   invalidateBinding();
   finish();
   expect(await pending).toBe("uncertain");
-  expect(renameOutcomeMessage("uncertain", "Old", "New")).toContain("Check whether");
-  expect(renameOutcomeMessage("busy", "Old", "New")).not.toContain("pending edits");
+  expect(renderEnglish(renameOutcomeMessage("uncertain", "Old", "New")!)).toContain("Check whether");
+  expect(renderEnglish(renameOutcomeMessage("busy", "Old", "New")!)).not.toContain("pending edits");
 });
 
 // R4 / I-20 (og-flow3): a display repaint (here: another page's rename bumping
@@ -172,11 +172,11 @@ it("words unchanged spelling and absent source truthfully", async () => {
   vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", renamed: [], touched: [] });
   const outcome = await renameOrMergePage("Draft", "Other");
   expect(outcome).toBe("unchanged");
-  const message = renameOutcomeMessage(outcome, "Draft", "Other")!;
+  const message = renderEnglish(renameOutcomeMessage(outcome, "Draft", "Other")!);
   expect(message).not.toContain("same page name");
   expect(message).toContain("“Draft”");
-  expect(renameOutcomeMessage("unchanged", "Old", "Old")).toContain("already has that spelling");
-  expect(renameOutcomeMessage("unchanged", "Old", "old")).toContain("no page file or reference");
+  expect(renderEnglish(renameOutcomeMessage("unchanged", "Old", "Old")!)).toContain("already has that spelling");
+  expect(renderEnglish(renameOutcomeMessage("unchanged", "Old", "old")!)).toContain("no page file or reference");
 });
 
 it("a case-only rename refreshes recent and right-sidebar names through the ordinary intent", async () => {

@@ -58,7 +58,10 @@ fn reaches_load_wait(body: &str) -> bool {
 
 #[test]
 fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
-    let source = include_str!("commands.rs");
+    let source = concat!(
+        include_str!("commands.rs"),
+        include_str!("commands/file_merge.rs")
+    );
     let listed = commands(source);
     let other_sources = [
         include_str!("graph.rs"),

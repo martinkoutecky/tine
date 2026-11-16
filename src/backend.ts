@@ -431,10 +431,10 @@ class TauriBackend implements Backend {
   getBlockReferrers(uuid: string) {
     return this.call<RefGroup[]>("block_referrers", { uuid });
   }
-  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]) {
+  renamePage(old: string, next: string, _kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[], saveFirst?: string) {
     dropDisplayedFor({ name: old });
     if (mergeInto) dropDisplayedFor({ name: mergeInto });
-    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths });
+    return this.call<import("./types").RenameDone>("rename_page", { old, new: next, expectedPath, mergeInto, unsavedPaths, saveFirst });
   }
   renameOffer(old: string, next: string, expectedPath?: string) {
     return this.call<import("./types").RenameOffer>("rename_offer", { old, new: next, expectedPath });
@@ -699,10 +699,10 @@ class TauriBackend implements Backend {
     source?.(answer.source);
     return answer.page;
   }
-  mergePages(src: string, dst: string) {
+  mergePages(src: string, dst: string, _kinds?: EditKinds, saveFirst?: string) {
     dropDisplayedFor({ name: src });
     dropDisplayedFor({ name: dst });
-    return this.call<void>("merge_pages", { src, dst });
+    return this.call<void>("merge_pages", { src, dst, saveFirst });
   }
   renameFileToPage(path: string, newName: string) {
     dropDisplayedFor({ path });

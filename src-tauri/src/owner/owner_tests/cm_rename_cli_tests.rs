@@ -6,6 +6,68 @@
 use super::*;
 use std::collections::BTreeMap;
 
+#[test]
+fn cli_check_refusal_carries_the_file_and_save_fix_as_data_and_prose() {
+    let graph = Graph::seeded(
+        Default::default(),
+        &[
+            ("pages/Old.md", "- body\n"),
+            ("pages/r.md", "- tags:: [[Old]]\n"),
+        ],
+    );
+    let before = files(&graph.root);
+    let body = verb(
+        &graph.slot(),
+        "page.rename",
+        json!({"old":"Old","new":"New"}),
+    )
+    .unwrap_err();
+    let detail = body.detail.unwrap();
+    assert_eq!(body.code, "refused");
+    assert_eq!(detail["admitted"], false);
+    assert_eq!(detail["reason"], "rename-refused");
+    assert_eq!(detail["guarantee"], "P3");
+    assert_eq!(detail["file"], "pages/r.md");
+    assert!(
+        body.message
+            .contains("open pages/r.md in the Tine app and save it once"),
+        "{}",
+        body.message
+    );
+    assert_eq!(files(&graph.root), before);
+}
+
+#[test]
+fn cli_failed_writer_check_is_refused_with_file_and_a_bug_report_request() {
+    let referrer = format!(
+        "- {} [[Old]]\n",
+        tine_store::model::TEST_RENAME_WRITER_BUG_SENTINEL
+    );
+    let graph = Graph::seeded(
+        Default::default(),
+        &[("pages/Old.md", "- body\n"), ("pages/r.md", &referrer)],
+    );
+    let before = files(&graph.root);
+    let body = verb(
+        &graph.slot(),
+        "page.rename",
+        json!({"old":"Old","new":"New"}),
+    )
+    .unwrap_err();
+    let detail = body.detail.unwrap();
+    assert_eq!(body.code, "refused");
+    assert_eq!(detail["admitted"], false);
+    assert_eq!(detail["reason"], "rename-refused");
+    assert_eq!(detail["guarantee"], "P2");
+    assert_eq!(detail["file"], "pages/r.md");
+    assert!(
+        body.message.contains("bug in Tine, please report"),
+        "{}",
+        body.message
+    );
+    assert_eq!(files(&graph.root), before);
+}
+
 /// Every page and journal file, path → text.
 fn files(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();

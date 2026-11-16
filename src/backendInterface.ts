@@ -203,7 +203,7 @@ export interface Backend {
    *  nothing was asked (model r6 O3). Without it, a `next` another page already has is refused.
    *  `unsavedPaths`: page files whose edits could not be saved; the rename
    *  refuses, writing nothing, if it would move or rewrite one (GH #535). */
-  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[]): Promise<import("./types").RenameDone>;
+  renamePage(old: string, next: string, kind: "rename-page", expectedPath?: string, mergeInto?: string, unsavedPaths?: string[], saveFirst?: string): Promise<import("./types").RenameDone>;
   /** What renaming `old` to `next` asks of the user: the backend rename's own
    *  answer (`pages::rename_offer`), read-only. */
   renameOffer(old: string, next: string, expectedPath?: string): Promise<import("./types").RenameOffer>;
@@ -408,7 +408,7 @@ export interface Backend {
   getPageByPath(path: string, source?: (value: import("./types").PageReadSource | null) => void): Promise<import("./types").PageRead | null>;
   /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
    *  `src` — fold a duplicate-day stray into the canonical day (#21). */
-  mergePages(src: string, dst: string, kinds: EditKinds): Promise<void>;
+  mergePages(src: string, dst: string, kinds: EditKinds, saveFirst?: string): Promise<void>;
   /** Move a stray file (graph-root-relative path) to a uniquely-named page so it
    *  stops colliding and becomes normally navigable (#21). */
   renameFileToPage(path: string, newName: string, kind: "rename-page"): Promise<void>;

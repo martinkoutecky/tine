@@ -4,6 +4,9 @@
 //! rename rule). Split out of `commands.rs` along this seam (CM step 2
 //! batch 12, PARITY-CAMPAIGN §3).
 use super::*;
+#[path = "rewrite_error.rs"]
+pub(super) mod rewrite_error;
+pub(super) use rewrite_error::RewriteError;
 
 /// What renaming `old` to `new` asks of the user (the rename dialog's
 /// question): a plain rename, a merge into the page holding `new`, the M-Q5
@@ -28,6 +31,8 @@ pub(crate) async fn rename_offer(
 
 /// Rename `old` to `new`. `merge_into`: the user confirmed a merge into that
 /// page file (model r6 O3: confirm or cancel are the only answers).
+/// `save_first`: explicitly save this exact page normally before the request;
+/// failure stops the sequence. Cost: that one save, then the existing rename.
 #[tauri::command]
 pub(crate) async fn rename_page(
     old: String,
@@ -35,9 +40,10 @@ pub(crate) async fn rename_page(
     expected_path: Option<String>,
     merge_into: Option<String>,
     unsaved_paths: Option<Vec<String>>,
+    save_first: Option<String>,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
-) -> Result<tine_graph_features::pages::RenameReport, String> {
+) -> Result<tine_graph_features::pages::RenameReport, RewriteError> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         // A rename is the page host's (STEP3 §7): a revoked slot is the
@@ -52,6 +58,14 @@ pub(crate) async fn rename_page(
             },
             || {
                 use tine_graph_features::pages::RenameChoice;
+                if let Some(path) = save_first.as_deref() {
+                    tine_graph_features::pages::save_page_unchanged(
+                        &slot.store,
+                        slot.host_slot()?.running()?,
+                        path,
+                    )
+                    .map_err(RewriteError::of)?;
+                }
                 let choice = match merge_into.as_deref() {
                     Some(into) => RenameChoice::MergeInto(into),
                     None => RenameChoice::Rename,
@@ -70,20 +84,21 @@ pub(crate) async fn rename_page(
         .inspect(|report| crate::seen::page_renamed(&app, &slot, &old, report))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| RewriteError::from(error.to_string()))?
 }
 
 /// What the window is told about the rename `rename_page` ran. Page files
 /// moved and the config.edn write then failed: the rename happened, so the
 /// window gets the applied report with the cause in `config_skipped`, refreshes
 /// and says that home and favorites did not follow, never "Rename failed"
-/// (`RenameReport::with_config_failure`). Any other failure is its message.
+/// (`RenameReport::with_config_failure`). Named refusals remain typed data;
+/// ordinary I/O failures retain their existing wire messages.
 fn window_answer(
     answer: std::io::Result<tine_graph_features::pages::RenameReport>,
-) -> Result<tine_graph_features::pages::RenameReport, String> {
+) -> Result<tine_graph_features::pages::RenameReport, RewriteError> {
     answer
         .or_else(|e| tine_graph_features::pages::RenameReport::with_config_failure(&e).ok_or(e))
-        .map_err(|e| e.to_string())
+        .map_err(RewriteError::of)
 }
 
 #[cfg(test)]

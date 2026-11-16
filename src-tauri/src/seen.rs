@@ -200,7 +200,10 @@ mod tests {
     /// page's seen record, after the operation and without failing it.
     #[test]
     fn seen_record_is_dropped_by_tine_rename_merge_and_delete() {
-        let commands = include_str!("commands.rs");
+        let commands = concat!(
+            include_str!("commands.rs"),
+            include_str!("commands/file_merge.rs")
+        );
         let rename = include_str!("commands/rename.rs");
         let pages = include_str!("page_commands.rs");
         let body = |source: &'static str, name: &str| {

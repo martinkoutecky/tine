@@ -44,7 +44,7 @@ pub struct RenameCheck {
 }
 
 /// Which promise a refused step breaks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum Guarantee {
     /// The new file does not read as the plan intends, or is at the wrong
     /// path: a writer bug.
@@ -143,9 +143,11 @@ pub(super) fn check(
     // rewrite (it moves verbatim)"; the save refuses it (R-VCS-MARKERS) and
     // publishes nothing, which leaves its bytes and its path (open question
     // Q9 for the manager: ruling Q6 and O4 disagree on this file).
-    let saved = crate::cost_counters::model_check_save(|| {
-        crate::model::unchanged_save::unchanged_save(path, Some(file.as_str()), text, parsed)
-    });
+    let save =
+        || crate::model::unchanged_save::unchanged_save(path, Some(file.as_str()), text, parsed);
+    #[cfg(feature = "test-faults")]
+    let save = || crate::cost_counters::model_check_save(save);
+    let saved = save();
     match saved {
         Ok(saved) if saved == text => Ok(()),
         Err(_) if unchanged => Ok(()),

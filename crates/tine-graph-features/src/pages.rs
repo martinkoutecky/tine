@@ -16,8 +16,11 @@ pub use rename_plan::{RenameBlocked, RenameChoice, RenamedPage};
 #[path = "pages_rename_offer.rs"]
 mod rename_offer;
 pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
+#[path = "pages_refusal.rs"]
+mod refusal;
 #[path = "pages_rename_report.rs"]
 mod rename_report;
+pub use refusal::{save_page_unchanged, MergeRefused};
 use rename_plan::{plan_rename, RenamePlan};
 use rename_report::{site_exceptions, survivor_check, IncompleteRename, StepChecks};
 pub use rename_report::{
@@ -1442,7 +1445,7 @@ fn merged_survivor(
         org,
         refs::RenameFormat::new(config.file_name_format, &days),
     )
-    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    .map_err(|e| MergeRefused::error(e, src, dst))?;
     if let Some(names) = renames {
         names
             .rewritten

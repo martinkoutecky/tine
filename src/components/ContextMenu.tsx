@@ -1088,9 +1088,14 @@ function RenamePage(props: {
     let current = graphOwner(live);
     props.close(false);
     if (!next || next === from) return;
+    const finished = (merged: boolean) => {
+      if (!current()) return;
+      openPage(next, kind);
+      pushToast(msg("context-menu-rename-success", { outcome: merged ? "merged" : "renamed", next }), "success");
+    };
     try {
       const target = { name: from, pageKind: kind, ...(path ? { path } : {}) };
-      const renamed = await renameOrMergePage(from, next, target, (refreshed) => { current = ownedWhen(refreshed, live); });
+      const renamed = await renameOrMergePage(from, next, target, (refreshed) => { current = ownedWhen(refreshed, live); }, (done) => finished(done === "merged"));
       if (renamed === "cancelled") return;
       const message = renameOutcomeMessage(renamed, from, next);
       if (message) {
@@ -1100,9 +1105,7 @@ function RenamePage(props: {
         if (show) pushToast(message, renamed === "unchanged" ? "info" : "error");
         return;
       }
-      if (!current()) return;
-      openPage(next, kind);
-      pushToast(msg("context-menu-rename-success", { outcome: renamed === "merged" ? "merged" : "renamed", next }), "success");
+      finished(renamed === "merged");
     } catch (e) {
       pushToast(msg("context-menu-ui-rename-failed", { value1: String(e) }), "error");
     }

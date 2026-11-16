@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "nativeLinuxSetup": "The shared suite launcher gives each native journey a disposable passwd-account home through the account-home preload shim, shared by app and CLI children (including HOME_OVERLAY runs). It observes a real app-held kernel owner lock, rejects owner-lock-unavailable and owner-endpoint-unavailable stderr, and retains per-process private debug logs. An intentional arbitration-fallback journey must supply TINE_E2E_EXPECT_OWNER_UNAVAILABLE with its reason; this never selects the real account home.",
   "scenarios": {
+    "scripts/e2e-cm-refusal.mjs": {
+      "setup": "Synthetic routed Old page and properties-only-bullet referrer; scratch HOME/XDG, account-home shim, native Linux WebKitGTK at 1920x1080.",
+      "contracts": [{"class":"stateful-ux","userOutcome":"A title rename refuses without writing and explains the named referrer's first-save layout change. Save it and rename is explicit; clicking it saves the referrer normally and repeats the same rename. Exact source, referrer and unrelated file contents and the new routed title are verified.","blocking":false,"authority":"D-20261116-P3H; D-20261115-HELP; UI-CM-REFUSAL-HELP"}],
+      "acceptableVariations": ["Toast layout, styling and save latency may vary."],
+      "nonRequirements": ["No automatic repair loop, new model outcome, release burn-in or other-platform runtime certification."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-gh944-journal-agenda.mjs": {
       "setup":"Synthetic realistic graph with 1500 pages and 500 journals, dated tasks, scratch HOME/XDG and account-home shim; frozen custom-protocol binaries with embedded origin asserted, Linux native at 1920x1080.",
       "contracts":[{"class":"stateful-ux","userOutcome":"Scheduled & Deadline stays present while typing characters and creating blocks in today's journal, expanded and collapsed, in the feed and on a routed journal page.","blocking":false,"authority":"GH #944 comment 5"}],

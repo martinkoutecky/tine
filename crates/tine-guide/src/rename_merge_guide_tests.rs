@@ -50,6 +50,10 @@ fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide
     // Model r6 O7 and O8 (slice 2): the report and the settings step.
     let pages = include_str!("templates/pages-links-references-search.md");
     for control in [
+        "**Save it and rename** saves that file normally",
+        "Each further file needs another click",
+        "a successful save stays even if the rename cannot finish",
+        "Tine's own check failed means a bug in Tine",
         "Tine lists the files where either happened",
         "and a property key `a/x::` into `b/x::`",
         "The label of a file link that names the page",

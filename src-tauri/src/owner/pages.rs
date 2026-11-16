@@ -296,11 +296,15 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         } else if let Some(check) = tine_graph_features::pages::CheckRefused::of(&e) {
             // The model's check of a file the rename would write (P2, P3),
             // before any write: `rename-refused`, with its message.
-            return refused(
+            let mut body = refused(
                 "rename-refused",
                 page.as_ref(),
                 format!("{check}; nothing changed"),
             );
+            let detail = body.detail.as_mut().expect("refused carries detail");
+            detail["guarantee"] = json!(check.guarantee);
+            detail["file"] = json!(check.file);
+            return body;
         } else {
             // Any I/O kind can also follow admission or incomplete rollback.
             body.detail = Some(json!({"admitted":null,"page":path}));

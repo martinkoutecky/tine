@@ -548,3 +548,17 @@ block-link-copy-copied = { $kind ->
        *[other] 已复制块嵌入
         }
     }
+rename-refused-first-save = 无法重命名：Tine 首次保存 { $file } 时会改变其布局，因此不能在重命名时改写此文件。未重命名任何页面。请先保存此文件一次，再尝试相同的重命名。
+rename-refused-check-failed = Tine 对 { $file } 的内部检查失败，操作已停止。未做任何更改。请通过帮助中的“{ help-report-a-bug-request-a-feature }”报告此错误。
+rename-save-and-retry = 保存文件并重命名
+rename-recovery-failed = 无法完成保存文件及重命名。如果保存失败，则不会再次尝试重命名。{ $error }
+rename-refused-header-children = 无法合并：{ $file } 中页首下的块会失去父级。请先将这些块移出页首，再重试。未合并任何页面。
+rename-refused-hidden-occurrence = 无法合并：{ $file } 页面属性中的引用移入合并后的页面时会失效。请先将这些引用移到普通块中，再重试。未合并任何页面。
+rename-refused-survivor-identity = 无法合并：{ $file } 首个块中的标题会改变保留页面的名称。请先使用预期的页面标题保存此文件一次，再重试。未合并任何页面。
+rename-refused-taken = 无法重命名：{ $file } 现在占用了此名称。请重新开始重命名以查看合并选项。
+rename-refused-unsaved-mention = 无法重命名：“{ $page }”有 Tine 无法保存的更改，且其中引用了“{ $from }”，因此重命名无法更新它们。请先保存或放弃这些更改，再重命名。待保存的编辑仍在。
+rename-refused-unsaved = 无法重命名：“{ $page }”有 Tine 无法保存的更改。请先保存或放弃它们，再重命名。待保存的编辑仍在。
+rename-unchanged-spelling = 未重命名：“{ $to }”已经使用此拼写。
+rename-unchanged-unused = 未重命名：尚无页面文件或引用使用“{ $from }”。
+rename-refused-busy = 另一个重命名仍在改写图谱。请在完成后重试。
+rename-uncertain = 重命名“{ $from }”时图谱发生了变化。再次尝试前，请检查“{ $to }”是否存在。
