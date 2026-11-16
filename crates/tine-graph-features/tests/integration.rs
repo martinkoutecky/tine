@@ -102,6 +102,9 @@ mod cm_conformance_rename;
 #[path = "cm_merge_rules.rs"]
 mod cm_merge_rules;
 
+#[path = "cm_merge_o6.rs"]
+mod cm_merge_o6;
+
 #[path = "cm_operation_cost.rs"]
 mod cm_operation_cost;
 

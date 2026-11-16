@@ -433,10 +433,13 @@ fn org_merge_keeps_the_source_directives() {
     })
     .unwrap();
     let merged = read(&root, "pages/New.org");
+    // O6: the united `#+ALIAS:` leaves no remnant; the title and the clashing
+    // `#+CATEGORY: work` are leftover lines, which Tine still reads in the
+    // quote (references kept, so `leftoverReference` does not refuse).
     assert_eq!(
         merged,
         "#+ALIAS: Kept, Former\n#+CATEGORY: home\n* survivor block\n\
-         *\n#+BEGIN_QUOTE\n#+TITLE: Old\n#+ALIAS: \n#+CATEGORY: work\n#+END_QUOTE\n* free text\n* source block\n"
+         *\n#+BEGIN_QUOTE\n#+TITLE: Old\n#+CATEGORY: work\n#+END_QUOTE\n* free text\n* source block\n"
     );
     let graph = store.whole_graph().unwrap();
     for name in ["New", "Former", "Kept"] {
@@ -466,7 +469,8 @@ fn plain_merge_unites_aliases_like_the_rename_merge() {
     pages::merge_pages(&store, &host, "pages/src.md", "pages/dst.md").unwrap();
     assert_eq!(
         read(&root, "pages/dst.md"),
-        "alias:: Shared, Kept, Former\n\n- kept\n- \n- moved\n"
+        // O6: the blank source header line makes no leftover block.
+        "alias:: Shared, Kept, Former\n\n- kept\n- moved\n"
     );
     drop(host);
     drop(store);

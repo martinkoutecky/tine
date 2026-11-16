@@ -263,7 +263,8 @@ fn page_renames_with_a_host_write_the_renamed_graph() {
             ("pages/Merged.md", None),
             (
                 "pages/Into.md",
-                Some("alias:: Joined\n- into\n- \n- merged body\n"),
+                // O6: the blank source header line makes no leftover block.
+                Some("alias:: Joined\n- into\n- merged body\n"),
             ),
         ])
     );
