@@ -110,8 +110,36 @@ function mount(siblings: number, width: number, comments: number) {
     </MarginContext.Provider></CommentResolutionScope></SurfaceContext.Provider>;
   }, pane);
 }
-function edit(siblings: number, width: number, comments: number) {
-  mount(siblings, width, comments);
+const resetTypingWork = () => {
+  typingWork.scans = typingWork.childReads = typingWork.scanReads = typingWork.childEvaluations = 0;
+  commentViews.runs = 0;
+};
+// Called right after a mount made with `typingWork.active` on: typing in `id` re-runs none of the comment index.
+function expectNoTypingWork(kind: string, width: number, comments: number, id: string) {
+  // A broken matcher must not turn every counter into a false zero.
+  expect(typingWork.scans).toBeGreaterThan(0);
+  expect(typingWork.childEvaluations).toBeGreaterThan(0);
+  expect(typingWork.childReads).toBeGreaterThan(0);
+  expect(commentViews.runs).toBeGreaterThan(0);
+  for (let key = 0; key < 3; key++) {
+    resetTypingWork();
+    setDoc("byId", id, "raw", `Typed ordinary text ${key}`);
+    const counts = { scans: typingWork.scans, childReads: typingWork.childReads,
+      scanReads: typingWork.scanReads, childEvaluations: typingWork.childEvaluations, views: commentViews.runs };
+    console.log(JSON.stringify({ measurement: "typing work counts", kind, width, comments, key, counts }));
+    expect(document.querySelector(`[data-block-id="${id}"]`)?.textContent).toContain(`Typed ordinary text ${key}`);
+    expect(counts).toEqual({ scans: 0, childReads: 0,
+      scanReads: 0, childEvaluations: 0, views: 0 });
+  }
+}
+// `countWork` also mounts with the typing-work counters on and checks them on the freshly mounted page, before any
+// measured edit (the 64-sibling mount serves both the cost comparison and the work counts).
+function edit(siblings: number, width: number, comments: number, countWork?: string) {
+  if (countWork) { resetTypingWork(); typingWork.active = true; }
+  try {
+    mount(siblings, width, comments);
+    if (countWork) expectNoTypingWork(countWork, width, comments, "k1");
+  } finally { typingWork.active = false; }
   let seq = 0;
   const one = () => {
     facetCalls.count = 0;
@@ -138,7 +166,7 @@ it.each([
   { tier: "medium", width: 800, comments: 0 },
   { tier: "phone", width: 390, comments: 2 },
 ])("typing in an ordinary sibling costs the same at 4, 16 and 64 siblings ($tier, $comments comments)", ({ width, comments, tier }) => {
-  const results = [4, 16, 64].map(n => ({ n, ...edit(n, width, comments) }));
+  const results = [4, 16, 64].map(n => ({ n, ...edit(n, width, comments, n === 64 ? (tier === "phone" ? "phone" : "ordinary") : undefined) }));
   console.log(JSON.stringify({ measurement: "ordinary sibling keystroke", tier, comments, results }));
   for (const r of results) {
     expect(r.foreignRaw, `foreign raw reads at ${r.n} siblings`).toBe(results[0].foreignRaw);
@@ -166,37 +194,16 @@ function mountFolded(children: number, hiddenThreads: number) {
   return pane;
 }
 
+// The ordinary and phone mounts at 64 children are the 64-sibling mounts of the test above (same four configs).
 it.each([
-  { kind: "ordinary", width: 800, comments: 1 },
-  { kind: "ordinary", width: 1400, comments: 1 },
-  { kind: "ordinary", width: 800, comments: 0 },
-  { kind: "phone", width: 390, comments: 2 },
   { kind: "folded", width: 800, comments: 0 },
   { kind: "folded", width: 800, comments: 1 },
 ])("typing work counts at 64 children ($kind, $width, $comments comments)", ({ kind, width, comments }) => {
-  typingWork.scans = typingWork.childReads = typingWork.scanReads = typingWork.childEvaluations = 0;
-  commentViews.runs = 0;
+  resetTypingWork();
   typingWork.active = true;
   try {
-    if (kind === "folded") mountFolded(64, comments);
-    else mount(64, width, comments);
-    // A broken matcher must not turn every counter into a false zero.
-    expect(typingWork.scans).toBeGreaterThan(0);
-    expect(typingWork.childEvaluations).toBeGreaterThan(0);
-    expect(typingWork.childReads).toBeGreaterThan(0);
-    expect(commentViews.runs).toBeGreaterThan(0);
-    for (let key = 0; key < 3; key++) {
-      typingWork.scans = typingWork.childReads = typingWork.scanReads = typingWork.childEvaluations = 0;
-      commentViews.runs = 0;
-      const id = kind === "folded" ? "p" : "k1";
-      setDoc("byId", id, "raw", `Typed ordinary text ${key}`);
-      const counts = { scans: typingWork.scans, childReads: typingWork.childReads,
-        scanReads: typingWork.scanReads, childEvaluations: typingWork.childEvaluations, views: commentViews.runs };
-      console.log(JSON.stringify({ measurement: "typing work counts", kind, width, comments, key, counts }));
-      expect(document.querySelector(`[data-block-id="${id}"]`)?.textContent).toContain(`Typed ordinary text ${key}`);
-      expect(counts).toEqual({ scans: 0, childReads: 0,
-        scanReads: 0, childEvaluations: 0, views: 0 });
-    }
+    mountFolded(64, comments);
+    expectNoTypingWork(kind, width, comments, "p");
   } finally { typingWork.active = false; }
 });
 function typeInFolded(children: number, hiddenThreads: number) {
