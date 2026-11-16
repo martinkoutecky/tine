@@ -638,7 +638,7 @@ unchanged without failing the rename: `report.config_skipped` says why.
 | `old` | string | always | no | canonical file title, or trimmed source name for a fileless source |
 | `name` | string | always | no | requested destination title, trimmed |
 | `report` | `tine_graph_features::pages::RenameReport` | always | no | app operation report |
-| `report.outcome` | string | always | no | `renamed` or `unchanged` |
+| `report.outcome` | string | always | no | `renamed` for every admitted rename, also one that changes no page bytes (every referrer left unspellable, already reading the new name, or conflicted); its config.edn step runs either way. `unchanged` only when the request names the page's own spelling: nothing is written |
 | `report.touched` | array | always | no | old paths and whether they moved |
 | `report.renamed` | array | always | no | every page identity the rename moved: the renamed page (one with no file too), each file-backed namespace descendant, and each reference-only namespace member named by an applied rewrite (links, tags, macro/query arguments and Org file links, including namespace parents; `path` is `null`). Skipped conflicted files contribute no reference-only members. Once per page, in no promised order. The app's window moves its tabs (closed ones too), Recent and sidebar by exactly this list. Empty for `unchanged` |
 | `report.renamed[].from` | string | always | no | the page's name before the rename |

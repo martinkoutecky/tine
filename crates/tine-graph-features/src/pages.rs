@@ -710,7 +710,7 @@ fn multi_rename(
                 plan.pages(store)?;
             }
             match rename_transaction(store, old, plan, unsaved_paths)? {
-                RenameTransaction::Unchanged(report) => {
+                RenameTransaction::Unchanged { report, home } => {
                     if inputs
                         .as_ref()
                         .is_some_and(|before| !host.inputs().is_ok_and(|now| now == *before))
@@ -718,7 +718,7 @@ fn multi_rename(
                         replan.set(true);
                         return Ok(None);
                     }
-                    built.replace(Some((report, None)));
+                    built.replace(Some((report, home)));
                     Ok(None)
                 }
                 RenameTransaction::Writes {
@@ -735,7 +735,7 @@ fn multi_rename(
                     if let Some((src, dst)) = merge {
                         op.moves.push((dst, src));
                     }
-                    built.replace(Some((report, Some(home))));
+                    built.replace(Some((report, home)));
                     Ok(Some(op))
                 }
             }
@@ -745,32 +745,38 @@ fn multi_rename(
     if replan.get() {
         return Ok(None);
     }
-    let (mut report, home) = built.into_inner().expect("planned before the operation");
-    if let Some((lookup, merged_old, days)) = home {
-        commit_config_after(store, &mut report, &lookup, merged_old.as_ref(), &days)?;
-    }
+    let (mut report, (lookup, merged_old, days)) =
+        built.into_inner().expect("planned before the operation");
+    commit_config_after(store, &mut report, &lookup, merged_old.as_ref(), &days)?;
     Ok(Some(report))
 }
 
-/// What a rename writes, as a store transaction of its page steps.
+/// What the settings step needs (O8): the rename's lookup, the merged
+/// source, whose home `merge-pages!` keeps, and the day format (days are
+/// pinned; after a merge, one entry per page or day).
+type SettingsStep = (
+    HashMap<String, String>,
+    Option<String>,
+    tine_core::date::JournalFormat,
+);
+
+/// What a rename writes, as a store transaction of its page steps. Both
+/// variants are an admitted rename, so both carry its settings step (O8
+/// follows every successful rename, not only one that changed page bytes).
 enum RenameTransaction<'s> {
-    /// Nothing to write (every referrer already reads the new name, or
-    /// carries VCS conflict markers).
-    Unchanged(RenameReport),
+    /// No page bytes to write (every referrer already reads the new name,
+    /// cannot spell it, or carries VCS conflict markers).
+    Unchanged {
+        report: RenameReport,
+        home: SettingsStep,
+    },
     Writes {
         tx: tine_store::PagePlan<'s>,
         /// Without the home page: `config.edn` is written after the pages.
         report: RenameReport,
         /// A merge's `(source, survivor)`.
         merge: Option<(PageId, PageId)>,
-        /// What the settings step needs (O8): the rename's lookup, the merged
-        /// source, whose home `merge-pages!` keeps, and the day format (days
-        /// are pinned; after a merge, one entry per page or day).
-        home: (
-            HashMap<String, String>,
-            Option<String>,
-            tine_core::date::JournalFormat,
-        ),
+        home: SettingsStep,
     },
 }
 
@@ -992,12 +998,21 @@ fn rename_transaction<'s>(
     skipped.sort_unstable();
     skipped.dedup();
     sites.sort_by(|a: &SiteException, b| (&a.path, a.start).cmp(&(&b.path, b.start)));
+    let merged_old = (merge.is_some() || ref_merge).then(|| refs::normalize(old));
     if edits.is_empty() && merged.is_none() {
-        return Ok(RenameTransaction::Unchanged(RenameReport {
-            skipped_conflicted_referrers: skipped,
-            site_exceptions: sites,
-            ..RenameReport::unchanged()
-        }));
+        // An admitted rename that changes no page bytes (every referrer is
+        // left unspellable, already reads the new name, or is conflicted) is
+        // still a completed rename: its settings step runs (O8), and its
+        // outcome says so.
+        return Ok(RenameTransaction::Unchanged {
+            report: RenameReport {
+                outcome,
+                skipped_conflicted_referrers: skipped,
+                site_exceptions: sites,
+                ..RenameReport::unchanged()
+            },
+            home: (lookup, merged_old, days),
+        });
     }
     let touched: Vec<TouchedPage> = edits
         .iter()
@@ -1018,7 +1033,6 @@ fn rename_transaction<'s>(
     {
         return Err(unsaved_error(&graph, &blocked.path));
     }
-    let merged_old = (merge.is_some() || ref_merge).then(|| refs::normalize(old));
     // Crash order (I-2), continued: the survivor and the referrer
     // rewrites are queued above; namespace descendant moves, then the
     // source trash, then config.edn LAST (the caller's). A crash before the

@@ -211,6 +211,42 @@ fn o4_a_contested_touched_name_is_refused() {
     ));
 }
 
+/// Review round 2, finding 4, with the reviewer's input: an image that is a
+/// day is touched (Lean `touchedNames` appends `touched.map nameMap`
+/// unfiltered; only days already written are left out), so contest is
+/// checked on it before capture. Title format `ns/yyyy-MM-dd`: the child
+/// `A/2026-10-26` is no day, but its image `ns/2026-10-26` is, and two
+/// journal files claim that day. `A → ns` is refused as contested, naming
+/// both files, not as a capture naming one.
+#[test]
+fn o4_a_day_image_claimed_by_two_journal_files_is_contested() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "touched-contested-day-image",
+        &[
+            (
+                "logseq/config.edn",
+                "{:journal/page-title-format \"ns/yyyy-MM-dd\"}\n",
+            ),
+            ("pages/A.md", "- a\n"),
+            ("pages/r.md", "- [[A/2026-10-26]]\n"),
+            ("journals/2026_10_26.md", "- one\n"),
+            ("journals/2026-10-26.md", "- two\n"),
+        ],
+    );
+    let reason = refusal(&store, "A", "ns");
+    assert_eq!(reason["kind"], "contested", "{reason}");
+    assert_eq!(reason["name"], "ns/2026-10-26");
+    assert_eq!(
+        reason["files"],
+        serde_json::json!(["journals/2026-10-26.md", "journals/2026_10_26.md"])
+    );
+    assert!(matches!(
+        refused_with(&root, &store, "A", "ns", RenameChoice::Rename),
+        RenameBlocked::Contested { .. }
+    ));
+}
+
 /// O4: "a name that is only referenced is free, here as in O3"
 /// (D-20261105-CM11). A file child `A/x` and a reference-only child `A/y`
 /// land on `B/x` and `B/y`, which are only linked: the rename proceeds and

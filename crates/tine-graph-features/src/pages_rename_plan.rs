@@ -338,7 +338,7 @@ pub(super) fn own_child_used(
 /// source, every name under it however it exists (a file, a namespace parent,
 /// a reference, an alias any page declares), the aliases the source's file
 /// declares, and the images of all of these under O1, once per page key. A
-/// day is not touched (O2, O4: it stays).
+/// day already written is not touched (O2, O4: it stays); a day image is.
 ///
 /// Cost: the names under the source come from the inventory the plan already
 /// holds (`FilesAtOrUnder`) and the ordered reference and alias indexes
@@ -366,9 +366,18 @@ impl<'a> Touched<'a> {
         let under = format!("{old_key}/");
         let mut keys = HashSet::new();
         let mut touched = Vec::new();
-        let mut touch = |name: &str, touched: &mut Vec<String>| {
-            if journal_format.parse(name).is_none() && keys.insert(refs::page_key(name)) {
+        // A day already written stays (O2, O4) and is not touched; an image
+        // is touched even when it is a day (Lean `touchedNames` appends
+        // `touched.map nameMap` unfiltered), so a day the rename newly
+        // produces is checked for contest like any other image.
+        let mut add = |name: &str, touched: &mut Vec<String>| {
+            if keys.insert(refs::page_key(name)) {
                 touched.push(name.to_owned());
+            }
+        };
+        let mut touch = |name: &str, touched: &mut Vec<String>| {
+            if journal_format.parse(name).is_none() {
+                add(name, touched);
             }
         };
         touch(old, &mut touched);
@@ -395,7 +404,7 @@ impl<'a> Touched<'a> {
         };
         for at in 0..touched.len() {
             let mapped = image(&touched[at]);
-            touch(&mapped, &mut touched);
+            add(&mapped, &mut touched);
         }
         let names = touched
             .into_iter()

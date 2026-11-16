@@ -10,9 +10,182 @@ use tine_core::refs::SiteKind;
 use tine_graph_features::pages::{Disposition, RenameReport};
 
 fn report(store: &Arc<Store>, old: &str, new: &str) -> RenameReport {
+    report_as(store, old, new, RenameChoice::Rename)
+}
+
+fn report_as(store: &Arc<Store>, old: &str, new: &str, choice: RenameChoice<'_>) -> RenameReport {
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
-    rename_page_as(store, &host, old, new, None, RenameChoice::Rename, &[]).unwrap()
+    rename_page_as(store, &host, old, new, None, choice, &[]).unwrap()
+}
+
+/// Each exception as (path, the bytes of its span in `texts[path]`, kind,
+/// disposition): slicing proves the span is in that file's text before the
+/// rename, on character boundaries.
+fn located<'t>(
+    report: &RenameReport,
+    texts: &[(&str, &'t str)],
+) -> Vec<(String, &'t str, SiteKind, Disposition)> {
+    report
+        .site_exceptions
+        .iter()
+        .map(|site| {
+            let (_, text) = texts
+                .iter()
+                .find(|(path, _)| *path == site.path)
+                .unwrap_or_else(|| panic!("unexpected file {site:?}"));
+            (
+                site.path.clone(),
+                &text[site.start..site.end],
+                site.kind,
+                site.disposition,
+            )
+        })
+        .collect()
+}
+
+/// Review round 2 follow-up: a merge's exceptions are located in each of
+/// the merge writer's two original inputs (the source's file and the
+/// survivor's), by path and offset in that file's text before the merge.
+#[test]
+fn o7_a_merges_exceptions_are_located_in_each_original_file() {
+    let source = "* old heading :Old:\n";
+    let survivor = "#+title: two words\n* kept :Old:\n";
+    let (root, store) = fixture(
+        "o7-merge-locations",
+        &[("pages/Old.org", source), ("pages/two words.org", survivor)],
+    );
+    let report = report_as(
+        &store,
+        "Old",
+        "two words",
+        RenameChoice::MergeInto("pages/two words.org"),
+    );
+    assert_eq!(report.outcome, RenameOutcome::Merged);
+    let sites = located(
+        &report,
+        &[("pages/Old.org", source), ("pages/two words.org", survivor)],
+    );
+    let mut paths: Vec<&str> = sites.iter().map(|(path, ..)| path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["pages/Old.org", "pages/two words.org"], "{sites:?}");
+    for (path, span, kind, disposition) in &sites {
+        assert!(span.contains("Old"), "{path}: {span:?}");
+        assert_eq!(
+            (*kind, *disposition),
+            (SiteKind::Tag, Disposition::Unspellable),
+            "{path}"
+        );
+    }
+    assert!(fs::read_to_string(root.join("pages/two words.org"))
+        .unwrap()
+        .contains(":Old:"));
+}
+
+/// Review round 2 follow-up: offsets are bytes in the file's text before the
+/// rename, so CRLF line ends and multibyte characters before a site count in
+/// full; and one file reports two kinds of exception, in file order.
+#[test]
+fn o7_offsets_count_crlf_and_multibyte_bytes_and_one_file_reports_two_kinds() {
+    let org = "* žluťoučký kůň :Old:\r\n:PROPERTIES:\r\n:Old: v\r\n:END:\r\n";
+    let md = "- žluťoučký [[Old]]\r\n- Old:: v\r\n";
+    let (root, store) = fixture(
+        "o7-offsets",
+        &[
+            ("pages/Old.md", "- old\n"),
+            ("pages/r.org", org),
+            ("pages/r.md", md),
+        ],
+    );
+    let report = report(&store, "Old", "Two Words");
+    assert_eq!(
+        fs::read_to_string(root.join("pages/r.md")).unwrap(),
+        "- žluťoučký [[Two Words]]\r\n- two-words:: v\r\n"
+    );
+    let sites = located(&report, &[("pages/r.org", org), ("pages/r.md", md)]);
+    let md_key = md.rfind("Old").unwrap();
+    assert_eq!(
+        report
+            .site_exceptions
+            .iter()
+            .find(|site| site.path == "pages/r.md")
+            .map(|site| site.start),
+        Some(md_key),
+        "{sites:?}"
+    );
+    let org_sites: Vec<_> = sites
+        .iter()
+        .filter(|(path, ..)| path == "pages/r.org")
+        .map(|(_, span, kind, disposition)| (*kind, *disposition, span.contains("Old")))
+        .collect();
+    assert_eq!(
+        org_sites,
+        [
+            (SiteKind::Tag, Disposition::Unspellable, true),
+            (SiteKind::PropertyKey, Disposition::NormalizedKey, true),
+        ],
+        "{sites:?}"
+    );
+    assert_eq!(
+        sites
+            .iter()
+            .filter(|(path, ..)| path == "pages/r.md")
+            .map(|(_, span, kind, disposition)| (*span, *kind, *disposition))
+            .collect::<Vec<_>>(),
+        [("Old", SiteKind::PropertyKey, Disposition::NormalizedKey)]
+    );
+}
+
+/// Review round 2 follow-up: property keys that do not name the renamed
+/// page stay as they are and are not reported: a key that only shares a
+/// prefix, a key inside a code block, a built-in key, and a day key (days
+/// are pinned, O2).
+#[test]
+fn o7_keys_that_do_not_name_the_page_stay_and_are_not_reported() {
+    // (label, source file, rename, referrer, referrer after the rename)
+    let day_format = (
+        "logseq/config.edn",
+        "{:journal/page-title-format \"ns/yyyy-MM-dd\"}\n",
+    );
+    let cases: [(&str, &[(&str, &str)], (&str, &str), &str, &str); 3] = [
+        (
+            "prefix-and-code",
+            &[("pages/Old.md", "- old\n")],
+            ("Old", "Two Words"),
+            "- older:: one\n- old-x:: two\n- ```\n  Old:: three\n  ```\n",
+            "- older:: one\n- old-x:: two\n- ```\n  Old:: three\n  ```\n",
+        ),
+        (
+            "built-in",
+            &[("pages/Collapsed.md", "- c\n")],
+            ("Collapsed", "Folded"),
+            "- block\n  collapsed:: true\n",
+            "- block\n  collapsed:: true\n",
+        ),
+        (
+            "day",
+            &[day_format, ("pages/ns.md", "- ns\n")],
+            ("ns", "nt"),
+            "- ns/2026-10-26:: v\n- [[ns/sub]]\n",
+            "- ns/2026-10-26:: v\n- [[nt/sub]]\n",
+        ),
+    ];
+    for (label, sources, (old, new), referrer, after) in cases {
+        let mut files = sources.to_vec();
+        files.push(("pages/r.md", referrer));
+        let (root, store) = fixture(&format!("o7-key-{label}"), &files);
+        let got = report(&store, old, new);
+        assert_eq!(
+            fs::read_to_string(root.join("pages/r.md")).unwrap(),
+            after,
+            "{label}"
+        );
+        assert!(
+            got.site_exceptions.is_empty(),
+            "{label}: {:?}",
+            got.site_exceptions
+        );
+    }
 }
 
 /// O7: "a site whose syntax cannot hold the new name stays as it is and is

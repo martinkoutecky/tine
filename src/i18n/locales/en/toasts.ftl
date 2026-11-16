@@ -553,13 +553,13 @@ graph-rewrite-conflicted-referrers =
     }
 graph-rewrite-unspellable-sites =
     { $count ->
-        [one] One place cannot hold the name “{ $name }” and still says “{ $page }”: in { $files }. Change it by hand if needed.
-       *[other] { NUMBER($count, useGrouping: 0) } places cannot hold the name “{ $name }” and still say “{ $page }”: in { $files }. Change them by hand if needed.
+        [one] Renaming “{ $page }” left one place as it was, because it cannot hold the new name: in { $files }. Change it by hand if needed.
+       *[other] Renaming “{ $page }” left { NUMBER($count, useGrouping: 0) } places as they were, because they cannot hold the new name: in { $files }. Change them by hand if needed.
     }
 graph-rewrite-respelled-keys =
     { $count ->
-        [one] One property key that named “{ $page }” now names “{ $name }” in key spelling (lower case, hyphens for spaces): in { $files }.
-       *[other] { NUMBER($count, useGrouping: 0) } property keys that named “{ $page }” now name “{ $name }” in key spelling (lower case, hyphens for spaces): in { $files }.
+        [one] Renaming “{ $page }” rewrote one property key in key spelling (lower case, hyphens for spaces): in { $files }.
+       *[other] Renaming “{ $page }” rewrote { NUMBER($count, useGrouping: 0) } property keys in key spelling (lower case, hyphens for spaces): in { $files }.
     }
 block-link-copy-save-failed =
     { $kind ->

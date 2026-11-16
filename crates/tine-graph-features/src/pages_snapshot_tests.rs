@@ -26,7 +26,7 @@ fn preflight_rename_after(
     between: impl FnOnce(),
 ) -> io::Result<Option<()>> {
     let tx = match rename_transaction(store, old, plan, unsaved_paths)? {
-        RenameTransaction::Unchanged(_) => return Ok(Some(())),
+        RenameTransaction::Unchanged { .. } => return Ok(Some(())),
         RenameTransaction::Writes { tx, .. } => tx,
     };
     between();
@@ -442,9 +442,12 @@ fn clean_namespace_flush_reuses_its_selected_plan() {
 #[test]
 fn rename_preserves_an_unchanged_unsaved_referrer() {
     use std::os::unix::fs::PermissionsExt;
+    // "Ghost" is admitted (a reference names it) and changes no page bytes:
+    // still a completed rename (model r6 O8, review round 2 finding 2), whose
+    // outcome is `Renamed`; only a same-spelling request is `Unchanged`.
     for (source, outcome) in [
         ("Old", RenameOutcome::Renamed),
-        ("Ghost", RenameOutcome::Unchanged),
+        ("Ghost", RenameOutcome::Renamed),
     ] {
         let (_temp, root, store) = b2_graph(&[
             ("pages/Old.md", "- source\n"),

@@ -2311,10 +2311,10 @@
       "random-87: n/y -> B: {\"destination\":\"B\",\"survivor\":null}": [],
       "random-88: A -> Z: offers/automatic": [
         "G3/B4: offered identities: model [], Tine [{\"destination\":\"Z\",\"survivor\":null}]",
-        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Unchanged)"
+        "G9/B6: unattended cardinality 0: model allowed=false, Tine Ok(Renamed)"
       ],
       "random-88: A -> Z: {\"destination\":\"Z\",\"survivor\":null}": [
-        "G4/B3: admission: model safe=false, Tine result=Ok(Unchanged); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
+        "G4/B3: admission: model safe=false, Tine result=Ok(Renamed); checks {\"consistent\":false,\"localClean\":true,\"noCapture\":true,\"ownership\":true,\"pairReady\":true,\"paths\":true,\"supported\":true}"
       ],
       "random-89: n/y -> Z/w: offers/automatic": [],
       "random-89: n/y -> Z/w: {\"destination\":\"Z/w\",\"survivor\":null}": [],

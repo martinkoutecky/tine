@@ -83,7 +83,7 @@ export async function renamePageOnDisk(
       throw error;
     }
     if (result.kind === "stale") return "uncertain";
-    await refreshAfterRename(from, to, target, result.value, onRefreshed);
+    await refreshAfterRename(from, target, result.value, onRefreshed);
     return result.value.outcome;
   } finally {
     release();
@@ -93,20 +93,22 @@ export async function renamePageOnDisk(
 /** A CLI rename is already published by this window's page host. Reuse the
  * same working-set and navigation refresh as a rename initiated here. */
 export async function applyOwnerPageRename(rename: import("../types").OwnerPageRename): Promise<void> {
-  await refreshAfterRename(rename.old, rename.name, undefined, rename.report);
+  await refreshAfterRename(rename.old, undefined, rename.report);
 }
 
-/** Model r6 O7: say which sites kept the old name because they cannot spell
- *  the new one, and which property keys now name it in key spelling. The
- *  backend's report is the one answer; nothing is re-derived here. One
- *  sticky toast per disposition, naming each file once. */
-function reportSiteExceptions(from: string, to: string, report: RenameDone): void {
+/** Model r6 O7: say how many sites the rename of `from` left as they were
+ *  because they cannot spell their new name, and how many property keys it
+ *  wrote in key spelling, with their files. A site may name a page under
+ *  `from` (`A/x` in a rename of `A`), so the message names the rename, never
+ *  a name per site. The backend's report is the one answer; nothing is
+ *  re-derived here. One sticky toast per disposition, naming each file once. */
+function reportSiteExceptions(from: string, report: RenameDone): void {
   const sites = report.site_exceptions ?? [];
   for (const [disposition, id] of [["unspellable", "graph-rewrite-unspellable-sites"], ["normalizedKey", "graph-rewrite-respelled-keys"]] as const) {
     const these = sites.filter((site) => site.disposition === disposition);
     if (!these.length) continue;
     const files = [...new Set(these.map((site) => site.path))].join(", ");
-    pushToast(msg(id, { count: these.length, page: from, name: to, files }), "warn", { sticky: true });
+    pushToast(msg(id, { count: these.length, page: from, files }), "warn", { sticky: true });
   }
 }
 
@@ -138,8 +140,8 @@ export async function followPageIdentity(path: string, old: string): Promise<voi
 
 /** `target`: the page the initiating dialog reopens under its new name (a CLI
  *  rename has no such control: every view of it follows instead). */
-async function refreshAfterRename(from: string, to: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void): Promise<void> {
-    reportSiteExceptions(from, to, report);
+async function refreshAfterRename(from: string, target: PageTarget | undefined, report: RenameDone, onRefreshed?: (owner: Owner) => void): Promise<void> {
+    reportSiteExceptions(from, report);
     if (report.outcome === "unchanged") return;
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = report.skipped_conflicted_referrers ?? [];

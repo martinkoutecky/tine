@@ -63,6 +63,51 @@ fn o8_after_a_merge_each_page_is_listed_once_and_the_first_entry_stays() {
     );
 }
 
+/// O8 follows every successful rename (Lean `finishSettings` consumes the
+/// page result, not a count of changed bytes); review round 2, finding 2,
+/// with the reviewer's input. `Old` has no file and is named only by an Org
+/// tag, which cannot hold `two words` (O7: left and reported), so no page
+/// bytes change; the rename still completes and the settings follow. The
+/// same-spelling request is the control: it writes nothing.
+#[test]
+fn o8_a_rename_that_changes_no_page_bytes_still_moves_the_settings() {
+    let settings = "{:default-home {:page \"Old\"} :favorites [\"Old\"]}\n";
+    let tagged = "* heading :Old:\n";
+    let (root, store) = with_config("no-bytes", settings, &[("pages/r.org", tagged)]);
+    let report = renamed(&store, "Old", "two words", RenameChoice::Rename);
+    assert_eq!(report.outcome, RenameOutcome::Renamed);
+    assert_eq!(
+        report.site_exceptions.len(),
+        1,
+        "{:?}",
+        report.site_exceptions
+    );
+    assert_eq!(report.site_exceptions[0].path, "pages/r.org");
+    assert_eq!(report.config_skipped, None);
+    assert_eq!(report.home_page.as_deref(), Some("two words"));
+    assert_eq!(
+        report.favorites.expect("favorites moved").names,
+        ["two words"]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/r.org")).unwrap(),
+        tagged
+    );
+    assert_eq!(
+        config(&root),
+        "{:default-home {:page \"two words\"} :favorites [\"two words\"]}\n"
+    );
+
+    let (root, store) = with_config("same-spelling", settings, &[("pages/r.org", tagged)]);
+    let report = renamed(&store, "Old", "Old", RenameChoice::Rename);
+    assert_eq!(report.outcome, RenameOutcome::Unchanged);
+    assert_eq!(
+        config(&root),
+        settings,
+        "a same-spelling request writes nothing"
+    );
+}
+
 /// O8 with O1: "Favorites entries follow O1", and O1 substitutes the
 /// namespace prefix for every name under the source "however it exists": a
 /// favorite or home page naming a reference-only child (`A/x`, only linked)

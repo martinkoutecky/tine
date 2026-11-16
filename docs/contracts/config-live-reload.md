@@ -110,7 +110,9 @@ merged-away entry); a plain rename drops no entry. An alias spelling stays (it
 still opens the page); a renamed arrangement page moves
 `:tine/favorites-page`. Home and favorites are edited together and written in
 one step after the pages, all of it or none: if any value cannot be edited,
-nothing is written and the report says the settings were not updated. A title:: change that renames a page moves
+nothing is written and the report says the settings were not updated. The step
+follows every admitted rename, also one whose page step changes no bytes (every
+site left unspellable); only a request for the page's own spelling skips it. A title:: change that renames a page moves
 both the same way, as the backend observes it (`follow_page_identity`: called by
 the window on an identity change, and by the CLI owner's page write). The rename
 report and the follow reply carry the new list; the window adopts it and never

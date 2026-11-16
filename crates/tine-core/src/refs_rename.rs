@@ -77,8 +77,9 @@ pub enum Unrealized {
     /// whitespace hyphenated), reported when that differs from the new name".
     /// The key is rewritten.
     KeySpelling,
-    /// A Markdown file link's label cannot hold the new name (a bracket or a
-    /// line break); left as it is.
+    /// A file link's label cannot hold the new name (a bracket or a line
+    /// break; inside formatting, a formatting delimiter), or markup splits
+    /// the name in the label; left as it is.
     LinkLabel,
 }
 
@@ -808,11 +809,23 @@ fn link_edits(
             ));
         }
     };
+    let label = |inner: Range<usize>, emphasis: &[char]| {
+        label_edit(
+            raw,
+            range.start + inner.start..range.start + inner.end,
+            name,
+            &to,
+            emphasis,
+            renames,
+        )
+    };
     if let Some(body) = node.strip_prefix("[[").and_then(|b| b.strip_suffix("]]")) {
         match body.find("][") {
             // Org file link: its label names the page (the evidence's rule);
             // the path stem is a rewrite target of its own.
-            Some(split) if body.starts_with("file:") => push(2 + split + 2..node.len() - 2),
+            Some(split) if body.starts_with("file:") => {
+                edits.extend(label(2 + split + 2..node.len() - 2, ORG_EMPHASIS));
+            }
             Some(split) => push(2..2 + split),
             None => push(2..node.len() - 2),
         }
@@ -823,22 +836,54 @@ fn link_edits(
         if trimmed.starts_with("[[") && trimmed.ends_with("]]") && trimmed.len() >= 4 {
             let start = split + 2 + lead + 2;
             push(start..start + trimmed.len() - 4);
-        } else if node.starts_with('[') {
-            // Markdown file link (`[Old](file:x.md)`, `[Old](../pages/x.md)`):
-            // its label names the page (the evidence's rule), as for Org. A
-            // label cannot hold a bracket or a line break (O7): left as it is
-            // and reported.
-            if to.contains(['[', ']', '\n', '\r']) {
-                if renames.page(&node[1..split]).as_deref() == Some(to.as_ref()) {
-                    renames.miss(
-                        range.start + 1..range.start + split,
-                        Unrealized::LinkLabel,
-                        SiteKind::Link,
-                    );
-                }
-            } else {
-                push(1..split);
-            }
+        } else if let Some(open) = ["[", "!["].iter().find(|open| node.starts_with(**open)) {
+            // Markdown file link (`[Old](file:x.md)`, `[Old](../pages/x.md)`,
+            // or an image link the evidence names): its label names the page
+            // (the evidence's rule), as for Org.
+            edits.extend(label(open.len()..split, MARKDOWN_EMPHASIS));
+        }
+    }
+}
+
+/// Characters that delimit formatting inside a label, by format.
+const MARKDOWN_EMPHASIS: &[char] = &['*', '_', '~', '^', '=', '`'];
+const ORG_EMPHASIS: &[char] = &['*', '/', '_', '=', '~', '+'];
+
+/// A file link's label names its page: the evidence's name, which it reads
+/// through the label's formatting (`[**Old**](file:x.md)` names `Old`). The
+/// name is respelled where it stands when it is one contiguous run of the
+/// label and the label can hold the new name (no bracket or line break, and
+/// inside formatting no formatting delimiter); the formatting stays.
+/// Otherwise, a name split by markup (`[**Ol**_d_](…)`, Org `[[file:x.org][*Ol*d]]`) or a new name the label
+/// cannot hold, the site is left as it is and reported (O7). The name's
+/// identity is the evidence's; the label text is only searched for where
+/// that name is written, never looked up again.
+fn label_edit(
+    raw: &str,
+    label: Range<usize>,
+    name: &str,
+    to: &str,
+    emphasis: &[char],
+    renames: &Renames<'_>,
+) -> Option<Edit> {
+    let text = &raw[label.clone()];
+    let mut runs = text.match_indices(name);
+    let run = match (runs.next(), runs.next()) {
+        (Some((at, _)), None) if !name.is_empty() => Some(at),
+        _ => None,
+    };
+    let formatted = run.is_some_and(|at| at != 0 || name.len() != text.len());
+    let holds = !to.contains(['[', ']', '\n', '\r']) && !(formatted && to.contains(emphasis));
+    match run {
+        Some(at) if holds => Some(renames.edit(
+            label.start + at..label.start + at + name.len(),
+            name,
+            to,
+            to.to_owned(),
+        )),
+        _ => {
+            renames.miss(label, Unrealized::LinkLabel, SiteKind::Link);
+            None
         }
     }
 }
@@ -1312,6 +1357,107 @@ mod tests {
             };
             assert_eq!(site.kind, super::SiteKind::Link, "{target}");
             assert_eq!(&text[site.range.clone()], "Old", "{target}");
+        }
+    }
+
+    /// Review round 2, finding 1 (model r6 O1 with O7; manager ruling): the
+    /// evidence names a formatted label by its text (`[**Old**](file:x.md)`
+    /// names `Old`). One contiguous run is respelled and the formatting stays;
+    /// a name split by markup, or a new name the formatted label cannot hold,
+    /// leaves the label and reports it. Never a silent drop.
+    #[test]
+    fn a_formatted_file_link_label_is_respelled_in_its_run_or_reported() {
+        let proposal = |text: &str, org: bool, to: &str| {
+            let map = HashMap::from([(crate::refs::page_key("Old"), to.to_owned())]);
+            crate::refs::rename_proposal(
+                text,
+                org,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap()
+        };
+        for (text, org, to, after) in [
+            (
+                "- [**Old**](file:x.md)\n",
+                false,
+                "New",
+                "- [**New**](file:x.md)\n",
+            ),
+            (
+                "- [*Old*](../pages/x.md)\n",
+                false,
+                "New",
+                "- [*New*](../pages/x.md)\n",
+            ),
+            (
+                "* h [[file:x.org][*Old*]]\n",
+                true,
+                "New",
+                "* h [[file:x.org][*New*]]\n",
+            ),
+        ] {
+            let p = proposal(text, org, to);
+            assert_eq!(p.text, after, "{text}");
+            assert!(p.unrealized.is_empty(), "{text}: {:?}", p.unrealized);
+        }
+        // Split by markup as the parser reads it (it names `Old` through the
+        // formatting and the code span).
+        for (text, org, to, label) in [
+            ("- [**Ol**_d_](file:x.md)\n", false, "New", "**Ol**_d_"),
+            ("- [Ol`d`](file:x.md)\n", false, "New", "Ol`d`"),
+            ("- [**Old**](file:x.md)\n", false, "a]b", "**Old**"),
+            ("- [**Old**](file:x.md)\n", false, "a*b", "**Old**"),
+            ("* h [[file:x.org][*Ol*d]]\n", true, "New", "*Ol*d"),
+        ] {
+            let p = proposal(text, org, to);
+            assert_eq!(p.text, text, "{text} -> {to}: left as it is");
+            let [site] = p.unrealized.as_slice() else {
+                panic!("{text} -> {to}: one reported site: {:?}", p.unrealized);
+            };
+            assert_eq!(site.reason, super::Unrealized::LinkLabel, "{text}");
+            assert_eq!(site.kind, super::SiteKind::Link, "{text}");
+            assert_eq!(&text[site.range.clone()], label, "{text}");
+        }
+        // `**Ol**d` is no emphasis to the Markdown parser (a letter follows the
+        // closing `**`): the link names the page `**Ol**d`, so it is no site
+        // of `Old`, neither respelled nor reported.
+        let text = "- [**Ol**d](file:x.md)\n";
+        let p = proposal(text, false, "New");
+        assert_eq!(p.text, text);
+        assert!(p.unrealized.is_empty(), "{:?}", p.unrealized);
+    }
+
+    /// Review round 2 follow-up: an image link is a site only when the parser
+    /// names a page by it. Then its label follows like a file link's;
+    /// otherwise it is no site: untouched and unreported. Either way nothing
+    /// the parser named is dropped silently.
+    #[test]
+    fn an_image_link_is_a_site_only_when_the_parser_names_it() {
+        for target in ["../assets/x.png", "file:x.md", "../pages/x.md"] {
+            let text = format!("- ![Old]({target})\n");
+            let parsed = crate::render::parse_projection(&text, false);
+            let named = crate::reference_evidence::project(&text, false, &parsed.blocks)
+                .explicit
+                .iter()
+                .any(|reference| reference.name == "Old");
+            let map = HashMap::from([(crate::refs::page_key("Old"), "New".to_owned())]);
+            let p = crate::refs::rename_proposal(
+                &text,
+                false,
+                &map,
+                &HashMap::new(),
+                FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            let want = if named {
+                format!("- ![New]({target})\n")
+            } else {
+                text.clone()
+            };
+            assert_eq!(p.text, want, "{target}: parser names it: {named}");
+            assert!(p.unrealized.is_empty(), "{target}: {:?}", p.unrealized);
         }
     }
 
