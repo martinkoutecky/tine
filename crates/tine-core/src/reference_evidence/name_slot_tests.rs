@@ -1,6 +1,41 @@
 use crate::doc::DocBlock;
 
 #[test]
+fn nested_candidate_confirmation_keeps_one_source_parse_per_block() {
+    use crate::render::BLOCK_PARSES;
+    for org in [false, true] {
+        for n in [1, 10, 100] {
+            let bullet = if org { "*" } else { "-" };
+            let text: String = (0..n)
+                .map(|i| format!("{bullet} {i} [[a [[X]]]]\n"))
+                .collect();
+            BLOCK_PARSES.with(|p| p.set(0));
+            let proposal = crate::refs::rename_proposal(
+                &text,
+                org,
+                &std::collections::HashMap::from([("a [[x]]".to_owned(), "b [[Y]]".to_owned())]),
+                &std::collections::HashMap::new(),
+                crate::config::FileNameFormat::TripleLowbar,
+            )
+            .unwrap();
+            assert_eq!(
+                proposal.text,
+                if org {
+                    text.clone()
+                } else {
+                    text.replace("a [[X]]", r"b \[\[Y\]\]")
+                }
+            );
+            // One source read, then one Org or two Markdown candidate confirmations.
+            assert_eq!(
+                BLOCK_PARSES.with(|p| p.get()),
+                if org { 2 * n } else { 3 * n }
+            );
+        }
+    }
+}
+
+#[test]
 fn reader_name_extents_and_nesting_come_from_the_same_projection() {
     for (org, raw, want) in [
         (

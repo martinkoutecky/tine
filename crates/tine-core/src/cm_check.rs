@@ -276,11 +276,7 @@ impl<'a> Rename<'a> {
     /// Lean `titlePrefix`: bytes of the title's spelling that the old name
     /// (or its namespace prefix) occupies; 0 for a day or no match.
     fn title_prefix(&self, name: &str) -> usize {
-        match crate::refs::renamed_site_name(name, &self.pages, self.days) {
-            // `renamed_page_name` is `destination ++ name[prefix..]`.
-            Some(new) => name.len() - (new.len() - self.destination.len()),
-            None => 0,
-        }
+        crate::refs::renamed_site_prefix(name, &self.pages, self.days)
     }
 }
 
@@ -324,12 +320,23 @@ fn spell(rename: &Rename, site: &Site, name: &str) -> Option<String> {
     };
     let tag = || crate::refs::rename::tag_spelling(name, site.native.starts_with("#[["), site.org);
     let link = || {
+        fn flatten<'a>(site: &'a Site, out: &mut Vec<(&'a str, &'a str)>) {
+            out.push((&site.name, &site.native));
+            for (_, child) in &site.inner {
+                flatten(child, out);
+            }
+        }
+        let mut inner = Vec::new();
+        for site in kept_inner(rename, site) {
+            flatten(site, &mut inner);
+        }
         crate::refs::label::reference_spelling(
             &site.native,
             site.slot.clone(),
             name,
             site.org,
             site.rule.unwrap_or("explicit_link"),
+            &inner,
         )
         .map(|spelling| {
             let mut out = site.native.clone();
@@ -399,7 +406,7 @@ fn site_result(rename: &Rename, skip: bool, s: &Site) -> Site {
     };
     match k.and_then(|k| spell(rename, &s, &k).map(|raw| (k, raw))) {
         Some((k, raw)) => Site {
-            inner: kept_inner(rename, &s),
+            inner: kept_inner(rename, &s).map(|i| (0..0, i.clone())).collect(),
             slot: 0..raw.len(),
             name: k,
             native: raw,
@@ -450,13 +457,13 @@ fn inner_results<'s>(rename: &Rename, s: &'s Site) -> Cow<'s, Site> {
 /// prefix) occupies, which the new name keeps (Lean `nsSubst`). Their ranges
 /// in the respelled text are not kept (coordinates, erased before any
 /// comparison).
-fn kept_inner(rename: &Rename, s: &Site) -> Vec<(std::ops::Range<usize>, Site)> {
-    let kept = s.slot.start + rename.title_prefix(&s.name);
-    s.inner
-        .iter()
-        .filter(|(r, _)| !(s.slot.start <= r.start && r.end <= s.slot.end) || kept <= r.start)
-        .map(|(_, i)| (0..0, i.clone()))
-        .collect()
+fn kept_inner<'a>(rename: &Rename, s: &'a Site) -> impl Iterator<Item = &'a Site> {
+    crate::refs::label::retained_inner(
+        s.slot.clone(),
+        rename.title_prefix(&s.name),
+        s.inner.iter().map(|(range, site)| (range.clone(), site)),
+    )
+    .map(|(_, i)| i)
 }
 
 /// Lean `compact`: adjacent text atoms merge; an empty text atom goes.

@@ -732,7 +732,7 @@ fn block_edits(
     let source = readings.read(block);
     let projection = block.projection();
     let mut edits = Vec::new();
-    for reference in &source.explicit {
+    for (index, reference) in source.explicit.iter().enumerate() {
         if reference.slot.encoding {
             continue;
         }
@@ -813,9 +813,14 @@ fn block_edits(
                     renames.miss(range, Unrealized::HeadlineTag, SiteKind::Tag);
                 }
             }
-            "explicit_link" | "explicit_nested_link" => {
-                link_edits(raw, reference, is_org, renames, &mut edits)
-            }
+            "explicit_link" | "explicit_nested_link" => link_edits(
+                raw,
+                reference,
+                source.explicit[index + 1..].iter(),
+                is_org,
+                renames,
+                &mut edits,
+            ),
             "explicit_embed" => {
                 if let Some(slot) = reference.slot.run() {
                     if let Some(to) = renames.page(&reference.name) {
@@ -834,7 +839,7 @@ fn block_edits(
         }
     }
     edits.extend(query_edits(raw, &projection.regions, is_org, renames));
-    for target in source.targets.iter().cloned() {
+    for (index, target) in source.targets.iter().cloned().enumerate() {
         match target {
             RewriteTarget::FileLink(range) => {
                 edits.extend(file_link_stem_edit(raw, range, renames));
@@ -843,7 +848,13 @@ fn block_edits(
             RewriteTarget::MacroLink(reference) => {
                 let misses = renames.unrealized.borrow().len();
                 let mut local = Vec::new();
-                link_edits(raw, &reference, is_org, renames, &mut local);
+                let inner = source.targets[index + 1..]
+                    .iter()
+                    .filter_map(|target| match target {
+                        RewriteTarget::MacroLink(r) => Some(r),
+                        _ => None,
+                    });
+                link_edits(raw, &reference, inner, is_org, renames, &mut local);
                 for site in &mut renames.unrealized.borrow_mut()[misses..] {
                     site.kind = SiteKind::MacroArg;
                 }
@@ -863,9 +874,10 @@ fn block_edits(
 /// A link node `[[x]]`, Org `[[x][label]]`, Markdown `[label]([[x]])`, or a
 /// file link named by its label (Org `[[file:…][label]]`, Markdown
 /// `[label](file:…)` or `[label](../pages/x.md)`): respell the name.
-fn link_edits(
+fn link_edits<'a>(
     raw: &str,
     reference: &crate::reference_evidence::SlottedPageRef,
+    following: impl Iterator<Item = &'a crate::reference_evidence::SlottedPageRef>,
     is_org: bool,
     renames: &Renames<'_>,
     edits: &mut Vec<Edit>,
@@ -905,7 +917,30 @@ fn link_edits(
     }
     if let Some(at) = reference.slot.run() {
         let inner = at.start - range.start..at.end - range.start;
-        match crate::refs::label::reference_spelling(node, inner, &to, is_org, reference.rule) {
+        let mut following = following
+            .take_while(|r| r.range.start < range.end)
+            .filter(|r| !r.slot.encoding && r.range.end <= range.end)
+            .peekable();
+        let prefix = if following.peek().is_some() {
+            crate::refs::renamed_site_prefix(name, renames.pages, renames.days)
+        } else {
+            0
+        };
+        let expected_inner: Vec<_> = crate::refs::label::retained_inner(
+            at.clone(),
+            prefix,
+            following.map(|r| (r.range.clone(), r)),
+        )
+        .map(|(_, r)| (r.name.as_str(), &raw[r.range.clone()]))
+        .collect();
+        match crate::refs::label::reference_spelling(
+            node,
+            inner,
+            &to,
+            is_org,
+            reference.rule,
+            &expected_inner,
+        ) {
             Some(spelling) => edits.push(renames.edit(at.clone(), name, &to, spelling)),
             None => renames.miss(at.clone(), Unrealized::NativeSpelling, SiteKind::Link),
         }
@@ -1079,7 +1114,7 @@ pub(crate) fn tag_spelling(to: &str, bracketed: bool, org: bool) -> Option<Strin
             return Some(candidate);
         }
     }
-    crate::refs::label::reference_spelling("#[[Old]]", 3..6, to, org, "explicit_tag")
+    crate::refs::label::reference_spelling("#[[Old]]", 3..6, to, org, "explicit_tag", &[])
         .map(|name| format!("#[[{name}]]"))
 }
 

@@ -15,6 +15,12 @@ reported. Ordinary references in the same file still follow the rename.
 Reports identify the input file, native byte span and site kind. The reader
 supplies the decoded name and native name slot, so an escaped spelling
 written by one rename remains eligible for subsequent renames.
+Macro arguments decide enclosure from all reader evidence before selecting
+their page-link rewrite targets. A candidate spelling must read as the new
+name with exactly the inner sites the substitution retains: replacing the
+whole name removes its old inner sites; a namespace substitution retains
+those in its untouched suffix. Markdown escapes are used where they give
+that reading; a site with no faithful spelling stays and is reported.
 
 A merge writes what the conceptual model's merge rule O6 says
 (`cm-cut-model-r6`). The survivor keeps its name, path, header and blocks; no

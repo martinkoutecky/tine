@@ -158,8 +158,9 @@ fn collect_macro_links(
             slots: Some(&mut slotted),
         },
     );
-    slotted.retain(|r| r.rule == "explicit_link" || r.rule == "explicit_nested_link");
     slots::mark_nested(&mut slotted);
+    slotted.retain(|r| r.rule == "explicit_link" || r.rule == "explicit_nested_link");
+    slotted.sort_by_key(|r| (r.range.start, std::cmp::Reverse(r.range.end)));
     targets.extend(slotted.into_iter().map(RewriteTarget::MacroLink));
 }
 

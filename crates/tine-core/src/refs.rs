@@ -126,16 +126,37 @@ pub fn renamed_page_name<'a, V: AsRef<str>>(
     name: &str,
     pages: &'a std::collections::HashMap<String, V>,
 ) -> Option<std::borrow::Cow<'a, str>> {
+    renamed_page_destination(name, pages).map(|(to, prefix)| {
+        if prefix == name.len() {
+            std::borrow::Cow::Borrowed(to)
+        } else {
+            std::borrow::Cow::Owned(format!("{to}{}", &name[prefix..]))
+        }
+    })
+}
+
+/// O1's substituted prefix, shared by title parts and retained inner sites.
+pub(crate) fn renamed_site_prefix(
+    name: &str,
+    pages: &std::collections::HashMap<String, String>,
+    days: Option<&crate::date::JournalFormat>,
+) -> usize {
+    pinned_site(name, days, || renamed_page_destination(name, pages))
+        .map_or(0, |(_, prefix)| prefix)
+}
+
+fn renamed_page_destination<'a, V: AsRef<str>>(
+    name: &str,
+    pages: &'a std::collections::HashMap<String, V>,
+) -> Option<(&'a str, usize)> {
     if let Some(to) = pages.get(&page_key(name)) {
-        return Some(std::borrow::Cow::Borrowed(to.as_ref()));
+        return Some((to.as_ref(), name.len()));
     }
     namespace_refs(name)
         .filter(|prefix| prefix.len() < name.len())
         .filter_map(|prefix| pages.get(&page_key(prefix)).map(|to| (prefix, to)))
         .last()
-        .map(|(prefix, to)| {
-            std::borrow::Cow::Owned(format!("{}{}", to.as_ref(), &name[prefix.len()..]))
-        })
+        .map(|(prefix, to)| (to.as_ref(), prefix.len()))
 }
 
 /// Pages whose text is never a reference source: the target page itself (OG

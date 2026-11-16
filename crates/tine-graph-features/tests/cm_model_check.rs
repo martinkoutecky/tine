@@ -14,6 +14,288 @@ use tine_store::Guarantee;
 
 const BUG: &str = tine_store::model::TEST_RENAME_WRITER_BUG_SENTINEL;
 
+#[test]
+fn macro_tags_decide_nesting_before_selecting_links() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        for macro_name in ["renderer", "cloze"] {
+            for (old, argument) in [
+                ("Old", "#[[Old]]Tail"),
+                ("Old", "#prefix[[Old]]"),
+                ("Old", "#[[Old]][[Other]]"),
+                ("a [[Old]]", "#[[a [[Old]]]]"),
+                ("Old", "#[[Old]] Tail"),
+                ("Old", "[[a [[Old]]]]"),
+            ] {
+                for merge in [false, true] {
+                    for eol in ["\n", "\r\n"] {
+                        let ext = if org { "org" } else { "md" };
+                        let bullet = if org { "*" } else { "-" };
+                        let source_path = format!("pages/source.{ext}");
+                        let target_path = format!("pages/New.{ext}");
+                        let ref_path = format!("pages/r.{ext}");
+                        let body = format!("{bullet} {{{{{macro_name} {argument}}}}}{eol}");
+                        let source = if org {
+                            format!("#+title: {old}{eol}{body}")
+                        } else {
+                            format!("title:: {old}{eol}{eol}{body}")
+                        };
+                        let target = format!("{bullet} target{eol}");
+                        let mut files = vec![
+                            (source_path.as_str(), source.as_str()),
+                            (ref_path.as_str(), body.as_str()),
+                        ];
+                        if merge {
+                            files.push((target_path.as_str(), target.as_str()));
+                        }
+                        let (root, store) = fixture("check-macro-tag-nesting", &files);
+                        let app_data = tempfile::tempdir().unwrap();
+                        let host =
+                            tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+                        let choice = if merge {
+                            RenameChoice::MergeInto(&target_path)
+                        } else {
+                            RenameChoice::Rename
+                        };
+                        let case = format!(
+                            "org={org}, {macro_name}, {argument}, merge={merge}, eol={eol:?}"
+                        );
+                        match rename_page_as(&store, &host, old, "New", None, choice, &[]) {
+                            Ok(report) => {
+                                let actual = fs::read_to_string(root.join(&ref_path)).unwrap();
+                                let survivor = fs::read_to_string(root.join(&target_path)).unwrap();
+                                let protected = argument != "#[[Old]] Tail";
+                                let expected = if protected {
+                                    body.clone()
+                                } else {
+                                    body.replace("Old", "New")
+                                };
+                                if actual != expected
+                                    || !survivor.contains(&expected)
+                                    || report.site_exceptions.len() != if protected { 2 } else { 0 }
+                                {
+                                    failures.push(format!("{case}: referrer={actual:?}, survivor={survivor:?}, exceptions={:?}", report.site_exceptions));
+                                    continue;
+                                }
+                                for (path, before) in [(&source_path, &source), (&ref_path, &body)]
+                                    .into_iter()
+                                    .filter(|_| protected)
+                                {
+                                    let site = report
+                                        .site_exceptions
+                                        .iter()
+                                        .find(|site| &site.path == path)
+                                        .unwrap();
+                                    assert_eq!(&before[site.start..site.end], old, "{case}");
+                                    assert_eq!(site.kind, tine_core::refs::SiteKind::MacroArg);
+                                    assert_eq!(
+                                        site.disposition,
+                                        tine_graph_features::pages::Disposition::Unspellable
+                                    );
+                                }
+                            }
+                            Err(error) => failures.push(format!("{case}: {error}")),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failing cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn enclosing_link_candidates_keep_only_the_models_inner_sites() {
+    let _guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    for org in [false, true] {
+        for to in ["b [[Y]]", "b [[X]]"] {
+            for (prefix, suffix) in [
+                ("", ""),
+                ("{{renderer ", "}}"),
+                ("{{cloze ", "}}"),
+                ("body\n  tags:: ", ""),
+            ] {
+                let bullet = if org { "*" } else { "-" };
+                let (prefix, suffix) = if org && prefix.starts_with("body") {
+                    ("body\n:PROPERTIES:\n:tags: ", "\n:END:")
+                } else {
+                    (prefix, suffix)
+                };
+                let before = format!("{bullet} {prefix}[[a [[X]]]]{suffix}\n");
+                let path = if org { "pages/r.org" } else { "pages/r.md" };
+                for merge in [false, true] {
+                    let ext = if org { "org" } else { "md" };
+                    let page_path = |name| {
+                        format!(
+                            "pages/{}.{ext}",
+                            tine_core::model::encode_page_name(
+                                name,
+                                tine_core::config::FileNameFormat::TripleLowbar
+                            )
+                        )
+                    };
+                    let source_path = page_path("a [[X]]");
+                    let target_path = page_path(to);
+                    let source = before.clone();
+                    let target = format!("{bullet} target\n");
+                    let mut files = vec![
+                        (path, before.as_str()),
+                        (source_path.as_str(), source.as_str()),
+                    ];
+                    if merge {
+                        files.push((target_path.as_str(), target.as_str()));
+                    }
+                    let (root, store) = fixture("check-inner-spelling", &files);
+                    let app_data = tempfile::tempdir().unwrap();
+                    let host =
+                        tine_store::PageHost::start_for_tests(&store, app_data.path()).unwrap();
+                    let case = format!("org={org}, to={to}, merge={merge}, input={before:?}");
+                    let choice = if merge {
+                        RenameChoice::MergeInto(&target_path)
+                    } else {
+                        RenameChoice::Rename
+                    };
+                    match rename_page_as(&store, &host, "a [[X]]", to, None, choice, &[]) {
+                        Ok(report) => {
+                            let actual = fs::read_to_string(root.join(path)).unwrap();
+                            if org {
+                                assert_eq!(actual, before, "{case}");
+                                assert_eq!(report.site_exceptions.len(), 2, "{case}");
+                                assert!(fs::read_to_string(root.join(&target_path))
+                                    .unwrap()
+                                    .ends_with(&before));
+                                for (site_path, text) in
+                                    [(path, &before), (source_path.as_str(), &source)]
+                                {
+                                    let site = report
+                                        .site_exceptions
+                                        .iter()
+                                        .find(|site| site.path == site_path)
+                                        .unwrap();
+                                    assert_eq!(&text[site.start..site.end], "a [[X]]");
+                                    assert_eq!(
+                                        site.disposition,
+                                        tine_graph_features::pages::Disposition::Unspellable
+                                    );
+                                }
+                            } else {
+                                let expected = before.replace(
+                                    "a [[X]]",
+                                    &to.replace('[', "\\[").replace(']', "\\]"),
+                                );
+                                assert_eq!(actual, expected, "{case}");
+                                assert!(fs::read_to_string(root.join(&target_path))
+                                    .unwrap()
+                                    .ends_with(&expected));
+                                assert!(report.site_exceptions.is_empty(), "{case}");
+                                let report = rename_page_as(
+                                    &store,
+                                    &host,
+                                    to,
+                                    "Final",
+                                    None,
+                                    RenameChoice::Rename,
+                                    &[],
+                                )
+                                .unwrap();
+                                assert!(report.site_exceptions.is_empty());
+                                assert_eq!(
+                                    fs::read_to_string(root.join(path)).unwrap(),
+                                    before.replace("a [[X]]", "Final")
+                                );
+                                assert!(fs::read_to_string(root.join(page_path("Final")))
+                                    .unwrap()
+                                    .ends_with(&before.replace("a [[X]]", "Final")));
+                            }
+                        }
+                        Err(error) => failures.push(format!("{case}: {error}")),
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} failing cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn macro_property_and_query_readings_keep_their_own_context() {
+    let _guard = crate::integration_lock();
+    for (path, before, after, reports) in [
+        (
+            "pages/r.md",
+            "- lead\n  {{renderer #[[Old]]Tail}}\n- [[Old]]\n",
+            "- lead\n  {{renderer #[[Old]]Tail}}\n- [[New]]\n",
+            1,
+        ),
+        (
+            "pages/r.md",
+            "- body\n  tags:: {{renderer #[[Old]]Tail}}\n- [[Old]]\n",
+            "- body\n  tags:: {{renderer #[[Old]]Tail}}\n- [[New]]\n",
+            1,
+        ),
+        (
+            "pages/r.org",
+            "* body\n:PROPERTIES:\n:tags: {{cloze #[[Old]]Tail}}\n:END:\n* [[Old]]\n",
+            "* body\n:PROPERTIES:\n:tags: {{cloze #[[Old]]Tail}}\n:END:\n* [[New]]\n",
+            1,
+        ),
+        (
+            "pages/r.md",
+            "- {{query (and #[[Old]] Tail)}} [[Old]]\n",
+            "- {{query (and #New Tail)}} [[New]]\n",
+            0,
+        ),
+        (
+            "pages/r.org",
+            "* {{query (and #[[Old]] Tail)}} [[Old]]\n",
+            "* {{query (and #New Tail)}} [[New]]\n",
+            0,
+        ),
+        (
+            "pages/r.md",
+            "- [#[[Old]]Tail](file:x.md) [[Old]]\n",
+            "- [#[[Old]]Tail](file:x.md) [[New]]\n",
+            0,
+        ),
+        (
+            "pages/r.org",
+            "* [[file:x.org][#[[Old]]Tail]] [[Old]]\n",
+            "* [[file:x.org][#[[Old]]Tail]] [[New]]\n",
+            0,
+        ),
+        ("pages/r.org", "* head :Old:\n", "* head :New:\n", 0),
+    ] {
+        let (root, store) = fixture(
+            "check-reader-contexts",
+            &[("pages/Old.md", "- source\n"), (path, before)],
+        );
+        let report = nested_rename(&store, "Old", "New");
+        assert_eq!(
+            fs::read_to_string(root.join(path)).unwrap(),
+            after,
+            "{before:?}"
+        );
+        assert_eq!(report.site_exceptions.len(), reports, "{before:?}");
+        for site in report.site_exceptions {
+            assert_eq!(site.path, path);
+            assert_eq!(&before[site.start..site.end], "Old");
+            assert_eq!(site.kind, tine_core::refs::SiteKind::MacroArg);
+        }
+    }
+}
+
 fn nested_rename(
     store: &Arc<Store>,
     old: &str,
