@@ -251,7 +251,7 @@
         "text": "Sized images; video embeds",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b38",
+          "anchor": "b39",
           "contains": "image"
         }
       },
@@ -279,7 +279,7 @@
         "text": "NOTE callouts",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b73",
+          "anchor": "b74",
           "contains": "NOTE"
         }
       },
@@ -335,7 +335,7 @@
         "text": "A / B / C",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b47",
+          "anchor": "b48",
           "contains": "High-priority"
         }
       },
@@ -358,7 +358,7 @@
         "text": "Scheduled and repeating tasks",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b52",
+          "anchor": "b53",
           "contains": "repeating"
         }
       },
@@ -381,7 +381,7 @@
         "text": "LOGBOOK drawers",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b53",
+          "anchor": "b54",
           "contains": "logbook"
         }
       },
@@ -404,7 +404,7 @@
         "text": "Supported",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b75",
+          "anchor": "b76",
           "contains": "footnote"
         }
       },
@@ -460,7 +460,7 @@
         "text": "Task / priority / compound queries",
         "evidence": {
           "path": "website/guide/feature-showcase.html",
-          "anchor": "b68",
+          "anchor": "b69",
           "contains": "Compound query"
         }
       },
@@ -754,7 +754,7 @@
         "text": "Supported subset; unsupported clauses refuse the whole query",
         "evidence": {
           "path": "website/guide/features-queries.html",
-          "anchor": "b60",
+          "anchor": "b71",
           "contains": "whole query is refused"
         }
       },
@@ -803,7 +803,7 @@
         "text": "Count, sum and average without code",
         "evidence": {
           "path": "website/guide/features-queries.html",
-          "anchor": "b39",
+          "anchor": "b49",
           "contains": "count/sum/average"
         }
       },
