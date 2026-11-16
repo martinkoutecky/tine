@@ -318,3 +318,35 @@ fn spelling_patch_collects_each_document_once_however_many_references_it_holds()
     assert_eq!(counts[0], counts[1], "collections per edit: {counts:?}");
     assert!(counts[0] <= 3, "collections per edit: {counts:?}");
 }
+
+/// A name's referrers come from its postings, never a walk of the graph's
+/// pages (round 2 finding 4; Principles 2, 3). The rename's O0 question ("is
+/// this name referenced?") on a name nobody references examines nothing, and
+/// a referenced name examines its postings only, however many unrelated
+/// pages the graph holds.
+#[test]
+fn explicit_referrers_examine_postings_not_pages() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("pages")).unwrap();
+    for n in 0..200 {
+        write(root.path(), &format!("pages/p{n}.md"), "- unrelated\n");
+    }
+    write(root.path(), "pages/r.md", "- [[Target]]\n");
+    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    let view = store.whole_graph().unwrap();
+    for (name, want, visits) in [
+        ("Ghost", Vec::<&str>::new(), 0),
+        ("Target", vec!["pages/r.md"], 1),
+    ] {
+        REFERRER_VISITS.with(|count| count.set(0));
+        let got = view.explicit_referrers(&[name.to_owned()]);
+        let got: Vec<&str> = got.iter().map(|id| id.as_str()).collect();
+        assert_eq!(got, want, "{name}");
+        assert_eq!(
+            REFERRER_VISITS.with(|count| count.get()),
+            visits,
+            "{name}: pages or postings examined"
+        );
+    }
+    store.close();
+}

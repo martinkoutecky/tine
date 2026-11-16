@@ -210,10 +210,21 @@ impl<'a> Renames<'a> {
 
     /// The new name of a query's page-name argument.
     fn query_page(&self, name: &str) -> Option<Cow<'a, str>> {
-        self.queries
-            .and_then(|queries| queries.get(&page_key(name)))
-            .map(|to| Cow::Borrowed(to.as_str()))
-            .or_else(|| self.page(name))
+        let queries = self.queries;
+        crate::refs::pinned_site(name, self.days, || {
+            queries
+                .and_then(|queries| queries.get(&page_key(name)))
+                .map(|to| Cow::Borrowed(to.as_str()))
+        })
+        .or_else(|| self.page(name))
+    }
+
+    /// The new name of a property key, looked up by its key spelling.
+    fn key(&self, name: &str) -> Option<&'a str> {
+        let keys = &self.keys;
+        crate::refs::pinned_site(name, self.days, || {
+            keys.get(&property_key_norm(&page_key(name))).copied()
+        })
     }
 
     fn edit(&self, range: Range<usize>, name: &str, to: &str, spelling: String) -> Edit {
@@ -585,10 +596,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
             "explicit_property_key" => {
                 // The key names its page by page identity (`Über::` is page
                 // "über"); `keys` is keyed by the old name's key spelling.
-                if let Some(to) = renames
-                    .keys
-                    .get(&property_key_norm(&page_key(&reference.name)))
-                {
+                if let Some(to) = renames.key(&reference.name) {
                     if let Some(key) = property_key_spelling(to) {
                         if key != *to {
                             renames.miss(range.clone(), Unrealized::PropertyKey);
@@ -979,6 +987,31 @@ mod tests {
     use super::{HashMap, HashSet, VALUE_PARSES};
     use crate::config::FileNameFormat;
     use std::time::{Duration, Instant};
+
+    /// O2 per site (round 2 finding 1): page `2026 10 26` is no day, but its
+    /// property-key spelling `2026-10-26` is, and a query override naming a day
+    /// is a day site too. Both keep their spelling, as a `[[2026-10-26]]` link
+    /// does; the ordinary sites around them follow the rename.
+    #[test]
+    fn a_day_spelled_property_key_stays() {
+        let days = crate::date::JournalFormat::default();
+        let format = crate::refs::RenameFormat::new(FileNameFormat::TripleLowbar, &days);
+        let pages = HashMap::from([("2026 10 26".into(), "New".into())]);
+        let text = "- [[2026 10 26]]\n  2026-10-26:: value\n";
+        let got = crate::refs::rename_proposal(text, false, &pages, &HashMap::new(), format);
+        assert_eq!(got.unwrap().text, "- [[New]]\n  2026-10-26:: value\n");
+    }
+
+    #[test]
+    fn a_day_spelled_query_override_stays() {
+        let days = crate::date::JournalFormat::default();
+        let format = || crate::refs::RenameFormat::new(FileNameFormat::TripleLowbar, &days);
+        let pages = HashMap::from([("other".into(), "New".into())]);
+        let queries = HashMap::from([("2026-10-26".into(), "New".into())]);
+        let text = "- {{query [[2026-10-26]]}} [[Other]]\n";
+        let got = crate::refs::rename_proposal(text, false, &pages, &queries, format());
+        assert_eq!(got.unwrap().text, "- {{query [[2026-10-26]]}} [[New]]\n");
+    }
 
     #[test]
     fn certificates_keep_the_minimum_partition_and_linear_rewrite_budget() {

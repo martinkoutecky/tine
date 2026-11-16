@@ -121,3 +121,39 @@ fn cli_planner_refusals_are_refused_before_any_write() {
         assert_eq!(files(&graph.root), before, "{old} → {new}: nothing written");
     }
 }
+
+/// O2 asks of the name the user typed (round 2 finding 3): under a
+/// yearless title format, `2026-10-26` names the 2026 journal, whose page is
+/// titled `10-26`; the rename is the Day refusal, not `uncertain` from the
+/// yearless title the owner used to pass on.
+#[test]
+fn cli_a_typed_day_is_refused_under_a_yearless_title_format() {
+    let graph = Graph::seeded(
+        Default::default(),
+        &[
+            (
+                "logseq/config.edn",
+                "{:file/name-format :triple-lowbar :journal/page-title-format \"MM-dd\"}\n",
+            ),
+            ("journals/2026_10_26.md", "- day\n"),
+            ("pages/Links.md", "- [[10-26]]\n"),
+        ],
+    );
+    let slot = graph.slot();
+    let before = files(&graph.root);
+    let body = verb(
+        &slot,
+        "page.rename",
+        json!({"old":"2026-10-26","new":"New"}),
+    )
+    .expect_err("refused");
+    let detail = body.detail.clone().unwrap_or(Value::Null);
+    assert_eq!(
+        (body.code.as_str(), &detail["reason"], &detail["admitted"]),
+        ("refused", &json!("rename-refused"), &json!(false)),
+        "{} {detail}",
+        body.message
+    );
+    assert!(body.message.contains("journal day"), "{}", body.message);
+    assert_eq!(files(&graph.root), before, "nothing written");
+}

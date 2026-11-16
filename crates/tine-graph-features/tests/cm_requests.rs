@@ -472,3 +472,110 @@ fn o4_a_moved_file_with_conflict_markers_that_needs_a_rewrite_is_refused() {
     assert_eq!(after["pages/New.md"], MARKED, "moved verbatim");
     assert_eq!(after["pages/r.md"], "- [[New]]\n");
 }
+
+/// O0, O2, O3 hold for a request that names the source again (round 2
+/// finding 2): "Any other name is refused", "A day cannot be the source of a
+/// rename", "An answer where nothing was asked is refused". None has a
+/// same-spelling exemption. A valid page renamed to its own spelling is
+/// unchanged and writes nothing.
+#[test]
+fn a_request_to_the_same_name_is_checked_like_any_other() {
+    let _guard = crate::integration_lock();
+    let (root, store) = fixture(
+        "same-name",
+        &[
+            ("pages/A.md", "- [[A]] [[2026-10-27]]\n"),
+            ("pages/unrelated.md", "- other\n"),
+        ],
+    );
+    let before = snapshot(&root);
+    for (name, kind) in [
+        ("Ghost", "notAPage"),
+        ("2026-10-26", "day"),
+        ("2026-10-27", "day"),
+    ] {
+        assert_eq!(reason(&store, name, name)["kind"], kind, "{name}");
+        let error = rename(&store, name, name, RenameChoice::Rename).unwrap_err();
+        assert!(RenameBlocked::of(&error).is_some(), "{name}: {error}");
+    }
+    assert!(
+        rename(
+            &store,
+            "A",
+            "A",
+            RenameChoice::MergeInto("pages/unrelated.md")
+        )
+        .is_err(),
+        "an answer where nothing was asked is refused"
+    );
+    assert_eq!(snapshot(&root), before, "a refusal writes nothing");
+    assert_eq!(
+        rename_offer(&store, "A", "A", None).unwrap(),
+        RenameOffer::Rename
+    );
+    assert_eq!(
+        rename(&store, "A", "A", RenameChoice::Rename).unwrap(),
+        RenameOutcome::Unchanged
+    );
+    assert_eq!(
+        snapshot(&root),
+        before,
+        "an unchanged rename writes nothing"
+    );
+}
+
+/// A request is "this page, that new spelling": the source may be typed in
+/// any case. `foo → foo` on page `Foo` respells it to `foo`, and `foo → Bar`
+/// renames it, each exactly as the request typed in the page's own spelling
+/// does (round 2 correction).
+#[test]
+fn the_source_typed_in_another_case_is_the_same_request() {
+    let _guard = crate::integration_lock();
+    let files = [
+        ("pages/Foo.md", "- body\n"),
+        ("pages/r.md", "- [[Foo]] [[foo]]\n"),
+    ];
+    for (label, new) in [("respell", "foo"), ("rename", "Bar")] {
+        let (typed_root, typed) = fixture(&format!("typed-case-{label}"), &files);
+        let (shown_root, shown) = fixture(&format!("shown-case-{label}"), &files);
+        let want = rename(&shown, "Foo", new, RenameChoice::Rename).unwrap();
+        assert_eq!(want, RenameOutcome::Renamed, "Foo → {new}");
+        assert_eq!(
+            rename(&typed, "foo", new, RenameChoice::Rename).unwrap(),
+            want,
+            "foo → {new}"
+        );
+        assert_eq!(snapshot(&typed_root), snapshot(&shown_root), "foo → {new}");
+    }
+}
+
+/// A valid request for the page's own spelling is unchanged and decided
+/// without a walk of the graph (no listing, no stamps), unlike a refusal.
+#[test]
+fn a_request_for_the_pages_own_spelling_is_unchanged_without_a_walk() {
+    let _guard = crate::exclusive_integration_lock();
+    let (root, store) = fixture("own-spelling", &[("pages/Foo.md", "- body\n")]);
+    let before = snapshot(&root);
+    store.whole_graph().unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
+    while !host.quiescent_for_tests() {
+        std::thread::yield_now();
+    }
+    tine_store::cost_counters::reset();
+    let report = rename_page_as(&store, &host, "Foo", "Foo", None, RenameChoice::Rename, &[]);
+    let unchanged = tine_store::cost_counters::snapshot();
+    assert_eq!(report.unwrap().outcome, RenameOutcome::Unchanged);
+    assert_eq!(
+        (unchanged.listing_stamps, unchanged.stamps_by_path),
+        (0, 0),
+        "no walk for an unchanged name: {unchanged:?}"
+    );
+    assert_eq!(snapshot(&root), before);
+    // The control: a refusal is decided on a walked view, which lists.
+    tine_store::cost_counters::reset();
+    let refused = rename_page_as(&store, &host, "Ghost", "X", None, RenameChoice::Rename, &[]);
+    assert!(refused.is_err());
+    let walked = tine_store::cost_counters::snapshot();
+    assert!(walked.listing_stamps > 0, "a walk lists: {walked:?}");
+}

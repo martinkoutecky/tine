@@ -62,6 +62,9 @@ pub(super) struct RenamePlan {
     /// The new text of each referrer `pages` found changed, computed from
     /// its `reads` bytes; the host reuses it on equal bytes (GH #623).
     pub(super) rewritten: HashMap<PageId, refs::RenameProposal>,
+    /// The request names the source's own current spelling: nothing to do,
+    /// on any view (the rename decides it without a walk).
+    pub(super) unchanged: bool,
 }
 
 impl RenamePlan {
@@ -492,6 +495,17 @@ pub(super) fn report_rewritten_names(
     }
 }
 
+/// O3: "An answer where nothing was asked is refused". Scenario: the answer
+/// is stale (another instance, an external editor or a sync delivery changed
+/// the names between the question and the answer), or a caller answered a
+/// question the planner never asked.
+fn unasked() -> io::Error {
+    error(
+        io::ErrorKind::NotFound,
+        "the page to merge into no longer owns that name",
+    )
+}
+
 pub(super) fn plan_rename(
     store: &Store,
     old: &str,
@@ -557,6 +571,39 @@ pub(super) fn plan_rename(
     }
     let source = existing(resolved);
     validate_target(&source, expected_path)?;
+    // A request is "this page, that spelling": unchanged when `new` is the
+    // source's own current spelling (its file's name; for a source with no
+    // file, the typed name), whatever case the source was typed in. Nothing
+    // to rewrite and nothing asked, so a merge answer is one nobody asked
+    // for (O3).
+    let own = owned
+        .0
+        .iter()
+        .find(|entry| refs::normalize(&entry.name) == old_key)
+        .map_or(old, |entry| entry.name.as_str());
+    if own == new {
+        if merge_into.is_some() {
+            return Err(unasked());
+        }
+        return Ok(RenamePlan {
+            graph,
+            config,
+            days: journal_format,
+            map: RenameMap(Vec::new(), Vec::new()),
+            lookup: HashMap::new(),
+            query_lookup: HashMap::new(),
+            moves: HashMap::new(),
+            renamed: Vec::new(),
+            moved_titles_to_rebind: HashSet::new(),
+            merge: None,
+            ref_merge: false,
+            candidates: Vec::new(),
+            reads: HashMap::new(),
+            skipped: Vec::new(),
+            rewritten: HashMap::new(),
+            unchanged: true,
+        });
+    }
     // CM-OWN-CHILD, M-Q6: refused for a rename and a merge alike, before
     // anything else is decided (D-20261103-CMA).
     if own_child_used(&graph, &journal_format, &old_key, new) {
@@ -769,10 +816,7 @@ pub(super) fn plan_rename(
         });
     }
     if merge_into.is_some() && merge.is_none() && !ref_merge {
-        return Err(error(
-            io::ErrorKind::NotFound,
-            "the page to merge into no longer owns that name",
-        ));
+        return Err(unasked());
     }
     let pairs = renamed
         .iter()
@@ -837,5 +881,6 @@ pub(super) fn plan_rename(
         reads: HashMap::new(),
         skipped: Vec::new(),
         rewritten: HashMap::new(),
+        unchanged: false,
     })
 }

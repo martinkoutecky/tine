@@ -2858,8 +2858,8 @@ impl WholeGraph {
     /// excludes arguments of
     /// `{{query}}` or other macros, so a page that mentions a name only inside a
     /// query is not a referrer. The answer comes from this snapshot's parse, not
-    /// from disk. Cost ranges from O(P + matching references) to O(P + B) over the
-    /// parsed snapshot.
+    /// from disk. Cost: O(matching referrers · log P) from this snapshot's
+    /// explicit-reference postings; a name nobody references examines no page.
     pub fn explicit_referrers(&self, names: &[String]) -> Vec<PageId> {
         let keys: Vec<String> = names
             .iter()

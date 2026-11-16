@@ -88,17 +88,30 @@ impl From<FileNameFormat> for RenameFormat<'_> {
     }
 }
 
-/// [`renamed_page_name`] for one name site a rename writes: `None` also for
-/// a day (the graph's one date answer, `JournalFormat::parse`, accepts the
-/// whole name), which stays as it is (O2; O4 "a day under the source ... stays,
-/// and the rename proceeds"). The rewriter and the store's title check share
-/// it. The day test runs only for a site the rename would otherwise respell.
+/// [`renamed_page_name`] for one name site a rename writes, through
+/// [`pinned_site`]. The rewriter's page sites and the store's title check
+/// share it.
 pub fn renamed_site_name<'a>(
     name: &str,
     pages: &'a std::collections::HashMap<String, String>,
     days: Option<&crate::date::JournalFormat>,
 ) -> Option<std::borrow::Cow<'a, str>> {
-    renamed_page_name(name, pages).filter(|_| days.is_none_or(|days| days.parse(name).is_none()))
+    pinned_site(name, days, || renamed_page_name(name, pages))
+}
+
+/// The day pin, the one answer for every site a rename writes (a page name, a
+/// property key, a query argument): `rename` answers a site's new spelling,
+/// and a site spelled as a day (the graph's one date answer,
+/// `JournalFormat::parse`, accepts the whole site name) keeps its spelling (O2
+/// "days are never respelled"; O4 "a day under the source ... stays, and the
+/// rename proceeds"). The day test runs only for a site the rename would
+/// otherwise respell.
+pub fn pinned_site<T>(
+    name: &str,
+    days: Option<&crate::date::JournalFormat>,
+    rename: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    rename().filter(|_| days.is_none_or(|days| days.parse(name).is_none()))
 }
 
 /// The renamed spelling of a page name, including unclaimed namespace
@@ -227,10 +240,10 @@ pub fn rename_rewrite<'f>(
 }
 
 /// [`rename_rewrite`] where a query's page-name arguments naming a key of
-/// `queries` take that name instead (a merge through an alias writes the
-/// survivor's own name there, ruling (a) of D-20261103-CMA; links and
-/// namespace children keep `renames`' typed name). Empty `queries` is
-/// [`rename_rewrite`].
+/// `queries` take that name instead (links and namespace children keep
+/// `renames`' name; a day-spelled argument stays, [`pinned_site`]). Empty
+/// `queries` is [`rename_rewrite`]; the planner supplies none, since a merge
+/// onto another page's alias is refused (model r6 O3).
 /// If supplied, `rewritten` receives distinct old/new logical-name pairs of edits
 /// actually spliced into the text (including macro/query/file-link targets).
 /// Rejected, overlapping and byte-identical edits contribute nothing. Recording

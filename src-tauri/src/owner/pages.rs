@@ -254,10 +254,14 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         .as_ref()
         .map(|page| slot.store.page(page).map_err(|e| store_refused(e, page)))
         .transpose()?;
-    let old = parsed.as_ref().map_or_else(
-        || args.old.trim().to_owned(),
-        |parsed| parsed.doc.name.clone(),
-    );
+    // The planner is asked about the name the user typed, as every request
+    // check (O0, O2) is: a journal's display title can be yearless (`10-26`)
+    // and no longer reads as the day the user named. The page's own name is
+    // what the window and the reply show.
+    let typed = args.old.trim();
+    let old = parsed
+        .as_ref()
+        .map_or_else(|| typed.to_owned(), |parsed| parsed.doc.name.clone());
     let kind = parsed
         .as_ref()
         .map_or(tine_core::model::PageKind::Page, |parsed| parsed.doc.kind);
@@ -272,7 +276,7 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
         tine_graph_features::pages::rename_or_merge_page(
             &slot.store,
             host,
-            &old,
+            typed,
             new,
             path,
             None,

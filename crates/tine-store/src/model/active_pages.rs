@@ -6,21 +6,20 @@ use std::collections::BTreeSet;
 
 impl ReadSnapshot {
     pub(super) fn is_active_path(&self, path: &Path) -> bool {
-        let Some((entry, _)) = self.physical_pages.iter().next() else {
-            return false;
-        };
-        let Some(root) = entry
+        self.rel_of(path)
+            .is_some_and(|rel| self.pages.positions.contains_key(rel.as_str()))
+    }
+
+    /// A page path's graph-relative spelling (the pages' `positions` key).
+    /// O(path length); no page is examined beyond the first, for the root.
+    pub(super) fn rel_of(&self, path: &Path) -> Option<String> {
+        let (entry, _) = self.physical_pages.iter().next()?;
+        let root = entry
             .path
             .ancestors()
-            .nth(Path::new(entry.rel_path_str()).components().count())
-        else {
-            return false;
-        };
-        let Ok(rel) = path.strip_prefix(root) else {
-            return false;
-        };
-        let rel = rel.to_string_lossy().replace('\\', "/");
-        self.pages.positions.contains_key(rel.as_str())
+            .nth(Path::new(entry.rel_path_str()).components().count())?;
+        let rel = path.strip_prefix(root).ok()?;
+        Some(rel.to_string_lossy().replace('\\', "/"))
     }
 }
 

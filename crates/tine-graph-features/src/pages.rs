@@ -588,7 +588,7 @@ fn rename_page_after_inventory(
     if new.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty name"));
     }
-    if old.is_empty() || old == new {
+    if old.is_empty() {
         return Ok(RenameReport::unchanged());
     }
     let plan = || {
@@ -605,9 +605,9 @@ fn rename_page_after_inventory(
     crate::retry_on_conflict("page changed repeatedly during rename", || {
         // Planned from the published view; the attempt's walk runs in
         // `multi_rename`, after the flush. A refusal (or nothing to do) is
-        // never decided on an unwalked view: walk and plan again.
+        // never decided on an unwalked view: walk and plan again (`unchanged` needs none).
         let first = match plan() {
-            Ok(first) if !first.map.0.is_empty() => first,
+            Ok(first) if !first.map.0.is_empty() || first.unchanged => first,
             _ => {
                 refreshed_view(store)?;
                 plan()?
@@ -787,6 +787,7 @@ fn rename_transaction<'s>(
         mut reads,
         skipped,
         mut rewritten,
+        unchanged: _,
     } = plan;
     let map = Arc::new(map); // shared by the steps: one move per namespace child
     let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));

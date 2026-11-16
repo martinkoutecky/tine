@@ -26,7 +26,7 @@ pub fn rename_offer(
     if new.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty name"));
     }
-    if old.is_empty() || old == new {
+    if old.is_empty() {
         return Ok(RenameOffer::Rename);
     }
     let plan = || {

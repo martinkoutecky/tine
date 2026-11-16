@@ -10,8 +10,8 @@
 //!   alias is a one-step rename. The only answers are confirm and cancel.
 //! - R10 / M-Q7: a journal day is the claimant of its day under every date
 //!   spelling, so a rename onto a day offers a merge into the journal.
-//! - B4 / accepted SPEC §5.3: a merge through an alias substitutes the
-//!   selected member's spelling in every site and namespace child.
+//! - B4 / model r6 O1: a merge writes the survivor's own name in every site
+//!   and namespace child (a merge onto another page's alias is refused, O3).
 //! - R12 / M-Q6, CM-OWN-CHILD (D-20261103-CMA): no rename or merge onto a
 //!   used name inside the page's own namespace; a merely linked one is free.
 //! - R14: a case-only rename onto a file another page holds refuses with
