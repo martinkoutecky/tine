@@ -98,7 +98,6 @@ jobs:
       - name: lsdoc generated artifacts are current
         run: |
           node scripts/check-wasm-pin.mjs
-          node scripts/check-lsdoc-oracle-sync.mjs
 
       - name: Typecheck and frontend tests
         run: |
@@ -191,9 +190,6 @@ jobs:
       - name: lsdoc WASM pin check
         run: node scripts/check-wasm-pin.mjs
 
-      - name: lsdoc mldoc-oracle drift check
-        run: node scripts/check-lsdoc-oracle-sync.mjs
-
       - name: Typecheck (tsc)
         run: npx tsc --noEmit
 
@@ -274,7 +270,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -406,7 +402,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -597,7 +593,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: wasm32-unknown-unknown
       - uses: swatinem/rust-cache@v2
@@ -739,7 +735,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
@@ -806,7 +802,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"

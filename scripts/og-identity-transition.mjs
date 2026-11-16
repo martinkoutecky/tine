@@ -138,7 +138,7 @@ fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });
 const graph = `${TMP}/graph`;
 fs.cpSync(GRAPH_SRC, graph, { recursive: true });
-// An ex-Managed-Storage graph still carries master's old `.tine-sync/` (ADR 0066):
+// A graph once used with Managed Storage (removed) still carries its old `.tine-sync/`:
 // neither build reads it, and og must leave it byte-identical.
 fs.mkdirSync(`${graph}/.tine-sync/v1`, { recursive: true });
 fs.writeFileSync(`${graph}/.tine-sync/v1/state.json`, "{\"schema\":1}\n");
