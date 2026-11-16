@@ -14,6 +14,7 @@ import { backend } from "../backend";
 import type { BlockDto } from "../types";
 import * as runs from "./authorRuns";
 import * as commentChildren from "../commentChildren";
+import * as foldOption from "../document/edits/queryFoldOption";
 import { setAuthorMarksHidden } from "../authorMarksPref";
 import { readFileSync } from "node:fs";
 
@@ -352,6 +353,19 @@ it.each([8, 32])("a real fold change on the spine (depth %i) still moves the thr
   expect(runOf(root, "n")).toBe("");
   setCollapsed(mid, false);
   expect(runOf(root, "n")).toBe("up");
+});
+
+// GH #892 review (round 5) F1: the walk keeps exactly its current spine's fold subscriptions. Once a fold
+// shortens the spine, the rows that left it are not watched: editing one reads no fold for the next sibling.
+it.each([8, 32])("rows that leave the previous row's spine (depth %i) are no longer watched", depth => {
+  const root = mount([chain(depth), b("n")]);
+  expect(runOf(root, "n")).toBe("up");
+  setCollapsed("s0", true);   // the spine is now s0 alone; s1.. are hidden and unmounted
+  const former = `s${depth >> 1}`;
+  const reads = vi.spyOn(foldOption, "storedFold");
+  setRaw(former, `${former} edited\ntine.author:: Ada`);
+  expect(reads.mock.calls.filter(([id]) => id === former).length).toBe(0);
+  reads.mockRestore();
 });
 
 // GH #892 review F3: the hits of a results list are independent. No thread link crosses from one hit to the
