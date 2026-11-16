@@ -63,10 +63,18 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
   const previousRow = () => (previousLast ??= runWithOwner(owner, () => {
     // The index that covers the previous sibling covers the whole spine below it.
     const index = createCommentIndexFor(() => run!.neighbours()?.()?.prev ?? null);
+    // A fold reads the row's raw text; one memo per visited row (under the row's owner, so a rerun does not
+    // dispose it) hands the walk a boolean, so typing in a spine row does not re-walk the spine.
+    const folds = new Map<string, Accessor<boolean>>();
+    const foldOf = (id: string) => {
+      let fold = folds.get(id);
+      if (!fold) folds.set(id, fold = runWithOwner(owner, () => createMemo(() => run!.folded(id)))!);
+      return fold();
+    };
     return createMemo(() => {
       const sides = run!.neighbours()?.() ?? NO_SIDES;
       return sides.prev === undefined || sides.results ? undefined
-        : lastRow(sides.prev, run!.folded, id => index()?.isComment(id) ?? false);
+        : lastRow(sides.prev, foldOf, id => index()?.isComment(id) ?? false);
     });
   }))!();
   const threadSides = () => {

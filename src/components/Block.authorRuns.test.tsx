@@ -6,7 +6,7 @@ import { Block, SurfaceContext } from "./Block";
 import { blockRegions, initParser } from "../render/parse";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
-import { pageByName, resetStore, setRaw, setBlockProperty, deleteBlock, undo } from "../document";
+import { pageByName, resetStore, setRaw, setCollapsed, setBlockProperty, deleteBlock, undo } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { editorIn } from "../tests/editorDriver";
@@ -306,6 +306,52 @@ it.each([8, 32])("typing beside %i hidden comments screens a constant number of 
   });
   // The index screens the one edited block; a walk over the tail would add one screen per hidden comment.
   for (const cost of costs) expect(cost).toBeLessThanOrEqual(4);
+});
+
+// GH #892 review (round 4) F1: typing in any row of the previous sibling's last-row spine, or in its hidden
+// tail, must not re-walk that spine (a walk inspects every row it visits and, at each, the children from the
+// end). `lastRow` is the walk, so its calls are the inspections: none when no fold or membership changed.
+const walks = () => vi.spyOn(runs, "lastRow");
+it.each([8, 32])("typing in the parent or last child above %i hidden comments does not re-walk the previous row", count => {
+  const comments = Array.from({ length: count }, (_, i) => quote(`c${i}`, "p"));
+  for (const edited of ["p", "last", "c1"]) {
+    const root = mount([b("p", "Ada", [b("first"), b("last"), ...comments]), b("n")]);
+    expect(runOf(root, "n")).toBe("up");
+    const calls = walks();
+    setRaw(edited, edited === "c1" ? "other note\ntine.quote:: p\ntine.author:: Bo" : `${edited} edited\ntine.author:: Ada`);
+    expect(calls.mock.calls.length, `editing ${edited}`).toBe(0);
+    expect(runOf(root, "n")).toBe("up");
+    calls.mockRestore(); dispose?.(); resetStore(); document.body.innerHTML = "";
+  }
+});
+
+/** A last-child chain of `depth` rows, root first: `s0` > `s1` > ... > the leaf `s<depth-1>`. */
+const chain = (depth: number, leafBy = "Ada"): BlockDto => {
+  let node = b(`s${depth - 1}`, leafBy);
+  for (let level = depth - 2; level >= 0; level--) node = b(`s${level}`, "Ada", [node]);
+  return node;
+};
+it.each([8, 32])("typing anywhere in a last-child chain of depth %i does not re-walk it for the next sibling", depth => {
+  for (const edited of ["s0", `s${depth >> 1}`, `s${depth - 1}`]) {
+    const root = mount([chain(depth), b("n")]);
+    expect(runOf(root, "n")).toBe("up");
+    const calls = walks();
+    setRaw(edited, `${edited} edited\ntine.author:: Ada`);
+    expect(calls.mock.calls.length, `editing ${edited}`).toBe(0);
+    expect(runOf(root, "n")).toBe("up");
+    calls.mockRestore(); dispose?.(); resetStore(); document.body.innerHTML = "";
+  }
+});
+
+it.each([8, 32])("a real fold change on the spine (depth %i) still moves the thread's row above the next sibling", depth => {
+  const mid = `s${depth >> 1}`;
+  // Ada's chain ends in a leaf of Bo's, and so does `n`: the run joins only while the leaf is the row above it.
+  const root = mount([chain(depth, "Bo"), b("n", "Bo")]);
+  expect(runOf(root, "n")).toBe("up");
+  setCollapsed(mid, true);
+  expect(runOf(root, "n")).toBe("");
+  setCollapsed(mid, false);
+  expect(runOf(root, "n")).toBe("up");
 });
 
 // GH #892 review F3: the hits of a results list are independent. No thread link crosses from one hit to the
