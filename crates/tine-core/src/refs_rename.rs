@@ -755,7 +755,7 @@ fn link_edits(
 /// macro is then a binary search of that read's code ranges. `properties` are
 /// in source order and disjoint (`block_regions`' visitors append in source
 /// order), and so are a parse's `literals` (sorted and merged).
-struct PropertyValueCode<'a> {
+pub(crate) struct PropertyValueCode<'a> {
     raw: &'a str,
     regions: &'a crate::block_regions::BlockRegions,
     is_org: bool,
@@ -765,7 +765,11 @@ struct PropertyValueCode<'a> {
 }
 
 impl<'a> PropertyValueCode<'a> {
-    fn new(raw: &'a str, regions: &'a crate::block_regions::BlockRegions, is_org: bool) -> Self {
+    pub(crate) fn new(
+        raw: &'a str,
+        regions: &'a crate::block_regions::BlockRegions,
+        is_org: bool,
+    ) -> Self {
         Self {
             raw,
             regions,
@@ -776,7 +780,7 @@ impl<'a> PropertyValueCode<'a> {
 
     /// Whether `at` (an offset in `raw`) is inside code written in a property's
     /// value.
-    fn contains(&mut self, at: usize) -> bool {
+    pub(crate) fn contains(&mut self, at: usize) -> bool {
         let (raw, is_org, properties) = (self.raw, self.is_org, &self.regions.properties);
         let index = properties.partition_point(|property| property.value_range.1 <= at);
         let Some(property) = properties
@@ -894,7 +898,7 @@ fn query_edits(
 }
 
 /// An OG DSL page-name token respelled for `to`, keeping its form.
-fn og_token_spelling(token: &str, to: &str) -> String {
+pub(crate) fn og_token_spelling(token: &str, to: &str) -> String {
     use crate::query::print::{quote_str, word};
     if token.starts_with("\"[[") {
         quote_str(&format!("[[{to}]]"))
@@ -934,7 +938,7 @@ pub(crate) fn member_spelling(to: &str) -> String {
 
 /// OG `replace-property-ref!`'s key: lower-cased, whitespace runs hyphenated.
 /// `None` when that is no property key (empty, or holding a `:`).
-fn property_key_spelling(to: &str) -> Option<String> {
+pub(crate) fn property_key_spelling(to: &str) -> Option<String> {
     let key = to
         .to_lowercase()
         .split_whitespace()
@@ -945,7 +949,7 @@ fn property_key_spelling(to: &str) -> Option<String> {
 
 /// An Org headline tag holds no whitespace and no `:`; a name that does
 /// cannot be written there, so that tag keeps the old name.
-fn headline_tag_ok(to: &str) -> bool {
+pub(crate) fn headline_tag_ok(to: &str) -> bool {
     !to.is_empty() && !to.contains(':') && !to.contains(char::is_whitespace)
 }
 

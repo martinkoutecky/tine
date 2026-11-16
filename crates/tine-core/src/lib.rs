@@ -7,6 +7,7 @@ pub mod asset_path;
 pub mod asset_refs;
 pub mod block_id;
 pub use tine_outline::block_regions;
+pub mod cm_check;
 pub mod concord_queue;
 pub mod config;
 pub mod corpus;
