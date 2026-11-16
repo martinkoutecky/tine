@@ -24,6 +24,12 @@ function html(node: () => JSX.Element): string {
 }
 
 describe("Welcome window chrome (GH #36)", () => {
+  it("offers cloning alongside opening and creating a graph during onboarding", () => {
+    const welcome = html(() => <Welcome />);
+    expect(welcome).toContain("Clone a graph from a git URL");
+    expect(welcome).toContain("Open an existing graph");
+    expect(welcome).toContain("Create a new graph");
+  });
   it("draws window controls on a frameless window (isTauri && !osDrawsWindowControls)", () => {
     drawsMock.mockReturnValue(false);
     expect(html(() => <Welcome />)).toContain("welcome-winchrome");

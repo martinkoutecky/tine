@@ -2,6 +2,55 @@
 //! a real Store.
 use super::*;
 
+#[test]
+fn an_orphan_stop_saves_the_admitted_queue_before_it_is_ready() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let pause = live.host.pause_for_tests(&[PageId::from("pages/a.md")]);
+    let window = live.host.session();
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
+    let orphaned = live.host.session();
+    assert_ne!(orphaned, window, "S2: the gone window's session ends");
+    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
+    assert_eq!(
+        live.host.session(),
+        orphaned,
+        "the window crash runs once per owner"
+    );
+    let dto = live.dto(&key, "- late\n");
+    let late = live
+        .host
+        .submit(window, live.id(), &key, &dto, page.version, None, &[]);
+    assert_eq!(
+        late,
+        Err(PageRefusal::NotAdmitted),
+        "a stale session is not admitted"
+    );
+    settle();
+    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
+    assert_eq!(
+        live.disk(&key),
+        "- one\n",
+        "the submit is queued behind the scheduler pause"
+    );
+    drop(pause);
+    assert_eq!(live.until_orphan_stop(), StopState::Ready);
+    assert_eq!(
+        live.disk(&key),
+        "- two\n",
+        "the admitted input is saved first"
+    );
+    let answered = live
+        .mail
+        .try_iter()
+        .any(|mail| mail.session == window && mail.answer.as_ref().is_some_and(|a| a.id == id));
+    assert!(!answered, "no answer is owed to the gone window");
+    let Ok(_stopped) = live.host.stop_finish() else {
+        panic!("a ready orphan stop finishes");
+    };
+}
+
 /// §7 steps 3–6: the whole restore stop saves the drained edit, and the
 /// stopped binding relaunches one host, for the same binding and mail
 /// sink, on the tree as the restore left it.
@@ -20,9 +69,16 @@ fn a_restore_stop_relaunches_one_host_on_the_restored_tree() {
         kinds,
         ..
     } = live;
+    let stopping = host.session();
     let Ok(stopped) = host.stop_saved(id, StopMode::Restore) else {
         panic!("the restore stop completes");
     };
+    // Mail the stopped host sent before the stop returned (a slow runner can
+    // deliver the save's later mail after its answer) stays in the sink; the
+    // relaunched host's mail is checked from here on.
+    for old in mail.try_iter() {
+        assert_eq!(old.session, stopping, "mail before the relaunch");
+    }
     assert_eq!(fs::read_to_string(root.join(&key)).unwrap(), "- two\n");
     {
         let _writer = store.writer.lock().unwrap();
@@ -95,63 +151,6 @@ impl Live {
         }
     }
 }
-
-/// Plan v3 §3, S2 (`windowCrash`, `storage-s3.qnt:588-590`): a host no
-/// window owns ends the window's session once, keeps applying the request
-/// it admitted (here queued behind a retained writer), mails no answer to
-/// the gone window, and stops only once that input is saved.
-#[test]
-fn an_orphan_stop_saves_the_admitted_queue_before_it_is_ready() {
-    let live = Live::new(&[("pages/a.md", "- one\n")]);
-    let (key, page) = live.open("pages/a.md");
-    let reservation = live
-        .host
-        .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-        .unwrap();
-    let window = live.host.session();
-    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
-    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
-    let orphaned = live.host.session();
-    assert_ne!(orphaned, window, "S2: the gone window's session ends");
-    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
-    assert_eq!(
-        live.host.session(),
-        orphaned,
-        "the window crash runs once per owner"
-    );
-    let dto = live.dto(&key, "- late\n");
-    let late = live
-        .host
-        .submit(window, live.id(), &key, &dto, page.version, None, &[]);
-    assert_eq!(
-        late,
-        Err(PageRefusal::NotAdmitted),
-        "a stale session is not admitted"
-    );
-    settle();
-    assert_eq!(live.host.orphan_stop(), StopState::Waiting);
-    assert_eq!(
-        live.disk(&key),
-        "- one\n",
-        "the submit is queued behind the reservation"
-    );
-    drop(reservation);
-    assert_eq!(live.until_orphan_stop(), StopState::Ready);
-    assert_eq!(
-        live.disk(&key),
-        "- two\n",
-        "the admitted input is saved first"
-    );
-    let answered = live
-        .mail
-        .try_iter()
-        .any(|mail| mail.session == window && mail.answer.as_ref().is_some_and(|a| a.id == id));
-    assert!(!answered, "no answer is owed to the gone window");
-    let Ok(_stopped) = live.host.stop_finish() else {
-        panic!("a ready orphan stop finishes");
-    };
-}
-
 /// Plan v3 §3 (B2) and §6: a host no window owns, holding conflicted input
 /// whose draft cannot be written, aborts its stop with that page and keeps
 /// the input live; a window reload then owns it again.
@@ -346,6 +345,7 @@ fn review_p1_m2_an_orphan_stop_finishes_once_draft_io_is_repaired() {
         match live.host.orphan_stop() {
             StopState::Aborted(pages) => break pages,
             StopState::Ready => panic!("R2: the orphan stop finished over a known copy"),
+            StopState::Ended => panic!("the driver ended"),
             StopState::Waiting => {
                 assert!(Instant::now() < deadline, "the stop never settled");
                 std::thread::sleep(Duration::from_millis(20));
@@ -363,6 +363,7 @@ fn review_p1_m2_an_orphan_stop_finishes_once_draft_io_is_repaired() {
                 assert!(Instant::now() < deadline, "still aborted: {pages:?}");
             }
             StopState::Waiting => assert!(Instant::now() < deadline, "never ready"),
+            StopState::Ended => panic!("the driver ended"),
         }
         std::thread::sleep(Duration::from_millis(20));
     }

@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
 import { FEED_LOAD_FAILURE, watchErrorToasts } from "./lib/e2e-toasts.mjs";
+import { findZips, zipEntry } from "./lib/e2e-zip.mjs";
 
 const TMP = process.env.E2E_TMP_DIR || `/tmp/tine-journal-format-e2e-${process.pid}`;
 const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || TMP;
@@ -70,17 +71,9 @@ const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NAT
 await sleep(3000);
 
 const journalFiles = () => fs.readdirSync(`${G}/journals`).sort();
-/** Every file under `dir` whose path has a directory containing `marker`. */
-function snapshotCopies(dir, marker, name, inside = false, found = []) {
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) snapshotCopies(full, marker, name, inside || entry.name.includes(marker), found);
-    else if (inside && entry.name === name) found.push(full);
-  }
-  return found;
-}
+/** The bytes of graph file `rel` in every `marker` backup zip under `dir` (ADR 0074). */
+const snapshotCopies = (dir, marker, rel) =>
+  findZips(dir, marker).map((zip) => zipEntry(zip, rel)).filter((bytes) => bytes !== undefined);
 
 let browser;
 let step = "launch";
@@ -141,7 +134,12 @@ try {
     || fs.readFileSync(TITLE_NAMED, "utf8") !== TITLE_NAMED_BYTES) {
     throw new Error(`declining the confirmation changed the journals: ${JSON.stringify(journalFiles())}`);
   }
-  if (snapshotCopies(`${XDG}/data`, "pre-journal-rename", "22.06.2026.md").length) {
+  // Positive control: the launch backup is a zip this reader opens, so the
+  // absence check below cannot pass because the reader finds nothing.
+  await browser.waitUntil(() => snapshotCopies(`${XDG}/data`, "", "journals/22.06.2026.md").length > 0, {
+    timeout: 10_000, timeoutMsg: "no launch backup zip holding journals/22.06.2026.md was found",
+  });
+  if (snapshotCopies(`${XDG}/data`, "pre-journal-rename", "journals/22.06.2026.md").length) {
     throw new Error("declining the confirmation still took a pre-journal-rename snapshot");
   }
   console.log("PASS: declining the native confirmation renamed nothing");
@@ -158,9 +156,9 @@ try {
   if (JSON.stringify(journalFiles()) !== JSON.stringify(["22-06-2026.md", "23-06-2026.md", "24-06-2026.md"])) {
     throw new Error(`unexpected journal files after rename: ${JSON.stringify(journalFiles())}`);
   }
-  const copies = snapshotCopies(`${XDG}/data`, "pre-journal-rename", "22.06.2026.md");
-  if (copies.length !== 1 || fs.readFileSync(copies[0], "utf8") !== TITLE_NAMED_BYTES) {
-    throw new Error(`expected one pre-journal-rename snapshot holding the original name, found ${JSON.stringify(copies)}`);
+  const copies = snapshotCopies(`${XDG}/data`, "pre-journal-rename", "journals/22.06.2026.md");
+  if (copies.length !== 1 || copies[0].toString("utf8") !== TITLE_NAMED_BYTES) {
+    throw new Error(`expected one pre-journal-rename snapshot holding the original name, found ${JSON.stringify(copies.map(String))}`);
   }
   await browser.waitUntil(async () => (await proposal()).length === 0, {
     timeout: 10_000, timeoutMsg: "the applied proposal was still listed",

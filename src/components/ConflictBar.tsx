@@ -2,8 +2,9 @@ import { Rich } from "../i18n/Rich";
 import { t, msg } from "../i18n";
 import { For, Show, type JSX } from "solid-js";
 import { conflictReason, conflicts, pageByName, resolveConflict } from "../document";
-import { liveConflictForPage } from "../liveConflicts";
+import { liveConflictForPage, requestConflictReview } from "../liveConflicts";
 import { openPageTarget } from "../routerBridge";
+import { DiskOrMineChoice } from "./DiskOrMineChoice";
 
 // Global save-conflict surface. The page host refuses to overwrite a file that
 // changed on disk under this window's input (external edit / Syncthing) and
@@ -27,7 +28,14 @@ export function ConflictBar(): JSX.Element {
               <div class="conflict-banner">
                 <span class="conflict-msg"><Rich message={msg("conflict-bar-live-notice", { name })} /></span>
                 <span class="conflict-actions">
-                  <button class="conflict-btn" onClick={() => { const c = live(); if (c) openPageTarget({ name: c.page_name, pageKind: c.kind, path: c.page_path }); }}>{t("conflict-bar-review")}</button>
+                  <button class="conflict-btn" onClick={() => {
+                  const c = live();
+                  if (!c) return;
+                  // Opens the page when it is not the current one (a no-op when it
+                  // is), then brings its resolver into view (GH #858).
+                  openPageTarget({ name: c.page_name, pageKind: c.kind, path: c.page_path });
+                  requestConflictReview(c.page_path);
+                }}>{t("conflict-bar-review")}</button>
                 </span>
               </div>
             }>
@@ -35,8 +43,8 @@ export function ConflictBar(): JSX.Element {
               <span class="conflict-msg">
                 <Rich message={msg("conflict-bar-unsaved-notice", { name, deleted: conflictReason(name)?.observedRev === null ? 1 : 0 })} /></span>
               <span class="conflict-actions">
-                <button class="conflict-btn" onClick={() => void resolveConflict(name, "disk")}>{t("conflict-bar-use-disk-version")}</button>
-                <button class="conflict-btn keep" onClick={() => void resolveConflict(name, "mine")}>{t("conflict-bar-keep-mine-overwrite")}</button>
+                <DiskOrMineChoice buttonClass="conflict-btn"
+                  onKeepMine={() => void resolveConflict(name, "mine")} onUseDisk={() => void resolveConflict(name, "disk")} />
               </span>
             </div>
             </Show>

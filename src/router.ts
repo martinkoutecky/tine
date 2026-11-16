@@ -1,5 +1,6 @@
 import { t as translate } from "./i18n";
 import { revealOutlineBlock } from "./outlineViewport";
+import { revealCommentMarginFor } from "./commentMargin";
 // Tab-based routing with per-tab navigation history. Each tab holds a back/
 // forward stack of routes; the active tab's current route drives the page view.
 // Middle-click opens links in a new tab. The whole tab session is persisted, so
@@ -7,7 +8,7 @@ import { revealOutlineBlock } from "./outlineViewport";
 // focused. `route()`/`openPage()`/`openJournals()` keep their old meaning via
 // focused-pane shims, so existing call sites are unchanged.
 
-import { createSignal, type Accessor } from "solid-js";
+import { createMemo, createRoot, createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
 import { navigationName, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
@@ -23,7 +24,12 @@ import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { VIEW_KINDS } from "./editor/queryIr";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
-import { mainWindow, requestFrame } from "./windowRealm";
+import { mainWindow } from "./windowRealm";
+import { captureScrollAnchor, pursueScroll, type ScrollAnchor } from "./routeScrollAnchor";
+import {
+  moveTabOutOfGroup as treeMoveOutOfGroup, moveTabSubtree, removeTabPromoting,
+  rootSlot, setTabCollapsed as treeSetCollapsed, settleTabTree,
+} from "./tabTree";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
 /** The one reader of a query presentation; null is "unreadable". */
@@ -116,12 +122,22 @@ export interface Tab {
   history: Route[];
   pos: number;
   pinned: boolean;
+  /** The tab this one is nested under (same pane), or null for a root. The tab
+   *  array is the tree in depth-first order (T1/T2, src/tabTree.ts). */
+  parent: string | null;
+  /** Hides this tab's descendants in the sidebar Tabs list only (GH #704). */
+  collapsed: boolean;
 }
 
 export interface SerializedTab {
   history: Route[];
   pos: number;
   pinned: boolean;
+  /** Index of the parent tab in the same snapshot (always earlier); omitted
+   *  for a root, so a session without nesting is byte-identical to v1. */
+  parent?: number;
+  /** Present (true) only for a collapsed tab that has children. */
+  collapsed?: true;
 }
 
 export interface PaneSnapshot {
@@ -163,6 +179,7 @@ export interface PaneRouter {
   openJournals(opts?: { inPlace?: boolean }): void;
   openConflicts(opts?: { inPlace?: boolean }): void;
   openAllPages(opts?: { inPlace?: boolean }): void;
+  openAllGraphs(opts?: { inPlace?: boolean }): void;
   /** Navigate this pane to a PDF tab. Cost O(tabs); no file read until mounted. */
   openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
   /** Save the active reader's page/zoom in its route; invalid values are ignored. */
@@ -203,6 +220,12 @@ export interface PaneRouter {
   togglePin(id: string): void;
   reorderTab(dragId: string, targetId: string): void;
   moveTabToIndex(tabId: string, index: number): void;
+  /** Sidebar tree drag (GH #704): move the tab and its subtree right before
+   *  `beforeId` (null: the end) at `depth`, clamped to what the slot allows. */
+  moveTabInTree(tabId: string, beforeId: string | null, depth: number): void;
+  /** "Move out of group": one level up, right after the parent's subtree. */
+  moveTabOutOfGroup(tabId: string): void;
+  setTabCollapsed(tabId: string, collapsed: boolean): void;
   extractTabForAdoption(id: string): { tab: AdoptedTab; emptied: boolean } | null;
   extractActiveTabForAdoption(): { tab: AdoptedTab; emptied: boolean } | null;
   adoptTab(tab: AdoptedTab, foreground?: boolean, index?: number): void;
@@ -222,6 +245,7 @@ export function routeTitle(r: Route): string {
   if (r.kind === "journals") return translate("navigation-prose-journals");
   if (r.kind === "conflicts") return translate("navigation-prose-conflicts");
   if (r.kind === "all-pages") return translate("navigation-prose-all-pages");
+  if (r.kind === "all-graphs") return translate("command-go-all-graphs");
   if (r.kind === "pdf") return r.label.trim() || r.filename;
   if (r.kind === "invalid") return r.title;
   if (r.kind === "query") {
@@ -250,7 +274,7 @@ export function resolveRouteBlock(r: Route): string | null {
 
 export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
-  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages") return true;
+  if (a.kind === "journals" || a.kind === "conflicts" || a.kind === "all-pages" || a.kind === "all-graphs") return true;
   if (a.kind === "query") return a.id === (b as QueryRoute).id;
   if (a.kind === "pdf") return a.viewId === (b as PdfRoute).viewId;
   if (a.kind === "invalid") return a === b;
@@ -329,12 +353,7 @@ function promoteRecentRoute(r: Route): void {
   if (r.kind === "page" && !isGuideRouteName(r.name)) pushRecent(pageTargetFromRoute(r)!);
 }
 
-/** Stable partition: all pinned tabs first (in their relative order), then the
- *  unpinned ones. Pinned tabs always sit to the left of the strip (matches the
- *  OG plugin), so a pinned tab can't be visually stranded among unpinned ones. */
-export function partitionPinned(list: Tab[]): Tab[] {
-  return [...list.filter((t) => t.pinned), ...list.filter((t) => !t.pinned)];
-}
+export { partitionPinned } from "./tabTree";
 
 let sessionPersistence = {
   schedule: () => {},
@@ -375,9 +394,15 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   // before first paint - see main.tsx. The structured session round-trips through
   // an atomic backend file rather than being tied to one WebView's localStorage.
   const [tabs, setTabs] = createSignal<Tab[]>([
-    { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false },
+    { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false },
   ]);
   const [activeId, setActiveId] = createSignal<string>(tabs()[0].id);
+  // A return to the same history entry is a fresh visit even if the intermediate
+  // view never finished loading. Background tab changes retain the current visit.
+  const routeVisit = createRoot(() => createMemo<{ route: Route }>((previous) => {
+    const next = tabRoute(activeTab());
+    return previous?.route === next ? previous : { route: next };
+  }));
 
   // Recently-closed tabs (most-recent last), for Ctrl+Shift+T "reopen closed tab".
   // In-memory only - like a browser, a reopen doesn't survive a restart (the whole
@@ -395,6 +420,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   // starts at the top, and only a return to a previously-seen entry restores its
   // scroll.
   const scrollByRoute = new WeakMap<Route, number>();
+  const anchorByRoute = new WeakMap<Route, ScrollAnchor>();
+  // The active history entry changes before its asynchronous view is laid out.
+  // Snapshots must not save that loading view's zero over the returning entry.
+  let scrollOwner: ReturnType<typeof routeVisit> | null = routeVisit();
   let scrollerElement: HTMLElement | null = null;
 
   let mobileHistoryDepth = 0;
@@ -403,6 +432,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   let mobileHistoryListenerAttached = false;
   let pdfViewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function setScrollerElement(el: HTMLElement | null) {
+    if (scrollerElement !== el) scrollOwner = null;
     scrollerElement = el;
   }
 
@@ -411,7 +441,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   function route(): Route {
-    return tabRoute(activeTab());
+    return routeVisit().route;
   }
 
   function activateCurrentRoute(): void {
@@ -443,7 +473,14 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  Called right before any navigation that leaves the current entry. */
   function rememberScroll() {
     const el = mainScroller();
-    if (el) scrollByRoute.set(tabRoute(activeTab()), el.scrollTop);
+    if (!el) return;
+    const visit = routeVisit();
+    if ((visit.route.kind === "page" || visit.route.kind === "journals") && visit !== scrollOwner) return;
+    const route = visit.route;
+    scrollByRoute.set(route, el.scrollTop);
+    const anchor = captureScrollAnchor(el);
+    if (anchor) anchorByRoute.set(route, anchor);
+    else anchorByRoute.delete(route);
   }
 
   function applyRouterBack() {
@@ -497,49 +534,22 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   /** Restore the saved scroll for a route once its content has rendered. A route
-   *  with no saved offset (a new page) goes to the top. Retries for ~1s while the
-   *  page is still growing toward a deep offset (blocks / linked refs render and
-   *  measure asynchronously, so the target height isn't there on the first frame).
-   *  If the saved offset is DEEPER than the loaded content - a journal-feed position
-   *  in days that haven't been lazy-loaded yet - it pulls in more feed days until the
-   *  target is reachable (or the feed is exhausted), so re-opening lands where you
-   *  left off instead of at the bottom of the default window. */
+   *  with no saved offset (a new page) goes to the top; a deep one is pursued while
+   *  the page grows (`pursueScroll`). */
   function restoreScrollFor(r: Route) {
     if (typeof requestAnimationFrame === "undefined") return; // no-DOM (unit tests)
+    const visit = routeVisit();
+    const entry = visit.route;
+    if (!sameRoute(entry, r)) return;
     const binding = captureBinding();
     const tabId = activeId();
-    const intent = intentRevision;
+    // The visit, not the intent revision: an unrelated tab change must not cancel the pursuit and leave it unowned.
     const current = () => stillBound(binding) && activeId() === tabId
-      && intentRevision === intent && sameRoute(route(), r);
-    const target = scrollByRoute.get(r) ?? 0;
-    let tries = 0;
-    let extending = false;
-    // Defer to a frame so the new page's content is laid out first - otherwise a
-    // synchronous reset races the content swap (a new page wouldn't actually land
-    // at the top). Then for a deep offset keep nudging while the page grows.
-    const tick = () => {
-      if (!current()) return;
-      const el = mainScroller();
-      if (!el) return;
-      const max = Math.max(0, el.scrollHeight - el.clientHeight);
-      el.scrollTop = Math.min(target, max);
-      if (target <= 0 || el.scrollTop >= target - 1) return; // top, or reached
-      // Target still out of reach. If the content is genuinely too SHORT (the feed's
-      // deeper days aren't loaded), grow it and keep going; otherwise it's just async
-      // layout catching up, so wait a frame. A deep offset can need several day-loads
-      // (each async), so allow more tries while the feed is still growing.
-      if (max < target - 1 && !extending) {
-        extending = true;
-        void extendFeedForScroll().then((grew) => {
-          extending = false;
-          if (!current()) return;
-          if (grew ? tries++ < 400 : tries++ < 60) requestFrame(mainScroller(), tick);
-        });
-        return;
-      }
-      if (tries++ < 60) requestFrame(mainScroller(), tick);
-    };
-    requestFrame(mainScroller(), tick);
+      && routeVisit() === visit && sameRoute(route(), r);
+    const target = scrollByRoute.get(entry) ?? 0;
+    const anchor = anchorByRoute.get(entry);
+    pursueScroll({ target, anchor, scroller: mainScroller, current, extend: extendFeedForScroll,
+      onPositioned: () => { scrollOwner = visit; } });
   }
 
   // Navigate the active tab to a new route, pushing it onto the history stack
@@ -605,17 +615,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     );
   }
 
-  function openJournals(opts: { inPlace?: boolean } = {}) {
-    navigate({ kind: "journals" }, { sticky: !opts.inPlace });
+  function openOverview(kind: "journals" | "conflicts" | "all-pages" | "all-graphs", opts: { inPlace?: boolean } = {}) {
+    navigate({ kind }, { sticky: !opts.inPlace });
   }
-
-  function openConflicts(opts: { inPlace?: boolean } = {}) {
-    navigate({ kind: "conflicts" }, { sticky: !opts.inPlace });
-  }
-
-  function openAllPages(opts: { inPlace?: boolean } = {}) {
-    navigate({ kind: "all-pages" }, { sticky: !opts.inPlace });
-  }
+  const openJournals = (opts?: { inPlace?: boolean }) => openOverview("journals", opts);
+  const openConflicts = (opts?: { inPlace?: boolean }) => openOverview("conflicts", opts);
+  const openAllPages = (opts?: { inPlace?: boolean }) => openOverview("all-pages", opts);
+  const openAllGraphs = (opts?: { inPlace?: boolean }) => openOverview("all-graphs", opts);
 
   function openPdf(pdfRoute: PdfRoute, opts: { inPlace?: boolean } = {}) {
     navigate(pdfRoute, { sticky: !opts.inPlace });
@@ -722,7 +728,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       if (entry.kind === "pdf") retirePdfNavigationIntent(entry.viewId);
     }
     const id = newId();
-    setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
+    setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false }]);
     setActiveId(id);
     persist();
   }
@@ -814,6 +820,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         // query below can never match and the poll times out silently (GH #258).
         // Inside the poll because the page load is async.
         expandAncestors(id);
+        revealCommentMarginFor(id); // GH #845: a comment link shows a hidden margin
       }
       const scroller = mainScroller();
       if (id) revealOutlineBlock(id, scroller);
@@ -839,7 +846,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // a click on a pinned tab lands you on the new tab. New tabs are unpinned, so
     // appending keeps the pinned-left invariant (all pinned precede all unpinned).
     const id = newId();
-    setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false }]);
+    setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false, parent: null, collapsed: false }]);
     if (foreground) {
       setActiveId(id);
       activateCurrentRoute();
@@ -957,7 +964,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned) {
-      const confirmation = await readOwned(owner, backend().confirm(translate("router-close-pinned-tab", { title: String(routeTitle(tabRoute(t))) })));
+      const confirmation = await readOwned(owner, backend().confirm(translate("router-close-pinned-tab", { title: String(routeTitle(tabRoute(t))) }), { okLabel: translate("confirm-close-tab"), cancelLabel: translate("confirm-keep-open") }));
       if (confirmation.kind === "stale" || !confirmation.value) return;
     }
     if (!owner()) return;
@@ -969,7 +976,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // in `closedTabs`, so its scrollByRoute entry is still live on reopen.
     if (activeId() === id) rememberScroll();
     const idx = list.findIndex((x) => x.id === id);
-    const next = list.filter((x) => x.id !== id);
+    // Its children stay open and move up one level, in place (GH #704).
+    const next = removeTabPromoting(list, id);
     // Remember the closed tab (its full history + position) so Ctrl+Shift+T can
     // reopen it. Most-recent last; cap the stack.
     if (t) {
@@ -995,7 +1003,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const id = newId();
     const pos = Math.min(Math.max(0, last.pos | 0), last.history.length - 1);
     // New tabs are unpinned, so appending preserves the pinned-left invariant.
-    setTabs([...tabs(), { id, history: last.history, pos, pinned: false }]);
+    setTabs([...tabs(), { id, history: last.history, pos, pinned: false, parent: null, collapsed: false }]);
     setActiveId(id);
     activateCurrentRoute();
     persist();
@@ -1021,27 +1029,34 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const list = tabs();
     const t = list.find((x) => x.id === id);
     if (!t) return;
-    const updated = { ...t, pinned: !t.pinned };
-    const rest = list.filter((x) => x.id !== id);
+    // A pinned tab is a root and never a parent (T2): pinning a nested tab
+    // lifts it out, and its children move up one level where they stand.
+    const updated = { ...t, pinned: !t.pinned, parent: null, collapsed: false };
+    const rest = list.filter((x) => x.id !== id)
+      .map((x) => (x.parent === id ? { ...x, parent: t.parent } : x));
     const pinned = rest.filter((x) => x.pinned);
     const unpinned = rest.filter((x) => !x.pinned);
-    setTabs([...pinned, updated, ...unpinned]);
+    setTabs(settleTabTree([...pinned, updated, ...unpinned]));
     persist();
   }
 
-  /** Move a tab to a strip index, then re-assert the pinned-left invariant (a
-   *  cross-group drag snaps back to its own group). */
-  function moveTabToIndex(dragId: string, index: number) {
-    const list = [...tabs()];
-    const from = list.findIndex((t) => t.id === dragId);
-    if (from < 0) return;
-    let to = Math.min(Math.max(0, index | 0), list.length);
-    const [moved] = list.splice(from, 1);
-    if (from < to) to -= 1;
-    list.splice(to, 0, moved);
-    setTabs(partitionPinned(list));
-    persist();
+  /** Move a tab to a strip index (an insertion boundary in the current list),
+   *  then re-assert the pinned-left invariant (a cross-group drag snaps back to
+   *  its own group). The tab's subtree moves with it; it keeps its parent when
+   *  the boundary allows that, else it takes the shallowest legal depth, so a
+   *  flat strip drag never nests a tab by itself (GH #704). */
+  function editTree(edit: (list: Tab[]) => Tab[]) {
+    const list = tabs();
+    const next = edit(list);
+    if (next !== list) { setTabs(next); persist(); }
   }
+  const moveTabToIndex = (dragId: string, index: number) => editTree((list) =>
+    moveTabSubtree(list, dragId, list[Math.min(Math.max(0, index | 0), list.length)]?.id ?? null, "flat"));
+  const moveTabInTree = (tabId: string, beforeId: string | null, depth: number) =>
+    editTree((list) => moveTabSubtree(list, tabId, beforeId, depth));
+  const moveTabOutOfGroup = (tabId: string) => editTree((list) => treeMoveOutOfGroup(list, tabId));
+  const setTabCollapsed = (tabId: string, collapsed: boolean) =>
+    editTree((list) => treeSetCollapsed(list, tabId, collapsed));
 
   /** Move the dragged tab to the position of the target tab. */
   function reorderTab(dragId: string, targetId: string) {
@@ -1067,13 +1082,14 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     };
     if (list.length === 1) {
       const id = newId();
-      setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
+      setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false }]);
       setActiveId(id);
       persist();
       return { tab: moved, emptied: true };
     }
     const idx = list.findIndex((t) => t.id === moving.id);
-    const next = list.filter((t) => t.id !== moving.id);
+    // The tab leaves alone; its children stay here, one level up, in place.
+    const next = removeTabPromoting(list, moving.id);
     setTabs(next);
     if (activeId() === moving.id) setActiveId(next[Math.max(0, idx - 1)].id);
     persist();
@@ -1088,12 +1104,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     if (!tab.history.length) return;
     const id = newId();
     const pos = Math.min(Math.max(0, tab.pos | 0), tab.history.length - 1);
-    const adopted: Tab = { id, history: tab.history, pos, pinned: tab.pinned };
+    const adopted: Tab = { id, history: tab.history, pos, pinned: tab.pinned, parent: null, collapsed: false };
     if (typeof tab.scroll === "number" && tab.scroll > 0) scrollByRoute.set(adopted.history[pos], tab.scroll);
     const list = [...tabs()];
-    const to = typeof index === "number" ? Math.min(Math.max(0, index | 0), list.length) : list.length;
+    // An arriving tab is a root: a drop inside a group lands after that group.
+    const to = typeof index === "number" ? rootSlot(list, index) : list.length;
     list.splice(to, 0, adopted);
-    setTabs(partitionPinned(list));
+    setTabs(settleTabTree(list));
     if (foreground) {
       setActiveId(id);
       activateCurrentRoute();
@@ -1104,8 +1121,15 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function snapshot(): PaneSnapshot {
     const list = tabs();
     rememberScroll();
+    const indexOf = new Map(list.map((t, i) => [t.id, i] as const));
     return {
-      tabs: list.map((t) => ({ history: t.history, pos: t.pos, pinned: t.pinned })),
+      tabs: list.map((t) => {
+        const tab: SerializedTab = { history: t.history, pos: t.pos, pinned: t.pinned };
+        const parent = t.parent === null ? undefined : indexOf.get(t.parent);
+        if (parent !== undefined) tab.parent = parent;
+        if (t.collapsed) tab.collapsed = true;
+        return tab;
+      }),
       activeIndex: Math.max(0, list.findIndex((t) => t.id === activeId())),
       scrolls: list.map((t) => scrollByRoute.get(t.history[t.pos]) ?? null),
     };
@@ -1114,17 +1138,25 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function parseSnapshot(s: PaneSnapshot): { tabs: Tab[]; active: number } | null {
     const scrolls = Array.isArray(s?.scrolls) ? s.scrolls : [];
     const restored: Tab[] = [];
+    // Snapshot index -> restored id, for the parent links (an index that is not
+    // an earlier, restored tab makes the child a root; settleTabTree then drops
+    // any link T1/T2 forbid, so a corrupt tree restores flat, never refused).
+    const idAt: (string | undefined)[] = [];
     (s?.tabs ?? []).forEach((t, i) => {
       if (!t || !Array.isArray(t.history) || t.history.length === 0) return;
       const pos = Math.min(Math.max(0, t.pos | 0), t.history.length - 1);
-      const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned };
+      const parentIndex = t.parent;
+      const parent = typeof parentIndex === "number" && Number.isInteger(parentIndex) && parentIndex >= 0 && parentIndex < i
+        ? idAt[parentIndex] ?? null : null;
+      const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned, parent, collapsed: t.collapsed === true };
+      idAt[i] = tab.id;
       restored.push(tab);
       const sc = scrolls[i];
       if (typeof sc === "number" && sc > 0) scrollByRoute.set(tab.history[pos], sc);
     });
     if (!restored.length) return null;
     const activeTabId = restored[Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1)].id;
-    const ordered = partitionPinned(restored);
+    const ordered = settleTabTree(restored);
     const active = Math.max(0, ordered.findIndex((t) => t.id === activeTabId));
     return { tabs: ordered, active };
   }
@@ -1177,6 +1209,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openJournals,
     openConflicts,
     openAllPages,
+    openAllGraphs,
     openPdf,
     updateActivePdfViewState,
     closePdf,
@@ -1208,6 +1241,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     togglePin,
     reorderTab,
     moveTabToIndex,
+    moveTabInTree,
+    moveTabOutOfGroup,
+    setTabCollapsed,
     extractTabForAdoption,
     extractActiveTabForAdoption,
     adoptTab,
@@ -1310,6 +1346,10 @@ export function openConflicts(opts: { inPlace?: boolean } = {}) {
 
 export function openAllPages(opts: { inPlace?: boolean } = {}) {
   focusedRouterInstance().openAllPages(opts);
+}
+
+export function openAllGraphs(opts: { inPlace?: boolean } = {}) {
+  focusedRouterInstance().openAllGraphs(opts);
 }
 
 export function openQueryInNewTab(

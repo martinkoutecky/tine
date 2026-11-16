@@ -47,6 +47,18 @@ function mountedIframeWrap(raw: string): { wrap: HTMLElement; dispose: () => voi
 }
 
 describe("renderInlines", () => {
+  it("exposes normalized tag and page names for custom CSS, independent of alias labels", () => {
+    const host = document.createElement("div");
+    host.innerHTML = inl([
+      { k: "tag", children: [{ k: "plain", text: "AI-Note" }] },
+      { k: "link", url: { type: "page_ref", v: "Parent/Elias" }, full: "[[Parent/Elias][writer]]", label: [{ k: "plain", text: "writer" }] },
+      { k: "link", url: { type: "page_ref", v: "/Cafe\u0301/" }, full: "[[/Cafe\u0301/]]" },
+    ]);
+    expect(host.querySelector('a.tag[data-ref="ai-note"]')?.textContent).toBe("#AI-Note");
+    expect(host.querySelector('a.page-ref[data-ref="parent/elias"]')?.textContent).toBe("writer");
+    expect(host.querySelector('a.page-ref[data-ref="café"]')).not.toBeNull();
+  });
+
   it.each(["javascript:alert(1)", "java\nscript:alert(1)", "vbscript:alert(1)", "data:text/html,<script>alert(1)</script>"])("does not place an executable graph link in href: %s", (dest) => {
     const h = inl([{ k: "link", url: { type: "file", v: dest }, full: `[run](${dest})`, label: [{ k: "plain", text: "run" }] }]);
     expect(h).not.toContain("href=");

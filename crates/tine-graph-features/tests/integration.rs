@@ -8,8 +8,36 @@ fn integration_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A running page host for `store`, the only writer of page files
+/// (host-only-writer DESIGN §3.6), under its own app data; it derefs to the
+/// host, so `&test_host(&store)` is a writer's `&PageHost`. Drop it before
+/// removing the graph.
+struct TestHost {
+    host: tine_store::PageHost,
+    _app_data: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestHost {
+    type Target = tine_store::PageHost;
+    fn deref(&self) -> &tine_store::PageHost {
+        &self.host
+    }
+}
+
+fn test_host(store: &std::sync::Arc<tine_store::Store>) -> TestHost {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    TestHost {
+        host,
+        _app_data: app_data,
+    }
+}
+
 #[path = "br3_page_open_before_ready.rs"]
 mod br3_page_open_before_ready;
+
+#[path = "audit_rn_b.rs"]
+mod audit_rn_b;
 
 #[path = "c3s_sync_copy_base.rs"]
 mod c3s_sync_copy_base;
@@ -107,6 +135,9 @@ mod journal_migrations;
 #[path = "l8_03_duplicate_day_asset.rs"]
 mod l8_03_duplicate_day_asset;
 
+#[path = "l9_live_safety.rs"]
+mod l9_live_safety;
+
 #[path = "legacy_config.rs"]
 mod legacy_config;
 
@@ -124,6 +155,9 @@ mod og_c5_p2_bad_file;
 
 #[path = "og_c5_p2_merge_rename.rs"]
 mod og_c5_p2_merge_rename;
+
+#[path = "merge_keeps_aliases.rs"]
+mod merge_keeps_aliases;
 
 #[path = "og_dupal2_format.rs"]
 mod og_dupal2_format;
@@ -160,6 +194,8 @@ mod page_delete_missing;
 
 #[path = "page_rename_identity.rs"]
 mod page_rename_identity;
+#[path = "page_rename_subfolder.rs"]
+mod page_rename_subfolder;
 
 #[path = "page_rename_merge.rs"]
 mod page_rename_merge;
@@ -191,6 +227,12 @@ mod query_owner_context;
 #[path = "query_publication.rs"]
 mod query_publication;
 
+#[path = "quick_share.rs"]
+mod quick_share;
+
+#[path = "share_selector.rs"]
+mod share_selector;
+
 #[path = "rename_cost.rs"]
 mod rename_cost;
 
@@ -220,3 +262,6 @@ mod sheets_export_chrome;
 
 #[path = "transport_flows.rs"]
 mod transport_flows;
+
+#[path = "org_link_spans_in_tags.rs"]
+mod org_link_spans_in_tags;

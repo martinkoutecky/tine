@@ -31,13 +31,18 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 serde = { workspace = true }
+uuid = { workspace = true }
 serde_json = { workspace = true }
 # Asset write commands receive bytes as base64 (a single compact string) instead
 # of a JSON number[] (~4-5x payload + a giant per-element parse on the UI thread).
 base64 = "0.22"
 cap-std = "4.0.2"
 same-file = "1.0.6"
+notify = "6"
 sha2 = "0.10"
+# Zip launch backups (backup/archive.rs): raw Deflate through the pure-Rust
+# miniz_oxide backend only, no C codec on any target.
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
 ed25519-dalek = "2"
 # Handle-relative no-replace restore publication on Unix-family platforms.
 libc = "0.2"
@@ -47,15 +52,33 @@ libc = "0.2"
 dirs = "6"
 # One schema owns parsing, --help, man pages and the forwarded-launch request
 # (ADR 0068 on master; the hand-rolled parser split those across three places).
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 tine-core = { path = "../crates/tine-core" }
+# The logbook's local timestamp for a command-line marker transition (as the window's Date).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tine-store = { path = "../crates/tine-store" }
 tine-graph-features = { path = "../crates/tine-graph-features" }
 # data_home: probe the app-data home with an unnamed temporary file (og I1a).
 tempfile = "3"
+# Quick share's device-flow poll waits (DESIGN §3.4); tokio is already in the
+# lock through tauri and reqwest. Smart git HTTP runs async reqwest IO on one
+# private multi-thread runtime while libgit2 stays on the dedicated blocking
+# git thread; bytes shares buffered retry bodies without duplicating a push
+# pack. TLS/proxy are target-defined below.
+tokio = { version = "1", default-features = false, features = ["time", "sync", "rt-multi-thread"] }
+bytes = "1"
+# Git autocommit, sync, seen and CLI runs on all five shipped targets (ADR 0078
+# slices 1-3, D-20261028-GM). libgit2 per git-sync G7, vendored, no built-in
+# https/ssh (git sync registers reqwest HTTPS); libgit2-sys for
+# GIT_OPT_ENABLE_FSYNC_GITDIR, which git2 does not expose (spike §9.5: history
+# writes must fsync).
+git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2"] }
+libgit2-sys = "0.18"
 
 [dev-dependencies]
 clap_mangen = "0.2"
+# backup/tests.rs: NFC/NFD page names in a zip round trip.
+unicode-normalization = "0.1"
 tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 
 # Mobile + Windows: open http/mailto URLs via the OS — an ACTION_VIEW Intent on
@@ -80,9 +103,27 @@ tine-ios-native-integrations = { path = "ios-native-integrations" }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 signal-hook-registry = "=1.4.8"
 
+# Quick share's GitHub transport (DESIGN §3.3) on Linux, macOS, Android and
+# iOS: rustls with the platform verifier and the ring provider, the updater's
+# own rustls stack (no aws-lc). Android's JVM hook and AAR are wired below
+# and in android_quick_share_tls.rs. Windows is declared below.
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "android", target_os = "ios"))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Match reqwest's locked verifier; this initializes its process-global JVM
+# context. Gradle locates the matching Kotlin AAR through cargo metadata.
+# Linux, macOS, Windows and iOS require no Android initialization or JNI.
+rustls-platform-verifier = { version = "=0.7.0", default-features = false }
+jni = { version = "0.22.4", default-features = false }
+
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Pipes"] }
+# Already enabled by the desktop dependency graph; make the pipe adapter's
+# runtime and networking requirements explicit on Windows.
+tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "time"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).
@@ -90,7 +131,10 @@ tauri-plugin-updater = { version = "2", default-features = false, features = ["n
 # The updater disables Reqwest defaults; opt back into Reqwest's Windows
 # system-proxy reader so it follows the same route as WebView2 and the browser
 # instead of consulting only proxy environment variables (GH #241).
-reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
+# Quick share's GitHub transport (DESIGN §3.3) takes the same Windows route:
+# Schannel through native-tls plus the system proxy. Pinned by the guard test
+# `quick_share_tls_is_declared_for_every_shipped_target`.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 # System tray (GH #625): desktop only, so the feature is requested only here.
@@ -138,6 +182,10 @@ x11 = { version = "2.21.0", features = ["xlib"] }
 # SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.
+
+[target.'cfg(windows)'.dev-dependencies]
+# Keep auto-started serve descendants inside the integration test's cleanup guard.
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp"] }
 
 # Keep all integration cases in one linked executable.
 [[test]]

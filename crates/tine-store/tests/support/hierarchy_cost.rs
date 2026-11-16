@@ -15,11 +15,15 @@ fn probe(root: &std::path::Path, expected_nodes: Option<usize>) {
         WORK.with(|work| work.set((0, 0, 0)));
         let start = std::time::Instant::now();
         let answer = graph
-            .query_ir(IrRequest::Run {
-                query: &query,
-                view: &view,
-                context: &ExecutionContext::none(),
-            })
+            .query_ir(
+                IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &ExecutionContext::none(),
+                },
+                &crate::Cancel::default(),
+            )
+            .map(|answer| answer.expect("never cancelled"))
             .unwrap();
         let IrAnswer::Result(answer) = answer else {
             panic!("result")

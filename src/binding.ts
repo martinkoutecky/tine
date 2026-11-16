@@ -90,13 +90,15 @@ export function invalidateBinding(): void {
  * Exemplar: `formulaEditor` (src/ui.ts) and FormulaEditor's `save`.
  * Reads are O(1) and track `graphEpoch`; a change of the backend binding
  * generation alone is seen on the next read but does not notify (a graph switch
- * also clears the value through `invalidateBinding`). */
-export function graphScopedSignal<T>(): readonly [Accessor<T | null>, (value: T | null) => void] {
+ * also clears the value through `invalidateBinding`). `lifetime: "binding"`
+ * keeps graph-level recovery notices through display-only epoch changes while
+ * still clearing them on a graph switch. */
+export function graphScopedSignal<T>(lifetime: "display" | "binding" = "display"): readonly [Accessor<T | null>, (value: T | null) => void] {
   const [held, setHeld] = createSignal<{ value: T; binding: Binding } | null>(null);
   scopedClears.add(() => setHeld(null));
   const read = () => {
     const current = held();
-    return current && stillBound(current.binding) ? current.value : null;
+    return current && (lifetime === "binding" ? bindingCurrent(current.binding) : stillBound(current.binding)) ? current.value : null;
   };
   const write = (value: T | null) => setHeld(value === null ? null : { value, binding: captureBinding() });
   return [read, write] as const;

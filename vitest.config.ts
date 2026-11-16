@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 // Store/editor-logic tests are pure TS (no DOM). Use the node environment and
@@ -13,7 +13,17 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Tests assert behaviour, never wall time, and several do a fixed amount of
+    // CPU work (whole-source scans through the TypeScript parser, 2500 wasm
+    // traps, wide-grid mounts) that takes 1-3 s idle and 5-9 s when gates share
+    // the host. The 5 s default is a hang detector tuned to an idle machine, so
+    // it fired on load alone. A real hang still fails, after 60 s.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     include: ["src/**/*.test.ts"],
+    // Builds and drives the native tine-store peer: its own mandatory gate,
+    // `npm run test:storage-conformance` (vitest.storage.config.ts), after Rust tests.
+    exclude: [...configDefaults.exclude, "src/document/host/nativeConformance.test.ts"],
     setupFiles: ["./src/testSetup.parser.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },

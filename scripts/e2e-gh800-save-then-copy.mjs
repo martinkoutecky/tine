@@ -3,6 +3,7 @@
 // conflict's review comes first, then the copy's, and every version survives.
 // Synthetic scratch graph and app data only. Run a custom-protocol debug build
 // under xvfb-run (TINE_APP overrides target/debug/tine).
+import "./lib/e2e-auto-account-home.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -138,11 +139,7 @@ try {
     return entry.isDirectory() ? recoverable(p, want) : fs.readFileSync(p, "utf8") === want;
   });
   assert.ok(recoverable(path.join(graph, "logseq/.tine-trash"), copyText), "the folded copy is not recoverable");
-  // Stable (0.8) has no recovery copy of the reviewed disk bytes on a live
-  // resolution: that guarantee is L9-04 (cdb189512, development only), not
-  // part of GH #800. Here the disk version survives inside the merge itself
-  // ("Keep both everywhere"): every line of it is still in the file.
-  for (const line of lines(diskBefore)) assert.ok(lines(resolved).includes(line), `the disk line ${JSON.stringify(line)} was lost`);
+  assert.ok(recoverable(path.join(graph, "logseq/.tine-trash"), diskBefore), "the disk version replaced by the live resolution is not recoverable");
   shot("resolved.png");
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify({ ...proof, outcome: "PASS", merged, resolved }, null, 2));
   console.log(`PASS GH800-SAVE-THEN-COPY: ${out}`);

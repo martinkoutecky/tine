@@ -1,7 +1,7 @@
 import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { customCssDisabled, setCustomCssDisabled } from "../customCss";
 import { ownedWhen, readOwned } from "../owned";
-import { openCssEditor } from "../cssEditor";
+import { openCssEditor, openCssInDefaultApp } from "../cssEditor";
 import { msg, t } from "../i18n";
 import { platformKind } from "../platform";
 import { isMac } from "../nativeChrome";
@@ -33,9 +33,15 @@ export function CustomCssSettings(): JSX.Element {
           <button class="settings-btn" onClick={() => void openCssEditor(false)}>
             {t("css-edit-graph")}
           </button>
+          <Show when={desktop()}>
+            <button class="settings-btn" onClick={() => void openCssInDefaultApp(false)}>{t("css-open-default-app")}</button>
+          </Show>
         </Field>
       <Field label={t("css-edit-global")} hint={t("css-global-hint")}>
         <button class="settings-btn" onClick={() => void openCssEditor(true)}>{t("css-edit-global")}</button>
+        <Show when={desktop()}>
+          <button class="settings-btn" onClick={() => void openCssInDefaultApp(true)}>{t("css-open-default-app")}</button>
+        </Show>
       </Field>
       <Field
         label={t("settings-search-disable-custom-css")}

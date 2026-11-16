@@ -3,7 +3,7 @@
 use super::*;
 use tine_core::model::Format;
 
-impl<'a> Transaction<'a> {
+impl<'a> PagePlan<'a> {
     pub(super) fn preflight_names(&self) -> Result<Vec<FileId>, (usize, Why)> {
         if self.store.is_closed() {
             return Err((0, Why::Refused(Refusal::Closed)));
@@ -40,9 +40,37 @@ impl<'a> Transaction<'a> {
         let mut allocated = HashSet::new();
         let mut prepared = Vec::new();
         for (index, step) in self.steps.iter().enumerate() {
-            let next = self
-                .preflight(step, &allocated)
-                .map_err(|why| (index, why))?;
+            // Preflight reads and computes, writing nothing, under the writer
+            // lock: a page's own-title read and reference rewrite parse it with
+            // lsdoc. A parser panic on one malformed page (an external editor,
+            // sync delivery or an import wrote bytes lsdoc cannot take) refuses
+            // this transaction and leaves the file untouched; unwound, it would
+            // poison the writer lock and fail every later save and read of the
+            // graph until restart (og-gh644 F3).
+            let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.preflight(step, &allocated)
+            }))
+            .unwrap_or_else(|_| {
+                Err(Why::Refused(Refusal::ReadOnly(
+                    "page could not be parsed; Tine will not rewrite it".into(),
+                )))
+            })
+            .map_err(|why| (index, why))?;
+            // File IDs and configured directories are dynamic. The public
+            // commit builder may inspect pages, but may never mutate one.
+            if self.non_page && !matches!(step, Step::Expect { .. }) {
+                for file in std::iter::once(&next.src).chain(next.dst.iter()) {
+                    if self.store.as_page(file).is_some() {
+                        return Err((
+                            index,
+                            Why::Refused(Refusal::InvalidTarget(format!(
+                                "page changes require a page-host plan: {}",
+                                file.as_str()
+                            ))),
+                        ));
+                    }
+                }
+            }
             if matches!(step, Step::Unique { .. }) {
                 allocated.insert(next.src.clone());
             }
@@ -210,8 +238,14 @@ impl<'a> Transaction<'a> {
                 expected,
                 bytes,
             } => {
-                if self.page(file) || file.as_str().starts_with("logseq/.tine-") {
+                // A page replacement is a host-operation plan's
+                // (`replace_page_bytes`); a direct commit refuses it.
+                let page = self.page(file);
+                if (page && !self.for_host) || file.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
+                }
+                if page {
+                    validation::page_bytes(file, bytes)?;
                 }
                 let old = self.stage(file, expected)?;
                 if file.as_str() == "logseq/config.edn" {
@@ -246,7 +280,7 @@ impl<'a> Transaction<'a> {
                 let new = if *rebind_title {
                     rewrite_move(&old, &path, renames, name_format)?
                 } else if let Some(new) = reused {
-                    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+                    let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
                     new
                 } else {
@@ -361,7 +395,7 @@ fn refuse_marker_rewrite(old: &[u8], new: &[u8], format: Format) -> Result<(), W
 /// A page save's checks by precondition (STEP3 §3.2). The transaction's
 /// preflight composes them; the page host runs each where its precondition
 /// holds, so none is added and none runs where it did not before.
-impl Transaction<'_> {
+impl PagePlan<'_> {
     /// Every page save, whatever its base: Guide-ephemeral, page target and
     /// nesting depth.
     pub(crate) fn page_save_target(&self, file: &FileId, doc: &PageDto) -> Result<(), Why> {
@@ -394,6 +428,36 @@ impl Transaction<'_> {
         self.unreadable_owner(file, &[name])
     }
 
+    /// The creating host save's logical slot, after its physical absence/twin
+    /// guard. Only creation pays: published lookup and bounded unreadable probes.
+    /// A running move's source may still claim the receiver's name.
+    pub(crate) fn creating_save_owner(
+        &self,
+        file: &FileId,
+        name: Option<&str>,
+        source: Option<&FileId>,
+    ) -> Result<(), Why> {
+        let path = self.path(file)?;
+        let graph = &self.store.graph;
+        let filename = graph.entry_for_path_in(&path, Some(""));
+        for entry in filename.iter() {
+            if let Some(existing) = self.store.move_claimant(&entry.name, entry.kind) {
+                if existing.path != path
+                    && source.is_none_or(|source| graph.root.join(source.as_str()) != existing.path)
+                {
+                    return Err(Why::Refused(Refusal::Twin {
+                        existing: PageId::from(graph.rel_path(&existing.path)),
+                    }));
+                }
+            }
+        }
+        if source.is_none() {
+            let names: Vec<_> = name.into_iter().collect();
+            self.unreadable_owner(file, &names)?;
+        }
+        Ok(())
+    }
+
     /// The page host's open of `file` (STEP3 §2): an eligible page target;
     /// with no file there, the page is being created, so the create-only
     /// checks run, as they run for a `CreateNew` save. A file that appears
@@ -424,11 +488,45 @@ impl Transaction<'_> {
         old: Option<&[u8]>,
         resolving: bool,
     ) -> Result<(Vec<u8>, Document), Why> {
+        self.serialize_page_at(&self.path(file)?, doc, old, resolving)
+    }
+
+    /// Admission must retain input typed after a root detaches. Serialization
+    /// uses only the validated page id and the host's comparison bytes; the
+    /// later graph save still crosses every physical target/root guard. Keep
+    /// normal admission refusals (including child symlinks) while bound. Probe
+    /// the root only after a failed target lookup, adding no successful-edit I/O.
+    pub(crate) fn serialize_host_input(
+        &self,
+        file: &FileId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+    ) -> Result<(Vec<u8>, Document), Why> {
+        self.page_save_target(file, doc)?;
+        let path = self.path(file).or_else(|why| {
+            if self.store.graph.root_binding.check().is_err_and(|error| {
+                error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<crate::root_binding::GraphRootMoved>())
+            }) {
+                Ok(self.store.graph.root.join(file.as_str()))
+            } else {
+                Err(why)
+            }
+        })?;
+        self.serialize_page_at(&path, doc, old, false)
+    }
+
+    fn serialize_page_at(
+        &self,
+        path: &Path,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+        resolving: bool,
+    ) -> Result<(Vec<u8>, Document), Why> {
         if let Some(old) = old {
-            crate::model::validate_parse_bytes_for_path(old, &self.path(file)?)
-                .map_err(content_refusal)?;
+            crate::model::validate_parse_bytes_for_path(old, path).map_err(content_refusal)?;
         }
-        let path = self.path(file)?;
         let text = match old {
             Some(bytes) => Some(std::str::from_utf8(bytes).map_err(|error| {
                 content_refusal(io::Error::new(io::ErrorKind::InvalidData, error))

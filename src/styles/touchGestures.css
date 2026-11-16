@@ -20,16 +20,17 @@
   -webkit-touch-callout: none;
 }
 
-/* On a touch platform the SAME hold that opens Tine's menu is also the OS's
+/* On a touch-first screen (primary pointer coarse, D-20261018-W1) the SAME hold that opens Tine's menu is also the OS's
    text-selection gesture, and that gesture is owned by a native recognizer:
    preventDefault() on our synthetic `contextmenu` cannot cancel it, and iOS
    does not fire `contextmenu` for touch at all. The only thing that stops the
    selection is refusing to be selectable (GH #452). Desktop keeps ordinary
    selection — a mouse user can still drag across a link's text. */
-html[data-platform="ios"] :is(.page-ref, .tag),
-html[data-platform="android"] :is(.page-ref, .tag) {
-  user-select: none;
-  -webkit-user-select: none;
+@media (pointer: coarse) {
+  :is(.page-ref, .tag) {
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }
 
 /* GH #375: Android/iOS already own the selection-adjacent region with their
@@ -45,6 +46,20 @@ html[data-platform="android"] :is(.page-ref, .tag) {
   right: max(6px, var(--system-inset-right));
   z-index: 81;
   justify-content: center;
+  /* High interface zoom can leave less than one row of essential actions.
+     Wrap instead of clipping their touch targets past the viewport edges. */
+  flex-wrap: wrap;
+}
+
+/* GH #375 (D-20261018-LP2 a): text selected in a RENDERED block has no editor
+   and normally no keyboard below it, so its toolbar docks at the bottom of the
+   screen, above the bottom navigation row when that row is shown, and above the
+   keyboard dock if one is up. */
+.sel-toolbar-mobile.rendered-selection-toolbar {
+  bottom: max(
+    calc(var(--overlay-inset-bottom, 0px) + var(--mobile-navigation-height, 0px) + 8px),
+    var(--mobile-kb-toolbar-lift, 0px)
+  );
 }
 
 /* The dock is already above the keyboard, so its narrow-layout overflow opens
@@ -56,10 +71,10 @@ html[data-platform="android"] :is(.page-ref, .tag) {
 
 /* Block swipe (GH #501, src/blockSwipe.ts): the row owns horizontal pans, the
    page keeps vertical scrolling and pinch. Rows that contain their own
-   sideways scroller (code, tables, sheets) keep full native panning instead:
+   sideways scroller (code, tables, sheets, math) keep full native panning instead:
    touch-action intersects down the tree, so a pan-y ancestor would freeze the
    inner scroller. The swipe's own disabled zones already skip those targets. */
-html[data-touch-gestures] .block-main:not(:has(.code-block, .md-table-wrap, .sheet-scroll)) {
+html[data-touch-gestures] .block-main:not(:has(.code-block, .md-table-wrap, .sheet-scroll, .math)) {
   touch-action: pan-y pinch-zoom;
 }
 /* Swipe feedback: the row follows the finger a little and tints by the action

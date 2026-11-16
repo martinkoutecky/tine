@@ -3,12 +3,14 @@ import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle, appNow } from "../journal";
-import { dataRev, graphEpoch } from "../graphSession";
+import { graphEpoch } from "../graphSession";
+import { changed } from "../changeKeys";
 import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import { readOr } from "../resourceRead";
+import { openPageInSidebar } from "../ui";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -55,17 +57,21 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
     return cells;
   });
   const step = (delta: number) => setView(stepMonth(view(), delta));
-  const pick = (d: number) => {
-    openPage(journalTitle(new Date(view().y, view().m, d)), "journal");
+  // OG container.cljs sidebar-nav -> route/sidebar-journals!: Shift opens
+  // today's journal beside the current page. The grid applies it to its day.
+  const pickDate = (date: Date, event: MouseEvent) => {
+    const name = journalTitle(date);
+    if (event.shiftKey) openPageInSidebar(name, "journal");
+    else openPage(name, "journal");
     setOpen(false);
   };
   const isToday = (d: number) =>
     view().y === today().getFullYear() && view().m === today().getMonth() && d === today().getDate();
 
   // Journal days that have content, fetched while the popup is open (re-fetched
-  // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
+  // on journal content changes). yyyymmdd keys, month 1-based.
   const [contentDaysResource] = createResource(
-    () => (open() ? { rev: dataRev(), epoch: graphEpoch() } : null),
+    () => (open() ? { rev: changed("journals"), epoch: graphEpoch() } : null),
     async () => {
       const owner = graphOwner();
       const epoch = graphEpoch();
@@ -98,7 +104,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
 
   return (
     <>
-      <button ref={trigger} class={`icon-btn ${props.triggerClass ?? ""}`} title={t("calendar-jump-go-to-date")} onClick={toggle}>
+      <button ref={trigger} class={`icon-btn ${props.triggerClass ?? ""}`} title={t("calendar-jump-go-to-date")} onClick={(event) => event.shiftKey ? pickDate(appNow(), event) : toggle()}>
         <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
           <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
           <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
@@ -125,7 +131,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
                       class="dp-cell"
                       classList={{ today: isToday(d!), "has-content": hasContent(d!) }}
                       title={hasContent(d!) ? t("calendar-jump-has-an-entry") : t("calendar-jump-empty")}
-                      onClick={() => pick(d!)}
+                      onClick={(event) => pickDate(new Date(view().y, view().m, d!), event)}
                     >
                       {d}
                     </button>
@@ -134,7 +140,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
               </For>
             </div>
             <div class="dp-foot">
-              <button class="dp-today" onClick={() => { openPage(journalTitle(today()), "journal"); setOpen(false); }}>{t("calendar-jump-today")}</button>
+              <button class="dp-today" onClick={(event) => pickDate(today(), event)}>{t("calendar-jump-today")}</button>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   adjustPaneSize,
   closeLayoutPane,
@@ -83,6 +83,22 @@ describe("PDF workspace routes", () => {
     openPdf("paper.pdf", "Paper", 3);
     expect(paneRouter(readerId).route()).toMatchObject({ page: 3 });
     expect(pdfNavigationIntent(route.viewId)()?.serial).not.toBe(serial);
+  });
+
+  it("opens another view of an open PDF beside it, at the source's page and zoom", () => {
+    const first = openPdf("paper.pdf", "Paper")!;
+    const readerId = layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!;
+    const second = openPdf("paper.pdf", "Paper", 4, undefined, { anotherView: true, sourcePaneId: readerId, scale: 1.5 })!;
+    expect(second).toMatchObject({ kind: "pdf", filename: "paper.pdf", page: 4, scale: 1.5 });
+    expect(second.viewId).not.toBe(first.viewId);
+    const besideId = layoutPaneIds().find((id) => id !== readerId && paneRouter(id).route().kind === "pdf")!;
+    expect(paneRouter(besideId).route()).toMatchObject({ viewId: second.viewId });
+    expect(paneRouter(readerId).route()).toMatchObject({ viewId: first.viewId });
+    expect(focusedPaneId()).toBe(besideId);
+    // A plain open still reuses a view rather than adding a third.
+    expect([first.viewId, second.viewId]).toContain(openPdf("paper.pdf", "Paper")!.viewId);
+    expect(layoutPaneIds().flatMap((id) => paneRouter(id).tabs())
+      .filter((tab) => tab.history[tab.pos]?.kind === "pdf")).toHaveLength(2);
   });
 
   it("reuses an existing companion Notes tab", () => {
@@ -350,7 +366,15 @@ describe("pane layout mutations", () => {
       activeIndex: 0,
     });
     const target = splitPane("main", "row")!;
-    paneRouter("main").setScrollerElement({ scrollTop: 73, isConnected: true } as HTMLElement);
+    const scroller = { scrollTop: 0, scrollHeight: 1000, clientHeight: 500, isConnected: true } as HTMLElement;
+    paneRouter("main").setScrollerElement(scroller);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    try {
+      paneRouter("main").restoreScrollFor(paneRouter("main").route());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    scroller.scrollTop = 73;
 
     expect(moveActiveTabToPane("main", target)).toBe(true);
 

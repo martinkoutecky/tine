@@ -45,6 +45,55 @@ impl PageHost {
         Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
     }
 
+    /// A host bug: the driver panics in its next step, holding the host
+    /// state, and ends. Returns once it has ended.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn crash_driver_for_tests(&self) {
+        self.driver
+            .shared
+            .notify(|_| panic!("test fault: a host bug ends the page host driver"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !self.driver.shared.ended() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the driver never ended"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// Pause work on selected pages while still accepting requests.
+    /// This test scheduler guard never grants permission to write pages.
+    /// Dropping it resumes progress; retirement also waits for the guard.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn pause_for_tests(&self, pages: &[PageId]) -> impl Send {
+        struct Pause {
+            shared: std::sync::Weak<driver::Shared<ProductionIo, SystemClock>>,
+            keys: BTreeSet<PageKey>,
+        }
+        impl Drop for Pause {
+            fn drop(&mut self) {
+                if let Some(shared) = self.shared.upgrade() {
+                    let keys = std::mem::take(&mut self.keys);
+                    shared.notify(move |state| {
+                        for key in keys {
+                            state.progress.host.paused_for_tests.remove(&key);
+                        }
+                    });
+                }
+            }
+        }
+        let keys = self.register_all(pages.to_vec()).expect("live test host");
+        let paused = keys.clone();
+        let _ = self.driver.shared.call(move |state| {
+            state.progress.host.paused_for_tests.extend(paused);
+        });
+        Pause {
+            shared: Arc::downgrade(&self.driver.shared),
+            keys,
+        }
+    }
+
     /// The host holds nothing and owes nothing: no page, job, draft worker,
     /// durable draft, queued request, owed observation or index ownership. A cost test waits
     /// for it so it measures an operation through its cleanup (M4).
@@ -106,17 +155,49 @@ impl PageHost {
         } = &launch;
         let (app_data, graph_id) = (app_data.as_path(), graph_id.as_str());
         let graph = store.graph.clone();
+        // A case move a stopped process left at its temporary entry (GS1)
+        // finishes first, so a recovered draft resolves its page's spelling.
+        {
+            let _writer = store.writer.lock().unwrap_or_else(|e| e.into_inner());
+            store.page_plan(None).complete_case_moves();
+        }
         let trash = crate::model::trash_root(&graph.root).join("pages");
-        let mut io = ProductionIo::attach(&graph.root, app_data, graph_id, &trash);
+        let mut io = ProductionIo::attach_bound(
+            &graph.root,
+            app_data,
+            graph_id,
+            &trash,
+            graph.root_binding.clone(),
+        );
         let spellings = io.spellings().clone();
         io.marks = Some(graph.clone());
+        io.storage_diag = graph.storage_diag.clone();
+        io.store = Arc::downgrade(store);
         let mut host = Host::new(io, BTreeMap::new());
+        host.storage_diag = graph.storage_diag.clone();
         host.stop();
         let mut recovered = Vec::new();
         let keys = host.recovered_keys();
         for key in keys.iter().cloned() {
             let id = PageId::from(super::super::production::key_base(&key));
-            let spelling = store.disk_spelling(&id).unwrap_or(id);
+            // Check the original folder before resolving the leaf: a folder
+            // retargeted while stopped must not redirect recovery. The old
+            // leaf itself can be a case alias after an entry-first move;
+            // checking it before resolution rejects the alias and leaves the
+            // draft registered at an unwritable old spelling (S3 B2).
+            let path = graph.root.join(id.as_str());
+            let spelling = path
+                .parent()
+                .filter(|parent| graph.ensure_write_target(parent).is_ok())
+                .and_then(|_| store.disk_spelling(&id))
+                .filter(|spelling| {
+                    graph
+                        .ensure_write_target(&graph.root.join(spelling.as_str()))
+                        .is_ok()
+                })
+                // Even a refused resolution keeps its logical key, text
+                // and draft; the actual save still checks its target.
+                .unwrap_or(id);
             let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
             host.register(key.clone(), spelling.as_str(), lock);
             recovered.push((key, spelling));
@@ -139,12 +220,20 @@ impl PageHost {
         // A watcher read of a held page (§5): the driver owes the host an
         // observation of it, taken under its path lock once the page is idle.
         let shared = Arc::downgrade(&driver.shared);
-        let forward: crate::watch::Forward = Box::new(move |keys| {
+        // A held page's read waits on `done` (A-H1): told after the
+        // delivery of the step that observed the key. Its observation is
+        // due now, past a failed one's backoff: the read waits for it.
+        let forward: crate::watch::Forward = Box::new(move |keys, done| {
             if let Some(shared) = shared.upgrade() {
                 // A notice: the watcher calls this holding the writer.
-                shared.notify(|state| {
+                shared.notify(move |state| {
                     for key in keys {
-                        state.observe.entry(key).or_default().forwarded = true;
+                        let owed = state.observe.entry(key.clone()).or_default();
+                        owed.forwarded = true;
+                        if let Some(done) = &done {
+                            owed.due = 0;
+                            state.observed.entry(key).or_default().push(done.clone());
+                        }
                     }
                 });
             }

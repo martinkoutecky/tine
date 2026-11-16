@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "./tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -64,15 +65,15 @@ describe("GH #161 P1A1 global capture suspension boundary", () => {
     const { root, dispose } = mount(() => (
       <For each={pageByName("P1A1")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
-    const editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
+    const editor = maybeEditorIn(root) as EditorDriver | null;
     expect(editor).not.toBeNull();
     const targetPhase = vi.fn();
-    editor!.addEventListener("keydown", targetPhase);
+    editor!.element.addEventListener("keydown", targetPhase);
     setKeybindingsSuspended(true);
     const uninstall = installKeybindings();
 
     const event = escape();
-    editor!.dispatchEvent(event);
+    editor!.keydown(event);
 
     expect(editingId()).toBe("block");
     expect(targetPhase).not.toHaveBeenCalled();
@@ -121,11 +122,11 @@ describe("GH #161 P1A1 global capture suspension boundary", () => {
     const { root, dispose } = mount(() => (
       <For each={pageByName("Unsuspended")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
-    const editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
+    const editor = maybeEditorIn(root) as EditorDriver | null;
     expect(editor).not.toBeNull();
     const uninstall = installKeybindings();
 
-    editor!.dispatchEvent(escape());
+    editor!.keydown(escape());
 
     expect(editingId()).toBeNull();
     uninstall();

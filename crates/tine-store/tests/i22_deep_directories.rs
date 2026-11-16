@@ -3,6 +3,8 @@
 //! Linux caps a path at 4096 bytes (~2000 one-letter levels); Windows long
 //! paths reach 32,767 characters (~16,000 levels), so these walks run the
 //! Linux-maximal tree on a stack one ninth of a 2 MiB command worker.
+//! Apple targets cap paths at 1024 bytes, so scale their tree to that limit,
+//! retaining headroom for restore's longer recovery prefix on every target.
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,7 +13,16 @@ use tine_store::{Area, Store};
 const SCALED_WORKER_STACK: usize = 2 * 1024 * 1024 / 9;
 
 fn deep_tree(base: &Path) -> PathBuf {
-    let budget = 4000usize.saturating_sub(base.as_os_str().len() + 16);
+    let path_budget: usize = match std::env::consts::OS {
+        "macos" | "ios" => 900,
+        "linux" | "android" | "windows" => 4000,
+        other => panic!("deep-tree path budget is unspecified for {other}"),
+    };
+    let budget = path_budget.saturating_sub(base.as_os_str().len() + 16);
+    assert!(
+        budget >= 400,
+        "fixture root leaves too little nesting depth"
+    );
     let mut dir = base.to_path_buf();
     for _ in 0..budget / 2 {
         dir.push("d");

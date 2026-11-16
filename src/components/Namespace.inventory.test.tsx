@@ -31,12 +31,47 @@ const backendMock = vi.hoisted(() => {
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
 import { NamespaceHierarchy } from "./Namespace";
+import { createSignal } from "solid-js";
+import { resetReferenceSectionState } from "../referenceSectionState";
 
 afterEach(() => {
+  resetReferenceSectionState();
   document.body.innerHTML = "";
 });
 
 describe("GH #229 reference-only namespace descendants", () => {
+  it("GH #738: folds by title, retains the page choice across navigation/remount and resets with the graph", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const [name, setName] = createSignal("test");
+    let dispose = render(() => <NamespaceHierarchy name={name()} />, root);
+    const title = () => root.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+    try {
+      await vi.waitFor(() => expect(root.querySelectorAll(".ns-hier-row")).toHaveLength(3));
+      expect(title()?.textContent).toContain("Hierarchy");
+      expect(title()?.getAttribute("aria-expanded")).toBe("true");
+      title().focus();
+      expect(document.activeElement).toBe(title());
+      // Native button activation supports Enter/Space without a custom key handler.
+      title().click();
+      expect(title().getAttribute("aria-expanded")).toBe("false");
+      expect(root.querySelector(".ns-hier-row")).toBeNull();
+      setName("test/testy test");
+      expect(title().getAttribute("aria-expanded")).toBe("true");
+      setName("test");
+      expect(title().getAttribute("aria-expanded")).toBe("false");
+      dispose();
+      dispose = render(() => <NamespaceHierarchy name="test" />, root);
+      expect(title().getAttribute("aria-expanded")).toBe("false");
+      title().click();
+      expect(root.querySelectorAll(".ns-hier-row")).toHaveLength(3);
+      title().click();
+      dispose();
+      resetReferenceSectionState();
+      dispose = render(() => <NamespaceHierarchy name="test" />, root);
+      expect(title().getAttribute("aria-expanded")).toBe("true");
+    } finally { dispose(); }
+  });
   it("shows the synthesized reference-only descendants in the real Hierarchy component", async () => {
     const root = document.createElement("div");
     document.body.append(root);

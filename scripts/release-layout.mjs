@@ -12,6 +12,7 @@ export const RELEASE_LANES = [
   "windows-arm64",
   "android",
   "flatpak-x64",
+  "quick-share-viewer-g1",
 ];
 
 export function assertReleaseVersion(version) {
@@ -22,6 +23,10 @@ export function releaseLayout(version, identity = IDENTITY) {
   const product = identity.productName.replace(/\s+/g, "-");
   assertReleaseVersion(version);
   const lanes = {
+    "quick-share-viewer-g1": {
+      assets: ["quick-share-viewer-g1.zip"],
+      platforms: {},
+    },
     "linux-x64": {
       assets: [
         `${product}_${version}_amd64.AppImage`,
@@ -135,7 +140,7 @@ export function releaseLayout(version, identity = IDENTITY) {
   for (const spec of Object.values(lanes)) {
     // Tauri uses productName verbatim; our own zip/APK/Flatpak are already canonical.
     spec.sourceAssets = Object.fromEntries(spec.assets.map((name) => [name,
-      name.endsWith("-portable.zip") || name.endsWith(".apk") || name.endsWith(".flatpak") ? name
+      name === "quick-share-viewer-g1.zip" || name.endsWith("-portable.zip") || name.endsWith(".apk") || name.endsWith(".flatpak") ? name
         : identity.productName + name.slice(product.length),
     ]));
   }

@@ -25,13 +25,63 @@ Literal planning lookalikes remain in place. Markdown built-in identity/collapse
 metadata keeps trailer placement. Debug builds reparse edits and compare the
 header, unrelated metadata/drawers/planning and literal source slices.
 
+Where a block's title ends and its rows begin is lsdoc's headline node: its
+source span, mapped to raw by `raw_offset`, the one prepared-to-raw conversion.
+Rows after the title go to the end of that headline (`BlockRegions::title_end`),
+and the Org drawer there is the block's own. An empty title before the
+properties or drawer lsdoc reads at the title position (`*` then
+`:PROPERTIES:`, `- id:: x`) ends where they start: the block's metadata begins
+there. Any other node at the title position (a quote, `#+TITLE: x`) is the
+block's first line and stays its title line. `BlockRegions::headline_end` records the headline's end only
+where it is not the end of the first line after the leading trim, so empty
+regions stay shared. A nonempty headline owns the rest of its line when only
+blanks follow (lsdoc ends a bare `TODO ` before them; a CRLF page keeps each
+line's CR), so a row never splits the title line. A whole document has no
+headline; its page rows keep the first physical line as the title line.
+OG reference for title placement: `og-1.0.0` at
+`680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content/has-title?`,
+`property/insert-property` and `text/add-timestamp`.
+
+A bare marker title (`TODO` with nothing after the marker) is a task when
+only property, planning or LOGBOOK rows follow it, or a LOGBOOK follows
+anywhere: the shared parse boundary (`lsdoc_block_parse::restore_bare_task`)
+decides it, so adding or removing those rows never changes the header. Blank
+lines beside the rows do not count (removing the last row leaves a task). The
+repair asks lsdoc for the headline's source up to the title word (so a CRLF
+bare task reads as its LF twin, and `# TODO` stays a heading) and reparses only
+that, and only when lsdoc did not already see the word at the end of input.
+Body text after a bare title stays text, as in Logseq (REG-BARE-TASK-HIDDEN-ROWS).
+
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.
+Visible-body labels and export projections also require that source format;
+unloaded pages use the existing inventory's physical owner and the same
+`tine-outline::page_format::Format` rule as native code, without another read.
+Markdown ATX label stripping applies only to Markdown. Rename planning and
+validation classify file extensions through `Format::from_path`, including
+mixed-case Org extensions. Clock edits take previous and next raw buffers at
+the shared logbook boundary; previous marker recognition retries the title
+line when a bare marker is followed by metadata (GH #741, L3-07).
 Main initializes the frontend parser before rendering. Capture can paint its
 seeded empty editor during initialization; Block defers durable identity and
 reference-count reads until ready. Synchronous structural calls require init.
 The bounded AST cache retains regions from the same parse bundle. Parser
 traps quarantine the block as literal; structural edits refuse quarantine.
+
+Backspace-at-start and Delete-at-end share `outline::merge` in Markdown and Org,
+on routed pages and journals (F2, D-20261026-F2). The survivor keeps its hidden
+properties and clocks; absorbed hidden properties and clocks are dropped.
+An absorbed durable ID transfers with `IdTransferred` only when referenced and
+the survivor has no ID. An unreferenced absorbed ID is dropped. The frontend
+uses the existing graph reference-count index, including block refs and embeds;
+an unavailable or cold count conservatively treats an absorbed ID as referenced.
+When both blocks have IDs and the absorbed one is referenced, merge refuses
+`referenced_identity` without mutation, keeping both targets resolvable. OG
+`delete-block!` / `delete-concat` at `6e7afa8eb` instead replace the survivor UUID
+and `update-block-refs` rewrites its graph-wide referrers; Tine's page-local merge
+cannot perform that rewrite. Clock dropping follows OG's `move-to-prev-block`;
+OG's unreferenced forward Delete can retain absorbed raw metadata and clocks,
+an intentional difference to keep Tine's two entry methods consistent.
 
 Editor literal decisions are the parser's, asked through this door and never recomputed from
 content (I-12). Typography adds no parse to ordinary input handling: a parse (`inlineLiteral.ts`,
@@ -47,6 +97,18 @@ a 2,000-block page loaded and the edited Block mounted, 200 typed characters pro
 in prose and code, with zero additional cold parses from typing itself. This probe does not mount the
 complete virtualized Page.
 
+The block editor keeps code wrappers editable (GH #879). Block entry outside a
+code payload, including sibling merge and arrow navigation, opens raw source.
+Entering a payload opens its reversible body view; Escape, boundary arrows or
+Backspace at its start return to raw source without rewriting the block. Empty
+code payloads retain the existing Backspace deletion gesture. Raw whole-block
+editing stays raw as the caret moves through the payload. Both modes use
+visible-source caret coordinates for history and the existing guarded save path.
+Markdown and Org, desktop and touch layouts share this boundary; calculator
+blocks retain their specialized editor. OG reference: `og-1.0.0` at
+`680b371f0f53968adf678759e9bfd5cb7ea5790c`, `block-content-or-editor`,
+`move-to-prev-block` and `extensions/code.cljs` `render!` (Escape).
+
 Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
 (`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
 Retained outside this door, pending native doors: the Org drawer extents used when a page-property
@@ -55,6 +117,15 @@ pasted and copied outlines (`outline.ts`, `clipboard.ts` `outlineToHtml` cannot 
 follows a bullet marker), and the leading-ATX/list-marker grammar of a bare list-prefix line
 (`format.ts` `trimBlockTrailingSpace`). The empty-card separator fix is included. Copy projection
 preserves a final raw newline, including the seven manager-approved corpus exceptions.
+
+Display-math Enter state excludes parser-owned trailing whitespace when deciding
+whether a closing delimiter is interior to a literal range (#862). Completed
+math therefore permits the next outline block even when prose follows it.
+The approved #278 difference from OG remains: Enter inside open display math
+inserts a newline. Escape from a projected code body saves through the existing
+editor commit, then reveals editable raw source at its end for the rest of that
+editing session (#865, OG `extensions/code.cljs` `render!`). The next Escape
+uses ordinary raw-editor block selection. Both Markdown and Org use this owner.
 
 Unit cost: no new persisted record, index or transport. Edits are bounded to one
 block; cached optimized edits need zero ownership parses, raw entry points need

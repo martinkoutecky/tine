@@ -82,7 +82,10 @@ mod canonical_root_fallback_tests {
             std::thread::current().id()
         ));
         fs::create_dir_all(&root).unwrap();
-        root
+        // The fallback deliberately refuses links in every ancestor. macOS's
+        // temporary directory commonly starts with the /var -> /private/var
+        // alias, which must not become part of this link-free fixture.
+        fs::canonicalize(root).unwrap()
     }
 
     #[test]

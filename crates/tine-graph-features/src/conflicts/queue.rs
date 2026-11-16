@@ -95,7 +95,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     }
     let (bytes, _) = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
         Ok(value) => value,
-        Err(tine_store::StoreError::NotFound) => return Ok(None),
+        Err(tine_store::StoreError::NotFound(_)) => return Ok(None),
         Err(error) => return Err(crate::store_error(error)),
     };
     if !tine_core::concord_queue::has_vcs_anchor(&bytes) {
@@ -305,6 +305,29 @@ impl ConflictQueue {
         Ok(derived.as_ref().unwrap().published())
     }
 
+    /// The queued sync copies with no decidable row, as (copy, page) paths:
+    /// the candidates [`super::trash_identical_sync_copies`] byte-compares.
+    /// From memory, O(queue); empty before the first [`Self::inventory`].
+    pub fn undecided_copies(&self) -> Vec<(String, String)> {
+        let derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(Derived { inventory, .. }) = derived.as_ref() else {
+            return Vec::new();
+        };
+        let side = |object: &ConflictObject, role| {
+            object
+                .sides
+                .iter()
+                .find(|s| s.role == role)
+                .and_then(|s| s.path.clone())
+        };
+        inventory
+            .queue
+            .iter()
+            .filter(|o| o.source == ConflictSource::SyncCopy && o.block_conflicts == Some(0))
+            .filter_map(|o| Some((side(o, SideRole::Theirs)?, side(o, SideRole::Mine)?)))
+            .collect()
+    }
+
     /// Re-derive what one published store change can affect. An external
     /// change (watcher, scan) re-derives every changed file, so a marker or
     /// copy written while the graph is open enters the queue on its next
@@ -373,7 +396,7 @@ impl ConflictQueue {
                 let file = id(store, rel)?;
                 match store.open_read(&file) {
                     Ok(_) => Ok(true),
-                    Err(tine_store::StoreError::NotFound) => Ok(false),
+                    Err(tine_store::StoreError::NotFound(_)) => Ok(false),
                     Err(error) => Err(crate::store_error(error)),
                 }
             };

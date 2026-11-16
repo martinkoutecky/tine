@@ -5,17 +5,19 @@ import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+import { createExpansionGate, expandTemplate, templateExpansionSize, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
+export { expandTemplate } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createRenderEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, zoomToBlock } from "../router";
+import { openPage, openPageInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import { refClickZoom } from "../copySettings";
-import { isJournalTitle } from "../journal";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { openRefTarget } from "../blockRefActions";
+import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
+import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { changed, changedAny, pageChangeKey } from "../changeKeys";
 import { pushToast } from "../toasts";
 import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
@@ -27,12 +29,14 @@ import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
-import { resolvedTarget } from "../pageIndex";
+import { linkPageKind, resolvedTarget } from "../pageIndex";
+import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
-import { typographic } from "./typography";
-import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, rebulletedSourceByteToRawByte, typographicPlainSpanAttrs, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { PageIcon } from "../components/PageIcon";
+import { coarseSpanAttrs, literalSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { QuoteHighlightContext } from "./quoteHighlight";
+import { renderPlain, renderQuotedPlain } from "./plainText";
 import { literalBlockOfLine } from "../editor/literalLines";
-import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
@@ -40,13 +44,17 @@ import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
-import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireCachedAssetBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
+import { isQuickShareViewer } from "../publishedBackend";
+import { ShareMedia } from "../quickShare/ShareMedia";
+import { CopyButton } from "./CopyButton";
+export { CopyButton } from "./CopyButton";
 import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
 import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
 import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
@@ -56,7 +64,9 @@ import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, Cloze
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
-import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
+import { annotationInfoForBlock, pdfAssetFile } from "../editor/annotation";
+import { openAnnotationPdf } from "../openAnnotationPdf";
+import { PdfAreaImage } from "../components/PdfAreaImage";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
@@ -80,13 +90,13 @@ import { windowOf } from "../windowRealm";
 // The query arm prefers the RAW source slice (`rawMacro`): mldoc splits macro
 // arguments on commas and stops before the first `}`, so the AST body loses an
 // options map's closing brace and a literal comma.
-function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent): JSX.Element {
+function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent, span?: Span): JSX.Element {
   const body = raw.trimStart();
   // A preview must not mount a live query editor through an inline macro.
   if (useContext(PeekContext) && (rawMacro || isQueryMacroName(body.split(" ", 1)[0]))) return <code>{`{{${raw}}}`}</code>;
   if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
   if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
-  if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} />;
+  if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} span={span} />;
   if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
   if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
   if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
@@ -142,16 +152,13 @@ export function renderInlines(
 function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansion = false, format?: Format): JSX.Element {
   switch (s.k) {
     case "plain": {
-      // Render-time typographic replacement (`->`→`→`, `--`→`–`, …) is a Tine
-      // opinion applied ONLY to plain text — code/links/math/tags are other node
-      // kinds, so they're excluded for free. Source keeps the ASCII.
-      const text = typographyMode() === "render" ? typographic(s.text) : s.text;
-      const attrs = spanMode
-        ? text === s.text
-          ? plainSpanAttrs(s.span, s.span_map)
-          : typographicPlainSpanAttrs(s.text, s.span, s.span_map)
-        : undefined;
-      return attrs ? <span {...attrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
+      const quoted = spanMode && blockId ? useContext(QuoteHighlightContext) : null;
+      // Reactive only under a parent that may hold comments: a comment added,
+      // edited or removed re-marks this run without re-rendering the block.
+      if (quoted && quoted.blockId === blockId) {
+        return <>{renderQuotedPlain(s, quoted.ranges()) ?? renderPlain(s.text, s.span, s.span_map, spanMode)}</>;
+      }
+      return renderPlain(s.text, s.span, s.span_map, spanMode);
     }
     case "code":
     case "verbatim":
@@ -192,7 +199,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
     case "tag":
       return <PageRef name={astText(s.children)} blockId={blockId} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "macro":
-      return renderMacroBody(macroBody(s), blockId, s.args, rawQueryMacro(s, blockId));
+      return renderMacroBody(macroBody(s), blockId, s.args, rawQueryMacro(s, blockId), hostSpan(s, spanMode, macroExpansion));
     case "latex":
       return <MathView tex={s.body} display={s.mode === "Displayed"} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "timestamp":
@@ -237,6 +244,12 @@ export function astText(inlines: Inline[]): string {
   return out;
 }
 
+/** The token's source span in its host block's raw (GH #417 occurrence actions):
+ *  none for text that is not the host's own source (a macro expansion, a label). */
+function hostSpan(s: Inline, spanMode: boolean, macroExpansion: boolean): Span | undefined {
+  return spanMode && !macroExpansion ? s.span : undefined;
+}
+
 function macroBody(s: MacroInline): string {
   return s.args.length ? `${s.name} ${s.args.join(", ")}` : s.name;
 }
@@ -252,8 +265,10 @@ function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefine
   return extent ?? undefined;
 }
 
-const PEEK_OPEN_MS = 350;
-const PEEK_CLOSE_MS = 150;
+// OG 0.10.9 page-preview-trigger / block-ref tippy: `:delay [1000, 100]` (ms open, close).
+// GH #735: a quicker open puts the popup over the reference you meant to click.
+const PEEK_OPEN_MS = 1000;
+const PEEK_CLOSE_MS = 100;
 const PEEK_BLOCK_CAP = 50;
 
 function createPeekBridge(disabled: () => boolean) {
@@ -261,6 +276,10 @@ function createPeekBridge(disabled: () => boolean) {
   let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
+  // The popup's editor holds the caret (D-20261023-VQ): no hover timer closes it.
+  let held = false;
+  const setHeld = (value: boolean) => { held = value; };
+  const closeLater = () => { closeT = setTimeout(() => { if (!held) setOpen(false); }, PEEK_CLOSE_MS); };
   const clearOpen = () => {
     if (openT) {
       clearTimeout(openT);
@@ -287,7 +306,7 @@ function createPeekBridge(disabled: () => boolean) {
     clearOpen();
     if (disabled()) return;
     clearClose();
-    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+    closeLater();
   };
   const popupEnter = () => {
     if (disabled()) return;
@@ -297,7 +316,7 @@ function createPeekBridge(disabled: () => boolean) {
     if (touchOpen) return;
     if (disabled()) return;
     clearClose();
-    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+    closeLater();
   };
   const dismiss = () => {
     touchOpen = false;
@@ -316,7 +335,7 @@ function createPeekBridge(disabled: () => boolean) {
     touchOpen = true;
     setOpen(true);
   };
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold, setHeld };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -331,7 +350,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
-  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
+  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : linkPageKind(targetName()));
   // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
   // link signals a blank destination. Tags are exempt: a tag whose page has no
   // file is ordinary Logseq usage, and dimming them would mark most tags in a
@@ -366,9 +385,19 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // right-click and touch on desktop still use the page context menu.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
+  const [previewPage, setPreviewPage] = createSignal<string>();
   const [previewResource] = createResource(
-    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
-    () => backend().getPage(targetName(), kind()),
+    // Source-page revisions include descendant folds and dataRev full refreshes.
+    // An alias also follows the canonical page the backend answered with.
+    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${changedAny([
+      ...new Set([pageChangeKey(targetName()), pageChangeKey(previewPage() ?? targetName())]),
+    ])}` : null),
+    async () => {
+      const result = await readOwned(graphOwner(), backend().getPage(targetName(), kind()));
+      if (result.kind === "stale") return null;
+      setPreviewPage(result.value?.name);
+      return result.value;
+    },
   );
   // A hover preview that cannot be fetched shows no popup; a rejection used to
   // throw out of this read and cost the whole page region.
@@ -380,6 +409,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       <a
         ref={anchorEl}
         class={props.tag ? "tag" : "page-ref"}
+        data-ref={pageIdentityKey(props.name)}
         data-missing-page={missing() ? "" : undefined}
         {...(props.spanAttrs ?? {})}
         // Suppress the browser defaults the destinations replace: shift-range
@@ -400,12 +430,12 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (isMobilePlatform && isLongPressContextMenu(e)) peek.hold();
+          if (touchPrimary() && isLongPressContextMenu(e)) peek.hold();
           else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
         <Show when={icon()}>
-          <span class="page-icon page-ref-icon"><EmojiText text={icon()!} /></span>
+          <span class="page-icon page-ref-icon"><PageIcon value={icon()!} name={targetName()} /></span>
         </Show>
         <Show when={props.tag} fallback={
           <Show when={props.alias} fallback={<><Show when={showBrackets()}><span class="bracket">[[</span></Show>{props.name}<Show when={showBrackets()}><span class="bracket">]]</span></Show></>}>
@@ -421,44 +451,17 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           title={<span class="peek-popup-title-name"><EmojiText text={preview()!.title || preview()!.name} /></span>}
           blocks={() => capped().blocks}
           page={preview()!.name}
-          pageKind={kind()}
+          path={preview()!.id}
+          pageKind={preview()!.kind}
           properties={pageHeaderProperties(preview()!)}
           format={preview()!.format}
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>
-  );
-}
-
-// One-click copy affordance (#24 — the logseq-copy-code / logseq-copy-url QoL).
-// Copies RAW source text (off the AST, never the rendered DOM) through the
-// backend clipboard path — WebKitGTK's navigator.clipboard is unreliable
-// ([[tine-webkitgtk-confirm]]) — and toasts. Shared by inline code + links
-// (here) and fenced code blocks (body.tsx). `class` positions it per site.
-export function CopyButton(props: { text: string; title: string; class?: string }): JSX.Element {
-  const onCopy = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    void writeClipboardText(props.text)
-      .then(() => pushToast(msg("render-copied-to-clipboard"), "success"))
-      .catch(() => pushToast(msg("render-couldn-t-copy-to-clipboard"), "error"));
-  };
-  return (
-    <button
-      class={`copy-btn${props.class ? " " + props.class : ""}`}
-      title={props.title}
-      aria-label={props.title}
-      onClick={onCopy}
-    >
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="9" y="9" width="11" height="11" rx="2" />
-        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-      </svg>
-    </button>
   );
 }
 
@@ -481,10 +484,12 @@ function renderLink(
   }
   if (url.type === "block_ref") {
     const label = s.label && s.label.length ? astText(s.label) : undefined;
-    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} />;
+    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
   const dest = urlDest(url);
-  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
+  const assetTarget = assetLinkRel(dest);
+  const fileTarget = assetTarget === null ? fileLinkTarget(dest) : null;
+  if (isQuickShareViewer() && (assetTarget !== null || fileTarget !== null)) return <ShareMedia url={dest} />;
   // File URLs use the OS viewer, preserving their full path (GH #577).
   // File URLs must never enter the graph annotation reader.
   const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
@@ -557,6 +562,7 @@ function pdfFilenameFromDest(dest: string): string {
 }
 
 function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.dest} label={props.label} />;
   // The route names the PDF by its path under assets/: highlights, sidecar and
   // hls page are keyed from it, so dropping `nested/` opened another resource.
   const filename = pdfAssetFile(props.dest);
@@ -787,7 +793,7 @@ function mediaResizeGrip(
 // are read from disk via the backend and shown as a blob URL. When rendered
 // inside a real block (`blockId` set, not the lightbox/capture scratch), a
 // corner grip lets you drag-resize; the result is written back as a width %.
-function AssetImage(props: {
+export function AssetImage(props: {
   url: string;
   alt: string;
   width?: string;
@@ -795,7 +801,9 @@ function AssetImage(props: {
   blockId?: string;
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
+  onClick?: (event: MouseEvent) => void;
 }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
   // percentage child doesn't shrink to it, so the grip (positioned against the
   // wrapper) would otherwise stay at full column width after a resize. With the
@@ -873,7 +881,7 @@ function AssetImage(props: {
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
       t("render-move-to-the-trash-and-remove-it-from-this-block-it-stays-recoverable-in-logseq-tine-trash", { name: String(name) }),
-      "Trash asset",
+      { title: t("confirm-trash-asset-title"), okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     // Drop the reference first (saves the block). Trash the file only when the
@@ -947,7 +955,7 @@ function AssetImage(props: {
             src={src()!}
             alt={props.alt}
             style={imgStyle()}
-            onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
+            onClick={props.onClick ?? ((e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); })}
           />
         </Show>
         <Show when={assetActions()}>
@@ -1028,6 +1036,7 @@ function MediaEmbed(props: {
   token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
+  if (isQuickShareViewer()) return <ShareMedia url={props.url} label={props.alt} />;
   const [failed, setFailed] = createSignal(false);
   const [blobFallback, setBlobFallback] = createSignal("");
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
@@ -1218,10 +1227,6 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
 // limit marker) — I-22, one budget with renderedText.ts.
 const userMacroGate = createExpansionGate();
 
-export function expandTemplate(template: string, args: string[]): string {
-  return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
-}
-
 function isSingleParagraphExpansionBlock(b: AstBlock): boolean {
   // parseBlock re-bullets raw Markdown/Org block bodies, so a plain paragraph
   // arrives as the synthetic header bullet. A heading expansion has `size`.
@@ -1245,9 +1250,8 @@ function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
 // the args. Single-paragraph expansions stay inline; block-level expansions render
 // through the block renderer, matching OG's macro parse/render split.
 function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
-  const expanded = expandTemplate(props.template, props.args);
   return userMacroGate.expand(
-    expanded.length,
+    templateExpansionSize(props.template, props.args),
     () => <span class="macro">{`{{${props.name}}}`}</span>,
     () => (
       <span class="macro macro-expansion-limit" title={`{{${props.name}}}`}>
@@ -1256,9 +1260,10 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
     ),
     () => {
       const fmt = formatForBlock(props.blockId);
+      const expanded = expandTemplate(props.template, props.args);
       if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
         return (
-          <div class="macro-blocks">
+          <div class="macro-blocks" data-foreign-source="macro">
             <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
           </div>
         );
@@ -1273,7 +1278,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target, or an id that is not a
 // UUID, shows its source `((id))` in full, as OG does (GH #589).
-function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string }): JSX.Element {
+function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string; span?: Span }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth >= MAX_DEPTH_OF_LINKS) {
     return <span class="link-depth-warning">{t("render-reference-depth-is-too-deep")}</span>;
@@ -1283,7 +1288,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   let anchorEl: HTMLSpanElement | undefined;
   const [grpResource] = createResource(
     // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
-    () => isBlockRefUuid(props.id) && `${props.id}\0${graphEpoch()}\0${dataRev()}`,
+    () => isBlockRefUuid(props.id) && `${props.id}\0${changed(`block:${props.id}`)}`,
     async () => {
       const result = await readOwned(graphOwner(), resolveBlockBatched(props.id));
       return result.kind === "current" ? result.value : null;
@@ -1294,6 +1299,15 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // keeps a loaded reactive node winning and otherwise shows the short id.
   const grp = () => readOr(grpResource, undefined, "block reference target");
   const peek = createPeekBridge(() => insidePeek);
+  // GH #231's deliberate hold opens this reference's menu on touch, where it is
+  // the route to Edit link / Remove reference (GH #417).
+  const longPress = createLongPress(() => anchorEl);
+  onCleanup(longPress.dispose);
+  // GH #417: this reference occurrence in its host block, for Edit link / Remove
+  // (the preview's title row and the right-click / long-press menu).
+  const owner = useOccurrenceOwner(() => props.blockId);
+  const occurrence = createShownOccurrence(() =>
+    insidePeek ? undefined : { host: props.blockId, span: props.span, kind: "ref", target: props.id });
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
   // backend snapshot remains the fallback for targets outside the working set;
@@ -1312,7 +1326,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const lines = () => props.label !== undefined
     ? [props.label]
     : targetRaw()
-      ? visibleBody(targetRaw()!)
+      ? visibleBody(targetRaw()!, fmt())
       : undefined;
   // Mirror the source's state with its shared recognizer and chip styling.
   // Explicit aliases remain label-only; targetRaw keeps live and unloaded
@@ -1320,7 +1334,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const marker = () => {
     if (props.label !== undefined) return null;
     const raw = targetRaw();
-    return raw ? leadingMarker(raw) : null;
+    return raw ? leadingMarker(raw, fmt()) : null;
   };
   // Where the checkbox writes: the same exact owner the click navigates to.
   const checkboxTarget = () => {
@@ -1340,7 +1354,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
   const [previewResource] = createResource(
-    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
+    () => (peek.open() && grp() ? `${props.id}\0${changedAny([`block:${props.id}`, pageChangeKey(grp()!.page)])}` : null),
     async () => {
       const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
       return result.kind === "current" ? result.value : null;
@@ -1354,6 +1368,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
       <span
         ref={anchorEl}
         data-block-ref={props.id}
+        data-foreign-source="block-ref"
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}
@@ -1370,17 +1385,24 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
           const ref = blockRefTarget(props.id, g);
-          if (!shouldOpenTextContextMenu(e.target)) return;
+          if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          openBlockRefContextMenu(e.clientX, e.clientY, ref.uuid, ref.page, ref.pageKind, ref.path);
+          const o = occurrence();
+          openBlockRefContextMenu(e.clientX, e.clientY, ref.uuid, ref.page, ref.pageKind, ref.path,
+            occurrenceEditable(o) ? { ...o, owner: owner() } : undefined);
         }}
         onClick={(e) => {
           e.stopPropagation();
+          if (longPress.consumeClick(e)) { e.preventDefault(); return; }
           const g = grp();
           if (!g) return;
           const ref = blockRefTarget(props.id, g);
@@ -1389,16 +1411,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks keep the shared destinations (sidebar / tab / other pane).
           if (ann && dest === "default") {
-            const owner = graphOwner();
-            void readOwned(owner, backend().getPage(g.page, g.kind))
-              .then((result) => {
-                if (result.kind === "stale") return;
-                const page = result.value;
-                const file = pdfFileFromPreBlock(page?.pre_block, page?.format);
-                if (file) openPdf(file, file, ann.hlPage, props.id);
-                else pushToast(msg("render-couldn-t-find-the-pdf-for-this-highlight"), "error");
-              })
-              .catch(() => { pushToast(msg("render-couldn-t-open-the-pdf-for-this-highlight"), "error"); });
+            openAnnotationPdf(g.page, ann.hlPage, props.id, g.kind);
             return;
           }
           // Shift-click opens the referenced block in the right sidebar, Ctrl/Cmd+click
@@ -1406,16 +1419,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // Plain click: Tine scrolls + flashes the block in context (default); the
           // OG behavior — zoom into the block as its own page — is opt-in
           // (Settings → ref-click-zoom).
-          if (dest === "sidebar") openBlockInSidebar(ref);
-          else if (dest === "background")
-            openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
-          else if (dest === "pane")
-            openRouteInOtherPane(
-              { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
-              pane?.paneId ?? focusedPaneId()
-            );
-          else if (refClickZoom()) zoomToBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
-          else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+          openRefTarget(ref, dest, pane?.paneId ?? focusedPaneId());
         }}
       >
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
@@ -1441,6 +1445,9 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               <AstBody raw={lines()!.join("\n")} format={fmt()} />
             </Show>
           </LinkDepthContext.Provider>
+          <Show when={props.label === undefined && annotation()?.areaStamp}>
+            {stamp => <PdfAreaImage page={grp()!.page} highlightId={props.id} hlPage={annotation()!.hlPage} stamp={stamp()} />}
+          </Show>
         </Show>
       </span>
       <Show when={peek.open() && preview() && capped().blocks.length > 0}>
@@ -1449,12 +1456,21 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           title={<span class="peek-popup-title-name">{preview()!.group.page}</span>}
           blocks={() => capped().blocks}
           page={preview()!.group.page}
+          path={preview()!.group.path}
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}
+          actions={<Show when={occurrenceEditable(occurrence()) ? occurrence() : undefined} keyed>
+            {(o) => <>
+              <button type="button" class="peek-ref-edit" title={t("ref-occurrence-edit-title")}
+                onClick={() => { peek.dismiss(); editOccurrence(o, owner()); }}>{t("ref-occurrence-edit")}</button>
+              <button type="button" class="peek-ref-remove" title={t("ref-occurrence-remove-ref-title")}
+                onClick={() => { peek.dismiss(); removeOccurrence(o); }}>{t("ref-occurrence-remove")}</button>
+            </>}
+          </Show>}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
-          onDismiss={peek.dismiss}
+          onDismiss={peek.dismiss} onHold={peek.setHeld}
         />
       </Show>
     </>

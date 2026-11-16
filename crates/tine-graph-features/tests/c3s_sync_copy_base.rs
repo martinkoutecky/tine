@@ -68,7 +68,8 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
     fs::write(root.join("pages/Meeting.md"), "- unrelated meeting\n").unwrap();
     fs::write(root.join("pages/Meeting (draft).md"), "- draft\n").unwrap();
     fs::write(root.join(copy), "- draft\n- edit from the other device\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
 
     let listed = conflicts::list_sync_conflicts(&store).unwrap();
     assert_eq!(listed.len(), 1, "{listed:?}");
@@ -86,7 +87,7 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
     let decisions: HashMap<String, String> = HashMap::new();
     let refused = conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         "pages/Meeting.md",
         copy,
         &decisions,
@@ -109,6 +110,7 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
         "- draft\n- edit from the other device\n",
         "the copy stays in place for its real reconcile"
     );
+    drop(host);
     store.close();
     let _ = fs::remove_dir_all(&root);
 }

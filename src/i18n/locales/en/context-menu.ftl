@@ -77,6 +77,7 @@ context-menu-ui-add-to-favorites = Add to favorites
 context-menu-ui-copy-page-ref = Copy page ref
 context-menu-ui-copied-page-ref = Copied page ref
 context-menu-ui-copy-export-as = Copy / export as…
+context-menu-ui-share = Share…
 context-menu-ui-copy-page-as-markdown = Copy page as Markdown
 context-menu-ui-copied-page-as-markdown = Copied page as Markdown
 context-menu-ui-couldn-t-copy-page-as-markdown = Couldn't copy page as Markdown.

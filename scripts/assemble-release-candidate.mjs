@@ -19,7 +19,7 @@ function findFragments(directory, found = []) {
   return found;
 }
 
-export function assembleCandidate({ input, output, version, commit, repository, channel = "stable", pubDate = new Date().toISOString() }) {
+export function assembleCandidate({ input, output, version, commit, repository, channel = "stable", pubDate = new Date().toISOString(), notesRoot = root }) {
   const layout = releaseLayout(version);
   const fragments = findFragments(input).map((file) => ({ file, value: JSON.parse(fs.readFileSync(file, "utf8")) }));
   const byLane = new Map();
@@ -76,7 +76,7 @@ export function assembleCandidate({ input, output, version, commit, repository, 
     }
   }
 
-  const updater = { version, notes: releaseNotes(root, version), pub_date: pubDate, platforms };
+  const updater = { version, notes: releaseNotes(notesRoot, version), pub_date: pubDate, platforms };
   fs.writeFileSync(path.join(output, "latest.json"), `${JSON.stringify(updater, null, 2)}\n`);
   const problems = candidateProblems(output, version, channel);
   if (problems.length) throw new Error(`candidate verification failed:\n  ${problems.join("\n  ")}`);

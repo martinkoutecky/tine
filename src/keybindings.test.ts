@@ -1,8 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+const mousePlatform = vi.hoisted(() => ({ mac: false, mobile: false }));
+const nativeHistory = vi.hoisted(() => ({ listener: undefined as undefined | ((event: { payload: { direction: string; target: string } }) => void), unlisten: vi.fn() }));
+vi.mock("./nativeChrome", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./nativeChrome")>(),
+  get isMac() { return mousePlatform.mac; },
+  get isMobilePlatform() { return mousePlatform.mobile; },
+}));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, listener) => {
+  if (name === "history-navigate") nativeHistory.listener = listener;
+  return nativeHistory.unlisten;
+}) }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({ listen: async () => () => {} }) }));
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
+import { closeSettings, settingsOpen, closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
@@ -114,6 +127,10 @@ function installFakeWindow() {
   };
 
   return {
+    dispatchMouse(type: string, button: number, buttons = 0, clientX = 20) {
+      const event = { type, button, buttons, clientX, clientY: 20, preventDefault() {} } as MouseEvent;
+      listeners.filter(l => l.type === type && l.capture).forEach(l => l.listener(event));
+    },
     dispatchCaptureKeydown(event: KeyboardEvent) {
       listeners
         .filter((l) => l.type === "keydown" && l.capture)
@@ -268,6 +285,143 @@ afterEach(() => {
 });
 
 describe("mouse side-button navigation (#156)", () => {
+  it.each(["windows", "linux"])("%s workspace popups keep their DOM history owner (GH #948)", async () => {
+    installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    const popup = new EventTarget();
+    Object.assign(popup, { document: new EventTarget(), getSelection: () => null });
+    const unregister = registerWindow("workspace-history", popup as unknown as Window);
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Popup history ${i}`, "page");
+      for (const direction of ["back", "forward"] as const) {
+        for (let i = 0; i < 3; i++) {
+          const button = direction === "back" ? 3 : 4;
+          for (const type of ["mousedown", "mouseup", "auxclick"]) {
+            const event = new Event(type, { cancelable: true });
+            Object.assign(event, { button, buttons: type === "mousedown" ? (button === 3 ? 8 : 16) : 0, clientX: 20, clientY: 20 });
+            popup.dispatchEvent(event);
+          }
+          expect(router.route()).toMatchObject({ kind: "page", name: `Popup history ${direction === "back" ? 2 - i : i + 1}` });
+        }
+      }
+    } finally {
+      unregister();
+      dispose();
+    }
+  });
+
+  it.each([
+    ...["windows", "linux"].flatMap(platform => ["partial", "paired", "native-first", "native-only"].map(delivery => ({ platform, delivery }))),
+    ...["macos", "ios", "android"].map(platform => ({ platform, delivery: "paired" })),
+  ])("$platform $delivery accepts every rapid history press once, matching keyboard steps (GH #948)", async ({ platform, delivery }) => {
+    mousePlatform.mac = platform === "macos";
+    mousePlatform.mobile = platform === "ios" || platform === "android";
+    const native = platform === "windows" || platform === "linux";
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 6; i++) router.openPage(`History ${i}`, "page");
+      const step = (direction: "back" | "forward", keyboard: boolean) => {
+        if (keyboard) {
+          fake.dispatchCaptureKeydown(trackedKeyEvent({ key: direction === "back" ? "ArrowLeft" : "ArrowRight", altKey: true }).event);
+        } else {
+          const button = direction === "back" ? 3 : 4;
+          const nativeRelease = () => {
+            nativeHistory.listener?.({ payload: { direction, target: "other-window" } });
+            nativeHistory.listener?.({ payload: { direction, target: "main" } });
+          };
+          if (native && delivery === "native-first") nativeRelease();
+          if (delivery !== "native-only") {
+            if (delivery !== "partial") fake.dispatchMouse("mousedown", button, button === 3 ? 8 : 16);
+            fake.dispatchMouse("mouseup", button);
+            fake.dispatchAuxClick(button);
+          }
+          if (native && delivery !== "native-first") nativeRelease();
+        }
+        return router.route();
+      };
+      for (const direction of ["back", "forward"] as const) {
+        const mouse = Array.from({ length: 6 }, (_, i) => {
+          const route = step(direction, false);
+          expect(route).toMatchObject({ kind: "page", name: `History ${direction === "back" ? 5 - i : i + 1}` });
+          return route;
+        });
+        for (let i = 0; i < 6; i++) step(direction === "back" ? "forward" : "back", true);
+        expect(Array.from({ length: 6 }, () => step(direction, true))).toEqual(mouse);
+      }
+    } finally {
+      dispose();
+      mousePlatform.mac = false;
+      mousePlatform.mobile = false;
+    }
+  });
+
+  it.each(["windows", "linux"])("%s native presses wait while a selection, drag or moved side-button press holds the gesture, and never stay blocked (GH #948)", async () => {
+    const fake = installFakeWindow();
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    nativeHistory.listener = undefined;
+    const dispose = installKeybindings();
+    try {
+      await vi.waitFor(() => expect(nativeHistory.listener).toBeDefined());
+      for (let i = 0; i <= 3; i++) router.openPage(`Gesture ${i}`, "page");
+      const back = () => { nativeHistory.listener?.({ payload: { direction: "back", target: "main" } }); return router.route(); };
+      const at = (i: number) => ({ kind: "page", name: `Gesture ${i}` });
+      fake.dispatchMouse("mousedown", 0, 1);
+      expect(back()).toMatchObject(at(3));
+      fake.dispatchMouse("mouseup", 0);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragstart", 0, 1);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("dragend", 0);
+      expect(back()).toMatchObject(at(1));
+      // A primary release the webview never delivered must not block later presses.
+      fake.dispatchMouse("mousedown", 0, 1);
+      fake.dispatchMouse("mousemove", 0, 0);
+      expect(back()).toMatchObject(at(0));
+      router.goForward(); router.goForward();
+      // A side-button press that moved is a drag, whichever of DOM release and native release arrives first.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      fake.dispatchMouse("mouseup", 3, 0, 60);
+      // The cancelled gestures leave nothing behind: the next presses step, in either order.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mouseup", 3);
+      expect(back()).toMatchObject(at(1));
+      fake.dispatchMouse("mousedown", 3, 8);
+      expect(back()).toMatchObject(at(0));
+      fake.dispatchMouse("mouseup", 3);
+      router.goForward(); router.goForward();
+      // A cancelled press whose DOM release never arrives vetoes only its own native release.
+      fake.dispatchMouse("mousedown", 3, 8);
+      fake.dispatchMouse("mousemove", 0, 8, 60);
+      expect(back()).toMatchObject(at(2));
+      expect(back()).toMatchObject(at(1));
+      expect(back()).toMatchObject(at(0));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("routes the macOS Wry down/up events into page history (GH #780)", () => {
+    const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    fake.dispatchMouse("mousedown", 3, 8);
+    fake.dispatchMouse("mouseup", 3);
+    expect(back).toHaveBeenCalledTimes(1);
+    dispose();
+  });
   it("aux button 3 (X1) goes back and button 4 (X2) goes forward, once each", () => {
     const back = vi.spyOn(router, "goBack").mockImplementation(() => {});
     const fwd = vi.spyOn(router, "goForward").mockImplementation(() => {});
@@ -622,15 +776,16 @@ describe("block-selection commands", () => {
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "c", code: "KeyC", ctrlKey: true }).event);
 
-    // Defaults are selected-only + strip-collapsed, exactly as before CB1.
+    // Defaults are selected-only + strip-collapsed; a selected COLLAPSED parent still
+    // carries the children it hides in the public text (GH #943, D-20261112-SU941).
     expect(write).toHaveBeenCalledWith(
-      "- Parent",
-      "<ul><li>Parent</li></ul>",
+      "- Parent\n\t- Child",
+      "<ul><li>Parent<ul><li>Child</li></ul></li></ul>",
     );
     expect(peekClipboardPayload()).toMatchObject({
       op: "copy",
       graph: "/plugin-test",
-      text: "- Parent",
+      text: "- Parent\n\t- Child",
       blocks: [{
         raw: "Parent\ncollapsed:: true\nid:: 11111111-1111-1111-1111-111111111111",
         sourceFormat: "md",
@@ -722,10 +877,7 @@ describe("block-selection commands", () => {
     resetStore();
     setWorkflow("todo");
     loadSingle({
-      name: "Tasks",
-      kind: "page",
-      title: "Tasks",
-      pre_block: null,
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null,
       blocks: [
         { id: "task-a", raw: "one", collapsed: false, children: [] },
         { id: "task-b", raw: "TODO two", collapsed: false, children: [] },
@@ -740,7 +892,7 @@ describe("block-selection commands", () => {
     fake.dispatchCaptureKeydown(pressed.event);
 
     expect(doc.byId["task-a"].raw).toBe("TODO one");
-    expect(doc.byId["task-b"].raw).toBe("DOING two");
+    expect(doc.byId["task-b"].raw).toContain("DOING two\n:LOGBOOK:\nCLOCK: [");
     expect(pressed.prevented()).toBe(true);
     dispose();
   });
@@ -1101,6 +1253,41 @@ describe("g h opens the graph home page (config.edn :default-home)", () => {
 });
 
 describe("secondary default chords (aliases)", () => {
+  it("mod+comma opens Settings outside and inside editing, while t s remains available", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    try {
+      for (const target of [null, { tagName: "TEXTAREA" }]) {
+        closeSettings();
+        const alias = trackedKeyEvent({ key: ",", code: "Comma", ctrlKey: true, target: target as unknown as EventTarget });
+        fake.dispatchCaptureKeydown(alias.event);
+        expect(settingsOpen()).toBe(true);
+        expect(alias.prevented()).toBe(true);
+      }
+      closeSettings();
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "t", code: "KeyT" }).event);
+      fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "s", code: "KeyS" }).event);
+      expect(settingsOpen()).toBe(true);
+      const holders = commandDefaults().filter((c) => c.binding.split(/\s+/).includes("mod+,") || c.alias === "mod+,");
+      expect(holders.map((c) => c.id)).toEqual(["ui/open-settings"]);
+    } finally {
+      dispose();
+      closeSettings();
+    }
+  });
+
+  it("remapping or disabling Settings suppresses its default alias", () => {
+    const fake = installFakeWindow();
+    for (const binding of ["mod+alt+s", "false"]) {
+      const dispose = installKeybindings({ "ui/open-settings": binding });
+      try {
+        closeSettings();
+        fake.dispatchCaptureKeydown(trackedKeyEvent({ key: ",", code: "Comma", ctrlKey: true }).event);
+        expect(settingsOpen()).toBe(false);
+      } finally { dispose(); }
+    }
+  });
+
   // GH #491: Ctrl+Z undid, Ctrl+Y did nothing. Logseq binds redo to
   // mod+shift+z and leaves Ctrl+Y unbound, so on Windows the key every other
   // editor treats as redo reached no command at all.

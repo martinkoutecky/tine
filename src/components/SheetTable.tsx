@@ -5,13 +5,14 @@ import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { formulaReferenceName } from "../sheet/boardColumns";
-import { clearOnBindingInvalidated } from "../binding";
+import { registerFindSheet, sheetFindChild } from "../sheet/find";
+import { renderedSheetRows, TitleBody } from "./SheetTableBody";
+export { resetSheetRowVirtualizationForTests } from "./SheetTableBody";
 import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
 import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
-import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
@@ -89,7 +90,8 @@ const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
 /** Render children or query rows as a table. A query display controller owns
  * saved columns, sorts and aggregates; without it headers keep their local arrangement.
  * Resizing reads one owner's widths and writes one property through document
- * on commit; row and field work scales with the supplied table, never a graph. */
+ * on commit; supplied host properties also render a detached query's View.
+ * Row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
   ownerId: string;
   rowSource: "children" | "query";
@@ -98,6 +100,7 @@ export function SheetTable(props: {
   addRowLabel?: string;
   schemaPage?: string;
   queryDisplay?: QueryDisplayControl;
+  hostProperties?: readonly [string, string][];
   onDefaultColumns?: (columns: string[]) => void;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
@@ -120,10 +123,12 @@ export function SheetTable(props: {
   let suppressFieldHeaderClick = false;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
-  const config = createMemo(() => {
+  const hostProperties = createMemo(() => {
+    if (props.hostProperties) return props.hostProperties;
     const owner = docNode(props.ownerId);
-    return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
+    return owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : [];
   });
+  const config = createMemo(() => sheetConfig(hostProperties()));
   // A pre-split bare column list on a QUERY block is the column selection, not a
   // declared schema: reading it as one marked every column stray and let the next
   // schema write replace the list (master P5A). It reads as an absent schema.
@@ -142,7 +147,7 @@ export function SheetTable(props: {
   });
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
     const home = schemaHome();
-    return home ? parseFields(home.value) : [];
+    return home ? parseFields(home.value) : config().fields;
   });
   const schemaFieldSet = createMemo(() => new Set<FieldId>(schemaFields().map((s) => s.field)));
   const fieldTypes = createMemo(() => {
@@ -154,10 +159,7 @@ export function SheetTable(props: {
     if (!props.schemaPage) return new Map();
     return formulasOf(readPageProperties(props.schemaPage));
   });
-  const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
-    const owner = docNode(props.ownerId);
-    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
-  });
+  const blockFormulas = createMemo(() => formulasOf(hostProperties()));
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
   const formulaHomes = createMemo(() => {
     const out = new Map<string, FormulaHome>();
@@ -204,7 +206,7 @@ export function SheetTable(props: {
     const draft = editingProp();
     if (draft) return draft.fields;
     const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
-    const explicit = props.rowSource === "query" && blockProperty(props.ownerId, "tine.columns") !== null;
+    const explicit = props.rowSource === "query" && hostProperties().some(([key]) => key.toLowerCase() === "tine.columns");
     return selected?.length || explicit ? (selected ?? []).map(queryColumnFieldId) : defaultFields();
   });
   const formulaHintFields = createMemo(() => {
@@ -221,7 +223,7 @@ export function SheetTable(props: {
   const formulaEntries = () => [...formulas().entries()];
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
-  const tableWidths = createTableColumnResize(props.ownerId, props.schemaPage);
+  const tableWidths = createTableColumnResize(props.ownerId, props.schemaPage, () => props.hostProperties);
   const columnIndex = createMemo(() => new Map(columns().map((column, index) => [column, index] as const)));
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
   const actionColumn = () => hasActionColumn() ? "96px" : "";
@@ -253,7 +255,7 @@ export function SheetTable(props: {
     ownerId: () => props.ownerId,
     hasAggregates,
     overlay: sheetOverlay,
-    hovering: sheetHovering,
+    hovering: () => (!props.queryDisplay || !!props.queryDisplay.apply) && sheetHovering(),
   });
 
   const captureStableColumns = () => {
@@ -323,6 +325,11 @@ export function SheetTable(props: {
     const limit = displayLimitThrough(row, displayedRows().length, sortedRows().length, SHEET_RENDER_PAGE);
     if (limit !== null) setRenderLimit(limit);
   };
+  onCleanup(registerFindSheet(() => tableRef, (id) => {
+    const rowId = sheetFindChild(id, props.ownerId) ?? id;
+    const row = rowIndexes().byBlockId.get(rowId)?.row;
+    if (row !== undefined) ensureDisplayedThrough(row);
+  }));
   createEffect(() => {
     const sel = cellSel();
     if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
@@ -391,7 +398,7 @@ export function SheetTable(props: {
   const schemaWriteAllowed = () => {
     const home = schemaHome() ?? createSchemaHome();
     if (!home) return false;
-    if (home.kind === "block") return !blockPageReadOnly(home.id);
+    if (home.kind === "block") return blockWritable(home.id);
     return !(pageByName(home.name)?.readOnly ?? false);
   };
   const writeSchemaFields = (next: readonly FieldSpec[]) => {
@@ -415,7 +422,7 @@ export function SheetTable(props: {
   };
   const formulaWriteAllowed = (home: FormulaHome | null) => {
     if (!home) return false;
-    if (home.kind === "block") return !blockPageReadOnly(home.id);
+    if (home.kind === "block") return blockWritable(home.id);
     return !(pageByName(home.name)?.readOnly ?? false);
   };
   const removeFormula = (field: FieldId) => {
@@ -456,7 +463,7 @@ export function SheetTable(props: {
     writeSchemaFields(specs);
   };
   const canDragFieldHeader = (field: FieldId) =>
-    props.queryDisplay ? queryColumnName(field) !== null && !blockPageReadOnly(props.ownerId)
+    props.queryDisplay ? queryColumnName(field) !== null && !!props.queryDisplay.apply && blockWritable(props.ownerId)
       : field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
   const canDropFieldHeader = (field: FieldId, dragged: FieldId) => {
     if (field === dragged) return false;
@@ -470,7 +477,7 @@ export function SheetTable(props: {
   const reorderFieldHeader = (field: FieldId, drop: FieldHeaderDrop) => {
     if (props.queryDisplay) {
       const columns = reorderedQueryColumns(fields(), field, drop.field, drop.before);
-      if (columns) props.queryDisplay.apply({ ...props.queryDisplay.view, columns });
+      if (columns) props.queryDisplay.apply?.({ ...props.queryDisplay.view, columns });
       else pushToast(msg("sheet-sheet-table-this-order-cannot-be-saved-while-a-computed-column-is"), "info");
       return;
     }
@@ -1099,27 +1106,6 @@ export function SheetTable(props: {
     </Show>
   );
 }
-
-
-
-// Lazy-mount virtualization (P2): a table row's heavy cell CONTENT (title
-// InlineText parse, value-view chips, the hover handle) is deferred until the
-// row first comes near the viewport, mirroring the block-body pattern
-// ([[tine-block-virtualization]], lazyObserve.ts). The .sheet-cell divs, their
-// data-row/col attrs, selection classes and event handlers stay mounted for
-// EVERY row so selection, keyboard nav and drag hit-testing keep working
-// off-screen. Render-once-keep: a row that has rendered once (latched by block
-// id) renders eagerly forever — no placeholder↔real churn on re-sort/remount.
-// Module-level so it survives remount and is shared across surfaces; bounded by
-// the working set of rows ever brought near the viewport.
-const renderedSheetRows = new Set<string>();
-clearOnBindingInvalidated(() => renderedSheetRows.clear());
-
-// Test seam: reset the render-once latch so a fresh mount defers again.
-export function resetSheetRowVirtualizationForTests() {
-  renderedSheetRows.clear();
-}
-
 function TitleCell(props: {
   query: boolean;
   ownerId: string;
@@ -1215,11 +1201,28 @@ function TitleCell(props: {
               when={props.near}
               fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <Show when={props.query} fallback={<InlineText text={tableRowTitle(props.row)} format={fmt()} />}>
+              <Show when={props.query} fallback={<TitleBody row={props.row} format={fmt()} />}>
                 <QueryResultTask row={props.row} />
-                <button type="button" class="query-result-open" onClick={(event) => openQueryResult(props.row, event)}>
-                  <InlineText text={tableRowTitle(props.row)} format={fmt()} />
-                </button>
+                {/* Not a <button>: the title holds block content (lists, links, refs), which a button may not
+                    contain. A ref or link inside handles its own click and stops it; any other click opens the
+                    result, and Enter/Space do the same when the row itself has focus. */}
+                <div
+                  class="query-result-open"
+                  role="button"
+                  tabindex="0"
+                  onClick={(event) => {
+                    const inner = (event.target as Element | null)?.closest?.("a, button, input, textarea, [role=button]");
+                    if (inner && inner !== event.currentTarget && event.currentTarget.contains(inner)) return;
+                    openQueryResult(props.row, event);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    openQueryResult(props.row, event);
+                  }}
+                >
+                  <TitleBody row={props.row} format={fmt()} />
+                </div>
               </Show>
             </Show>
           }

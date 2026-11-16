@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0",
+  "baseTag": "v0.9.0-beta.14",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.9.0 is Tine Beta 0.9.0-beta.14 with its app code unchanged (tested by Beta users since 2026-11-15, the 0.9 line since 2026-10-29), plus the stable identity flip, version metadata, the regenerated comparison page and the master-only docs/website content carried in cada466f1. Martin authorized the cut on 2026-11-15 (D-20261115-STC) and confirmed it on 2026-11-16; #964 and the CLI move-indent fix go to 0.9.1, and the release notes carry the #964 known issue (D-20261115-964). No exact-tree release audit was run, which is a deferral, not an audit certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Stable Tine now carries the 0.9 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "not-applicable",
+        "reason": "No app code change beyond 0.9.0-beta.14: every behaviour change is listed, with its catalog row, in that Beta's sections and impact files. The identity flip is guarded by appIdentity.guard, flatpakPackaging.guard and the identity --check.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The in-app Guide is beta.14's; website/guide is regenerated from this candidate's Guide templates before the cut (D-20261019-G1).",
+        "refs": []
+      },
+      "website": {
+        "status": "update",
+        "reason": "website/compare.html is generated from website/compare/rows.json for 0.9.0, with every competitor source rechecked on 2026-11-16; the master-only website content was carried into release/0.9 first (cada466f1).",
+        "refs": [
+          "website/compare.html",
+          "website/compare/rows.json"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); the 0.9.0 announcement is written separately (D-20261115-STC).",
+        "refs": []
+      }
+    }
+  ]
+}

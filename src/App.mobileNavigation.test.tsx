@@ -3,11 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // GH #716 (D-20261018-N1): on a phone or tablet app, Sidebar / Search / Back /
 // Forward are in the top bar by default, the same place whether or not the user
 // is editing. "Navigation buttons at the bottom" (default off) restores the
-// GH #598 bottom row. Platform is read once at module load, so each case loads a
+// GH #598 bottom row. The input is read through matchMedia, so each case loads a
 // fresh module graph under the platform it needs.
+// D-20261018-W1: the bottom row follows the input (a finger as the primary
+// pointer), not the OS name; the harness gives the "mobile" cases a touch screen.
+function stubPointer(touch: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: touch && (query === "(pointer: coarse)" || query === "(any-pointer: coarse)"),
+    addEventListener: () => {}, removeEventListener: () => {},
+  }));
+}
 async function mount(platform: "android" | "ios" | "desktop", bottom: boolean) {
   vi.resetModules();
   globalThis.__TINE_PLATFORM__ = platform;
+  stubPointer(platform !== "desktop");
   const { render } = await import("solid-js/web");
   const { initParser } = await import("./render/parse");
   await initParser();
@@ -25,6 +34,7 @@ const SELECTORS = ["[data-search-trigger]", 'button[title="Go back"]', 'button[t
 describe("mobile navigation placement (GH #716)", { timeout: 30_000 }, () => {
   afterEach(() => {
     delete globalThis.__TINE_PLATFORM__;
+    vi.unstubAllGlobals();
     document.documentElement.removeAttribute("data-mobile-editing-dock");
     document.body.innerHTML = "";
   });

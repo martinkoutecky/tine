@@ -7,6 +7,7 @@ page-no-journals-hint = 请确认打开的是 Logseq 图谱（包含 <code>journ
 page-guide-read-only = 内置指南页面，仅供阅读，不会写入你的图谱。
 
 page-ui-could-not-load-journal-feed-it-will-retry-when = 无法加载日记列表。视图刷新时会重试。
+page-ui-journal-template-not-applied = 无法将日记模板添加到今天的页面：{ $error } 日记仍会显示，但不含模板；日记刷新时会重试。
 
 page-ui-tine-did-not-modify-the-file-try-reopening-or = Tine 未修改文件。请尝试重新打开，或检查磁盘文件。
 
@@ -30,9 +31,13 @@ page-ui-unfavorite = 取消收藏
 
 page-ui-add-to-favorites = 添加收藏
 
-page-ui-also-known-as-other-names-that-link-here = 别名：可链接到此页面的其他名称
+page-ui-also-called-title = 此页面的其他名称，它们没有自己的页面。点击其中一个会打开声明它的页面。
 
-page-ui-aka = 别名
+page-ui-also-called = 别名
+
+page-ui-alias-group-pages-title = 与此页面共享别名、并有自己内容的页面。每个链接都会打开对应的页面。
+
+page-ui-alias-group-pages = 同一别名组中的相关页面
 
 page-ui-tine-can-t-reproduce-this-org-file-byte-for = Tine 无法逐字节还原此 .org 文件，因此以只读方式显示，避免损坏。请在 Logseq/Emacs 中编辑。
 

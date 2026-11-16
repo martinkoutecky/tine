@@ -678,6 +678,7 @@ mod tests {
             ("data_home.rs", "let home = dirs::home_dir();", "Linux only"),
             ("data_home.rs", "std::env::temp_dir().join(format!(\"tine-data-{uid}\"))", "Linux only"),
             ("data_home.rs", "let Some(base) = dirs::data_dir() else {", "Linux only"),
+            ("data_home.rs", "&std::env::temp_dir(),", "Read-only comparison against the selected Tauri app-data path to warn about volatile storage; never chooses or writes host storage"),
             ("linux_window_identity.rs", ".or_else(dirs::data_dir)", "Linux only"),
             ("youtube_identity.rs", "tempfile::Builder::new().prefix(\"tine-youtube-\")", "Linux only"),
         ];
@@ -698,11 +699,12 @@ mod tests {
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/");
-                // Test-only sources: `*_tests.rs` files and `*_tests/` modules.
+                // Test-only sources: `tests.rs` / `*_tests.rs` files and `tests/` / `*_tests/` modules.
                 if !name.ends_with(".rs")
-                    || relative
-                        .split('/')
-                        .any(|part| part.trim_end_matches(".rs").ends_with("_tests"))
+                    || relative.split('/').any(|part| {
+                        let stem = part.trim_end_matches(".rs");
+                        stem == "tests" || stem.ends_with("_tests")
+                    })
                 {
                     continue;
                 }

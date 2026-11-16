@@ -18,12 +18,12 @@ use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBat
 const BULK_CHANGE_THRESHOLD: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-struct GraphChange {
-    path: String,
-    name: String,
-    kind: PageKind,
-    created: bool,
-    removed: bool,
+pub(crate) struct GraphChange {
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) kind: PageKind,
+    pub(crate) created: bool,
+    pub(crate) removed: bool,
 }
 
 pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
@@ -388,7 +388,7 @@ fn run_rescan(
 
 /// One publication's page events as window events: one `graph-changed` per
 /// page, or a single `graph-changed-bulk` above `BULK_CHANGE_THRESHOLD`.
-fn page_event_payloads(
+pub(crate) fn page_event_payloads(
     events: Vec<GraphChange>,
     binding_generation: u64,
     answers: Option<serde_json::Value>,
@@ -404,8 +404,9 @@ fn page_event_payloads(
         })
     };
     if events.len() > BULK_CHANGE_THRESHOLD || events.is_empty() && answers.is_some() {
-        let changes: Vec<_> = events.into_iter().map(payload).collect();
-        let bulk = serde_json::json!({ "changes": changes, "binding_generation": binding_generation, "answers": answers });
+        // Named `pages`: host_slot_guard_tests matches by name, and git_pull has a function `changes`.
+        let pages: Vec<_> = events.into_iter().map(payload).collect();
+        let bulk = serde_json::json!({ "changes": pages, "binding_generation": binding_generation, "answers": answers });
         vec![("graph-changed-bulk", bulk)]
     } else {
         events
@@ -422,15 +423,34 @@ fn page_event_payloads(
     }
 }
 
+/// Summary delivery is unconditional, including own text-only publications.
+/// Own changes keep an empty page list, so this cannot request a page reload.
+fn publication_event_payloads(
+    events: Vec<GraphChange>,
+    binding_generation: u64,
+    change: &Change,
+) -> Vec<(&'static str, serde_json::Value)> {
+    let answers = serde_json::to_value(change).expect("Change answer serialization");
+    page_event_payloads(events, binding_generation, Some(answers))
+}
+
+fn config_event_payload(change: &Change, slot: &GraphSlot) -> Option<serde_json::Value> {
+    change
+        .files
+        .iter()
+        .any(|(id, _, _)| id.as_str() == "logseq/config.edn")
+        .then(|| {
+            serde_json::json!({
+                "binding_generation": slot.binding_generation,
+                "meta": crate::state::graph_meta(slot),
+            })
+        })
+}
+
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
 fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: Change) {
     let binding_generation = slot.binding_generation;
-    let config_changed = change.origin == Origin::External
-        && change
-            .files
-            .iter()
-            .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, copies_changed) = window_events(&change);
     crate::spotlight::observe(
         app,
@@ -442,16 +462,21 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
             .collect(),
     );
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
+    if conflicts_dirty {
+        // Synchronous on this subscription bridge thread (I-21: no new worker).
+        crate::concord::trash_identical_copies(app, label, slot);
+    }
     let pages = events.len();
-    // Own publications also update derived answers for deletes/renames and
-    // other windows. Empty text-only deltas emit no additional event.
-    let answers = serde_json::to_value(&change).expect("Change answer serialization");
-    let answers = (answers["inventoryChanged"] == true
-        || answers["blockRefCounts"]
-            .as_object()
-            .is_some_and(|counts| !counts.is_empty()))
-    .then_some(answers);
-    for (name, payload) in page_event_payloads(events, binding_generation, answers) {
+    let payloads = publication_event_payloads(events, binding_generation, &change);
+    if let Some(link) = slot.window.get() {
+        if let Some(answers) = payloads
+            .first()
+            .and_then(|(_, payload)| payload.get("answers"))
+        {
+            link.published(change.graph_rev, answers.clone());
+        }
+    }
+    for (name, payload) in payloads {
         let _ = app.emit_to(label, name, payload);
     }
     if let Some(payload) = asset_event_payload(&change, binding_generation) {
@@ -477,15 +502,15 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: 
     if conflicts_dirty {
         let _ = app.emit_to(label, "conflicts-changed", ());
     }
-    if config_changed {
-        let _ = app.emit_to(
-            label,
-            "graph-config-changed",
-            serde_json::json!({
-                "binding_generation": binding_generation,
-                "meta": crate::state::graph_meta(slot),
-            }),
-        );
+    if let Some(payload) = config_event_payload(&change, slot) {
+        if change.origin == Origin::External {
+            let _ = app.emit_to(label, "graph-config-changed", &payload);
+        }
+        // The scratch WebView uses this graph's editor preferences too. Its
+        // listener rejects publications from any other binding generation.
+        // Include own Settings writes: the graph view updates optimistically,
+        // but the independent capture view cannot see that local signal.
+        let _ = app.emit_to("capture", "graph-config-changed", &payload);
     }
 }
 
@@ -558,6 +583,29 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_workflow_changes_publish_the_bound_config_for_capture() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pages")).unwrap();
+        let store = tine_store::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let slot = GraphSlot::new(store, root.path().to_path_buf());
+        let subscription = slot.store.subscribe();
+        for workflow in ["todo", "now"] {
+            tine_graph_features::config::set_preferred_workflow(&slot.store, workflow).unwrap();
+            let change = subscription
+                .try_recv()
+                .unwrap()
+                .expect("Settings publication");
+            assert_eq!(change.origin, Origin::Own);
+            let payload = config_event_payload(&change, &slot).expect("capture config event");
+            assert_eq!(payload["meta"]["preferred_workflow"], workflow);
+            assert_eq!(payload["binding_generation"], slot.binding_generation);
+        }
+    }
 
     fn rev(value: u64) -> GraphRev {
         GraphRev::try_from(value.to_string()).unwrap()
@@ -651,6 +699,53 @@ mod tests {
         assert_eq!(payload["binding_generation"], 7);
         assert_eq!(payload["changes"][3]["name"], "p3");
         assert_eq!(payload["changes"][3]["binding_generation"], 7);
+    }
+
+    #[test]
+    fn an_own_text_save_delivers_its_summary_without_an_external_reload() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-watch-summary-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/A.md"), "- before\n").unwrap();
+        let store = tine_store::Store::open(&root, Default::default())
+            .unwrap()
+            .0;
+        store.whole_graph().unwrap();
+        let store = std::sync::Arc::new(store);
+        let app = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, app.path()).unwrap();
+        let subscription = store.subscribe();
+        let id = tine_store::PageId::from("pages/A.md");
+        let mut read = store.page(&id).unwrap();
+        read.doc.blocks[0].raw = "after".into();
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &read.doc,
+        );
+        host.apply(tx.plan().unwrap()).unwrap();
+        let change = subscription.try_recv().unwrap().expect("host publication");
+        assert_eq!(change.origin, Origin::Own);
+        let (events, _) = window_events(&change);
+        let payloads = publication_event_payloads(events, 7, &change);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].0, "graph-changed-bulk");
+        let payload = &payloads[0].1;
+        assert_eq!(payload["changes"], serde_json::json!([]));
+        assert_eq!(payload["binding_generation"], 7);
+        assert_eq!(payload["answers"]["inventoryChanged"], false);
+        assert_eq!(payload["answers"]["blockRefCounts"], serde_json::json!({}));
+        assert_eq!(
+            payload["answers"]["summary"]["pages"],
+            serde_json::json!(["a"])
+        );
+        assert_eq!(payload["answers"]["summary"]["full"], false);
+        store.close();
     }
 
     #[test]
@@ -880,9 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn rollback_external_bytes_dispatch_graph_changed() {
-        use tine_store::{FaultPoint, PageId, SaveBase, TxOutcome};
-
+    fn external_bytes_dispatch_graph_changed() {
         let root = std::env::temp_dir().join(format!(
             "tine-watch-rollback-{}-{:?}",
             std::process::id(),
@@ -903,30 +996,8 @@ mod tests {
         .0;
         store.whole_graph().unwrap();
         let subscription = store.subscribe();
-        let a = PageId::from("pages/A.md");
-        let b = PageId::from("pages/B.md");
-        let read_a = store.page(&a).unwrap();
-        let read_b = store.page(&b).unwrap();
-        let mut doc_a = read_a.doc;
-        let mut doc_b = read_b.doc;
-        doc_a.blocks[0].raw = "new A".into();
-        doc_b.blocks[0].raw = "new B".into();
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-        tx.save_page(
-            &[tine_store::EditKind::ReplacePage],
-            &a,
-            SaveBase::Existing(read_a.rev),
-            &doc_a,
-        );
-        tx.save_page(
-            &[tine_store::EditKind::ReplacePage],
-            &b,
-            SaveBase::Existing(read_b.rev),
-            &doc_b,
-        );
-        store.inject_fault(FaultPoint::MidStepIoAt(1));
-        store.inject_fault(FaultPoint::UndoLiveWrite);
-        assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+        std::fs::write(root.join("pages/B.md"), "- external\n").unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let events: Vec<_> = std::iter::from_fn(|| subscription.try_recv().unwrap())
             .flat_map(|change| window_events(&change).0)
             .collect();

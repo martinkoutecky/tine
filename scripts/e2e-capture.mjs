@@ -11,6 +11,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
+import { watchErrorToasts } from "./lib/e2e-toasts.mjs";
 
 ensurePrivateSessionBus();
 
@@ -22,7 +25,7 @@ const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4456);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4457);
-const TMP = "/tmp/tine-capture-e2e";
+const TMP = process.env.E2E_TMP_DIR || "/tmp/tine-capture-e2e";
 const GRAPH = `${TMP}/graph`;
 // Avoid adjacent duplicate characters: WebKitWebDriver coalesces identical
 // synthetic key-downs on some Linux versions even though a physical keyboard
@@ -32,14 +35,17 @@ const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || TMP;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
+for (const dir of ["data", "config", "cache", "state"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 const appData = `${TMP}/xdg/data/${APP_ID}`;
 fs.mkdirSync(appData, { recursive: true });
 const settingsPath = `${appData}/tine-settings.json`;
 // Capture is an independent WebView: begin with a persisted non-default mode
 // so its cold start cannot accidentally inherit the main WebView's default.
 fs.writeFileSync(settingsPath, '{"link_autocomplete_policy":"existing","space_after_ref_completion":true}\n');
-fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
+// The one-time Guide announcement is a sticky toast in the main window's
+// bottom-right corner; it is not this journey's subject and can cover the
+// Settings controls below (other journeys set the same key).
+fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{:preferred-workflow :todo :tine/guide-announced? true}\n");
 fs.writeFileSync(`${GRAPH}/pages/Home.md`, "- capture focus fixture\n");
 fs.writeFileSync(`${GRAPH}/pages/Fuzzy Existing.md`, "- completion target\n");
 const now = new Date();
@@ -53,6 +59,7 @@ const env = {
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
   XDG_CACHE_HOME: `${TMP}/xdg/cache`,
+  XDG_STATE_HOME: `${TMP}/xdg/state`,
   // GitHub runners may set host-specific XDG search paths. Openbox must still
   // find its system config and theme after the test isolates the user's XDG
   // homes, otherwise it starts without EWMH activation support.
@@ -315,6 +322,22 @@ try {
     }
     for (const key of query) await browser.keys([key]);
   };
+  const expectWorkflow = async (markers) => {
+    for (const key of "buy milk") await browser.keys([key]);
+    for (const marker of [...markers, "DONE", ""]) {
+      await browser.keys(["Control", "Enter"]);
+      const expected = `${marker ? `${marker} ` : ""}buy milk`;
+      await browser.waitUntil(() => browser.execute(wanted =>
+        document.activeElement instanceof HTMLTextAreaElement &&
+        document.activeElement.value.split("\n")[0] === wanted, expected), {
+        timeout: 5_000, timeoutMsg: `Quick Capture workflow did not reach ${expected}`,
+      });
+    }
+    await browser.keys(["Control", "a"]);
+    await browser.keys(["Backspace"]);
+    await expectAutocompleteValue("", "workflow probe did not clear the capture editor");
+  };
+  await expectWorkflow(["TODO", "DOING"]);
   // A fuzzy-only query distinguishes existing-first from adaptive/Create-first.
   // Exercise both page and tag acceptance in the cold, independently initialized
   // capture WebView using literal keys.
@@ -337,6 +360,42 @@ try {
   await browser.keys([...PROOF]);
   await sleep(150);
   await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-typed.png"));
+  // UI-CAPTURE-NO-PAGE-INVENTORY: completing page references in the capture
+  // window must not raise an error (it once asked for the page inventory the
+  // capture WebView is refused, and showed "Couldn't refresh the page list").
+  const captureErrors = await watchErrorToasts(browser, 1_000);
+  if (captureErrors.length) throw new Error(`Quick Capture showed error toasts: ${JSON.stringify(captureErrors)}`);
+  if (process.env.E2E_CAPTURE_REFUSAL === "1") {
+    // Rebind the native graph slot while leaving the shown capture WebView on
+    // its original generation. Reload only the receiver so it takes the new
+    // lease; the real stale request must then be refused without insertion.
+    const otherGraph = `${TMP}/rebind-graph`;
+    for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${otherGraph}/${dir}`, { recursive: true });
+    await browser.switchToWindow(mainHandle);
+    const rebind = await browser.execute(async (other, original) => {
+      await globalThis.__TAURI_INTERNALS__.invoke("load_graph", { path: other });
+      return globalThis.__TAURI_INTERNALS__.invoke("load_graph", { path: original });
+    }, otherGraph, GRAPH);
+    if (!Number.isSafeInteger(rebind?.binding_generation)) throw new Error(`native graph rebind failed: ${JSON.stringify(rebind)}`);
+    await browser.refresh();
+    await browser.$(".ls-block").waitForExist({ timeout: 20_000 });
+    await browser.switchToWindow(captureHandle);
+    await browser.keys(["Control", "Shift", "Enter"]);
+    await browser.waitUntil(() => browser.execute(() => document.body.textContent.includes("text kept")), {
+      timeout: 10_000, timeoutMsg: "stale capture did not report retained text",
+    });
+    if (fs.readFileSync(journalPath, "utf8").includes(PROOF)) throw new Error("refused capture reached the journal");
+    await browser.keys(["Escape"]);
+    const reopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+    await waitForForwarderExit(reopen, 5000);
+    reopen.unref();
+    await waitForWindow("Quick Capture", 10_000);
+    await browser.switchToWindow(captureHandle);
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".capture-shell textarea")].some(editor => editor.value.includes("capture-focus-ok"))), {
+      timeout: 10_000, timeoutMsg: "Escape discarded refused capture text",
+    });
+    await browser.saveScreenshot(path.join(ARTIFACT_DIR, "quick-capture-refused-kept.png"));
+  }
   await browser.keys(["Control", "Shift", "Enter"]);
 
   const deadline = Date.now() + 10_000;
@@ -344,10 +403,22 @@ try {
   if (!fs.readFileSync(journalPath, "utf8").includes(PROOF)) {
     throw new Error(`keyboard input did not reach the graph despite proven native + DOM focus; dom=${JSON.stringify(domFocus)} journal=${JSON.stringify(fs.readFileSync(journalPath, "utf8"))}`);
   }
+  if (fs.readFileSync(journalPath, "utf8").split(PROOF).length !== 2) throw new Error("retry duplicated the capture in the journal");
+  if (process.env.E2E_CAPTURE_REFUSAL === "1") console.log("PASS: stale delivery was refused, Escape kept the text, and retry saved it exactly once");
   // Change the policy through the main Settings UI while the persistent capture
   // window is hidden. Reopening that exact WebView must refresh before Enter can
   // choose a completion; otherwise it would retain the cold existing-first signal.
   await browser.switchToWindow(mainHandle);
+  // The graph window confirms the save with a transient toast in its
+  // bottom-right corner, which is where the Settings modal's Advanced policy
+  // select lands once WebDriver scrolls it into view: a click there while the
+  // toast lives is intercepted (seen on develop, 2026-11-02). Assert the
+  // confirmation, then close it as a user would before going on.
+  const confirmation = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' toast ')][contains(., \"Captured to today's journal\")]");
+  await confirmation.waitForExist({ timeout: 5_000, timeoutMsg: "the graph window did not confirm the capture" });
+  // It may expire on its own (3.2 s) between these two commands; either way it must be gone.
+  try { await confirmation.$(".toast-close").click(); } catch (error) { if (await confirmation.isExisting()) throw error; }
+  await confirmation.waitForExist({ timeout: 5_000, reverse: true, timeoutMsg: "the capture confirmation did not close" });
   await browser.$('button[title^="Settings"]').click();
   // The settings launcher opens its default tab, while this policy deliberately
   // lives under Editor → Advanced. Follow that visible flow rather than reaching
@@ -378,6 +449,10 @@ try {
   if (!openedSettings.tabs.some((tab) => tab.label === "Editor")) {
     throw new Error(`Settings UI lacks its Editor tab; settings=${JSON.stringify(openedSettings)}`);
   }
+  const journalsTab = await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Journals']");
+  await journalsTab.click();
+  await browser.$("//button[normalize-space(.)='NOW / LATER']").click();
+  await waitForFileText(`${GRAPH}/logseq/config.edn`, text => text.includes(":preferred-workflow :now"));
   const editorTab = await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Editor']");
   await editorTab.click();
   let currentSettings = await waitForSettingsState(
@@ -411,6 +486,7 @@ try {
   // into outline selection, so clearing again destroys this test's input owner.
   // Assert the reset and type into the editor the application focused.
   await expectAutocompleteValue("", "reopened Quick Capture did not retain its empty focused editor after filing");
+  await expectWorkflow(["LATER", "NOW"]);
   await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "reopened Quick Capture retained the hidden existing-first policy");
   await browser.keys(["Escape"]);
@@ -457,10 +533,63 @@ try {
   coldReopen.unref();
   await waitForWindow("Quick Capture", 10_000);
   await browser.switchToWindow(restartedCapture);
+  await expectWorkflow(["LATER", "NOW"]);
   await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "cold restarted Quick Capture did not initialize persisted typed policy");
   await browser.keys(["Escape"]);
+  // Set the reported preference through Settings, with a real page routed in
+  // the graph window, then prove capture adopts it without an app restart.
+  await browser.switchToWindow(restartedMain);
+  await openPageByName(browser, "Home");
+  // The cold restart above follows this journey's own kill, so the isolated
+  // state directory correctly reports an unclean shutdown in a sticky toast
+  // over the Settings controls. Dismiss only that one (as e2e-calm-query does).
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast").forEach(toast => {
+    if (toast.textContent?.includes("did not close cleanly")) toast.querySelector(".toast-close")?.click();
+  }));
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Journals']").click();
+  await browser.$("//button[normalize-space(.)='TODO / DOING']").click();
+  await waitForFileText(`${GRAPH}/logseq/config.edn`, text => text.includes(":preferred-workflow :todo"));
+  await browser.keys(["Escape"]);
+  await browser.$("//div[contains(@class, 'block-content') and normalize-space(.)='capture focus fixture']").click();
+  for (const marker of ["TODO", "DOING", "DONE"]) {
+    await browser.keys(["Control", "Enter"]);
+    await browser.waitUntil(() => browser.execute(wanted =>
+      document.activeElement instanceof HTMLTextAreaElement &&
+      document.activeElement.value.split("\n")[0] === `${wanted} capture focus fixture`, marker), {
+      timeout: 5_000, timeoutMsg: `routed Home page did not cycle to ${marker}`,
+    });
+  }
+  await browser.keys(["Escape"]);
+  await waitForFileText(`${GRAPH}/pages/Home.md`, text => text.includes("DONE capture focus fixture"));
+  const workflowReopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(workflowReopen, 5_000);
+  workflowReopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(restartedCapture);
+  // The prior page-completion probe left an unfiled query. Select its text
+  // before replacing it, rather than letting it contaminate the marker check.
+  await browser.waitUntil(() => browser.execute(() =>
+    document.activeElement instanceof HTMLTextAreaElement), {
+    timeout: 5_000, timeoutMsg: "reopened capture did not focus its editor",
+  });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["Backspace"]);
+  await expectWorkflow(["TODO", "DOING"]);
+  console.log("PASS: capture uses both workflows after Settings changes, reopen and process restart");
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)}`);
+} catch (error) {
+  try { await browser?.saveScreenshot(path.join(ARTIFACT_DIR, "failure.png")); } catch {}
+  fs.writeFileSync(path.join(ARTIFACT_DIR, "failure.json"), JSON.stringify({
+    testedBase: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(),
+    candidate: "working diff",
+    journey: "scripts/e2e-capture.mjs",
+    expected: "capture activates, saves once, and follows the selected task workflow across Settings, reopen and restart",
+    observed: error?.message || String(error),
+    classification: "ambiguous; inspect driver log and failure screenshot",
+  }, null, 2));
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

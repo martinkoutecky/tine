@@ -1,0 +1,546 @@
+{
+ "schemaVersion": 1,
+ "version": "0.9.0-beta.4",
+ "baseTag": "v0.9.0-beta.3",
+ "focusedAudit": {
+  "required": false,
+  "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+ },
+ "items": [
+  {
+   "section": "Fixed",
+   "text": "Updated TLS certificate verification dependencies for the emSign distrust advisories (#828).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH828-TLS-DISTRUST"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH828-TLS-DISTRUST. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src-tauri/src/quick_share/quick_share_tests.rs::quick_share_tls_is_declared_for_every_shipped_target",
+     "src-tauri/src/owner/git_sync/transport_tests.rs::git_sync_tls_names_all_five_targets",
+     "src-tauri/src/lib.rs::updater_transport_is_declared_for_every_desktop_target"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Pressing Enter after Ctrl+Enter cycles a task to DOING keeps its clock drawer on the original task, including when splitting the title (#829; covered by the earlier #741 drawer fix).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH829-CYCLE-DOING-ENTER"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH829-CYCLE-DOING-ENTER. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/Block.clockInParagraph.test.tsx",
+     "scripts/e2e-gh741-doing-clockin.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Security: patched an out-of-bounds write in the PDF image decoder that a crafted JPEG 2000 image in a PDF could trigger (#827).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH827-OPENJPEG-TILE-PART-INDEX"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH827-OPENJPEG-TILE-PART-INDEX. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/pdfjsOpenjpegSecurity.test.ts"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The build instructions now say where to get the Emscripten SDK and how the build finds it, and the missing-SDK error points to them (#830).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH830-EMSDK-SOURCE-BUILD"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH830-EMSDK-SOURCE-BUILD. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "YouTube timestamps written as `9:03` or `1:02:03` now show and seek to the full time, instead of treating only the first number as seconds. Invalid timestamp arguments are hidden.",
+   "userVisible": true,
+   "regressions": [
+    "UI-YOUTUBE-TIMESTAMP-COLON"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-YOUTUBE-TIMESTAMP-COLON. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/Macro.youtubeTimestamp.test.tsx",
+     "src/components/ExportModal.test.tsx",
+     "src/components/Block.youtubeTimestampCommand.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Linux desktop launcher updates now check the launcher's channel identity as well as its managed flag, preserving entries with another channel's identity (#814).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH814-DESKTOP-CHANNEL"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH814-DESKTOP-CHANNEL. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src-tauri/src/linux_window_identity.rs::tests"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Shift-clicking **Journals** in the left sidebar or toolbar opens today's journal in the right sidebar and keeps the main page in place, as in Logseq. Plain clicks and **g j** still open the journal feed (#740).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH740-JOURNALS-SHIFT"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH740-JOURNALS-SHIFT. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/App.topbar.test.tsx",
+     "src/components/Sidebar.test.tsx",
+     "src/components/CalendarJump.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Adding a margin comment opens it beside or directly below its passage without first jumping to the end of the block's children. Every response now has the same author row above its text, separate from the quoted passage (#110).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH110-COMMENT-CREATION-JUMP",
+    "UI-GH110-COMMENT-IDENTITY"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH110-COMMENT-CREATION-JUMP, UI-GH110-COMMENT-IDENTITY. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/Block.marginComment.test.tsx",
+     "scripts/shot-margin-create.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Expanding or collapsing a large bullet no longer reloads embeds and queries above it, which made text flash and rows jump (GH #795, UI-GH795-COLLAPSE-FLASH).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH795-COLLAPSE-FLASH"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH795-COLLAPSE-FLASH. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/BlockList.foldMode.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "At interface zoom above 100% on phones, the bottom navigation row stays on screen and the editing toolbar stays usable, with the keyboard open or closed; drawers and bottom sheets fit the screen too (#826).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH826-MOBILE-INTERFACE-ZOOM"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH826-MOBILE-INTERFACE-ZOOM. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "scripts/shot-interface-zoom.mjs",
+     "src/zoomDesktop.test.ts"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Expand children and Collapse children now work one level at a time on query blocks and their result rows (#792). BEGIN_QUERY also honours `:remove-block-children? false` for nested matches (#651).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH792-QUERY-EXPAND-ONE-LEVEL",
+    "REG-OG-GH651-BEGIN-QUERY-KEEPS-CHILDREN",
+    "UI-GH651-ADVANCED-QUERY-TABLE-IN-BOX"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH792-QUERY-EXPAND-ONE-LEVEL, REG-OG-GH651-BEGIN-QUERY-KEEPS-CHILDREN, UI-GH651-ADVANCED-QUERY-TABLE-IN-BOX. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/QueryExpandChildren.test.tsx",
+     "crates/tine-store/tests/og_gh651_nested_task_rows.rs::remove_block_children_false_applies_to_a_begin_query_map_with_a_dsl_form",
+     "crates/tine-core/tests/query_edn_spans.rs::begin_query_inspector_reports_the_keep_children_option",
+     "crates/tine-core/src/query/parse_tests.rs::remove_block_children_is_off_only_for_a_false_or_nil_advanced_option",
+     "crates/tine-graph-features/tests/legacy_publish.rs::publish_begin_query_honours_remove_block_children_false",
+     "src/components/BeginQuery.test.tsx::forwards :remove-block-children? false to the query macro",
+     "scripts/shot-table-bleed.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The Journal sections note in Settings → Journals wraps within the pane, keeping its Open page link visible (#808).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH808-SETTINGS-SECTIONS-NOTE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH808-SETTINGS-SECTIONS-NOTE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "scripts/check-gh808-settings-note.mjs",
+     "src/components/Settings.sectionsNote.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Fast PDF scrolling gives page painting priority over first selectable-text builds. Text selection catches up shortly after scrolling stops; page jumps and Find still request it immediately.",
+   "userVisible": true,
+   "regressions": [
+    "UI-PDF9-TEXT-SCROLL-IDLE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-PDF9-TEXT-SCROLL-IDLE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/PdfViewer.textLayer.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Pasting a copied web URL on macOS inserts the link instead of showing a copied-files error. Real copied files still paste as assets (#813).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH813-WEB-URI-PASTE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH813-WEB-URI-PASTE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/Block.assetPaste.test.tsx",
+     "src/editor/clipboardFlavors.test.ts"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A refused or failed graph clone now removes its downloaded git metadata before checkout, so fixing the remote or signing in and retrying does not leave a hidden `.git` folder blocking the next attempt. Existing empty folders are kept; folders with unexpected contents are retained and named in the error.",
+   "userVisible": true,
+   "regressions": [
+    "REG-GIT-CLONE-REFUSAL-CLEANUP"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GIT-CLONE-REFUSAL-CLEANUP. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src-tauri/src/owner/git_sync/transport_tests.rs::clone_refuses_folding_tree_before_checkout_including_directories_and_nfc",
+     "src-tauri/src/owner/git_sync/transport_tests.rs::clone_failure_preserves_a_preexisting_empty_folder_and_allows_retry",
+     "src-tauri/src/owner/git_sync/transport_tests.rs::https_clone_cancellation_and_mid_fetch_failure_remove_the_new_folder",
+     "src-tauri/src/owner/git_sync/clone_cleanup_tests.rs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Typing `1. ` inside a code or calculator block now keeps it as literal text instead of removing the fence and turning the block into a numbered list.",
+   "userVisible": true,
+   "regressions": [
+    "UI-TEXTAREA-NUMBERED-FENCE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-TEXTAREA-NUMBERED-FENCE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/Block.literalPrefix.test.tsx",
+     "src/components/Block.numberedList.test.tsx",
+     "scripts/e2e-textarea-numbered-fence.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Queries with `query-table:: true` now show their results in published read-only apps. Query exports also keep the table's chosen columns and starting sort.",
+   "userVisible": true,
+   "regressions": [
+    "UI-EXPORT-QUERY-TABLE"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-EXPORT-QUERY-TABLE. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "crates/tine-graph-features/tests/query_owner_context.rs",
+     "crates/tine-graph-features/tests/query_publication.rs",
+     "src/components/QueryMacro.ir.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  }
+ ]
+}

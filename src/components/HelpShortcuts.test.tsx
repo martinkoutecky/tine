@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { render } from "solid-js/web";
 import { commandDefaults } from "../keybindings";
 import { renderEnglish } from "../i18n";
-import { HELP_ITEMS, buildShortcutPaneData, shortcutPaneCommandIds, type ShortcutSettingRow } from "./HelpShortcuts";
+import { HELP_ITEMS, ShortcutsSettingsPane, buildShortcutPaneData, shortcutPaneCommandIds, type ShortcutSettingRow } from "./HelpShortcuts";
 
 function rows(): ShortcutSettingRow[] {
   return commandDefaults().map((c) => ({
@@ -12,6 +13,18 @@ function rows(): ShortcutSettingRow[] {
 }
 
 describe("shortcuts pane data", () => {
+  it("shows both Settings defaults together in one shortcut row", () => {
+    const host = document.createElement("div");
+    const dispose = render(() => <ShortcutsSettingsPane shortcuts={rows()} search="Open settings" recording={null}
+      onRecord={() => {}} onReset={() => {}} onUnbind={() => {}} />, host);
+    try {
+      const matches = [...host.querySelectorAll(".help-shortcut-row")].filter((row) => row.textContent?.includes("ui/open-settings"));
+      expect(matches).toHaveLength(1);
+      expect(matches[0].querySelector(".help-keycap-button")?.textContent).toBe("t s");
+      expect(matches[0].querySelector(".help-shortcut-alias")?.textContent).toMatch(/or.*,/);
+    } finally { dispose(); }
+  });
+
   it("puts the Guide action at the top of the help menu", () => {
     expect(renderEnglish(HELP_ITEMS[0].label)).toBe("Guide");
     expect(renderEnglish(HELP_ITEMS[0].detail)).toBe("Open the in-app how-to guide");
@@ -24,5 +37,22 @@ describe("shortcuts pane data", () => {
 
     expect(actual).toHaveLength(expected.length);
     expect(new Set(actual)).toEqual(new Set(expected));
+  });
+});
+
+// Margin dialogue (vision §3.7): Ctrl/Cmd+R is a built-in editor chord. It must
+// be listed in the shortcuts pane, and no other built-in command may share it
+// (the webview's own reload is consumed by the editor command instead).
+describe("comment on selection chord", () => {
+  it("is listed once under Editor and collides with no other default binding", () => {
+    const data = buildShortcutPaneData(rows());
+    const editor = data.find((section) => section.scope === "editor")!;
+    const row = editor.commands.find((c) => c.id === "editor/comment");
+    expect(row?.binding).toBe("mod+r");
+    expect(row?.english).toBe("Comment on selected text");
+    const holders = commandDefaults().filter((c) => c.binding.split(/\s+/).includes("mod+r") || c.alias === "mod+r");
+    expect(holders.map((c) => c.id)).toEqual(["editor/comment"]);
+    const palette = data.flatMap((section) => section.commands).find((c) => c.id === "comment/on-selection");
+    expect(palette?.english).toBe("Comment on selection");
   });
 });

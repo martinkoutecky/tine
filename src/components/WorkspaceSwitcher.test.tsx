@@ -107,7 +107,7 @@ describe("WorkspaceSwitcher", () => {
     const root = host.querySelector<HTMLElement>('[data-workspace-switcher-compact="true"]')!;
     expect(root.querySelector(".workspace-switcher-name")).toBeNull();
     expect(root.querySelector(".workspace-switcher-mark")?.textContent).toBe("W");
-    expect(root.querySelector(".workspace-switcher-caret")?.textContent).toBe("▾");
+    expect(root.querySelector(".workspace-switcher-caret svg")).not.toBeNull();
   });
 
   it("offers hover quick-switch and a click menu with new, rename, and confirmed delete actions", async () => {
@@ -135,7 +135,7 @@ describe("WorkspaceSwitcher", () => {
     const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     menu.querySelector<HTMLButtonElement>('[aria-label="Delete Alpha"]')!.click();
     await vi.waitFor(() => expect(workspaces()).toHaveLength(1));
-    expect(confirm).toHaveBeenCalledWith("Delete workspace “Alpha”?", "Delete workspace");
+    expect(confirm).toHaveBeenCalledWith("Delete workspace “Alpha”?", { title: "Delete workspace", okLabel: "Delete workspace", cancelLabel: "Cancel" });
     expect(activeWorkspaceId()).not.toBe("default");
   });
   // Master GH #498: the name field was rendered under a keyed <Show> whose key

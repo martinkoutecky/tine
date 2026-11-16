@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Production source of `src-tauri/src`: test files and trailing test
-/// modules are left out.
-fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
+/// modules are left out. Also `file_lock`'s one-lock-module guard.
+pub(crate) fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
@@ -405,15 +405,15 @@ fn every_graph_window_binding_runs_a_host() {
     );
     assert_eq!(
         binds(&files),
-        ["graph.rs::load_graph_for_label"],
-        "a graph window binds only in load_graph_for_label, which starts its page host \
+        ["graph.rs::load_graph_with_relocation"],
+        "a graph window binds only in load_graph_with_relocation, which starts its page host \
          (the only writer of the window's page edits; a binding without one has no save \
          path); a second binding site would need its own host start"
     );
     let (_, graph) = files.iter().find(|(f, _)| f.ends_with("graph.rs")).unwrap();
     let (_, load) = functions(graph)
         .into_iter()
-        .find(|(name, _)| name == "load_graph_for_label")
+        .find(|(name, _)| name == "load_graph_with_relocation")
         .unwrap();
     // The new-open arm starts the host; the adopted arm keeps its own.
     assert!(load.contains("start_host(") && load.contains("PageHostSlot::Running(host)"));

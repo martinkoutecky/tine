@@ -163,18 +163,30 @@ fn run_ir(
     view: &ViewSettings,
     context: &ExecutionContext,
 ) -> QueryResult {
-    match graph.query_ir(IrRequest::Run {
-        query,
-        view,
-        context,
-    }) {
+    match graph
+        .query_ir(
+            IrRequest::Run {
+                query,
+                view,
+                context,
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Result(result)) => *result,
         other => panic!("{other:?}"),
     }
 }
 
 fn explain(graph: &WholeGraph, query: &Query, context: &ExecutionContext) -> ExplainEmptyResult {
-    match graph.query_ir(IrRequest::ExplainEmpty { query, context }) {
+    match graph
+        .query_ir(
+            IrRequest::ExplainEmpty { query, context },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::ExplainEmpty(explained)) => explained,
         other => panic!("{other:?}"),
     }

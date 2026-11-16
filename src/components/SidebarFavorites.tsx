@@ -1,13 +1,15 @@
 import { t } from "../i18n";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 // The left sidebar's Favorites list (family 22): one flat run of rows in
 // pre-order, indented by depth. The visible index IS `data-row-index`, so a
 // drop found by elementFromPoint needs no translation, and a label row and a
 // favorite row drag on exactly the same terms.
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { resolveBlockBatched, blockRefTarget } from "../resolveBatch";
-import { dataRev, graphEpoch } from "../graphSession";
+import { changed } from "../changeKeys";
 import { readOr } from "../resourceRead";
 import { visibleBody } from "../render/block";
+import { formatForPage } from "../document";
 import { openPageTarget, replaceActiveRoute, openInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { openBlockInSidebar, openBlockRefContextMenu } from "../ui";
@@ -50,7 +52,10 @@ function startDrag(from: number, event: PointerEvent) {
     (target) => {
       const { parent, index } = resolveFor(rows, from, target);
       moveFavoriteRow(rows[from].path, parent, index);
-    });
+    },
+    // Touch and pen: hold still to pick a row up, move first and the list scrolls
+    // (D-20261019-FT1, the Tabs list's gesture, GH #704). Mouse is unchanged.
+    { touchHold: true });
 }
 
 /** The favorites tree. `targetName` is used only for the active highlight;
@@ -67,7 +72,7 @@ export function SidebarFavorites(props: {
       <For each={visibleRows(favoritesLayout())}>
         {(row, i) => {
           const [block] = createResource(
-            () => row.node.blockId ? `${row.node.blockId}\0${graphEpoch()}\0${dataRev()}` : null,
+            () => row.node.blockId ? `${row.node.blockId}\0${changed(`block:${row.node.blockId}`)}` : null,
             () => resolveBlockBatched(row.node.blockId!),
           );
           const source = () => readOr(block, undefined, "favorite block");
@@ -82,7 +87,7 @@ export function SidebarFavorites(props: {
               <button type="button" class="nav-fav-group-toggle" aria-expanded={!row.node.collapsed}
                 aria-label={row.node.collapsed ? t("sidebar-favorites-expand") : t("sidebar-favorites-collapse")}
                 onClick={() => setFavoriteRowCollapsed(row.path, !row.node.collapsed)}>
-                <span class="nav-toggle-caret" classList={{ open: !row.node.collapsed }}>▸</span>
+                <ReferenceDisclosure class="nav-toggle-caret" collapsed={!!row.node.collapsed} />
               </button>
             </Show>
           );
@@ -100,7 +105,7 @@ export function SidebarFavorites(props: {
             </div>
           );
           const kind = row.node.kind ?? itemKind(name ?? "");
-          const title = () => row.node.blockId ? (source()?.blocks[0] ? visibleBody(source()!.blocks[0].raw).join(" ") : row.node.blockId) : name!;
+          const title = () => row.node.blockId ? (source()?.blocks[0] ? visibleBody(source()!.blocks[0].raw, formatForPage(source()!.page)).join(" ") : row.node.blockId) : name!;
           const open = (gesture: "normal" | "sidebar" | "new-tab" | "pane" | "context", point?: { x: number; y: number }) => {
             if (!row.node.blockId) { props.open(name!, kind, gesture, point); return; }
             const group = source();
@@ -132,7 +137,7 @@ export function SidebarFavorites(props: {
               {toggle}
               {/* ⭐ via EmojiText: WebKitGTK's Skia COLRv1 path crashes painting a
                   raw color-emoji glyph on hardened libstdc++ (#29). */}
-              <SidebarTitle text={`${name ? pageIcon(name) || "⭐" : "⭐"} ${title()}`} fullTitle={title()} />
+              <SidebarTitle icon={name ? pageIcon(name) || "⭐" : "⭐"} pageName={name ?? undefined} text={title()} fullTitle={title()} />
             </div>
           );
         }}

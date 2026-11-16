@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -34,19 +35,17 @@ function mountEditor(raw = "alpha") {
   const dispose = render(() => (
     <For each={pageByName("Document mode Enter")?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
-  const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor");
+  const editor = editorIn(root);
   if (!editor) throw new Error("missing active editor");
   editor.focus();
-  editor.setSelectionRange(raw.length, raw.length);
+  editor.select(raw.length, raw.length);
   return { root, editor, dispose };
 }
 
-function pressEnter(editor: HTMLTextAreaElement, shiftKey = false) {
-  const event = new KeyboardEvent("keydown", {
+function pressEnter(editor: EditorDriver, shiftKey = false) {
+  return editor.keydown({
     key: "Enter", code: "Enter", shiftKey, bubbles: true, cancelable: true,
   });
-  editor.dispatchEvent(event);
-  return event;
 }
 
 describe("document-mode Enter mapping", () => {

@@ -68,6 +68,12 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
 
 use tine_outline::page_filename;
 
+/// The native file-format answer, including mixed-case Org extensions.
+#[wasm_bindgen]
+pub fn page_file_format(path: &str) -> String {
+    tine_outline::page_format::Format::from_path(std::path::Path::new(path)).ext().to_string()
+}
+
 /// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
 /// namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
 #[wasm_bindgen]
@@ -100,11 +106,24 @@ pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 
+#[path = "../../tine-core/src/reference_evidence/og_built_in.rs"]
+mod og_built_in;
+
+/// OG built-ins excluded from default query-table property columns.
+#[wasm_bindgen]
+pub fn is_og_built_in_property(key: &str) -> bool {
+    og_built_in::is_og_built_in_property(key)
+}
+
 /// Whether a block property key is hidden from rendered chips (I-12: the one
 /// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
 #[wasm_bindgen]
-pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>) -> bool {
-    render_facets::is_render_hidden_prop(key, &user_hidden)
+pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>, pre_block: bool) -> bool {
+    if pre_block {
+        render_facets::is_render_hidden_page_prop(key, &user_hidden)
+    } else {
+        render_facets::is_render_hidden_prop(key, &user_hidden)
+    }
 }
 
 /// The checkbox a task marker draws: true checked, false empty, undefined none.
@@ -235,18 +254,14 @@ pub fn logbook_clock_out(raw: &str, is_org: bool, with_seconds: bool) -> String 
 pub fn logbook_apply_marker_transition(
     raw: &str,
     is_org: bool,
-    old_marker: &str,
-    new_marker: &str,
+    old_raw: &str,
     enabled: bool,
     with_seconds: bool,
 ) -> String {
-    let old = (!old_marker.is_empty()).then_some(old_marker);
-    let new = (!new_marker.is_empty()).then_some(new_marker);
-    logbook::apply_marker_transition_at(
+    logbook::apply_edit_transition_at(
+        old_raw,
         raw,
         logbook_format(is_org),
-        old,
-        new,
         enabled,
         with_seconds,
         now_parts(),
@@ -301,6 +316,17 @@ fn now_parts() -> logbook::TimestampParts {
 /// Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
 /// build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
 /// See docs/wasm-parse-plan.md §7D.
+/// What removing blocks does to block references (`tine_outline::removal_refs`):
+/// `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+#[wasm_bindgen]
+pub fn removal_refs_json(blocks: &str, with_content: bool) -> Result<String, JsValue> {
+    let blocks: Vec<(String, bool)> =
+        serde_json::from_str(blocks).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let removed: Vec<(&str, bool)> = blocks.iter().map(|(raw, org)| (raw.as_str(), *org)).collect();
+    let refs = tine_outline::removal_refs::removal_refs(&removed, with_content);
+    Ok(serde_json::to_string(&refs).unwrap())
+}
+
 #[wasm_bindgen]
 pub fn lsdoc_tag() -> String {
     option_env!("LSDOC_TAG").unwrap_or("unknown").to_string()
@@ -353,6 +379,14 @@ fn regions_from_js(raw: &str, regions: &JsValue) -> Result<block_regions::BlockR
     };
     let mut r = BlockRegions::default();
     r.quarantined = get(regions, "quarantined").as_bool().unwrap_or(true);
+    let headline_end = get(regions, "headline_end");
+    if !headline_end.is_null() && !headline_end.is_undefined() {
+        let at = headline_end.as_f64().map(|at| at as usize);
+        r.headline_end = Some(
+            at.filter(|&at| at <= raw.len() && raw.is_char_boundary(at))
+                .ok_or_else(|| JsValue::from_str("Invalid region"))?,
+        );
+    }
     for v in array(regions, "literals").iter() {
         r.literals.push(range(&v)?);
     }
@@ -469,18 +503,48 @@ pub fn raw_byte_of_editor(raw: &str, is_org: bool, regions: &JsValue, policy: &s
     Ok(editor_text::visible_to_raw_with(raw, is_org, &r, &p, editor_text::utf16_to_byte(&visible, editor_utf16)))
 }
 
-/// Editor text plus hidden lines back to raw (`editor_text::join_with`); the
-/// regions are the window's cached ones for exactly `visible` (read for Org).
+/// Parser-boundary negative-only prefilter; true still needs drawer ownership.
 #[wasm_bindgen]
-pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue) -> Result<String, JsValue> {
-    let r = if is_org && !hidden.is_empty() { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
+pub fn block_may_have_logbook(raw: &str) -> bool {
+    block_regions::may_have_logbook(raw)
+}
+
+/// Editor text plus hidden lines back to raw (`editor_text::join_with`), with
+/// optional exact source for metadata-preserving text-only edits.
+#[wasm_bindgen]
+pub fn editor_text_join(visible: &str, hidden: &str, is_org: bool, visible_regions: &JsValue, source: Option<String>, policy: Option<String>) -> Result<String, JsValue> {
+    if let Some(source) = source {
+        // The policy that split `hidden` from `source` (the built-ins when absent).
+        let hide = match policy { Some(p) => hide_policy(&p)?, None => editor_text::HidePolicy::Builtin };
+        return editor_text::join_preserving(visible, hidden, is_org, &source, &hide).map_err(|e| JsValue::from_str(&e));
+    }
+    let r = if !hidden.is_empty() && (is_org || !visible_regions.is_null()) { regions_from_js(visible, visible_regions)? } else { block_regions::BlockRegions::default() };
     editor_text::join_with(visible, hidden, is_org, &r).map_err(|e| JsValue::from_str(&e))
 }
 
 /// Whether hide `policy` hides property `key` (`HidePolicy::hides`).
 #[wasm_bindgen]
-pub fn hide_policy_hides(policy: &str, key: &str) -> Result<bool, JsValue> {
-    Ok(hide_policy(policy)?.hides(key))
+pub fn hide_policy_hides(policy: &str, key: &str, properties: &str) -> Result<bool, JsValue> {
+    let properties: Vec<(String, String)> = serde_json::from_str(properties)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(hide_policy(policy)?.hides_properties(key, properties.iter().map(|(k, v)| (k.as_str(), v.as_str()))))
+}
+
+/// The same own-property discriminator that editor_text uses to hide comment metadata.
+#[wasm_bindgen]
+pub fn comment_quote(properties: &str) -> Result<Option<String>, JsValue> {
+    let properties: Vec<(String, String)> = serde_json::from_str(properties)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(editor_text::comment_quote(properties.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .map(str::to_owned))
+}
+
+/// Tine's legacy property-key spellings, `[[legacy, canonical], …]` as JSON:
+/// the ONE alias table (`tine_outline::tine_keys`, D-20261102-PNS), so the
+/// window reads the stable `tine/…` markers exactly as the backend does.
+#[wasm_bindgen]
+pub fn tine_key_aliases() -> String {
+    serde_json::to_string(tine_outline::tine_keys::LEGACY_KEY_ALIASES).unwrap()
 }
 
 /// The kernel's outline depth cap (twin 4).
@@ -504,9 +568,12 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
         pages: Vec<outline::OutlinePage>,
         verb: outline::Verb,
         keys: outline::KeySource,
+        #[serde(default)]
+        hide: Option<editor_text::HidePolicy>,
     }
-    let req: Request = serde_json::from_str(request).map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
-    Ok(match outline::apply(&req.pages, &req.verb, &req.keys) {
+    let req: Request = outline_request(request)?;
+    let hide = req.hide.unwrap_or(editor_text::HidePolicy::Builtin);
+    Ok(match outline::apply_with_policy(&req.pages, &req.verb, &req.keys, &hide) {
         Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
         Ok(change) => {
             let editor_offset = change.focus.as_ref().and_then(|f| {
@@ -526,10 +593,9 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
                     })?;
                 let org = format.is_org();
                 let r = block_regions::parse(raw, org);
-                let p = editor_text::HidePolicy::Builtin;
-                let at = editor_text::raw_to_visible_with(raw, org, &r, &p, offset);
+                let at = editor_text::raw_to_visible_with(raw, org, &r, &hide, offset);
                 Some(editor_text::byte_to_utf16(
-                    &editor_text::split_with(raw, org, &r, &p).visible,
+                    &editor_text::split_with(raw, org, &r, &hide).visible,
                     at,
                 ))
             });
@@ -542,8 +608,41 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
 /// the window can send only those (DESIGN §5.3, §8).
 #[wasm_bindgen]
 pub fn outline_reads_json(verb: &str) -> Result<String, JsValue> {
-    let verb: outline::Verb = serde_json::from_str(verb).map_err(|e| JsValue::from_str(&format!("Invalid outline verb: {e}")))?;
+    let verb: outline::Verb = outline_request(verb)?;
     serde_json::to_string(&verb.reads()).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// An imported forest has two JSON containers per outline level. Serde's
+/// default 128-container ceiling would reject valid 128-block pastes. Bound
+/// nesting before deserialization, then let the kernel enforce outline depth.
+fn outline_request<'a, T: serde::Deserialize<'a>>(input: &'a str) -> Result<T, JsValue> {
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for byte in input.bytes() {
+        if quoted {
+            if escaped { escaped = false; }
+            else if byte == b'\\' { escaped = true; }
+            else if byte == b'"' { quoted = false; }
+        } else {
+            match byte {
+                b'"' => quoted = true,
+                b'{' | b'[' => {
+                    depth += 1;
+                    if depth > 2 * outline::OUTLINE_MAX_DEPTH + 16 {
+                        return Err(JsValue::from_str("Invalid outline request: excessive JSON nesting"));
+                    }
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    let mut decoder = serde_json::Deserializer::from_str(input);
+    decoder.disable_recursion_limit();
+    let value = T::deserialize(&mut decoder).map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    decoder.end().map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    Ok(value)
 }
 
 /// Shared comparison form; O(text bytes), no graph access.

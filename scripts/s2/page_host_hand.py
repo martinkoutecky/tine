@@ -93,7 +93,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "TINE_HOST_REPO_ROOT": str(ROOT),
            "CARGO_TARGET_DIR": str(work / "target")}
-    command = ["rtk", "proxy", "cargo", "test", "--manifest-path", str(work / "Cargo.toml"),
+    command = ["cargo", "test", "--manifest-path", str(work / "Cargo.toml"),
                "--lib", "page_host", "--", "--skip", "scheduler_random_walks",
                "--skip", "committed_witnesses_through_host"]
     outcomes = []

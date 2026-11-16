@@ -4,7 +4,9 @@
 //! stale owner. The file is never unlinked or recreated (a contender may
 //! hold an open handle to it); its content is diagnostic only.
 
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::File;
+#[cfg(not(windows))]
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -29,6 +31,9 @@ impl OwnerLock {
     /// failure is not contention (`owner-lock`, §3.5).
     pub(crate) fn try_take(path: &Path, owner: &str) -> Result<Option<Self>, OwnerError> {
         for _ in 0..2 {
+            #[cfg(windows)]
+            let file = super::windows_security::open_lock_file(path)?;
+            #[cfg(not(windows))]
             let file = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -36,10 +41,12 @@ impl OwnerLock {
                 .truncate(false)
                 .open(path)
                 .map_err(|e| OwnerError::Lock(format!("cannot open {}: {e}", path.display())))?;
-            match file.try_lock() {
-                Ok(()) => {}
-                Err(TryLockError::WouldBlock) => return Ok(None),
-                Err(TryLockError::Error(e)) => {
+            // `file_lock`'s arm per target: std's `try_lock` answers
+            // `Unsupported` on Android.
+            match crate::file_lock::try_lock_file(&file) {
+                Ok(true) => {}
+                Ok(false) => return Ok(None),
+                Err(e) => {
                     return Err(OwnerError::Lock(format!(
                         "cannot lock {}: {e}",
                         path.display()
@@ -80,11 +87,11 @@ impl OwnerLock {
     }
 }
 
-/// Unlock explicitly: the lock belongs to the open file description, which a
-/// child spawned by another thread shares until its exec closes it.
+/// Unlock explicitly: a descriptor a spawned child inherited mid-exec must
+/// not keep the lock (as `file_lock::FileLock`).
 impl Drop for OwnerLock {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        crate::file_lock::unlock_file(&self.file);
     }
 }
 

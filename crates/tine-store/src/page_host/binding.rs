@@ -129,12 +129,10 @@ impl From<Why> for PageRefusal {
     }
 }
 
-/// A retained writer's contract for unsaved input on the pages it touches
-/// (§7 step 1). Each writer keeps today's rule.
+/// A host operation's policy for unsaved input on its pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
-    /// Flush then write: input found under the reservation is saved first,
-    /// with the reservation released meanwhile, and reserving starts over.
+    /// Save input before planning, then recheck it at admission.
     /// A page whose save cannot complete (conflict, persistent save error)
     /// is returned, as today's stuck pages are.
     Flush,
@@ -167,6 +165,11 @@ pub enum StopState {
     /// cannot be listed). The caller aborts (`stop_abort`), unfreezes and
     /// shows them; nothing closes over missing custody.
     Aborted(BTreeSet<PageKey>),
+    /// The driver ended (a host bug panicked it): nothing is left that can
+    /// save or draft. Every draft it wrote stays on disk for the next host's
+    /// recovery. A retirement ends the host with `stop_finish`; a restore
+    /// does not close over it.
+    Ended,
 }
 
 /// The disk state a window was shown, named by revision: a Keep-mine
@@ -287,8 +290,8 @@ pub struct MailNotice {
     /// watcher change or a retained writer's release; the driver keeps
     /// retrying, and the notice clears once a read succeeds (§5, §7).
     pub observe_error: bool,
-    /// Another page file claims this page's name (the alternate-extension
-    /// twin, §3.2, Q9): it failed the page's creation, or appeared beside
+    /// Another page file claims this page's name or could own it unreadably
+    /// (the creating save's owner checks, §3.2, Q9): it failed creation, or appeared beside
     /// it. Cleared once a later save publishes.
     pub twin: Option<String>,
 }
@@ -382,13 +385,10 @@ pub(super) struct Publication {
 pub(super) enum Indexing {
     Indexed,
     Failed,
-    /// A reservation holds the key: its retained transaction publishes
-    /// meanwhile, and this waits for the release (Q6).
-    Reserved,
 }
 
 /// A publication awaiting retry. A newer publication of its key, or the
-/// observation that ends a reservation, supersedes it.
+/// observation of newer disk bytes, supersedes it.
 struct Retry {
     publication: Publication,
     failures: u32,
@@ -410,6 +410,10 @@ pub(super) struct Delivery {
     /// Keys the host evicted with no publication left: their index returns
     /// to the watcher (§5, Q6). (key, spelling).
     pub evicted: Vec<(PageKey, String)>,
+    /// Reads that found the bytes their page already holds (A-H1): each
+    /// read's pre-read stamp, which becomes the watcher's observation of
+    /// the file once the publications above are indexed. (spelling, stamp).
+    pub confirmed: Vec<(String, crate::watch::Stamp)>,
     pub mail: Vec<(PageKey, Mail, MailFacts)>,
 }
 
@@ -417,6 +421,7 @@ impl Delivery {
     pub fn is_empty(&self) -> bool {
         self.mail.is_empty()
             && self.publications.is_empty()
+            && self.confirmed.is_empty()
             && self.claimed.is_empty()
             && self.evicted.is_empty()
     }
@@ -451,10 +456,6 @@ pub(super) struct Book {
     pub observe_errors: BTreeSet<PageKey>,
     /// Each key's last twin: (existing file, save version, after the rename).
     twins: BTreeMap<PageKey, (String, u64, bool)>,
-    /// Released keys whose release observation has not yet succeeded
-    /// (V2, REVIEW-3a): the retained transaction's index stands until the
-    /// host has read its bytes, so older publications keep waiting.
-    pub handover: BTreeSet<PageKey>,
     /// A collected delivery's publications are with the sink and their
     /// results not yet recorded (V5, REVIEW-3a).
     delivering: bool,
@@ -591,6 +592,12 @@ impl Book {
                         stamp: progress.host.fs.take_stamp(page),
                     });
                 }
+                Event::Confirmed(page) => {
+                    if let Some(stamp) = progress.host.fs.take_stamp(page) {
+                        let spelling = progress.host.fs.spelling(page);
+                        delivery.confirmed.push((spelling, stamp));
+                    }
+                }
                 Event::Refused { page, id, reason } => {
                     refused.insert((page.clone(), *id), *reason);
                 }
@@ -611,12 +618,11 @@ impl Book {
         }
         // Due retries go first: each is older than any event of its key,
         // and an event of its key has superseded it above.
-        let host = &progress.host;
         let due = self
             .retry
             .iter()
             .inspect(|_| work(Work::Book, 1))
-            .filter(|(key, retry)| retry.due <= now && !self.reserved(key, host))
+            .filter(|(_, retry)| retry.due <= now)
             .map(|(_, retry)| retry.publication.clone());
         delivery.publications.splice(0..0, due.collect::<Vec<_>>());
         for key in self.evictable(&progress.host, &delivery.publications) {
@@ -735,7 +741,7 @@ impl Book {
     }
 
     /// Owned keys the host no longer holds, with nothing left to publish:
-    /// no page, job, reservation or unobserved release, queued or applying
+    /// no page, job, queued or applying
     /// request (an Open waiting for its lock: its admission owned the key),
     /// vehicle debt (R2), retry or `pending` publication (Q6: a dirty page closed by the window stays held until
     /// its save and cleanup finish).
@@ -745,12 +751,12 @@ impl Book {
             .filter(|key| {
                 work(Work::Book, 2 + host.queue.len() + pending.len());
                 !host.pages.contains_key(*key)
+                    && !host.release_blocked(key)
                     && !host.busy(key)
                     && !host.vehicle_debt.contains(*key)
                     && !(host.applying.iter().chain(&host.queue))
                         .any(|request| &request.page == *key)
                     && !self.retry.contains_key(*key)
-                    && !self.handover.contains(*key)
                     && !pending.iter().any(|p| &p.key == *key)
             })
             .cloned()
@@ -758,8 +764,7 @@ impl Book {
     }
 
     /// Record a delivery's index results in order (§5): success advances
-    /// the key's watermark; a failure retries with the save backoff; a
-    /// reserved key waits for its release.
+    /// the key's watermark; a failure retries with the save backoff.
     pub fn record(&mut self, results: Vec<(Publication, Indexing)>, now: u64) {
         self.delivering = false;
         for (publication, indexing) in results {
@@ -785,38 +790,18 @@ impl Book {
                         },
                     );
                 }
-                Indexing::Reserved => {
-                    let retry = Retry {
-                        publication,
-                        failures,
-                        due: now,
-                    };
-                    self.retry.insert(key, retry);
-                }
             }
         }
     }
 
     /// The earliest retry due, for the driver's sleep (§5).
-    pub fn next_retry<F: HostIo>(&self, host: &Host<F>) -> Option<u64> {
-        self.retry
-            .iter()
-            .filter(|(key, _)| !self.reserved(key, host))
-            .map(|(_, retry)| retry.due)
-            .min()
-    }
-
-    /// A retained writer publishes `key`'s index: its reservation holds,
-    /// or its release has not yet been observed (Q6, V2).
-    fn reserved<F: HostIo>(&self, key: &str, host: &Host<F>) -> bool {
-        host.retained.contains(key) || self.handover.contains(key)
+    pub fn next_retry<F: HostIo>(&self, _host: &Host<F>) -> Option<u64> {
+        self.retry.iter().map(|(_, retry)| retry.due).min()
     }
 
     /// Who publishes `key`'s index now (§5, Q6).
-    pub fn owner<F: HostIo>(&self, key: &str, host: &Host<F>) -> Owner {
-        if self.reserved(key, host) {
-            Owner::Reservation
-        } else if self.owned.contains(key) {
+    pub fn owner<F: HostIo>(&self, key: &str, _host: &Host<F>) -> Owner {
+        if self.owned.contains(key) {
             Owner::Consumer
         } else {
             Owner::Watcher
@@ -979,7 +964,7 @@ impl PageHost {
         };
         if !held {
             self.store
-                .transaction(None)
+                .page_plan(None)
                 .page_open_checks(&spelling.file(), name)?;
         }
         self.try_register(&key, &spelling)
@@ -1064,10 +1049,9 @@ impl PageHost {
         kinds: &[EditKind],
     ) -> Result<(Text, Handoff), PageRefusal> {
         let file = PageId::from(spelling).file();
-        let tx = self.store.transaction(None);
-        tx.page_save_target(&file, dto)?;
+        let tx = self.store.page_plan(None);
         let old = source.and_then(|text| text.as_deref());
-        let (bytes, document) = tx.serialize_page(&file, dto, old, false)?;
+        let (bytes, document) = tx.serialize_host_input(&file, dto, old)?;
         let bytes: Text = Some(Arc::from(bytes));
         let handoff = Handoff {
             bytes: bytes.clone(),
@@ -1092,6 +1076,12 @@ impl PageHost {
     ) -> Result<(), PageRefusal> {
         let (spelling, source, base, version) = self.source(key, version, resolve);
         let (bytes, handoff) = self.serialize(&spelling, dto, source.as_ref(), kinds)?;
+        // L9-04: every live resolution, including whole-page Keep mine, keeps
+        // the reviewed disk bytes before any submit can publish over them.
+        if let Some(Some(old)) = &base {
+            self.store
+                .stage_marker_copy(&PageId::from(spelling).file(), old)?;
+        }
         let request = Request {
             id,
             generation: 0,
@@ -1167,71 +1157,6 @@ impl PageHost {
         };
         self.admit(session, request, vec![])
     }
-
-    /// `page_delete` (§7): the host's delete operation, for the current
-    /// window `session` only (S2). D4 refuses a page with unsaved input;
-    /// Waiting means the page is busy (retry when clean). `checked` is the
-    /// file's bytes the caller's identity check read (GH #620,
-    /// `pages::delete_page_expected`); the operation refuses when its own
-    /// read differs (Q-P2b-5). An admitted deletion is waited for, at most
-    /// `OPERATION_WAIT` (Finding B): `Applied` once its own save
-    /// published it; `Refused` when its draft failed (nothing changed);
-    /// `Pending` when the page cannot publish without the user (a conflict
-    /// or a persistent save error; it completes once it can); `Superseded`
-    /// or `Uncertain` otherwise.
-    pub fn delete(&self, session: u64, page: &PageId, checked: &[u8]) -> PageOperation {
-        // A host that ended deletes nothing.
-        let Some((key, spelling, ..)) = self.try_identify(page) else {
-            return PageOperation::Refused;
-        };
-        // `open`'s invalid-target refusal (docs/storage-contract.md
-        // `page_host::delete`): a path that is not a page file of this graph
-        // (outside the root, not a graph text file) deletes nothing. In-scope
-        // scenario: web content, a plugin or a frontend defect passing a path.
-        if self.store.as_page(&spelling.file()).is_none() {
-            return PageOperation::Refused;
-        }
-        if self.try_register(&key, &spelling).is_none() {
-            return PageOperation::Refused;
-        }
-        let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
-        let (shared, checked) = (Arc::downgrade(&self.driver.shared), checked.to_vec());
-        let delete = move |state: &mut State<ProductionIo, SystemClock>| {
-            if state.book.session != session {
-                return (Disposition::Refused, None);
-            }
-            let (disposition, reply) = state.progress.with_host(|host| {
-                let disposition = host.delete_checked(&key, &checked);
-                let pending = disposition == Disposition::Pending;
-                (
-                    disposition,
-                    pending.then(|| host.register_reply()).flatten(),
-                )
-            });
-            // OG-RULES Rule 8 (A-K1): the operation's write is a deletion.
-            if disposition == Disposition::Pending {
-                state.book.took([key.clone()], EditKind::DeletePage);
-            }
-            let slot = reply.map(|id| retained::ReplySlot::new(shared.clone(), id));
-            (disposition, slot)
-        };
-        let deleted = (self.driver.shared).locked_step(Deadline::At(deadline), delete);
-        match deleted {
-            Ok((Disposition::Pending, Some(slot))) => {
-                match self.settle(&slot, Some(session), deadline) {
-                    retained::Settled::Applied => PageOperation::Applied,
-                    retained::Settled::DraftFailed => PageOperation::Refused,
-                    retained::Settled::Unwritten(_) => PageOperation::Pending,
-                    retained::Settled::Superseded(_) => PageOperation::Superseded,
-                    retained::Settled::Uncertain => PageOperation::Uncertain,
-                }
-            }
-            // Not admitted in time: the page stayed busy (a path lock held).
-            Ok((Disposition::Waiting, _)) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
-            Err(Unanswered::Late) => PageOperation::Uncertain,
-            _ => PageOperation::Refused,
-        }
-    }
 }
 
 pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &Book) -> StopState {
@@ -1286,11 +1211,19 @@ pub(super) fn stop_state<F: HostIo, C: Clock>(progress: &Progress<F, C>, book: &
 
 impl Drop for PageHost {
     /// Stop and join the driver (its last step's results have been
-    /// delivered), then hand every held page's index back to the watcher.
+    /// delivered), then hand every held page's index back to the watcher,
+    /// which rereads them from disk. A driver that panicked (a host bug)
+    /// hands them back too, before its panic goes on (s3b O6). A writer lock
+    /// another writer's panic poisoned is taken over: handing pages back
+    /// writes nothing, and a panic here while unwinding would abort.
     fn drop(&mut self) {
-        self.driver.join();
-        let _writer = self.store.writer.lock().unwrap();
+        let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.driver.join()));
+        let writer = self.store.writer.lock().unwrap_or_else(|e| e.into_inner());
         self.store.watch.release_holds();
+        drop(writer);
+        if let Err(panic) = joined {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
 
@@ -1309,19 +1242,24 @@ mod publication;
 #[path = "binding_launch.rs"]
 mod launch;
 
+#[path = "binding_delete.rs"]
+mod delete;
 #[path = "binding_read.rs"]
 mod read;
 pub use read::{HostRead, HostReadError};
 #[path = "binding_apply.rs"]
 mod apply;
+#[path = "binding_spelling.rs"]
+mod spelling;
 #[cfg(test)]
 pub(super) use apply::creation_refusal;
 pub use apply::{ApplyRefusal, Effect, Expected, HostOp};
 #[cfg(test)]
 pub(super) use retained::unsaved;
+pub(super) use retained::FlushRefusal;
+pub use retained::RenameRefusal;
 #[cfg(feature = "test-faults")]
 pub use retained::OPERATION_WAIT;
-pub use retained::{RenameRefusal, Reservation, ReserveRefusal};
 #[cfg(test)]
 #[path = "binding_tests.rs"]
 mod tests;

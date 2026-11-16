@@ -6,10 +6,11 @@ import { LONG_PRESS_DELAY } from "./longPress";
 import { contextMenu, closeContextMenu, openPageContextMenu } from "../ui";
 import { ContextMenu } from "../components/ContextMenu";
 import { openPage, route } from "../router";
+import { pageByName } from "../document";
 import { readFileSync } from "node:fs";
 
-vi.mock("../nativeChrome", async (original) => ({
-  ...await original<typeof import("../nativeChrome")>(), isMobilePlatform: true,
+vi.mock("../inputCapability", async (original) => ({
+  ...await original<typeof import("../inputCapability")>(), touchPrimary: () => true,
 }));
 beforeAll(initParser);
 afterEach(() => { vi.useRealTimers(); closeContextMenu(); document.body.replaceChildren(); });
@@ -27,14 +28,19 @@ it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actio
   try {
     // Shared builder used by desktop right-click; platform-only actions retain
     // their existing availability policy.
-    openPageContextMenu(40, 40, "Tine");
-    const expected = actionIds();
-    expect(expected).toContain("open-sidebar");
-    closeContextMenu();
     const link = host.querySelector("a")!;
     pointer(link, "pointerdown");
     await vi.advanceTimersByTimeAsync(LONG_PRESS_DELAY + 100);
     pointer(link, "pointerup");
+    expect(document.querySelector(".peek-popup")).not.toBeNull();
+    // The editable preview (D-20261023-VQ) loads its source page; the shared
+    // builder is compared in that same state.
+    for (let i = 0; i < 40 && !pageByName("Tine"); i++) await vi.advanceTimersByTimeAsync(25);
+    expect(pageByName("Tine")).toBeTruthy();
+    openPageContextMenu(40, 40, "Tine");
+    const expected = actionIds();
+    expect(expected).toContain("open-sidebar");
+    closeContextMenu();
     expect(document.querySelector(".peek-popup")).not.toBeNull();
     const actions = document.querySelector<HTMLButtonElement>('.peek-popup [aria-label="Page actions"]');
     expect(actions).not.toBeNull();
@@ -43,9 +49,9 @@ it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actio
     expect(actionIds()).toEqual(expected);
     expect(route()).toMatchObject({ name: "Before" });
     expect(document.querySelector(".peek-popup")).not.toBeNull();
-    // GH #705: a phone has no tab strip, so the shared menu must not offer a
-    // background tab the user could never reach.
-    expect(actionIds()).not.toContain("open-new-tab");
+    // GH #705 + D-20261018-W1: a phone offers Open in new tab like any screen;
+    // the background tab is listed under Tabs in the left sidebar.
+    expect(actionIds()).toContain("open-new-tab");
     // Tapping a menu action never dismisses the preview that owns the menu.
     document.querySelector<HTMLElement>('[data-page-action-id="open-sidebar"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }));
     expect(document.querySelector(".peek-popup")).not.toBeNull();

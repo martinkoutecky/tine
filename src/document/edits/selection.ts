@@ -1,10 +1,12 @@
 import { msg } from "../../i18n";
 import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
-import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
-import { doc, setDoc, bumpCollapseEpochs } from "../model";
-import { applyOutlineChange, markOutlineDirty, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
-import { createSignal, createRoot, createMemo } from "solid-js";
+import { OutlineScope, hidesChildrenInView, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible } from "../tree";
+import { doc, setDoc, bumpCollapseEpochs, writeRaw } from "../model";
+import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
+import { createSignal, createRoot, createMemo, untrack } from "solid-js";
+import { threadRootOf } from "../commentThreads";
+import { previousBodySibling } from "../bodyStructure";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
@@ -13,7 +15,7 @@ import { formatForBlock } from "../model";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
-import { workflow } from "../../ui";
+import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../../ui";
 import { markDirty } from "../host/wiring";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
@@ -36,10 +38,9 @@ export function selectionScope(): OutlineScope | null { return activeSelectionSc
  *  Arrow, Shift+Arrow) is dead on any routed page / reference / embed. */
 function selectionOrder(id: string | null, scope: OutlineScope | null = activeSelectionScope): string[] {
   if (!id) return [];
-  if (scope) return scopedVisibleOrder(scope);
-  if (visibleData().index.has(id)) return visibleOrder();
   const page = doc.byId[id]?.page;
-  return page ? pageVisibleOrder(page) : [];
+  const order = scope ? scopedVisibleOrder(scope) : visibleData().index.has(id) ? visibleOrder() : page ? pageVisibleOrder(page) : [];
+  return untrack(() => threadRootOf(id) === null ? order.filter(at => threadRootOf(at) === null) : order);
 }
 
 // ---------------------------------------------------------------------------
@@ -219,9 +220,12 @@ export function cycleSelectionTasks(): boolean {
       for (const id of ids) {
         const node = state.byId[id];
         if (!node) continue;
-        // Match the existing editor command exactly: marker cycling handles
-        // repeaters, while checkbox/marker-chip transitions own time tracking.
-        node.raw = cycleMarkerSmart(node.raw, workflow(), formatForBlock(id)).raw;
+        // OG cycle-todos! saves through with-timetracking. Reuse the shared
+        // old/new-raw transition without adding per-block undo or save work.
+        const format = formatForBlock(id);
+        writeRaw(state, id, cycleMarkerSmart(node.raw, workflow(), format, {
+          format, enabled: timetrackingEnabled(), withSeconds: logbookWithSecondSupport(),
+        }).raw);
       }
     })
   );
@@ -284,10 +288,8 @@ export function indentSelection() {
   const ids = topSelected();
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const first = ids[0];
-  const sibs = rootsOf(first);
-  const fi = sibs.indexOf(first);
-  if (fi <= 0) return;
-  const newParent = sibs[fi - 1];
+  const newParent = previousBodySibling(first);
+  if (!newParent) return;
   // A view rule: inside a scope, the new parent must be visible there.
   if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(newParent)) return;
   // Structural indent is single-page ONLY. The target (newParent) is on first's
@@ -301,6 +303,7 @@ export function indentSelection() {
   const change = outlineChange({ verb: "indent", keys: same }, [destPage]);
   if ("refused" in change) {
     if (change.refused === "depth_cap") pushToast(msg("selection-outline-is-too-deep-to-indent"), "error");
+    else noteOutlineRefusal(change.refused, "indent");
     return;
   }
   commitSelectionChange(change, "indent-sel");
@@ -343,6 +346,21 @@ export function deleteSelection() {
   notice.show();
 }
 
+/** The blocks a selected-only copy carries (GH #943, D-20261112-SU941): the selected
+ * blocks, plus the whole subtree of every selected block whose children its view hides
+ * (a fold or a Sheet view), since those can never be selected. An expanded parent
+ * selected alone stays alone.
+ * O(selection + hidden subtree size). */
+function selectionCopiedIds(): Set<string> {
+  const selected = selectedIds();
+  const out = new Set(selected);
+  const addSubtree = (id: string) => {
+    for (const child of doc.byId[id]?.children ?? []) { out.add(child); addSubtree(child); }
+  };
+  for (const id of selected) if (hidesChildrenInView(id, activeSelectionScope)) addSubtree(id);
+  return out;
+}
+
 /** Public clipboard text for the selected roots; O(visible-order resolution + selected subtree bytes).
  * Defaults to the copy preference; cuts request complete subtrees so their
  * public clipboard flavor includes everything deletion removes. */
@@ -351,7 +369,7 @@ export function selectionMarkdown(includeSubtree = copyIncludeSubtree()): string
   // selected-only are user-configurable (see copySettings): OG copies the full
   // sub-tree of a selected parent; Tine's default copies only the selected blocks.
   const stripCollapsed = copyStripCollapsed();
-  const onlySel = includeSubtree ? undefined : new Set(selectedIds());
+  const onlySel = includeSubtree ? undefined : selectionCopiedIds();
   return topSelected()
     .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
     .join("\n");
@@ -371,7 +389,7 @@ export function setSelectionHeading(pointerId: string, state: HeadingState): boo
   const pages = [...new Set(changes.map((change) => change.page))];
   pushUndo("heading-selection", pages);
   setDoc(produce((stateDoc) => {
-    for (const change of changes) stateDoc.byId[change.id].raw = change.raw;
+    for (const change of changes) writeRaw(stateDoc, change.id, change.raw);
   }));
   // No block changes page: one independent edit per page (STEP3 §8).
   for (const page of pages) markDirty(page, "save-block");

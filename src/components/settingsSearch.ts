@@ -41,7 +41,7 @@ export function settingHighlight(text: string, query: string): { text: string; m
   return parts;
 }
 
-export type SettingSearchEntry = { tab: Tab; label: string | Msg; description: string | Msg; keywords?: string | Msg; aliases?: string[]; level?: "advanced"; mobileOnly?: true };
+export type SettingSearchEntry = { tab: Tab; label: string | Msg; description: string | Msg; keywords?: string | Msg; aliases?: string[]; level?: "advanced"; touchOnly?: true };
 export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-language"), description: msg("settings-search-interface-translation-locale-menus"), aliases: ["语言", "中文", "Chinese", "English"] },
   { tab: "appearance", label: msg("settings-search-theme-mode"), description: msg("settings-search-light-dark-system") },
@@ -67,6 +67,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-wide-page-width"), description: msg("settings-search-fill-pane-custom-pixels-cap"), aliases: ["wide mode width"], level: "advanced" },
   { tab: "appearance", label: msg("settings-search-document-mode"), description: msg("settings-search-hide-bullets-prose") },
   { tab: "appearance", label: msg("settings-search-document-mode-enter-creates-a-new-block"), description: msg("settings-search-enter-shift-enter-internal-newline-config") },
+  { tab: "appearance", label: msg("settings-search-comment-margin"), description: msg("settings-search-comment-threads-hide-show") },
   { tab: "appearance", label: msg("settings-search-show-brackets"), description: msg("settings-search-page-references-config-shortcut") },
   { tab: "appearance", label: msg("settings-search-typographic-replacements"), description: msg("settings-search-arrows-dashes-glyphs") },
   { tab: "appearance", label: msg("settings-search-wrap-code-lines"), description: msg("settings-search-code-blocks-line-wrapping-long-lines") },
@@ -75,12 +76,13 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-space-after-inserting-a-reference"), description: msg("settings-search-page-block-autocomplete-spacing") },
   { tab: "appearance", label: msg("settings-search-dim-in-focus-mode"), description: msg("settings-search-inactive-blocks") },
   { tab: "appearance", label: msg("settings-search-load-local-file-images"), description: msg("settings-search-absolute-paths-permission-security") },
-  { tab: "appearance", label: msg("settings-mobile-navigation-label"), description: msg("settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar"), mobileOnly: true },
+  { tab: "appearance", label: msg("settings-mobile-navigation-label"), description: msg("settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar"), touchOnly: true },
   { tab: "appearance", label: msg("settings-search-smooth-scrolling-experimental"), description: msg("settings-search-animated-journal-scrolling-webkit"), aliases: ["scroll animation"], level: "advanced" },
   { tab: "appearance", label: msg("settings-search-system-title-bar-window-controls"), description: msg("settings-search-native-frame-chrome") },
   { tab: "appearance", label: msg("settings-search-show-tine-in-the-system-tray"), description: msg("settings-search-tray-notification-area-menu-bar-icon") },
   { tab: "appearance", label: msg("settings-search-minimize-to-tray"), description: msg("settings-search-hide-taskbar-dock-minimize-system-tray") },
   { tab: "appearance", label: msg("settings-search-start-minimized-to-tray"), description: msg("settings-search-launch-hidden-startup-autostart-system-tray") },
+  { tab: "editor", label: msg("settings-search-your-name"), description: msg("settings-search-comment-author-name-margin-reply"), aliases: ["author", "identity"] },
   { tab: "editor", label: msg("settings-search-file-format"), description: msg("settings-search-new-pages-markdown-org") },
   { tab: "editor", label: msg("settings-search-logical-outdenting"), description: msg("settings-search-shift-tab-following-siblings-roam-config") },
   { tab: "editor", label: msg("settings-search-link-autocomplete-default"), description: msg("settings-search-og-adaptive-existing-typed-page-tag-completion"), level: "advanced" },
@@ -92,6 +94,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "editor", label: msg("settings-search-copy-a-parent-block-s-sub-blocks"), description: msg("settings-search-clipboard-subtree"), level: "advanced" },
   { tab: "editor", label: msg("settings-search-strip-collapsed-when-copying"), description: msg("settings-search-clipboard-properties"), level: "advanced" },
   { tab: "editor", label: msg("settings-search-click-a-block-reference-to-zoom-in"), description: msg("settings-search-reference-navigation") },
+  { tab: "editor", label: msg("settings-result-destination-label"), description: msg("settings-search-search-tab-results-open-in-new-tab-this-tab"), level: "advanced" },
   { tab: "journals", label: msg("settings-search-journal-date-format"), description: msg("settings-search-display-titles") },
   { tab: "journals", label: msg("settings-search-first-day-of-week"), description: msg("settings-search-calendar-monday-sunday") },
   { tab: "journals", label: msg("settings-search-carry-over"), description: msg("settings-search-buttons-context-header-last-days") },
@@ -117,6 +120,8 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "graph", label: msg("settings-graph-folder-label"), description: msg("settings-graph-folder-search-description"), aliases: ["open graph folder"] },
   { tab: "graph", label: msg("settings-search-home-page"), description: msg("settings-search-home-start-startup-page") },
   { tab: "graph", label: msg("graph-publish-publish"), description: msg("graph-publish-choose-a-destination-outside-the-graph-the-export"), keywords: msg("graph-publish-export-name") },
+  { tab: "graph", label: msg("git-settings-label"), description: msg("git-settings-hint"), aliases: ["git", "autocommit", "version control", "sync", "push", "pull", "remote", "token"] },
+  { tab: "graph", label: msg("seen-settings-label"), description: msg("seen-settings-hint"), aliases: ["seen", "changed since", "mark seen", "forget seen"] },
   { tab: "graph", label: msg("query-export-limit-setting-query-export-size-limit"), description: msg("query-export-limit-setting-default-1-gi-b-copied-assets-must-fit") },
   { tab: "plugins", label: msg("settings-ui-plugins"), description: msg("plugins-open-settings") },
   { tab: "diagnostics", label: msg("settings-search-help-diagnostics"), description: msg("settings-search-diagnostic-report-crash-unclean-exit-save-slow") },
@@ -125,6 +130,9 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "diagnostics", label: msg("graph-verification-verify-synchronized-graph"), description: msg("graph-verification-compare-the-exact-markdown-and-org-file-bytes") },
   { tab: "shortcuts", label: msg("settings-search-keyboard-shortcuts"), description: msg("settings-search-key-bindings-commands-remap") },
   { tab: "about", label: msg("settings-search-about"), description: msg("settings-search-version-licenses-updates") },
+  { tab: "sharing", label: msg("quick-share-settings-account"), description: msg("settings-search-quick-share-account"), aliases: ["GitHub", "gist"] },
+  { tab: "sharing", label: msg("quick-share-settings-shares"), description: msg("settings-search-quick-share-shares") },
+  { tab: "sharing", label: msg("quick-share-settings-find"), description: msg("settings-search-quick-share-find") },
 ];
 
 function textsOf(...parts: (string | Msg | undefined)[]): string {
@@ -161,32 +169,53 @@ export function settingMatches(entry: SettingSearchEntry, query: string): boolea
   return terms.every((term) => (isShortTerm(term) ? shown : haystack).includes(term));
 }
 
-/** The description to show under a result whose name does not match: the
- * shown-language text when it holds a query word, else the English original.
- * Undefined when the name matches, so name hits stay one line (GH #706: a
- * description match looked unrelated while the description was hidden). */
+/** Explain query words absent from the visible label, including hits in hidden
+ * keywords, aliases and English originals. Ranking still uses nameMatches;
+ * that group includes hidden text and cannot decide whether evidence is needed. */
 export function matchedDescription(entry: SettingSearchEntry, query: string): string | undefined {
-  const terms = queryTerms(query);
-  if (!terms.length || nameMatches(entry, terms)) return undefined;
-  const shown = typeof entry.description === "string" ? entry.description : richPlain(render(entry.description));
-  const english = typeof entry.description === "string" ? entry.description : richPlain(renderEnglish(entry.description));
-  for (const [text, short] of [[shown, true], [english, false]] as const) {
-    const hits = terms.filter((term) => short || !isShortTerm(term)).map((term) => text.toLowerCase().indexOf(term)).filter((at) => at >= 0);
-    if (hits.length) return excerpt(text, Math.min(...hits));
+  let missing = queryTerms(query).filter(term => !shownTextsOf(entry.label).includes(term));
+  if (!missing.length) return undefined;
+  const plain = (value: string | Msg, english = false) => typeof value === "string" ? value : richPlain(english ? renderEnglish(value) : render(value));
+  const sources = [
+    ...[entry.description, entry.keywords].flatMap(value => value === undefined ? [] : [{ text: plain(value), shown: true }]),
+    ...[entry.label, entry.description, entry.keywords, ...(entry.aliases ?? [])].flatMap(value => value === undefined ? [] : [{ text: plain(value, true), shown: false }]),
+  ];
+  const snippets: string[] = [];
+  for (const { text, shown } of sources) {
+    // One-character terms must obey settingMatches' shown-language rule.
+    // One source can need several excerpts when its matching words are far apart.
+    while (true) {
+      const hits = missing.filter(term => shown || !isShortTerm(term))
+        .map(term => ({ term, at: text.toLowerCase().indexOf(term) })).filter(hit => hit.at >= 0)
+        .sort((a, b) => a.at - b.at);
+      if (!hits.length) break;
+      const snippet = excerpt(text, hits[0].at, hits[0].term.length);
+      snippets.push(snippet);
+      missing = missing.filter(term => !snippet.toLowerCase().includes(term));
+    }
+    if (!missing.length) break;
   }
-  return undefined;
+  return snippets.length ? snippets.join(" · ") : undefined;
 }
 
 /** About one line of `text` around position `at`, with an ellipsis where cut, so a
  * long description shows its match instead of its opening sentences. */
-function excerpt(text: string, at: number): string {
+function excerpt(text: string, at: number, matchLength: number): string {
   const chars = [...text];
-  const index = [...text.slice(0, at)].length;
+  // Search offsets refer to lowercased UTF-16 text; map them back before slicing
+  // visible code points (lowercasing can expand a character, e.g. İ).
+  let index = 0, matchEnd = 0, foldedOffset = 0;
+  for (const char of chars) {
+    if (foldedOffset <= at) index = matchEnd;
+    if (foldedOffset >= at + matchLength) break;
+    foldedOffset += char.toLowerCase().length;
+    matchEnd++;
+  }
   let start = Math.max(0, index - 40);
   // Start at a word boundary when the text has one before the match (Latin text; CJK has none).
   const space = chars.slice(start, index).findIndex((char) => /\s/.test(char));
   if (start > 0 && space >= 0) start += space + 1;
-  const end = Math.min(chars.length, start + 120);
+  const end = Math.min(chars.length, Math.max(start + 120, matchEnd));
   return `${start > 0 ? "…" : ""}${chars.slice(start, end).join("").trim()}${end < chars.length ? "…" : ""}`;
 }
 

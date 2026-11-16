@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { CalcBlock } from "./body";
@@ -83,11 +84,11 @@ describe("CalcBlock copy button (GH #228)", () => {
       expect(column).not.toBeNull();
       const btns = column.querySelectorAll<HTMLButtonElement>(".calc-out button.copy-btn");
       expect(btns).toHaveLength(1); // the error line offers none
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      const before = editor.value;
+      const editor = maybeEditorIn(root)!;
+      const before = editor.value();
       btns[0]!.click();
       expect(writeText).toHaveBeenCalledWith("2");
-      expect(editor.value).toBe(before);
+      expect(editor.value()).toBe(before);
       expect(doc.byId.calc.raw).toBe(raw);
     } finally {
       dispose();

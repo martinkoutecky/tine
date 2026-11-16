@@ -48,7 +48,9 @@ export function currentFiles(root) {
 // Inline Rust test modules can occur near the start of a very large file.
 // Remove each complete top-level module, preserving production code after it.
 export function productionSource(source) {
-  return source.replace(/#\[cfg\(test\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\}/gm, "");
+  // `#[cfg(test)]` and `#[cfg(all(test, …))]` modules, nested ones included:
+  // the block ends at the closing brace with the module's own indentation.
+  return source.replace(/^([ \t]*)#\[cfg\((?:test|all\(test\b[^\]]*)\)\]\s*mod\s+\w+\s*\{[\s\S]*?^\1\}/gm, "");
 }
 
 /** Production lines: inline `#[cfg(test)] mod` blocks do not count. */
@@ -92,11 +94,24 @@ export const PERSISTED_FORMATS = Object.freeze([
   "graph-link-identity",
   // Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073.
   "share-inbox",
+  // ADR 0074 (Martin 2026-10-11, "for now do full zips"; ADR acceptance pending).
+  "backup-zip-snapshot",
+  // Martin 2026-10-18 (D-20261018-Q1 S1: Rule 8 approval of quick share's device-local records); docs/adr/0076.
+  "quick-share-records-json", "quick-share-account-json",
+  // PENDING Martin: GIT-CRED (ADR 0078 open question 2) and its Rule 8 approval; not to integrate before.
+  "git-credentials-json",
+  // D-20261028-SG, seen design rev 2; docs/adr/0079.
+  "seen-git-json",
 ]);
-export const PINNED_FORMAT_COUNT = 30;
+export const PINNED_FORMAT_COUNT = 35;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
+  // Not a new format: one rename of an existing git file, `.git/index.lock`, aside to `tine-stale-index-<uuid>.lock`
+  // in the same gitdir before deleting it, on the person's "Remove the stale lock" click (ADR 0078 §1 slice 3).
+  // Martin approved 2026-10-29, D-20261029-GSL.
+  "src-tauri/src/owner/git_stale_lock.rs": { sites: 1, approval: "Martin 2026-10-29 D-20261029-GSL; docs/adr/0078 §1 slice 3" },
+  "src-tauri/src/owner/seen.rs": { sites: 1, approval: "Martin 2026-10-28 D-20261028-SG; seen design rev 2; docs/adr/0079" },
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
   "src-tauri/src/drafts.rs": { sites: 1, approval: "og QUESTIONS Q6 2026-09-29; docs/adr/0061" },
@@ -110,7 +125,13 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "crates/tine-store/src/transaction/move_file.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
   // Not a new format: rename_replace's one rename gained a Windows arm
   // (MoveFileExW with WRITE_THROUGH, falling back to std's rename; REVIEW-2b F10).
-  "crates/tine-store/src/atomic_file.rs": { sites: 1, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm" },
+  // Plus the private writer (create_new owner-only temporary + write_all, then fsync + rename) of the two quick
+  // share records, the only caller (src-tauri/src/quick_share/records.rs via device_io::atomic_write_private).
+  "crates/tine-store/src/atomic_file.rs": { sites: 3, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm. +2: atomic_write_private, Martin 2026-10-18 D-20261018-Q1 S1; docs/adr/0076" },
+  // Not a persisted format: the share's private build graph, a copy of the selected pages and config.edn in a
+  // tempdir under app cache that is removed before prepare returns (DESIGN §3.1), plus the in-memory gzip of the
+  // share document. Martin 2026-10-18 D-20261018-Q1 S1; docs/adr/0076.
+  "crates/tine-graph-features/src/quick_share.rs": { sites: 3, approval: "Martin 2026-10-18 D-20261018-Q1 S1 (scratch build graph removed before prepare returns, in-memory gzip); docs/adr/0076" },
   // Bench-only NDJSON event log: written only when TINE_BENCH_EVENTS names a
   // path, never read back by Tine, absent in normal use (docs/bench-storage-ab.md
   // on og-storage-perf-ab). Not a persisted format.
@@ -128,6 +149,14 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/owner/terminal.rs": { sites: 1, approval: "Martin 2026-10-13: CLI stdout output, not a persisted format" },
   // The detached serve's stderr capture, emptied past 1 MiB (serve.rs bound_start_log); read only to report a failed start.
   "src-tauri/src/owner/client.rs": { sites: 1, approval: "Martin 2026-10-13: tine serve start log, bounded diagnostic, not a persisted format" },
+  // CLI slice 3 git runs: git's own index file, under git's index.lock protocol
+  // (create_new lock + write_all + rename, with a scratch copy for libgit2 to
+  // read). Git's format in .git, not a Tine format; never a graph file.
+  "src-tauri/src/owner/git_run.rs": { sites: 4, approval: "Martin 2026-10-19 D-20261019-CL4 (runs write .git objects, not a storage mode)" },
+  // Git autocommit (ADR 0078 slice 1): the chunked copy of a staged file into
+  // libgit2's blob writer, i.e. a git object in .git (git's format, not Tine's;
+  // never a graph file). Same category as git_run's CL4 entry.
+  "src-tauri/src/owner/git_autocommit.rs": { sites: 1, approval: "Martin 2026-10-18/19 D-20261018-G2/G5, D-20261019-G8/G9 (Tine commits the graph to git); docs/adr/0078" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

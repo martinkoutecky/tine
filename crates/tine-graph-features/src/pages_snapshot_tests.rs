@@ -508,7 +508,7 @@ fn a_rename_planned_before_a_config_change_commits_nothing() {
         b2_deliver(&store, &root, B2_LOWBAR);
         let before = b2_tree(&root);
         assert!(
-            commit_rename(&store, old, plan, &[]).unwrap().is_none(),
+            preflight_rename(&store, old, plan, &[]).unwrap().is_none(),
             "{case}: a stale plan replans"
         );
         assert_eq!(b2_tree(&root), before, "{case}: nothing written");
@@ -536,7 +536,7 @@ fn a_config_change_between_targets_and_write_set_replans() {
         "the stale plan spells the old format: {pages:?}"
     );
     let before = b2_tree(&root);
-    assert!(commit_rename(&store, "Ns", plan, &[]).unwrap().is_none());
+    assert!(preflight_rename(&store, "Ns", plan, &[]).unwrap().is_none());
     assert_eq!(b2_tree(&root), before);
     hosted(&store, |host| {
         rename_page_expected(&store, host, "Ns", "Space", None)
@@ -552,7 +552,10 @@ fn a_config_change_between_targets_and_write_set_replans() {
 /// plan exhausts the existing four attempts with no write; once it is
 /// stable the rename goes through, in the format it was planned in. Each
 /// attempt now plans more than once (the retained writer's discovery under
-/// its reservation, Q-P2b-1), so the bound is counted in attempts.
+/// its reservation, Q-P2b-1), so the bound is counted in attempts. A
+/// rename of several pages is one host operation (host-only-writer S2):
+/// the rename's one attempt hands it to `retained::operation`, whose four
+/// attempts are the bound.
 #[test]
 fn a_config_changing_during_every_plan_exhausts_the_retries() {
     let (_dir, root, store) = b2_graph(&[
@@ -581,8 +584,8 @@ fn a_config_changing_during_every_plan_exhausts_the_retries() {
     assert_eq!(err.to_string(), "page changed repeatedly during rename");
     assert_eq!(
         crate::ATTEMPTS.with(|n| n.get()),
-        4,
-        "the existing bound: four attempts"
+        1 + 4,
+        "the existing bound: four attempts of the host operation"
     );
     assert!(
         flips.get() >= 4,
@@ -594,7 +597,13 @@ fn a_config_changing_during_every_plan_exhausts_the_retries() {
     })
     .unwrap();
     let after = b2_tree(&root);
-    assert!(after.contains_key("Space%2Fchild.md"), "{after:?}");
+    // The config the last flip left: an odd count is the triple-lowbar one.
+    let child = if flips.get() % 2 == 1 {
+        "Space___child.md"
+    } else {
+        "Space%2Fchild.md"
+    };
+    assert!(after.contains_key(child), "{after:?}");
     assert_eq!(after["Ref.md"], "- see [[Space/child]]\n");
     store.close();
 }

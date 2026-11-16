@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -20,6 +21,7 @@ for (const format of ["md", "org"] as const) for (const children of [false, true
     const source = { id: `pages/Source.${format}`, name: "Source", title: "Source", kind: "page" as const, format, pre_block: null,
       blocks: [{ id: "source", raw: "source body", collapsed: false, children: [] }] };
     vi.spyOn(backend(), "getPage").mockResolvedValue(source);
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(source);
     loadSingle({ name: "Host", title: "Host", kind: "page", format, pre_block: null,
       blocks: [{ id: "host", raw: "{{embed [[Source]]}}", collapsed: false,
         children: children ? [{ id: "child", raw: "host child", collapsed: false, children: [] }] : [] }] });
@@ -46,10 +48,10 @@ for (const format of ["md", "org"] as const) for (const children of [false, true
       expect(blockProperty("host", "collapsed")).toBe("false");
       if (children) expect(root.textContent).toContain("host child");
       startEditing("host", 0); await tick();
-      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", ctrlKey: true, bubbles: true, cancelable: true }));
+      const editor = editorIn(root);
+      editor.keydown({ key: "ArrowUp", ctrlKey: true, bubbles: true, cancelable: true });
       expect(doc.byId.host.collapsed).toBe(true);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", ctrlKey: true, bubbles: true, cancelable: true }));
+      editor.keydown({ key: "ArrowDown", ctrlKey: true, bubbles: true, cancelable: true });
       expect(doc.byId.host.collapsed).toBe(false);
     } finally { dispose(); }
   });

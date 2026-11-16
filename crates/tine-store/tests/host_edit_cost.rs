@@ -38,12 +38,19 @@ struct Graph {
     aged: bool,
     /// How many of the unrelated pages the window holds open beside it.
     held: usize,
+    /// Whether the store's background watcher is stopped for the measurement.
+    /// Its echo of the save reaches the host as one more observation round
+    /// (reconcile and worker-key visits) when its cycle falls between the
+    /// save's rename and its publication, which the machine's load decides;
+    /// a count of visits that must be exact cannot include it.
+    no_watcher: bool,
 }
 
 const ALONE: Graph = Graph {
     unrelated: 0,
     aged: false,
     held: 0,
+    no_watcher: false,
 };
 
 /// `edits` submits of the page's first block, each answered before the next,
@@ -70,6 +77,9 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
     }
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
+    if graph.no_watcher {
+        store.stop_watcher_for_tests();
+    }
     let (sink, mail) = mpsc::channel();
     let host = PageHost::start(
         &store,
@@ -190,14 +200,17 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // REVIEW-3b-P2b R4(a): the path from submit to publication (save, index
     // publication, the waiter) reads and stamps the edited page only, on an
-    // aged graph and on one a sync tool just delivered (every file racy, so
-    // the watcher rehashes them; that is its own thread's work, §5.4).
+    // aged graph and on one a sync tool just delivered. Stop the watcher:
+    // these exact process-global counts must exclude its racy rehashes and
+    // forwarded save echoes, whichever cycle host load puts them in (§5.4).
+    // racy_delivery_cost measures the live watcher's work separately.
     for aged in [true, false] {
         let [small, large] = [60, 600].map(|unrelated| {
             let graph = Graph {
                 unrelated,
                 aged,
                 held: 0,
+                no_watcher: true,
             };
             let (counts, _) = edit(1, 1, graph);
             eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?}");
@@ -220,6 +233,45 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
              (aged={aged}); exemplar page_host/binding_bridge.rs index()"
         );
         assert_eq!(large.files_written, 1, "the edit's one save");
+        // PC-3 (s3b O6): the delivery's and dispatch's writer sections run
+        // under `driver::under_writer`, whose unwind containment adds no
+        // read, write, stat, sync or parse. The exact path, from submit to
+        // publication: the save reads the page and its base (2 full reads,
+        // 2 stamps), parses old and new text plus the index's parse (3),
+        // writes one temp file and syncs it and the directory (2).
+        let io = |c: &Counts| {
+            [
+                ("full_reads", c.full_reads),
+                ("preamble_reads", c.preamble_reads),
+                ("hash_reads", c.hash_reads),
+                ("stamps_by_path", c.stamps_by_path),
+                ("readdir", c.readdir),
+                ("parses", c.parses),
+                ("store_reads", c.store_reads),
+                ("watcher_reads", c.watcher_reads),
+                ("observation_reads", c.observation_reads),
+                ("fsyncs", c.fsyncs),
+                ("files_written", c.files_written),
+            ]
+        };
+        let pinned = [
+            ("full_reads", 2),
+            ("preamble_reads", 0),
+            ("hash_reads", 0),
+            ("stamps_by_path", 2),
+            ("readdir", 0),
+            ("parses", 3),
+            ("store_reads", 0),
+            ("watcher_reads", 0),
+            ("observation_reads", 0),
+            ("fsyncs", 2),
+            ("files_written", 1),
+        ];
+        assert_eq!(
+            io(&small),
+            pinned,
+            "PC-3: a save's delivery costs exactly this (aged={aged})"
+        );
     }
 }
 
@@ -236,6 +288,7 @@ fn an_edit_among_many_held_pages_visits_what_changed() {
             unrelated: held as usize,
             aged: true,
             held: held as usize,
+            no_watcher: true,
         };
         let (counts, _) = edit(1, 1, graph);
         eprintln!("M4 held={held}: {counts:?}");

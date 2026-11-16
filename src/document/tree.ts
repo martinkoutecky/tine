@@ -1,7 +1,9 @@
 import { doc, blockIsOpaqueSheetView, mainPages, formatForBlock } from "./model";
 import { createRoot, createMemo } from "solid-js";
-import { splitProps, BUILTIN_HIDE } from "../editor/properties";
+import { isEditorEmpty, BUILTIN_HIDE } from "../editor/properties";
 import { outlineMaxDepth } from "../editor/outline";
+import { visibleChildren } from "./commentOrder";
+import { threadRootOf } from "./commentThreads";
 
 // ---------------------------------------------------------------------------
 // Tree helpers
@@ -18,6 +20,17 @@ export function indexInSiblings(id: string): number {
   return rootsOf(id).indexOf(id);
 }
 
+/** Whether the block's children are hidden in the view `scope` describes: folded (the
+ * scope's fold override, a zoom's force-expanded root, else the durable flag) or shown
+ * as an opaque Sheet view (grid/table/board) instead of as rows. The one answer visible
+ * order and copy share (GH #943). O(1); the Sheet answer is read only for an unfolded parent. */
+export function hidesChildrenInView(id: string, scope?: OutlineScope | null): boolean {
+  const node = doc.byId[id];
+  if (!node?.children.length) return false;
+  const folded = id !== scope?.forceExpandedRoot && (scope?.collapsed?.(id, node.collapsed) ?? node.collapsed);
+  return folded || blockIsOpaqueSheetView(id);
+}
+
 /** Page-local preorder without DTO copies. Scopes omit missing nodes and can
  * override collapse; ordinary page/feed order retains missing root ids. O(visible nodes). */
 function visitVisible(ids: readonly string[], visit: (id: string) => void, scope?: OutlineScope): void {
@@ -26,9 +39,9 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
     if (!node && scope) continue;
     visit(id);
     if (!node) continue;
-    const collapsed = scope?.collapsed?.(id, node.collapsed) ?? node.collapsed;
-    if ((!collapsed || id === scope?.forceExpandedRoot) && node.children.length && !blockIsOpaqueSheetView(id)) {
-      visitVisible(node.children, visit, scope);
+    if (node.children.length && !hidesChildrenInView(id, scope)) {
+      // Comments show under their block, before its other children (commentOrder.ts).
+      visitVisible(visibleChildren(node.children), visit, scope);
     }
   }
 }
@@ -57,11 +70,24 @@ export function visibleOrder(): string[] {
 // that aren't part of the main routed view, e.g. the quick-capture scratch page,
 // whose roots never appear in mainPages(). Without this, prevVisible/nextVisible
 // (and therefore Backspace-merge and Up/Down nav) are dead in the capture window.
-export function pageVisibleOrder(pageName: string): string[] {
+export function pageVisibleOrder(pageName: string, revealId?: string): string[] {
   const order: string[] = [];
   const page = doc.pages.find((p) => p.name === pageName);
   if (!page) return order;
-  visitVisible(page.roots, (id) => order.push(id));
+  // GH #766: a secondary view can expose a child whose source ancestors are
+  // folded. Reveal only its ancestor path in SOURCE order for structural
+  // navigation; never use the arbitrary result list as a merge topology.
+  const ancestors = new Set<string>();
+  let parent = revealId ? doc.byId[revealId]?.parent : null;
+  while (parent && !ancestors.has(parent)) {
+    ancestors.add(parent);
+    parent = doc.byId[parent]?.parent;
+  }
+  const scope = revealId ? {
+    roots: page.roots,
+    collapsed: (id: string, stored: boolean) => ancestors.has(id) ? false : stored,
+  } : undefined;
+  visitVisible(page.roots, (id) => order.push(id), scope);
   return order;
 }
 
@@ -91,45 +117,55 @@ export function scopedVisibleOrder(scope: OutlineScope): string[] {
 /** The only trailing-block reuse candidate for a rendered outline boundary.
  * The caller must supply the actual page or zoom scope so journal days cannot
  * cross-select each other. A collapsed parent and an opaque Sheet host remain
- * visible terminal rows, but their storage children mean neither is a leaf. */
+ * visible terminal rows, but ordinary children mean neither is a body leaf. */
 export function trailingVisibleEmptyLeaf(scope: OutlineScope): string | null {
-  const id = scopedVisibleOrder(scope).at(-1);
+  const id = scopedVisibleOrder(scope).reverse().find(id => threadRootOf(id) === null);
   if (!id) return null;
   const node = doc.byId[id];
-  if (!node || node.children.length !== 0) return null;
-  return splitProps(node.raw, BUILTIN_HIDE, formatForBlock(id)).visible.trim() === "" ? id : null;
+  if (!node || node.children.some(child => threadRootOf(child) === null)) return null;
+  const format = formatForBlock(id);
+  return isEditorEmpty(node.raw, BUILTIN_HIDE, format) ? id : null;
+}
+
+/** Resolve visible order once per gesture. A body source skips annotations by
+ * default; a thread source can still step within its thread. Explicit filters
+ * also support returning from a thread to the body.
+ * Rebuilding a routed/scoped order at every skipped reply is quadratic. */
+export function visibleNeighbor(
+  id: string,
+  direction: -1 | 1,
+  scope: OutlineScope | null = null,
+  include?: (id: string) => boolean,
+): string | null {
+  const body = !include && threadRootOf(id) === null;
+  let order: readonly string[], at: number;
+  if (scope) {
+    order = scopedVisibleOrder(scope);
+    at = order.indexOf(id);
+  } else {
+    const visible = visibleData();
+    const mainIndex = visible.index.get(id);
+    if (mainIndex !== undefined) { order = visible.order; at = mainIndex; }
+    else {
+      const node = doc.byId[id];
+      if (!node) return null;
+      order = pageVisibleOrder(node.page, id);
+      at = order.indexOf(id);
+    }
+  }
+  if (at < 0) return null;
+  for (at += direction; at >= 0 && at < order.length; at += direction) {
+    if (include ? include(order[at]) : !body || threadRootOf(order[at]) === null) return order[at];
+  }
+  return null;
 }
 
 export function prevVisible(id: string, scope: OutlineScope | null = null): string | null {
-  if (scope) {
-    const order = scopedVisibleOrder(scope);
-    const i = order.indexOf(id);
-    return i > 0 ? order[i - 1] : null;
-  }
-  const { order, index } = visibleData();
-  const i = index.get(id);
-  if (i !== undefined) return i > 0 ? order[i - 1] : null;
-  const node = doc.byId[id];
-  if (!node) return null;
-  const ord = pageVisibleOrder(node.page);
-  const j = ord.indexOf(id);
-  return j > 0 ? ord[j - 1] : null;
+  return visibleNeighbor(id, -1, scope);
 }
 
 export function nextVisible(id: string, scope: OutlineScope | null = null): string | null {
-  if (scope) {
-    const order = scopedVisibleOrder(scope);
-    const i = order.indexOf(id);
-    return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
-  }
-  const { order, index } = visibleData();
-  const i = index.get(id);
-  if (i !== undefined) return i < order.length - 1 ? order[i + 1] : null;
-  const node = doc.byId[id];
-  if (!node) return null;
-  const ord = pageVisibleOrder(node.page);
-  const j = ord.indexOf(id);
-  return j >= 0 && j < ord.length - 1 ? ord[j + 1] : null;
+  return visibleNeighbor(id, 1, scope);
 }
 
 export function depthOf(id: string): number {

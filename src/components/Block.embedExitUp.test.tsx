@@ -1,3 +1,4 @@
+import { maybeEditorIn, focusedEditor } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
@@ -117,8 +118,8 @@ describe("Up arrow at the top of an embedded block (GH #415)", () => {
     } finally { dispose(); }
   });
   it("selects the containing macro from a page embed too", async () => {
-    const source: PageDto = { name: "SourcePage", title: "SourcePage", kind: "page", pre_block: null, blocks: [leaf("source", "source text", [leaf("kid", "kid text")])] };
-    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...source, id: "pages/SourcePage.md" });
+    const source: PageDto & { id: string } = { id: "pages/SourcePage.md", name: "SourcePage", title: "SourcePage", kind: "page", pre_block: null, blocks: [leaf("source", "source text", [leaf("kid", "kid text")])] };
+    vi.spyOn(backend(), "getPage").mockResolvedValue(source);
     loadFeed([{ name: "HostPage", title: "HostPage", kind: "page", pre_block: null, blocks: [leaf("host", "{{embed [[SourcePage]]}}"), leaf("below", "below")] }, source]);
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <For each={pageByName("HostPage")?.roots ?? []}>{id => <Block id={id}/>}</For>, root);
@@ -153,23 +154,21 @@ describe("Up arrow at the top of an embedded block (GH #415)", () => {
       mouseDownAndUp(embeddedContent);
 
       const embeddedEditor = await vi.waitFor(() => {
-        const editor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="target"] textarea.block-editor`,
-        );
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="target"]`)!);
         expect(editor).not.toBeNull();
         return editor!;
       });
       // Caret at the very start of the embed root's first (single-line) row.
-      embeddedEditor.setSelectionRange(0, 0);
-      embeddedEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      embeddedEditor.select(0, 0);
+      embeddedEditor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
 
       await vi.waitFor(() => expect(editingId()).toBe("above"));
       // The exit mounts in the host page's primary surface — NOT back inside
       // the embed, and NOT into the raw macro text of the embedding block.
       await vi.waitFor(() => {
         const active = document.activeElement;
-        expect(active).toBeInstanceOf(HTMLTextAreaElement);
-        expect((active as HTMLTextAreaElement).value).toBe("plain above");
+        expect(focusedEditor()).not.toBeNull();
+        expect(focusedEditor()!.value()).toBe("plain above");
         expect(active!.closest(".embed-block")).toBeNull();
       });
       // The embed stays rendered (only its root lost the caret); internal
@@ -200,14 +199,12 @@ describe("Up arrow at the top of an embedded block (GH #415)", () => {
       mouseDownAndUp(childContent);
 
       const childEditor = await vi.waitFor(() => {
-        const editor = root.querySelector<HTMLTextAreaElement>(
-          `.embed-block [data-block-id="target-child"] textarea.block-editor`,
-        );
+        const editor = maybeEditorIn(root.querySelector<HTMLElement>(`.embed-block [data-block-id="target-child"]`)!);
         expect(editor).not.toBeNull();
         return editor!;
       });
-      childEditor.setSelectionRange(0, 0);
-      childEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      childEditor.select(0, 0);
+      childEditor.keydown(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
 
       // Surface-local internal navigation (GH #341) is unchanged: the child
       // climbs to the embed root INSIDE the embed.

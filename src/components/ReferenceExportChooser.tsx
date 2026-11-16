@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { formatForPage } from "../document";
 import { openExportNodesModal } from "../ui";
@@ -67,17 +68,16 @@ export function ReferenceExportChooser(props: {
                 return <label class="ref-export-row">
                   <input type="checkbox" checked={selected().has(key)}
                     onChange={(event) => toggle(key, event.currentTarget.checked)} />
-                  <span class="ref-export-text"><EmojiText text={visibleBody(block.raw)[0] ?? ""} /></span>
+                  <span class="ref-export-text"><EmojiText text={visibleBody(block.raw, formatForPage(group.page))[0] ?? ""} /></span>
                 </label>;
               }}</For>
             </div>
           )}</For>
           <Show when={total() === 0}><div class="ref-export-empty">{t("reference-export-chooser-no-entries-in-this-section")}</div></Show>
         </div>
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={props.onClose}>{t("reference-export-chooser-cancel")}</button>
-          <button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>{t("reference-export-chooser-open")}</button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={props.onClose}>{t("reference-export-chooser-cancel")}</button>}
+          primary={<button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>{t("reference-export-chooser-open")}</button>} />
       </div>
     </div>
   );

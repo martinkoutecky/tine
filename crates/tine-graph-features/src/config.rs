@@ -1,7 +1,11 @@
 //! Graph config edits. Each operation reads one Meta file and commits one guarded
 //! create or replace; conflicts retry with fresh bytes at most four times.
-//! Cost: O(config.edn bytes) per attempt. Errors are I/O errors; exhausted
-//! conflicts return WouldBlock. Callers need no graph path, lock, or cache state.
+//! File work: O(config.edn bytes) per attempt. Settings-only changes retain
+//! parsed pages; publication may still enumerate names (reading page preambles)
+//! and rebuild in-memory indexes. Changing a build-key field also re-reads and
+//! re-parses the graph.
+//! Errors are I/O errors; exhausted conflicts return WouldBlock. Callers need
+//! no graph path, lock, or cache state.
 
 use std::io;
 
@@ -359,6 +363,14 @@ pub fn set_preferred_format(store: &Store, fmt: tine_core::model::Format) -> io:
 /// untouched, so existing journal files keep working.
 pub fn set_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<()> {
     update_scalar(store, ":journal/page-title-format", &edn_string(fmt))
+}
+
+/// [`set_journal_page_title_format`], then the reloaded config's journal
+/// pattern diagnostics (D-20261020-CH3). An own write emits no external-config
+/// event, so Settings takes the fresh notes from this result.
+pub fn store_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<Vec<String>> {
+    set_journal_page_title_format(store, fmt)?;
+    Ok(store.config().config.journal_config_diagnostics.clone())
 }
 
 /// Persist the new-journal default template as `:default-templates {:journals

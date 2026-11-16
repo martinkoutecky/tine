@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 // I-2/I-21: acquire -> durable asset -> reference is one owned editor operation.
 // Native Android blur ordering is driven at the actual command/editor boundary;
 // native picker/IO promises are parked, not a substitute text-insertion helper.
@@ -37,8 +38,8 @@ function setup(surface: string, method: "photo" | "upload", launch = true) {
   writer.mockReturnValue(stored);
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <SurfaceContext.Provider value={surface}><Block id="asset-host" /></SurfaceContext.Provider>, root);
-  const ta = root.querySelector("textarea")!;
-  ta.focus(); ta.setSelectionRange(7, 7);
+  const ta = maybeEditorIn(root)!;
+  ta.element.focus(); ta.select(7, 7);
   if (launch) expect(dispatchFocusedEditorCommand(method === "photo" ? "editor/capture-photo" : "editor/upload-asset")).toBe(true);
   return { ta, dispose, writer, save, pick: () => pick(method === "photo"
     ? { status: "ok", path: "/cache/photo.jpg", ext: "jpg" } : "/tmp/photo.jpg"), cancel: () => pick(method === "photo" ? { status: "cancelled" } : null) };
@@ -50,16 +51,16 @@ it.each(surfaces.flatMap(surface => (["photo", "upload"] as const).map(method =>
   try {
     op.pick(); await settle(); expect(op.writer).toHaveBeenCalledOnce();
     // The user can keep editing while import is in flight; don't replay an old base.
-    op.ta.value = "before new after"; op.ta.dispatchEvent(new Event("input", { bubbles: true }));
-    op.ta.setSelectionRange(7, 10);
+    op.ta.replaceText("before new after"); op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.select(7, 10);
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    op.ta.blur(); // delayed native lifecycle event, after the picker already returned
+    op.ta.element.blur(); // delayed native lifecycle event, after the picker already returned
     op.save("saved.jpg"); await settle();
     expect(doc.byId["asset-host"].raw).toBe("before ![](../assets/saved.jpg) after");
     expect(toasts().some(t => t.message.includes("not inserted"))).toBe(false);
-    expect(document.activeElement).toBe(op.ta);
+    expect(document.activeElement).toBe(op.ta.element);
     // The acquisition is released: an ordinary subsequent blur exits the editor.
-    op.ta.blur(); await settle(); expect(editingId()).toBe(null);
+    op.ta.element.blur(); await settle(); expect(editingId()).toBe(null);
   } finally { op.dispose(); }
 });
 
@@ -67,7 +68,7 @@ it.each(["photo", "upload"] as const)("%s cancellation releases blur ownership",
   const op = setup("main", method);
   try {
     op.cancel(); await settle(); vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    op.ta.blur(); await settle();
+    op.ta.element.blur(); await settle();
     expect(editingId()).toBe(null); expect(op.writer).not.toHaveBeenCalled();
     expect(doc.byId["asset-host"].raw).toBe("before after");
   } finally { op.dispose(); }
@@ -88,13 +89,13 @@ it.each(["graph", "surface"])("does not insert or reclaim focus after an explici
 it("the literal Upload slash command keeps the editor during the picker and import", async () => {
   const op = setup("pane:split", "upload", false);
   try {
-    op.ta.value = "/upload"; op.ta.setSelectionRange(7, 7);
-    op.ta.dispatchEvent(new Event("input", { bubbles: true }));
+    op.ta.replaceText("/upload"); op.ta.select(7, 7);
+    op.ta.reportInput({ bubbles: true }, "plain");
     await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Upload an asset"));
-    op.ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    op.ta.keydown(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await settle(); expect(backend().pickFile).toHaveBeenCalledOnce();
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    op.ta.blur(); // Upload must also own blur while the chooser is still up.
+    op.ta.element.blur(); // Upload must also own blur while the chooser is still up.
     op.pick(); await settle(); op.save("saved.jpg"); await settle();
     expect(doc.byId["asset-host"].raw).toContain("![](../assets/saved.jpg)");
     expect(doc.byId["asset-host"].raw).not.toContain("/upload");
@@ -108,11 +109,11 @@ it.each(surfaces)("%s file paste uses the current selection after durable import
   try {
     const paste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(paste, "clipboardData", { value: { getData: () => "", types: ["Files"], items: [{ kind: "file", getAsFile: () => new File(["bytes"], "photo.jpg") }] } });
-    op.ta.dispatchEvent(paste); await settle(); expect(op.writer).toHaveBeenCalledOnce();
-    op.ta.value = "before new after"; op.ta.dispatchEvent(new Event("input", { bubbles: true }));
-    op.ta.setSelectionRange(7, 10); op.save("saved.jpg"); await settle();
+    op.ta.paste(paste); await settle(); expect(op.writer).toHaveBeenCalledOnce();
+    op.ta.replaceText("before new after"); op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.select(7, 10); op.save("saved.jpg"); await settle();
     expect(doc.byId["asset-host"].raw).toBe("before ![](../assets/saved.jpg) after");
-    expect(op.ta.value).toBe(doc.byId["asset-host"].raw);
+    expect(op.ta.value()).toBe(doc.byId["asset-host"].raw);
   } finally { op.dispose(); }
 });
 
@@ -122,7 +123,7 @@ it("failed import releases native operation ownership and preserves text", async
   try {
     op.pick(); await settle();
     expect(toasts().some(t => t.message.includes("disk-full"))).toBe(true);
-    vi.spyOn(document, "hasFocus").mockReturnValue(true); op.ta.blur(); await settle();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true); op.ta.element.blur(); await settle();
     expect(editingId()).toBe(null); expect(doc.byId["asset-host"].raw).toBe("before after");
   } finally { op.dispose(); }
 });
@@ -137,10 +138,10 @@ it("clipboard image bytes share the landing path and use text edited during save
     Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([1, 2, 3]).buffer });
     const paste = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(paste, "clipboardData", { value: { getData: () => "", types: ["Files"], items: [{ kind: "file", type: "image/png", getAsFile: () => file }] } });
-    op.ta.dispatchEvent(paste); await settle(); expect(backend().saveAsset).toHaveBeenCalledOnce();
+    op.ta.paste(paste); await settle(); expect(backend().saveAsset).toHaveBeenCalledOnce();
     expect(doc.byId["asset-host"].raw).toBe("before after"); // no reference before bytes
-    op.ta.value = "before new after"; op.ta.dispatchEvent(new Event("input", { bubbles: true }));
-    op.ta.setSelectionRange(7, 10); op.save("saved.jpg"); await settle();
+    op.ta.replaceText("before new after"); op.ta.reportInput({ bubbles: true }, "plain");
+    op.ta.select(7, 10); op.save("saved.jpg"); await settle();
     expect(doc.byId["asset-host"].raw).toBe("before ![](../assets/saved.jpg) after");
   } finally { op.dispose(); }
 });
@@ -153,9 +154,9 @@ it("finishing one native operation does not release another pending operation", 
     vi.mocked(backend().capturePhoto).mockReturnValue(new Promise(r => { cancelSecond = r; }));
     expect(dispatchFocusedEditorCommand("editor/capture-photo")).toBe(true);
     op.save("saved.jpg"); await settle();
-    vi.spyOn(document, "hasFocus").mockReturnValue(true); op.ta.blur(); await settle();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true); op.ta.element.blur(); await settle();
     expect(editingId()).toBe("asset-host");
     cancelSecond({ status: "cancelled" }); await settle();
-    op.ta.focus(); op.ta.blur(); await settle(); expect(editingId()).toBe(null);
+    op.ta.element.focus(); op.ta.element.blur(); await settle(); expect(editingId()).toBe(null);
   } finally { op.dispose(); }
 });

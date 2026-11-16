@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 // GH #433 review run 11: the query editor's /Scheduled and /Deadline pickers
 // are deferred controls like the result date chips; they write only while the
 // edited row is still the result it was opened on.
@@ -35,10 +36,10 @@ async function slashPicker(which: string) {
   const root = await mount();
   root.querySelector('[data-block-id="hit"] .block-content-wrapper')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
   document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
-  await vi.waitFor(() => expect(root.querySelector('textarea')).not.toBeNull());
-  const editor = root.querySelector<HTMLTextAreaElement>('textarea')!;
-  editor.value = raw + '\n/' + which; editor.setSelectionRange(editor.value.length, editor.value.length);
-  editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: which }));
+  await vi.waitFor(() => expect(maybeEditorIn(root)).not.toBeNull());
+  const editor = editorIn(root);
+  editor.replaceText(raw + '\n/' + which); editor.select(editor.value().length, editor.value().length);
+  editor.reportInput({ bubbles: true, inputType: 'insertText', data: which });
   await vi.waitFor(() => expect([...document.querySelectorAll('.ac-label')].some(e => e.textContent === which)).toBe(true));
   const item = [...document.querySelectorAll('.ac-item')].find(e => e.querySelector('.ac-label')?.textContent === which)!;
   item.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));

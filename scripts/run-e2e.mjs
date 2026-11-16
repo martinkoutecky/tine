@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 import { privateSessionLaunch } from "./lib/e2e-session-bus.mjs";
+import { accountHomeFixture } from "./lib/e2e-account-home.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contractsPath = path.join(root, "tests/ui-regressions/e2e-contracts.json");
@@ -133,6 +134,7 @@ const suites = {
     ["query-sheet", "scripts/e2e-query-sheet.mjs", {}],
     ["query-sheet-input", "scripts/e2e-query-sheet-input.mjs", {}],
     ["query-nested-rows", "scripts/e2e-query-nested-rows.mjs", {}],
+    ["cells-results-render", "scripts/e2e-cells-results-render.mjs", {}],
     ["query-bare-hint", "scripts/e2e-query-bare-hint.mjs", {}],
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
@@ -157,6 +159,10 @@ const suites = {
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
     // GH #719: not in the default fan-out lists yet (burn-in); dispatch it by name.
     ["windows-portable", "scripts/e2e-windows-portable.mjs", {}],
+    // GH #809: new-window stage diagnostics on WebView2; dispatch by name.
+    ["beta-win-809", "scripts/e2e-beta-win-863-809.mjs", { ONLY: "809" }],
+    // GH #809: a popup on a profile whose clean quit saved window state; dispatch by name.
+    ["popup-relaunch-809", "scripts/e2e-popup-relaunch-809.mjs", {}],
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
   ],
@@ -392,6 +398,27 @@ function archiveInfrastructureAttempt(dir, attempt) {
   }
 }
 
+// The app warns (toast "Tine is keeping application data in temporary or
+// memory-backed storage", src-tauri/src/data_home.rs `volatile_location`, L9-15)
+// when its app-data dir lies under its own temp directory, which is TMPDIR or
+// /tmp. Journeys keep their disposable XDG_DATA_HOME under /tmp or os.tmpdir(),
+// so without help every journey shows that real-user warning, and the toast
+// stack intercepts clicks on the controls at the bottom right. The warning
+// stays; the harness instead gives the *app process* (and only it) a private
+// TMPDIR that contains no journey data. Journeys keep computing their own paths
+// from the unchanged environment. A launcher script is the one point every
+// journey and CI job shares, because each reads the binary from TINE_APP and
+// spawns it with its own environment (tauri-driver, WebKitWebDriver, or
+// directly). `exec` keeps the pid, so process identity is unchanged.
+function privateTempAppLauncher(dir, binary) {
+  const appTmp = path.join(dir, "app-tmp");
+  fs.mkdirSync(appTmp, { recursive: true });
+  const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+  const launcher = path.join(dir, "tine-app-launcher.sh");
+  fs.writeFileSync(launcher, `#!/bin/sh\nTMPDIR=${quote(appTmp)}\nexport TMPDIR\nexec ${quote(binary)} "$@"\n`, { mode: 0o755 });
+  return launcher;
+}
+
 async function runScenario([id, script, extraEnv], contractEntry) {
   const started = Date.now();
   const dir = path.join(artifactRoot, id);
@@ -437,7 +464,11 @@ async function runScenario([id, script, extraEnv], contractEntry) {
       env.E2E_TMP_DIR = process.env.E2E_TMP_DIR
         || path.join(os.tmpdir(), `tine-e2e-${suiteName}-${id}-${process.pid}-${driverPort}`);
     }
+    if (process.platform === "linux") env.TINE_APP = privateTempAppLauncher(dir, app);
     const nativeLinux = process.platform === "linux" && id !== "selection-wrap" && id !== "wayland-app-id";
+    const owner = process.platform === "linux" && id !== "selection-wrap"
+      ? accountHomeFixture(dir, dir, env) : undefined;
+    if (owner) Object.assign(env, owner.env);
     // Tauri's Linux single-instance plugin owns a well-known session-bus name.
     // Give each native scenario a private bus so a slow WebKit/Tauri teardown
     // cannot forward the next scenario into the previous app. Processes spawned
@@ -464,6 +495,15 @@ async function runScenario([id, script, extraEnv], contractEntry) {
       child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
     });
     clearTimeout(timer);
+    if (owner) {
+      owner.close();
+      // The Wayland identity probe never opens a graph.
+      try { owner.verify({ requireLease: id !== "wayland-app-id" }); }
+      catch (error) {
+        result.code = 1;
+        fs.writeSync(stderr, `Owner fixture: ${error.message}\n`);
+      }
+    }
     if (process.platform === "win32") {
       fs.writeFileSync(
         path.join(dir, "webview2-profile.json"),

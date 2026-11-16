@@ -5,7 +5,7 @@ import { APP_PRODUCT_NAME } from "../appIdentity";
 import { writeClipboardTextStrict } from "../clipboard";
 import { isTauri } from "../backend";
 import { platformKind } from "../platform";
-import { checkForUpdateNow, openReleasesPage, isMsixPackaged } from "../update";
+import { checkForUpdateNow, openReleasesPage, isMsixPackaged, packagedBy } from "../update";
 import { checkForUpdatesAutomatically, setCheckForUpdatesAutomatically, initUpdateSettings } from "../updateSettings";
 import { openExternal } from "./primitives";
 import { t, msg, render, type Msg } from "../i18n";
@@ -48,19 +48,29 @@ export function AboutTab(): JSX.Element {
   const owner = ownedWhen(() => alive);
   const [checking, setChecking] = createSignal(false);
   const [storeManaged, setStoreManaged] = createSignal(false);
+  // The package manager that built this copy (TINE_PACKAGED_BY, tine#187).
+  const [packager, setPackager] = createSignal<string | null>(null);
+  const updatesManaged = () => storeManaged() || packager() !== null;
   const [nativePlatform, setNativePlatform] = createSignal<"loading" | "desktop" | "android" | "ios" | "unavailable">(
     isTauri() ? "loading" : "unavailable"
   );
+
+  const desktop = () => nativePlatform() === "desktop";
 
   onMount(async () => {
     if (!isTauri()) return;
     try {
       const platform = await platformKind();
       if (!owner()) return;
-      const packaged = platform === "desktop" && await isMsixPackaged() === true;
+      const onDesktop = platform === "desktop";
+      const packaged = onDesktop && await isMsixPackaged() === true;
       if (!owner()) return;
+      const byPackager = onDesktop && !packaged ? await packagedBy() : "none";
+      if (!owner()) return;
+      const packagerName = typeof byPackager === "object" ? byPackager.name : null;
       setStoreManaged(packaged);
-      if (platform === "desktop" && !packaged) await initUpdateSettings();
+      setPackager(packagerName);
+      if (onDesktop && !packaged && packagerName === null) await initUpdateSettings();
       if (!owner()) return;
       setNativePlatform(platform);
     } catch {
@@ -113,12 +123,12 @@ export function AboutTab(): JSX.Element {
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>
-        <Show when={nativePlatform() === "desktop" && !storeManaged()}>
+        <Show when={desktop() && !updatesManaged()}>
           <button class="btn-secondary about-check" onClick={check} disabled={checking()}>{checking() ? t("about-checking") : t("about-check-for-updates")}
           </button>
         </Show>
       </div>
-      <Show when={nativePlatform() === "desktop" && !storeManaged()}>
+      <Show when={desktop() && !updatesManaged()}>
         <div class="settings-row"><span class="settings-label">{t("about-check-for-updates-automatically")}</span>
           <button class="settings-toggle" classList={{ on: checkForUpdatesAutomatically() }}
             role="switch" aria-label={t("about-check-for-updates-automatically")} aria-checked={checkForUpdatesAutomatically()}
@@ -129,6 +139,9 @@ export function AboutTab(): JSX.Element {
       </Show>
       <Show when={storeManaged()}>
         <div class="settings-hint about-status">{t("settings-about-store-updates")}</div>
+      </Show>
+      <Show when={desktop() && packager()}>
+        {(name) => <div class="settings-hint about-status">{t("about-packaged-by-update-there", { product: APP_PRODUCT_NAME, packager: name() })}</div>}
       </Show>
       <Show when={nativePlatform() === "android" || nativePlatform() === "ios"}>
         <div class="settings-hint about-status">{t("about-updates-arrive-through-your-app-s-distribution-channel")}</div>

@@ -25,18 +25,26 @@ pub(crate) struct GraphSlot {
     pub(crate) store: Arc<Store>,
     /// Latest `((` request per transport lane for this window binding.
     pub(crate) block_search_lanes: tine_graph_features::search::SearchLanes,
+    /// One cancellation flag per in-flight IR query run (`query_run`,
+    /// `query_explain_empty`, the owner's `query` verb). Revoking the binding
+    /// sets every one, so a graph switch or close stops a running query
+    /// (`WholeGraph::query_ir`'s cooperative checks) instead of letting it
+    /// finish against a graph nobody shows.
+    pub(crate) query_runs: QueryRuns,
     pub(crate) root_key: PathBuf,
     /// Unique lease for this exact window→graph binding. Frontend mutations carry
     /// it so an IPC queued before an in-place graph switch cannot execute against
     /// the replacement graph after the window label is rebound.
     pub(crate) binding_generation: u64,
+    /// How long an owner write waits for its turn (`owner::write`); tests shorten it.
+    pub(crate) turn_wait: std::time::Duration,
     startup_idle: Mutex<Option<Instant>>,
     startup_changed: Condvar,
     pub(crate) warm_done: AtomicBool,
     pub(crate) warm_generation: AtomicU64,
     /// Revoked as soon as this exact window→graph binding is replaced/removed.
     /// Detached warm/backup workers check it before and during graph-sized work.
-    pub(crate) background_cancelled: AtomicBool,
+    pub(crate) background_cancelled: Arc<AtomicBool>,
     /// Concord's derived conflict queue (memory only; see `ConflictQueue`).
     pub(crate) conflict_queue: tine_graph_features::conflicts::ConflictQueue,
     /// Concord base ledger, attached at graph open (`concord_ledger::attach`);
@@ -61,11 +69,77 @@ pub(crate) struct GraphSlot {
     /// retirement once the host has stopped. `None` when the platform or
     /// filesystem gives no arbitration (the graph opens without endpoint).
     pub(crate) owner: Mutex<Option<crate::owner::lease::Lease>>,
+    /// Last failed arbitration claim, retained for the persistent notice.
+    pub(crate) owner_failure: Mutex<Option<crate::owner::OwnerError>>,
+    /// Serialize background/manual retries without holding the host gate during
+    /// a potentially slow handover. Lock order at attachment: host, owner.
+    pub(crate) owner_retry: Mutex<()>,
+    /// The window this binding belongs to, for the owner's command-line
+    /// writes (`owner::window`). Unset in tests and under `tine serve`.
+    pub(crate) window: std::sync::OnceLock<crate::owner::window::WindowLink>,
+}
+
+/// The in-flight IR query runs of one binding, each with its own flag
+/// (`GraphSlot::begin_query_run`). O(1) per run; `cancel_all` is O(runs).
+#[derive(Default)]
+pub(crate) struct QueryRuns {
+    next: AtomicU64,
+    runs: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+}
+
+impl QueryRuns {
+    fn begin<'a>(&'a self, revoked: &AtomicBool) -> QueryRun<'a> {
+        use std::sync::atomic::Ordering;
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let flag = Arc::new(AtomicBool::new(false));
+        self.runs.lock().unwrap().insert(id, Arc::clone(&flag));
+        // `cancel_background` stores `revoked` before it takes the map, so a
+        // run registered after that sweep sees `revoked` here.
+        if revoked.load(Ordering::Acquire) {
+            flag.store(true, Ordering::Release);
+        }
+        QueryRun {
+            runs: self,
+            id,
+            cancel: tine_store::Cancel(flag),
+        }
+    }
+
+    fn cancel_all(&self) {
+        for flag in self.runs.lock().unwrap().values() {
+            flag.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.runs.lock().unwrap().len()
+    }
+}
+
+/// One IR query run's flag, deregistered when dropped (also on error or
+/// unwinding).
+pub(crate) struct QueryRun<'a> {
+    runs: &'a QueryRuns,
+    id: u64,
+    cancel: tine_store::Cancel,
+}
+
+impl QueryRun<'_> {
+    pub(crate) fn cancel(&self) -> &tine_store::Cancel {
+        &self.cancel
+    }
+}
+
+impl Drop for QueryRun<'_> {
+    fn drop(&mut self) {
+        self.runs.runs.lock().unwrap().remove(&self.id);
+    }
 }
 
 /// Where the binding's page host stands. `Off` before the open starts it,
-/// and after a restore whose fresh host could not start (writers then run
-/// as with no host).
+/// and after a restore whose fresh host could not start (page writers then
+/// refuse with [`NO_PAGE_HOST`]; DESIGN host-only-writer §3.6).
 #[derive(Default)]
 pub(crate) enum PageHostSlot {
     #[default]
@@ -79,16 +153,27 @@ pub(crate) enum PageHostSlot {
 }
 
 impl PageHostSlot {
-    /// The running host, which census writers reserve their pages from.
-    /// Reached only through `GraphSlot::host_slot`, which refuses a revoked
-    /// slot.
-    pub(crate) fn running(&self) -> Option<&tine_store::PageHost> {
+    /// The running host, the only writer of page files. Reached only
+    /// through `GraphSlot::host_slot`, which refuses a revoked slot; an off
+    /// one refuses with [`NO_PAGE_HOST`] and writes nothing (in-scope
+    /// scenario: the host failed to start, or to relaunch after a restore,
+    /// on a disk error).
+    pub(crate) fn running(&self) -> Result<&tine_store::PageHost, &'static str> {
         match self {
-            Self::Running(host) => Some(host),
-            Self::Off | Self::Revoked => None,
+            Self::Running(host) => Ok(host),
+            Self::Off | Self::Revoked => Err(NO_PAGE_HOST),
         }
     }
+
+    /// A running host whose driver ended (a host bug): it is never
+    /// adopted, only retired (`HostRetirement`).
+    pub(crate) fn ended(&self) -> bool {
+        matches!(self, Self::Running(host) if host.ended())
+    }
 }
+
+/// An off host's refusal of a page write (host-only-writer DESIGN §3.6).
+pub(crate) const NO_PAGE_HOST: &str = "The graph isn't open right now. Reopen it, then try again.";
 
 /// A revoked slot's outcome: the existing stale-binding refusal (scenario:
 /// a command queued before its window closed and the root was reopened).
@@ -100,18 +185,23 @@ impl GraphSlot {
         Self {
             store: store.into(),
             block_search_lanes: tine_graph_features::search::SearchLanes::default(),
+            query_runs: QueryRuns::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            turn_wait: crate::owner::write::TURN_WAIT,
             startup_idle: Mutex::new(None),
             startup_changed: Condvar::new(),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
-            background_cancelled: AtomicBool::new(false),
+            background_cancelled: Arc::new(AtomicBool::new(false)),
             conflict_queue: Default::default(),
             concord_ledger: Default::default(),
             rescan: Default::default(),
             host: Default::default(),
             owner: Default::default(),
+            owner_failure: Default::default(),
+            owner_retry: Default::default(),
+            window: Default::default(),
         }
     }
 
@@ -160,7 +250,15 @@ impl GraphSlot {
         let _idle = self.startup_idle.lock().unwrap();
         self.background_cancelled
             .store(true, std::sync::atomic::Ordering::Release);
+        self.query_runs.cancel_all();
         self.startup_changed.notify_all();
+    }
+
+    /// A fresh cancellation flag for one IR query run on this binding,
+    /// registered until the returned guard drops. Already set when the
+    /// binding is revoked, including a revocation racing this call.
+    pub(crate) fn begin_query_run(&self) -> QueryRun<'_> {
+        self.query_runs.begin(&self.background_cancelled)
     }
 
     /// Wait off the UI thread for this binding's warm completion plus quiet,
@@ -318,8 +416,8 @@ pub(crate) fn release_own_overlap(
 }
 
 /// Before an open of `root`: wait, outside the registry lock, up to `bound`
-/// for each retiring graph whose root overlaps it (another root: the same
-/// root is adopted) to save and close. `waiting` runs once, with that
+/// for each retiring graph whose root overlaps it to save and close (the same
+/// root is adopted only while its binding is intact). `waiting` runs once, with that
 /// graph's root, when the open has to wait. Past the bound, the refusal
 /// `bind` would give.
 pub(crate) fn wait_for_retiring_overlaps(
@@ -345,6 +443,24 @@ pub(crate) struct GraphRegistry {
 }
 
 impl GraphRegistry {
+    /// graph_load serializes opens/adoption; holding this registry lock also
+    /// excludes transfers into retirement. Only the target whose host is under
+    /// the saved-stop barrier may be exempted during explicit recovery.
+    pub(crate) fn draft_namespace_held(
+        &self,
+        source: &str,
+        target: &str,
+        stopped_target: Option<&Arc<GraphSlot>>,
+    ) -> bool {
+        self.by_window.values().any(|slot| {
+            if stopped_target.is_some_and(|stopped| Arc::ptr_eq(stopped, slot)) {
+                return false;
+            }
+            let id = crate::settings::host_graph_id(&slot.root_key);
+            id == source || id == target
+        }) || self.retirement.draft_namespace_held(source, target)
+    }
+
     pub(crate) fn slot(&self, window: &str) -> Option<Arc<GraphSlot>> {
         self.by_window.get(window).cloned()
     }
@@ -617,16 +733,19 @@ pub(crate) fn slot_for_bound_window(
     Ok(slot)
 }
 
-/// Resolve the only graph capability granted to the capture WebView: a bounded
-/// page/tag quick-switch query. This is deliberately not a GraphContext route;
+/// Resolve the graph capabilities granted to the capture WebView. Each is a
+/// narrow command of its own (a bounded page/tag quick-switch query, and the
+/// import of a pasted file as an asset); none is a GraphContext route, so
 /// capture retains no generic read or write access to the selected graph.
-pub(crate) fn capture_quick_switch_slot(
+/// `what` names the capability in the refusal of a non-capture caller.
+fn capture_scoped_slot(
     state: &AppState,
     caller: &str,
     binding_generation: Option<u64>,
+    what: &str,
 ) -> Result<Arc<GraphSlot>, String> {
     if caller != "capture" {
-        return Err("capture quick switch is only available to quick capture".into());
+        return Err(format!("{what} is only available to quick capture"));
     }
     let capture = state
         .capture_graph_binding()
@@ -642,9 +761,57 @@ pub(crate) fn capture_quick_switch_slot(
     Ok(slot)
 }
 
+/// The bounded page/tag quick-switch query (read only).
+pub(crate) fn capture_quick_switch_slot(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    capture_scoped_slot(state, caller, binding_generation, "capture quick switch")
+}
+
+/// Importing a file the user pasted into Quick Capture as an asset of the
+/// selected capture graph (GH #835). It writes only through the audited asset
+/// transaction; the capture window still never writes a page.
+pub(crate) fn capture_asset_slot(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    capture_scoped_slot(state, caller, binding_generation, "capture asset import")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn off_ui_slow_read_yields_to_its_caller() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Wake, Waker};
+        struct Noop;
+        impl Wake for Noop {
+            fn wake(self: Arc<Self>) {}
+        }
+        let caller = std::thread::current().id();
+        let (release, wait) = std::sync::mpsc::channel();
+        let mut read = Box::pin(off_ui(move || {
+            assert_ne!(std::thread::current().id(), caller);
+            wait.recv().unwrap();
+            Ok("unchanged bytes")
+        }));
+        let waker = Waker::from(Arc::new(Noop));
+        // A suspended native read cannot block the caller's event dispatch.
+        assert!(matches!(
+            read.as_mut().poll(&mut Context::from_waker(&waker)),
+            Poll::Pending
+        ));
+        release.send(()).unwrap();
+        assert_eq!(
+            tauri::async_runtime::block_on(read).unwrap(),
+            "unchanged bytes"
+        );
+    }
 
     /// G6: every exit is the revocable waiter's. The last window's
     /// `close_graph_window` and the `Destroyed` hook each release the
@@ -831,13 +998,15 @@ mod tests {
             .store
             .file_id(tine_store::Area::Pages, "DuringRefresh.md")
             .unwrap();
-        let mut tx = old
-            .store
-            .transaction(Some(tine_store::EditKind::CreatePage));
+        let mut tx = old.store.page_plan(Some(tine_store::EditKind::CreatePage));
         tx.create(&id, tine_store::Content::Bytes(b"- retained\n".to_vec()));
         assert!(matches!(
-            tx.commit(),
-            tine_store::TxOutcome::Committed { .. }
+            {
+                let app = tempfile::tempdir().unwrap();
+                let host = tine_store::PageHost::start_for_tests(&old.store, app.path()).unwrap();
+                host.apply(tx.plan().unwrap())
+            },
+            Ok(())
         ));
         assert_eq!(
             std::fs::read(base.join("pages/DuringRefresh.md")).unwrap(),
@@ -870,6 +1039,40 @@ mod tests {
             .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&b).is_none());
         assert_eq!(registry.len(), 0);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn revoking_a_binding_cancels_its_running_queries_and_every_later_one() {
+        use std::sync::atomic::Ordering;
+        let base =
+            std::env::temp_dir().join(format!("tine-registry-query-runs-{}", std::process::id()));
+        let a = base.join("a");
+        let b = base.join("b");
+        let mut registry = GraphRegistry::default();
+        let old = graph(&a);
+        registry.bind("main".into(), old.clone()).unwrap();
+        {
+            let first = old.begin_query_run();
+            let second = old.begin_query_run();
+            assert_eq!(old.query_runs.len(), 2);
+            assert!(!first.cancel().0.load(Ordering::Acquire));
+            // A graph switch revokes the old binding: both running queries stop.
+            registry.bind("main".into(), graph(&b)).unwrap();
+            assert!(first.cancel().0.load(Ordering::Acquire));
+            assert!(second.cancel().0.load(Ordering::Acquire));
+            // A run that begins on the revoked binding starts cancelled.
+            let late = old.begin_query_run();
+            assert!(late.cancel().0.load(Ordering::Acquire));
+        }
+        assert_eq!(
+            old.query_runs.len(),
+            0,
+            "a finished run leaves no flag behind"
+        );
+        // The replacement binding's runs are unaffected.
+        let current = registry.slot("main").unwrap();
+        assert!(!current.begin_query_run().cancel().0.load(Ordering::Acquire));
         let _ = std::fs::remove_dir_all(base);
     }
 

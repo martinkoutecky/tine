@@ -1,5 +1,6 @@
 import { shortcutKey } from "../shortcutKey";
 import { createMembershipResource } from "../resultMembership";
+import { createSearchResultRows } from "../searchResultRows";
 import {
   For,
   Match,
@@ -35,8 +36,9 @@ import type {
   QueryExplainNode,
   QueryHit,
   QueryPageScope,
+  RefGroup,
 } from "../types";
-import { VIEW_KINDS, type ParsedQuery, type Query, type QueryResult, type ViewSettings, type ExplainEmptyResult, type FriendlyPageMatchScope } from "../editor/queryIr";
+import { VIEW_KINDS, type PageRow, type ParsedQuery, type Query, type QueryResult, type ViewSettings, type ExplainEmptyResult, type FriendlyPageMatchScope } from "../editor/queryIr";
 import { queryDisplaySettings, type QueryDisplayDraft } from "../editor/queryDisplayDraft";
 import { displayPropertyPatch, queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
@@ -47,23 +49,31 @@ import { QueryResultsSelection } from "./QueryResultsSelection";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
+import { PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY, type BothFamilies } from "./queryMacroSupport";
+import { bothFamilies } from "../queryTwin";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
+import { createAnswerDay } from "../journal";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
-import { QueryResultSections } from "./QueryResultSections";
+import { QueryResultSections, type ResultFamily } from "./QueryResultSections";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
+import { searchResultsOpenInThisTab } from "../navSettings";
 import { steppedResultIndex } from "../resultNavigation";
 import { openRouteInOtherPane } from "../panes";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readLatestOr, readOr } from "../resourceRead";
 import { documentOf } from "../windowRealm";
+import { focusableElements } from "./focusableElements";
 import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
 import { t, msg, render } from "../i18n";
+import { DialogActions } from "./DialogActions";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -79,6 +89,8 @@ export interface MaterializeQueryInput {
   blockPresentation?: QueryPresentation;
   pageDisplay?: QueryDisplayDraft;
   blockDisplay?: QueryDisplayDraft;
+  /** "Pages and blocks" from the block this workspace was opened from; saved back as `tine.result-kinds`. */
+  resultKinds?: QueryRoute["resultKinds"];
   /** Stable workspace identity: also bounds the native validation cancellation lane. */
   routeId: string;
 }
@@ -121,12 +133,13 @@ export interface QueryWorkspaceProps {
 }
 
 /** The query block's text and its properties, in the order they have always been written. */
-async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">, deps: MaterializeQueryDependencies): Promise<{ query: string; properties: Array<[string, string]> }> {
+async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay" | "resultKinds">, deps: MaterializeQueryDependencies): Promise<{ query: string; properties: Array<[string, string]> }> {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
   const properties: Array<[string, string]> = [];
   if (input.presentation !== "list") properties.push(["tine.view", input.presentation]);
   if (input.sourceKind === "search" && input.pageMatchScope) properties.push(["tine.page-match-scope", input.pageMatchScope]);
+  if (input.sourceKind === "dsl" && input.resultKinds) properties.push([RESULT_KINDS_PROPERTY, PAGES_AND_BLOCKS]);
   for (const kind of ["page", "block"] as const) {
     for (const [key, value] of queryScopedDisplayPropertyPatch({
       scope: kind,
@@ -308,17 +321,16 @@ function defaultDependencies(): QueryWorkspaceDependencies {
   };
 }
 
-function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): QueryExecution {
-  const hits: QueryHit[] = result.anchor === "page"
-    ? result.pages.map((page) => ({
-      entity: "page" as const,
-      page: { name: page.name, kind: page.kind, path: page.path, date_key: null },
-      row: page,
-      display_text: page.name,
-      evidence: [],
-      score: 0,
-    }))
-    : result.groups.flatMap((group) => group.blocks.map((block) => ({
+function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult, twin?: { both: BothFamilies; blockGroups: RefGroup[] }): QueryExecution {
+  const pageHits = (pages: PageRow[]): QueryHit[] => pages.map((page) => ({
+    entity: "page" as const,
+    page: { name: page.name, kind: page.kind, path: page.path, date_key: null },
+    row: page,
+    display_text: page.name,
+    evidence: [],
+    score: 0,
+  }));
+  const blockHits = (groups: RefGroup[]): QueryHit[] => groups.flatMap((group) => group.blocks.map((block) => ({
     entity: "block" as const,
     page: group.page,
     kind: group.kind,
@@ -327,6 +339,9 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
     display_text: block.raw,
     evidence: [],
   })));
+  const hits: QueryHit[] = twin
+    ? [...pageHits(twin.both.pages), ...blockHits(twin.blockGroups)]
+    : result.anchor === "page" ? pageHits(result.pages) : blockHits(result.groups);
   const diagnostics: QueryDiagnostic[] = (result.diagnostics ?? [])
     .filter((item) => !item.disabled)
     .map((item) => ({ code: item.kind, message: item.message }));
@@ -335,6 +350,9 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
   });
   return {
     hits,
+    families: twin ? ["page", "block"] : [result.anchor],
+    // Pages above blocks, each family's own truncation, exactly as the block reports it.
+    ...(twin ? { has_more: { pages: twin.both.pageMore, blocks: twin.both.blockMore } } : {}),
     diagnostics,
     cancelled: false,
     explanation: {
@@ -498,12 +516,6 @@ function friendlyFieldsFromSource(source: string): FriendlyFields | null {
     exclude: common.filter((term) => term.negated).map((term) => term.text).join(" "),
     regex: "",
   };
-}
-
-function focusableElements(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'
-  )].filter((element) => !element.hasAttribute("hidden") && !element.closest("details:not([open])"));
 }
 
 function AdvancedModal(props: {
@@ -715,10 +727,10 @@ function AdvancedModal(props: {
         <Show when={error()}>
           <p class="query-advanced-error" role="alert">{error()}</p>
         </Show>
-        <footer class="query-advanced-actions">
-          <button type="button" onClick={props.onClose}>{t("query-query-sheet-parts-cancel")}</button>
-          <button type="button" class="primary" disabled={printing()} onClick={apply}>{t("query-query-sheet-parts-apply")}</button>
-        </footer>
+        <DialogActions
+          class="query-advanced-actions"
+          cancel={<button type="button" onClick={props.onClose}>{t("query-query-sheet-parts-cancel")}</button>}
+          primary={<button type="button" class="primary" disabled={printing()} onClick={apply}>{t("query-query-sheet-parts-apply")}</button>} />
       </div>
     </div>
   );
@@ -814,6 +826,17 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
   const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
   const executionScope = {};
+  const answerDay = createAnswerDay();
+  const [asOfDay, setAsOfDay] = createSignal<number | null>(null);
+  answerDay.follow(asOfDay);
+  const subscription = createQuerySubscription(() => {
+    if (!source().trim()) return undefined;
+    if (sourceKind() === "search") return { kind: "search", source: source().trim(),
+      page_match_scope: pageMatchScope(), transliteration: pinyinMatchingEnabled() };
+    if (props.route.resultKinds === PAGES_AND_BLOCKS) return { kind: "full" };
+    const dsl = queryWorkspaceDsl(source().trim());
+    return { kind: "source", source: dsl.argument, dialect: dsl.dialect };
+  }, answerDay.day);
   const [execution] = createMembershipResource(
     () => ({
       id: props.route.id,
@@ -823,15 +846,18 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       pageMatchScope: pageMatchScope(),
       pageView: pageView(),
       blockView: blockView(),
+      resultKinds: props.route.resultKinds,
       transliteration: sourceKind() === "search" && pinyinMatchingEnabled(),
     }),
-    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), sourceKind() === "search" && pinyinMatchingEnabled()]),
+    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), props.route.resultKinds, sourceKind() === "search" && pinyinMatchingEnabled()]),
     async (request): Promise<QueryExecution> => {
+      const cancelled: QueryExecution = { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true };
+      const retained = () => readLatestOr(execution, undefined, "search") ?? cancelled;
+      if (!await subscription.ready()) return retained();
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
       }
       const owner = latestOwner(executionScope, "run", graphOwner(() => alive && props.route.id === request.id));
-      const cancelled: QueryExecution = { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true };
       if (request.sourceKind === "search") {
         const result = await readOwned(owner, deps().runGraphSearch(
           request.source,
@@ -843,7 +869,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           request.pageMatchScope,
           { page: request.pageView, block: request.blockView }
         ));
-        return result.kind === "current" && owner() ? result.value : cancelled;
+        return result.kind === "current" && owner() && !result.value.cancelled ? result.value : retained();
       }
       const source = queryWorkspaceDsl(request.source);
       const parsed = await readOwned(owner, deps().parseQuery(source.argument, source.dialect));
@@ -851,15 +877,27 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       setDslReading({ source: request.source, parsed: parsed.value });
       const result = await readOwned(owner, deps().queryRun(parsed.value.query, queryDisplaySettings(blockDisplay(), parsed.value.view, presentation())));
       if (result.kind === "stale" || !owner()) return cancelled;
+      setAsOfDay(result.value.as_of_day ?? null);
+      // "Pages and blocks" (the block's `tine.result-kinds`): the engine re-reads the same conditions at the
+      // other anchor, exactly as the block and the sheet's live preview do (one answerer, queryTwin.ts).
+      const twin = request.resultKinds === PAGES_AND_BLOCKS
+        ? await bothFamilies(owner, {
+          scope: `${graphMeta()?.root ?? ""}\0${graphEpoch()}`, key: `workspace\0${request.id}\0${request.source}\0${subscription.revision()}\0${subscription.publication()}`,
+          query: parsed.value.query, view: queryDisplaySettings(blockDisplay(), parsed.value.view, presentation()), own: result.value,
+        })
+        : undefined;
+      if (request.resultKinds === PAGES_AND_BLOCKS && (!twin || !owner())) return cancelled;
       const explanation = request.explain && result.value.total === 0 && !(result.value.diagnostics ?? []).some((item) => !item.disabled)
         ? await readOwned(owner, deps().queryExplainEmpty(parsed.value.query, parsed.value.view))
         : undefined;
       if (explanation?.kind === "stale" || !owner()) return cancelled;
-      return irToExecution(result.value, explanation?.value);
+      return irToExecution(result.value, explanation?.value, twin);
     },
     (value, id) => value.hits.some((hit) => hit.entity === "block" && hit.block.id === id),
     () => true,
     true,
+    subscription.revision,
+    subscription,
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.
@@ -869,19 +907,32 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
     };
   };
-  const hits = () => executed()?.hits ?? [];
+  /** GH #838: "not answered yet" is more than `execution.loading`. While a result change is in flight
+   *  (hydration, the user's own save) the membership resource holds its read and is idle, and between
+   *  a retype and its first answer it has no value for the new identity. Neither may read as "No
+   *  matching pages". A failed read is shown as a failure, never as pending. */
+  const awaitingAnswer = () => !!source().trim() && !execution.error && (execution.loading || executed() === undefined);
+  const hits = createSearchResultRows(() => executed()?.hits ?? [],
+    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), props.route.resultKinds, pinyinMatchingEnabled()]),
+    () => workspace);
   const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
   const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");
   const boardGroups = createMemo(() => {
-    const grouped: [string, QueryHit[]][] = [];
+    const grouped: { key: string; page: string; hits: QueryHit[] }[] = [];
+    const occurrences = new Map<string, number>();
     for (const hit of blockHits()) {
       const page = hitPage(hit);
       const last = grouped[grouped.length - 1];
-      if (last && last[0] === page) last[1].push(hit);
-      else grouped.push([page, [hit]]);
+      if (last && last.page === page) last.hits.push(hit);
+      else {
+        const occurrence = occurrences.get(page) ?? 0;
+        occurrences.set(page, occurrence + 1);
+        grouped.push({ key: JSON.stringify([page, occurrence]), page, hits: [hit] });
+      }
     }
     return grouped;
   });
+  const boardByKey = createMemo(() => new Map(boardGroups().map(group => [group.key, group])));
   const [pageDisplayOpen, setPageDisplayOpen] = createSignal(false);
   const [blockDisplayOpen, setBlockDisplayOpen] = createSignal(false);
   const registry = createQueryRegistryAccess(() => pageDisplayOpen() || blockDisplayOpen());
@@ -950,7 +1001,13 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       if (target.block) openBlockInSidebar({ uuid: target.block, page: target.name, pageKind: target.pageKind, path: target.path });
       else openPageInSidebar(target.name, target.pageKind, target.path);
     } else if (dest === "pane") openRouteInOtherPane(target);
-    else props.router.openInNewTab(target, dest !== "background");
+    else if (dest === "default" && searchResultsOpenInThisTab()) {
+      // GH #796 (Settings > Search results open in > This tab): the plain gesture
+      // is ordinary navigation of this tab, as the Quick Switcher's plain Enter
+      // is (GH #288). The modified destinations above and below are unchanged.
+      if (target.block) props.router.openPageAtBlock({ name: target.name, pageKind: target.pageKind, block: target.block, ...(target.path ? { path: target.path } : {}) });
+      else props.router.openPageTarget({ name: target.name, pageKind: target.pageKind, ...(target.path ? { path: target.path } : {}) });
+    } else props.router.openInNewTab(target, dest !== "background");
   };
   const [activeResult, setActiveResult] = createSignal<string | null>(null);
   // Navigation identity includes the physical owner: same-named page results
@@ -1038,6 +1095,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       pagePresentation: pagePresentation(), blockPresentation: blockPresentation(),
       pageDisplay: pageDisplay(), blockDisplay: blockDisplay(),
       pageMatchScope: pageMatchScopeExplicit() ? pageMatchScope() : undefined,
+      resultKinds: props.route.resultKinds,
     },
   });
   type CapturedSave = ReturnType<typeof captureSave>;
@@ -1092,6 +1150,68 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       {body}
     </button>
   );
+
+  // Own each family/body once. Rebuilding these objects inside the JSX made
+  // Solid's keyed For replace both sections on every new answer (GH #907).
+  const resultFamilies: ResultFamily[] = [
+    { kind: "page", get hits() { return pageHits().length; }, get hasMore() { return !!executed()?.has_more?.pages; },
+      control: sectionControl("page"),
+      body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} showProperties={sourceKind() === "dsl"} /> },
+    { kind: "block", get hits() { return blockHits().length; }, get hasMore() { return !!executed()?.has_more?.blocks; },
+      control: sectionControl("block"),
+      body: <Switch>
+        <Match when={blockView().view === "search"}>
+          <div class="query-results-search" role="list" aria-label={t("query-query-workspace-block-results")}>
+            <For each={blockHits()}>{(hit) => (
+              <div role="listitem">
+                {task(hit)}
+                {resultButton(hit, <SearchResultRow page={hit.page} breadcrumb={hit.block.breadcrumb ?? []}
+                  text={hit.display_text} spans={hitSpans(hit)} />)}
+              </div>
+            )}</For>
+          </div>
+        </Match>
+        <Match when={blockView().view === "list"}>
+          <ul class="query-results-list" aria-label={t("query-query-workspace-query-results")}>
+            <For each={blockHits()}>{(hit) => (
+              <li>{task(hit)}<button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
+                <span class="query-list-context">{hitPage(hit)}</span>
+                <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
+              </button></li>
+            )}</For>
+          </ul>
+        </Match>
+        <Match when={blockView().view === "table"}>
+          <div class="query-results-table-wrap"><table class="query-results-table">
+            <caption class="sr-only">{t("query-query-workspace-query-results")}</caption>
+            <thead><tr><th scope="col">{t("query-query-workspace-type")}</th><th scope="col">{t("query-query-workspace-page")}</th><th scope="col">{t("query-query-workspace-content")}</th></tr></thead>
+            <tbody><For each={blockHits()}>{(hit) => (
+              <tr data-inpage-find-surface={hitSurfaceId(hit)}>
+                <td>{hitKind(hit)}</td>
+                <td><button type="button" {...resultActions(hit, false)}>{hitPage(hit)}</button></td>
+                <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
+              </tr>
+            )}</For></tbody>
+          </table></div>
+        </Match>
+        <Match when={blockView().view === "board"}>
+          <div class="query-results-board" aria-label={t("query-query-workspace-query-results-grouped-by-page")}>
+            <For each={boardGroups().map(group => group.key)}>{(key) => {
+              const group = () => boardByKey().get(key)!;
+              return (
+              <section class="query-board-column">
+                <h2>{group().page}<span class="query-board-count">{group().hits.length}</span></h2>
+                <div role="list"><For each={group().hits}>{(hit) => (
+                  <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
+                    <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
+                  </button></div>
+                )}</For></div>
+              </section>
+            ); }}</For>
+          </div>
+        </Match>
+      </Switch> },
+  ];
 
   return (
     <section ref={workspace} onKeyDown={resultKeyDown} onFocusIn={(event) => {
@@ -1187,7 +1307,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
       <section class="query-workspace-status" aria-live="polite" aria-atomic="true">
         <Show when={!source().trim()}>{sourceKind() === "search" ? t("query-query-workspace-enter-a-search-to-begin") : t("query-query-workspace-enter-a-query-to-begin")}</Show>
-        <Show when={!!source().trim() && execution.loading}>{t("query-query-workspace-searching")}</Show>
+        <Show when={awaitingAnswer()}>{t("query-query-workspace-searching")}</Show>
         <Show when={!!source().trim() && !execution.loading && execution.error}>
           {t("query-workspace-search-failed", { detail: execution.error instanceof Error ? execution.error.message : String(execution.error) })}
         </Show>
@@ -1227,81 +1347,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
       <Show when={source().trim() && !ogHint()?.date_windows}>
       <QueryResultSections
-        pending={execution.loading}
+        pending={awaitingAnswer() && executed() === undefined}
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
-        families={[
-          { kind: "page", hits: pageHits().length, hasMore: !!executed()?.has_more?.pages,
-            control: sectionControl("page"),
-            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} /> },
-          { kind: "block", hits: blockHits().length, hasMore: !!executed()?.has_more?.blocks,
-            control: sectionControl("block"),
-            body: <Switch>
-        <Match when={blockView().view === "search"}>
-          <div class="query-results-search" role="list" aria-label={t("query-query-workspace-block-results")}>
-            <For each={blockHits()}>{(hit) => (
-              <div role="listitem">
-                {task(hit)}
-                {resultButton(hit, <SearchResultRow
-                    page={hit.page}
-                    breadcrumb={hit.block.breadcrumb ?? []}
-                    text={hit.display_text}
-                    spans={hitSpans(hit)}
-                  />)}
-              </div>
-            )}</For>
-          </div>
-        </Match>
-
-        <Match when={blockView().view === "list"}>
-          <ul class="query-results-list" aria-label={t("query-query-workspace-query-results")}>
-            <For each={blockHits()}>{(hit) => (
-              <li>
-                {task(hit)}
-                <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
-                  <span class="query-list-context">{hitPage(hit)}</span>
-                  <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
-                </button>
-              </li>
-            )}</For>
-          </ul>
-        </Match>
-
-        <Match when={blockView().view === "table"}>
-          <div class="query-results-table-wrap">
-            <table class="query-results-table">
-              <caption class="sr-only">{t("query-query-workspace-query-results")}</caption>
-              <thead><tr><th scope="col">{t("query-query-workspace-type")}</th><th scope="col">{t("query-query-workspace-page")}</th><th scope="col">{t("query-query-workspace-content")}</th></tr></thead>
-              <tbody>
-                <For each={blockHits()}>{(hit) => (
-                  <tr data-inpage-find-surface={hitSurfaceId(hit)}>
-                    <td>{hitKind(hit)}</td>
-                    <td><button type="button" {...resultActions(hit, false)}>{hitPage(hit)}</button></td>
-                    <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
-                  </tr>
-                )}</For>
-              </tbody>
-            </table>
-          </div>
-        </Match>
-
-        <Match when={blockView().view === "board"}>
-          <div class="query-results-board" aria-label={t("query-query-workspace-query-results-grouped-by-page")}>
-            <For each={boardGroups()}>{([page, pageHits]) => (
-              <section class="query-board-column">
-                <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>
-                <div role="list">
-                  <For each={pageHits}>{(hit) => (
-                    <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
-                      <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
-                    </button></div>
-                  )}</For>
-                </div>
-              </section>
-            )}</For>
-          </div>
-        </Match>
-      </Switch> },
-        ]}
+        families={resultFamilies.filter((family) => !executed()?.families || executed()!.families!.includes(family.kind))}
       />
       </Show>
 

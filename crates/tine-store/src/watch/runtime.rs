@@ -43,6 +43,17 @@ pub(super) fn run(
                 match install_watch(&core, &pending, &wake) {
                     Ok(created) => {
                         watcher = Some(created);
+                        // A drain whose sentinel predates the registration
+                        // has no notification: take it as one, behind a
+                        // full diff (`test_drain.rs`).
+                        #[cfg(feature = "test-faults")]
+                        if let Some(id) =
+                            super::test_drain::Barrier::written_before_install(&core.graph.root)
+                        {
+                            let mut pending = pending.lock().unwrap();
+                            pending.barrier = pending.barrier.max(Some(id));
+                            pending.full = true;
+                        }
                         // The asset baseline predates registration. An edit in
                         // that gap has no event; retain the scan until Ready.
                         pending.lock().unwrap().assets.scan_after_install();

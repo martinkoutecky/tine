@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 // GH #726: right-clicking a block inside a query's results opened the block
 // menu of the QUERY HOST (the nested row's handler ran, then the host row's
 // handler overrode it), so Cut / Delete removed the query block from its page.
@@ -71,7 +72,10 @@ function clickMenu(label: string): void {
 describe("query results (GH #726)", () => {
   beforeEach(() => {
     const parsed: ParsedQuery = { query: { anchor: "block", filter: { kind: "and", items: [] }, source: { kind: "builder" } }, view: {} };
-    vi.spyOn(backend(), "parseQuery").mockResolvedValue(parsed);
+    // The engine resolves presentation from the supplied host properties.
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (_text, _dialect, properties) => ({
+      ...parsed, view: { view: properties?.find(([key]) => key === "tine.view")?.[1] as ParsedQuery["view"]["view"] },
+    }));
     vi.spyOn(backend(), "printQuery").mockResolvedValue("@block");
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
     vi.spyOn(backend(), "queryRun").mockImplementation(async () => blockRunResult([{ page: "Src", kind: "page", blocks: [
@@ -219,12 +223,12 @@ describe("query results (GH #726)", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       const editor = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLTextAreaElement>('[data-block-id="query"] [data-block-id="hit"] textarea');
+        const el = maybeEditorIn(root.querySelector('[data-block-id="query"]')!, "hit");
         expect(el).not.toBeNull();
         return el!;
       });
       expect(editingId()).toBe("hit");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
       await vi.waitFor(() => expect(selectedIds()).toEqual(["hit"]));
       document.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: key === "x", metaKey: key === "x", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId.hit).toBeUndefined());
@@ -243,12 +247,12 @@ describe("query results (GH #726)", () => {
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
       const editor = await vi.waitFor(() => {
-        const el = root.querySelector<HTMLTextAreaElement>('[data-block-id="query"] [data-block-id="hit"] textarea');
+        const el = maybeEditorIn(root.querySelector('[data-block-id="query"]')!, "hit");
         expect(el).not.toBeNull();
         return el!;
       });
-      editor.setSelectionRange(0, 0);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+      editor.select(0, 0);
+      editor.keydown({ key: "Backspace", bubbles: true, cancelable: true });
       await Promise.resolve();
       expect(doc.byId.query.raw).toBe("{{tine-query @block}}");
       expect(pageByName("Host")!.roots).toEqual(["query", "after"]);
@@ -291,7 +295,9 @@ describe("block embeds (GH #726 sweep)", () => {
     } finally { dispose(); }
   });
 
-  it("the transparent embed's root row stays the occurrence's handle (master GH #514), as before", async () => {
+  // D-20261030-EMB restores GH #514 (0.8), which beta.1's GH #726 had reversed:
+  // the one bullet of a whole-block embed is the host's on this page.
+  it("the embedded root's menu belongs to the host (D-20261030-EMB, GH #514)", async () => {
     const { root, dispose } = mount(() => <For each={pageByName("HostPage")!.roots}>{(id) => <Block id={id} />}</For>);
     try {
       rightClick(await embedded(root, "target"));

@@ -69,7 +69,7 @@ see the project `CLAUDE.md`.
 | [0040](0040-file-path-is-storage-identity.md) | Physical file path, not logical page name, is storage identity | Accepted |
 | [0041](0041-rendered-outline-navigation-scope.md) | Outline navigation is scoped to the rendered model, not the whole page | Accepted |
 | [0042](0042-one-query-plan-many-frontends.md) | One typed query plan serves friendly search, visual builders, DSL, and virtual query workspaces | Accepted |
-| [0043](0043-canonical-reference-evidence.md) | Canonical reference occurrences and evidence | Accepted |
+| [0043](0043-canonical-reference-evidence.md) | Canonical reference occurrences and evidence (code-exclusion rule superseded by 0077) | Accepted, superseded in part by 0077 |
 | [0044](0044-objective-launcher-ranking.md) | Objective search classes and bounded launcher frecency | Accepted |
 | [0045](0045-tine-native-plugin-platform.md) | Tine-native plugins run as capability-limited WebAssembly guests | Accepted |
 | [0046](0046-declarative-plugin-settings-and-themes.md) | Plugin settings and themes are separate declarative host contracts | Accepted |
@@ -85,3 +85,8 @@ see the project `CLAUDE.md`.
 | [0071](0071-open-only-tine-links.md) | External tine:// links use lazy graph UUIDs and open existing graph, page or block targets | Accepted |
 | [0072](0072-window-large-outlines.md) | Window large outline shells with measured re-entry geometry (GH #623) | Accepted |
 | [0073](0073-share-inbox.md) | Share inbox for native capture (GH #608) | Accepted |
+| [0074](0074-launch-backups-are-one-zip-per-snapshot.md) | Launch backups are one verified zip per snapshot (schema 5; an unchanged launch writes nothing; supersedes 0062 as the write format) | Proposed |
+| [0075](0075-margin-dialogue-comments.md) | Margin dialogue: a comment is an ordinary child block with `quote::`; the anchor is re-derived, never stored | Proposed |
+| [0076](0076-quick-share-device-records.md) | Quick share keeps its account and share keys in two private app-data files | Proposed |
+| [0077](0077-unlinked-mentions-count-code-text.md) | Unlinked mentions count text inside code, math and other literal regions (supersedes 0043's code-exclusion rule; matches OG) | Accepted |
+| [0080](0080-theme-typography-local-fonts.md) | Theme API 0.3 lets a package name local fonts and a block line height (closed grammar, no CSS, no downloads) | Accepted |

@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 const out = "artifacts/fix-sticky-overlap";
-const tested = `${execFileSync("rtk", ["git", "rev-parse", "HEAD"], {encoding:"utf8"}).trim()} + working diff`;
+const tested = `${execFileSync("git", ["rev-parse", "HEAD"], {encoding:"utf8"}).trim()} + working diff`;
 mkdirSync(out, { recursive: true });
 writeFileSync(`${out}/fixture.html`, `<html data-theme="light"><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/${out}/fixture.tsx"></script></body></html>`);
 writeFileSync(`${out}/fixture.tsx`, `

@@ -4,7 +4,10 @@
 //! unowned until the host has stopped and its Store has closed. A later open
 //! of the same root adopts the host instead (`adopt`); otherwise the
 //! retirement thread stops it with `PageHost::orphan_stop` (the model's
-//! `windowCrash`, once per abandoned owner) and closes the Store.
+//! `windowCrash`, once per abandoned owner) and closes the Store. A host
+//! whose driver ended (a host bug) is never adopted: its retirement is
+//! terminal (`PageHost::stop_finish` on `Ended`), and the reopen gets a
+//! fresh host.
 //!
 //! Lock order: registry, then this map; a slot's host lock, then this map.
 //! The map is always taken last and held only briefly.
@@ -30,12 +33,19 @@ struct Inner {
 /// per abandoned owner): `None` once it stopped (or there was none), else the
 /// pause before the next pass. A draft failure aborts the stop; the host
 /// keeps its pages, stays alive, and the stop is retried with `backoff`.
+/// A host whose driver ended (a host bug) stops here for good: its pages go
+/// back to the watcher and its drafts stay for recovery (`stop_finish`).
 /// Retirement and `tine serve` stop their hosts through this one step.
 pub(crate) fn stop_pass(host: &mut PageHostSlot, backoff: &mut Duration) -> Option<Duration> {
     match &*host {
         PageHostSlot::Off | PageHostSlot::Revoked => None,
         PageHostSlot::Running(running) => match running.orphan_stop() {
-            tine_store::StopState::Ready => {
+            // Ended is final: the driver is gone, and `stop_finish` ends the
+            // host for good.
+            state @ (tine_store::StopState::Ready | tine_store::StopState::Ended) => {
+                if state == tine_store::StopState::Ended {
+                    crate::debug::diag("page-host-retired-after-driver-ended");
+                }
                 let PageHostSlot::Running(running) = std::mem::take(host) else {
                     unreachable!()
                 };
@@ -123,25 +133,60 @@ impl HostRetirement {
             let pause = match &*host {
                 // Revoked only by an adoption, which `claims` saw.
                 PageHostSlot::Revoked => return,
-                _ => stop_pass(&mut host, &mut backoff),
+                // A pass that panics (a host bug) is retried like an aborted
+                // one: a host it dropped is gone (the slot is Off), and one
+                // whose driver ended stops for good next pass. The thread
+                // never leaves the slot retiring behind it.
+                _ => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    stop_pass(&mut host, &mut backoff)
+                }))
+                .unwrap_or_else(|_| {
+                    crate::debug::diag("page-host-retirement-pass-panicked");
+                    let pause = backoff;
+                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                    Some(pause)
+                }),
             };
             let Some(pause) = pause else {
                 // Still under the host lock: an adoption either took the
                 // host before this pass or finds the slot gone.
-                let lease = slot.owner.lock().unwrap_or_else(|e| e.into_inner()).take();
-                slot.store.close();
-                self.0.retiring.lock().unwrap().remove(&slot.root_key);
-                self.0.idle.notify_all();
-                drop(host);
-                // The host has stopped: release the owner lease (endpoint,
-                // then lock; CLI PROTOCOL §3.2), outside the host lock so a
-                // request in flight can finish.
-                drop(lease);
+                self.close_stopped(&slot, host);
                 return;
             };
             drop(host);
             std::thread::sleep(pause);
         }
+    }
+
+    /// The end of `slot`'s retirement, once its host stopped (`host` is its
+    /// held host lock): the Store closes, the slot leaves this map, and the
+    /// owner lease goes. Every step runs even when the close panics, so app
+    /// exit and a reopen never wait on this slot again.
+    fn close_stopped(
+        &self,
+        slot: &Arc<GraphSlot>,
+        host: std::sync::RwLockWriteGuard<'_, PageHostSlot>,
+    ) {
+        let lease = slot.owner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let closed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.store.close()));
+        if closed.is_err() {
+            crate::debug::diag("page-host-retirement-close-panicked");
+        }
+        {
+            let mut retiring = self.0.retiring.lock().unwrap_or_else(|e| e.into_inner());
+            if retiring
+                .get(&slot.root_key)
+                .is_some_and(|kept| Arc::ptr_eq(kept, slot))
+            {
+                retiring.remove(&slot.root_key);
+            }
+        }
+        self.0.idle.notify_all();
+        drop(host);
+        // The host has stopped: release the owner lease (endpoint, then
+        // lock; CLI PROTOCOL §3.2), outside the host lock so a request in
+        // flight can finish.
+        drop(lease);
     }
 
     fn claims(&self, slot: &Arc<GraphSlot>) -> bool {
@@ -162,7 +207,26 @@ impl HostRetirement {
         root: &std::path::Path,
     ) -> Option<(Arc<tine_store::Store>, PageHostSlot, Option<Lease>)> {
         let slot = self.0.retiring.lock().unwrap().get(root).cloned()?;
+        // A pathname can name a different directory by the time it reopens.
+        // Preserve this host in retirement until its drafts have custody;
+        // the opener must then capture a fresh Store/root witness.
+        if slot.store.check_graph_root().is_err() {
+            return None;
+        }
         let mut host = slot.host.write().unwrap_or_else(|e| e.into_inner());
+        // A host whose driver ended (a host bug) answers nothing: the opener
+        // ends its retirement here, as the retirement thread would, and
+        // starts a fresh host on a fresh Store.
+        if host.ended() {
+            if !self.claims(&slot) {
+                return None;
+            }
+            let mut backoff = Duration::from_secs(1);
+            if stop_pass(&mut host, &mut backoff).is_none() {
+                self.close_stopped(&slot, host);
+            }
+            return None;
+        }
         {
             let mut retiring = self.0.retiring.lock().unwrap();
             if !retiring
@@ -191,7 +255,7 @@ impl HostRetirement {
     }
 
     /// Wait up to `bound` until no other retiring root overlaps `root`
-    /// (`root` itself is adopted, not waited for). `waiting` runs once,
+    /// (`root` itself is adopted only while its binding is intact). `waiting` runs once,
     /// with the root still saving, when the wait has to begin. The root
     /// still retiring past the bound comes back.
     pub(crate) fn wait_overlapping(
@@ -201,9 +265,13 @@ impl HostRetirement {
         waiting: impl FnOnce(&std::path::Path),
     ) -> Result<(), PathBuf> {
         let deadline = Instant::now() + bound;
+        let exact = self.0.retiring.lock().unwrap().get(root).cloned();
+        // Probe outside the retirement-map lock: a network volume's metadata
+        // call must not hold up the other graphs' retirement bookkeeping.
+        let wait_same = exact.is_some_and(|slot| slot.store.check_graph_root().is_err());
         let mut waiting = Some(waiting);
         let mut retiring = self.0.retiring.lock().unwrap();
-        while let Some(saving) = overlap(&retiring, root, false) {
+        while let Some(saving) = overlap(&retiring, root, wait_same) {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err(saving);
@@ -221,6 +289,15 @@ impl HostRetirement {
     /// Whether no host is retiring.
     pub(crate) fn is_idle(&self) -> bool {
         self.0.retiring.lock().unwrap().is_empty()
+    }
+
+    /// A retiring host retains its entire draft namespace, even while a
+    /// failed draft delays its stop. Called under the registry lock.
+    pub(crate) fn draft_namespace_held(&self, source: &str, target: &str) -> bool {
+        self.0.retiring.lock().unwrap().keys().any(|root| {
+            let id = crate::settings::host_graph_id(root);
+            id == source || id == target
+        })
     }
 
     /// Wait up to `bound` for every retiring host to stop; the roots still
@@ -261,7 +338,113 @@ mod tests {
     };
     use std::sync::atomic::AtomicBool;
     use std::sync::{mpsc, Barrier, Mutex, RwLock};
-    use tine_store::{EditKind, Input, PageHost, PageId, PageMail, Store};
+    use tine_store::{EditKind, PageHost, PageId, PageMail, Store};
+
+    #[test]
+    fn l9_retiring_source_refuses_draft_recovery() {
+        let f = Fixture::new("draft-recovery-retiring");
+        let current = Fixture::new("draft-recovery-target");
+        let registry = GraphRegistry::default();
+        let source = Arc::new(GraphSlot::new(f.store.clone(), f.root.clone()));
+        let target = Arc::new(GraphSlot::new(current.store.clone(), current.root.clone()));
+        registry
+            .retirement
+            .0
+            .retiring
+            .lock()
+            .unwrap()
+            .insert(f.root.clone(), source);
+        let id = crate::settings::host_graph_id(&f.root);
+        let drafts = current.app_data.join("drafts-v2").join(&id);
+        std::fs::create_dir_all(&drafts).unwrap();
+        std::fs::write(drafts.join("vehicle"), b"retained input").unwrap();
+        assert_eq!(
+            crate::root_identity::recover_namespace(&current.app_data, &id, &target, &registry),
+            Err("draft-recovery-owner-held".into())
+        );
+        assert_eq!(
+            std::fs::read(drafts.join("vehicle")).unwrap(),
+            b"retained input"
+        );
+    }
+
+    #[test]
+    fn l9_recovery_and_relocation_exclude_both_bound_and_retiring_namespaces() {
+        let source = Fixture::new("namespace-source");
+        let current = Fixture::new("namespace-current");
+        let source_id = crate::settings::host_graph_id(&source.root);
+        let target_id = crate::settings::host_graph_id(&current.root);
+        for retiring in [false, true] {
+            for held_source in [false, true] {
+                let mut registry = GraphRegistry::default();
+                let f = if held_source { &source } else { &current };
+                let held = Arc::new(GraphSlot::new(f.store.clone(), f.root.clone()));
+                if retiring {
+                    registry
+                        .retirement
+                        .0
+                        .retiring
+                        .lock()
+                        .unwrap()
+                        .insert(f.root.clone(), held.clone());
+                } else {
+                    registry.bind("held".into(), held.clone()).unwrap();
+                }
+                // Equal roots do not exempt another slot with a live host.
+                let target = Arc::new(GraphSlot::new(current.store.clone(), current.root.clone()));
+                assert!(registry.draft_namespace_held(&source_id, &target_id, Some(&target)));
+                assert_eq!(
+                    crate::root_identity::recover_namespace(
+                        &current.app_data,
+                        &source_id,
+                        &target,
+                        &registry
+                    ),
+                    Err("draft-recovery-owner-held".into())
+                );
+                assert_eq!(
+                    crate::root_identity::relocate_if_idle(
+                        &current.app_data,
+                        &source.root,
+                        &current.root,
+                        &registry
+                    ),
+                    Err("draft-recovery-owner-held".into())
+                );
+                if !retiring && !held_source {
+                    assert!(
+                        !registry.draft_namespace_held(&source_id, &target_id, Some(&held)),
+                        "only the saved-stop target is exempt"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn l9_a_detached_retiring_host_is_waited_for_instead_of_adopted() {
+        let f = Fixture::new("root-replaced");
+        let retirement = HostRetirement::default();
+        let slot = Arc::new(GraphSlot::new(f.store.clone(), f.root.clone()));
+        retirement
+            .0
+            .retiring
+            .lock()
+            .unwrap()
+            .insert(f.root.clone(), slot);
+        std::fs::rename(&f.root, f.dir.join("moved")).unwrap();
+        if !cfg!(target_os = "android") {
+            std::fs::create_dir(&f.root).unwrap();
+        }
+        assert!(
+            retirement.adopt(&f.root).is_none(),
+            "a reopen needs a fresh root witness"
+        );
+        assert_eq!(
+            retirement.wait_overlapping(&f.root, Duration::from_millis(10), |_| {}),
+            Err(f.root.clone())
+        );
+    }
 
     struct Fixture {
         dir: PathBuf,
@@ -394,10 +577,9 @@ mod tests {
         slot.store.page_of(&page, body.as_bytes()).unwrap().doc
     }
 
-    fn hold(slot: &GraphSlot) -> tine_store::Reservation {
+    fn hold(slot: &GraphSlot) -> Box<dyn Send> {
         running(slot, |host| {
-            host.reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-                .unwrap()
+            Box::new(host.pause_for_tests(&[PageId::from("pages/a.md")]))
         })
     }
 
@@ -456,7 +638,7 @@ mod tests {
         let retirement = registry.retirement.clone();
         assert!(retirement.wait_idle(Duration::from_millis(2500)).is_err());
         assert!(
-            slot.host_slot().unwrap().running().is_some(),
+            slot.host_slot().unwrap().running().is_ok(),
             "the host stays alive"
         );
         assert!(!f.closed());
@@ -547,6 +729,28 @@ mod tests {
         *fresh.host.write().unwrap() = PageHostSlot::Off;
     }
 
+    /// Review R1 of audit-storage-1109: a writer that panicked leaves the
+    /// Store's writer lock poisoned. Retiring the slot still stops the host,
+    /// closes the Store and takes the slot out of the retirement, and
+    /// dropping the last slot and Store references (each closes again) does
+    /// not panic or abort.
+    #[test]
+    fn a_retirement_after_a_writer_panicked_closes_and_releases_the_root() {
+        let f = Fixture::new("writer-poisoned");
+        let mut registry = GraphRegistry::default();
+        let slot = f.bind(&mut registry, "graph-1");
+        f.store.poison_writer_for_tests();
+        assert!(registry.remove("graph-1").is_none());
+        let retirement = registry.retirement.clone();
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+        assert!(f.closed(), "the Store closed");
+        drop(slot);
+        drop(retirement);
+        drop(registry);
+        f.store.close();
+        assert!(f.closed());
+    }
+
     /// The registry hands a host-less slot straight back, for the caller to
     /// drop outside the lock (today's path).
     #[test]
@@ -563,7 +767,7 @@ mod tests {
     /// A retiring host whose page input is admitted but held: it cannot stop
     /// until `reservation` drops. Bound as `graph-1` in `graphs`, then
     /// released.
-    fn retiring(f: &Fixture, graphs: &RwLock<GraphRegistry>) -> tine_store::Reservation {
+    fn retiring(f: &Fixture, graphs: &RwLock<GraphRegistry>) -> Box<dyn Send> {
         let slot = f.bind(&mut graphs.write().unwrap(), "graph-1");
         let window = window(&slot);
         let reservation = hold(&slot);
@@ -689,11 +893,10 @@ mod tests {
     /// of `slot`, on `slot` as a worker that captured it finds it.
     fn late_writer(slot: &GraphSlot, to: &str) -> Result<(), String> {
         let gate = slot.host_slot()?;
-        rename(&slot.store, gate.running(), to)
+        rename(&slot.store, gate.running()?, to)
     }
 
-    fn rename(store: &Store, host: Option<&PageHost>, to: &str) -> Result<(), String> {
-        let host = host.ok_or("no page host")?;
+    fn rename(store: &Store, host: &PageHost, to: &str) -> Result<(), String> {
         tine_graph_features::pages::rename_page_expected(store, host, "a", to, None)
             .map_err(|error| error.to_string())
     }
@@ -725,7 +928,7 @@ mod tests {
             Err(STALE_BINDING.to_owned()),
             "revoked for good, not only while the page is reserved"
         );
-        assert!(fresh.host_slot().unwrap().running().is_some());
+        assert!(fresh.host_slot().unwrap().running().is_ok());
         assert!(registry.remove("graph-2").is_none());
         assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
         assert_eq!(f.disk(), "- one\n");
@@ -755,7 +958,7 @@ mod tests {
                 let gate = old.host_slot().unwrap();
                 entered.wait();
                 release.wait();
-                rename(&old.store, gate.running(), "inside")
+                rename(&old.store, gate.running()?, "inside")
             });
             entered.wait();
             let adopt = scope.spawn(|| retirement.adopt(&f.root));
@@ -835,7 +1038,7 @@ mod tests {
     }
 
     /// Tear down a state whose graph-2 adopted `f`'s host.
-    fn close_reopened(f: &Fixture, state: &AppState, reservation: tine_store::Reservation) {
+    fn close_reopened(f: &Fixture, state: &AppState, reservation: Box<dyn Send>) {
         drop(reservation);
         assert!(state.graphs.write().unwrap().remove("graph-2").is_none());
         let retirement = state.graphs.read().unwrap().retirement.clone();
@@ -990,5 +1193,172 @@ mod tests {
         });
         assert_eq!(*at_exit.lock().unwrap(), Some("- unsaved\n".to_owned()));
         assert!(f.closed());
+    }
+
+    /// `f`'s owner lease, held by `slot` as an app binding's is (CLI
+    /// PROTOCOL §3.1); the lock path a later claim of the graph takes.
+    #[cfg(desktop)]
+    fn lease(f: &Fixture, slot: &Arc<GraphSlot>) -> PathBuf {
+        use crate::owner::{lease::Claimed, lock::OwnerLock, namespace::Namespace};
+        let owners = Namespace::at(f.dir.join("owners")).unwrap();
+        let paths = owners.graph(&slot.root_key).unwrap();
+        let lock = OwnerLock::try_take(&paths.lock, "app").unwrap().unwrap();
+        let path = paths.lock.clone();
+        *slot.owner.lock().unwrap() = Some(Claimed::from_lock(lock, paths).serve_app(slot));
+        path
+    }
+
+    #[cfg(desktop)]
+    fn lease_free(lock: &std::path::Path) -> bool {
+        crate::owner::lock::OwnerLock::try_take(lock, "serve")
+            .unwrap()
+            .is_some()
+    }
+
+    fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !done() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// R1 (s3b O6 neighbour): a window closed after its host's driver
+    /// panicked (a host bug) retires that host for good, through the real
+    /// retirement thread: the slot leaves the retirement, the Store closes,
+    /// the owner lease is free and the pending app exit runs. The draft the
+    /// host wrote before it died stays, and the reopen, which has nothing
+    /// left to adopt, launches a fresh host that recovers and saves it and
+    /// saves new input.
+    #[cfg(all(unix, desktop))]
+    #[test]
+    fn r1_a_window_closed_after_a_driver_panic_retires_its_host_for_good() {
+        use std::os::unix::fs::PermissionsExt;
+        let f = Fixture::new("driver-ended");
+        let state = app_state();
+        let slot = f.bind(&mut state.graphs.write().unwrap(), "graph-1");
+        let lock = lease(&f, &slot);
+        let shown = window(&slot);
+        // The save cannot be written, so the host drafts the input.
+        let pages = f.root.join("pages");
+        let mode =
+            |mode| std::fs::set_permissions(&pages, std::fs::Permissions::from_mode(mode)).unwrap();
+        mode(0o555);
+        submit(&slot, &shown, "- two\n").unwrap();
+        let drafts = f.app_data.join("drafts-v2/test-graph");
+        // A draft record (`page_host/drafts.rs`), not the namespace's own files.
+        let drafted = || {
+            std::fs::read_dir(&drafts).is_ok_and(|entries| {
+                entries.flatten().any(|entry| {
+                    std::fs::read(entry.path()).is_ok_and(|bytes| bytes.starts_with(b"TINEDRF2"))
+                })
+            })
+        };
+        wait_for("the unsaved input was never drafted", drafted);
+        running(&slot, PageHost::crash_driver_for_tests);
+        mode(0o755);
+        drop(slot);
+        assert!(crate::state::release_window_graph(&state.graphs, "graph-1"));
+        let exited = AtomicBool::new(false);
+        let exit = exit_when_unowned(
+            &state,
+            Duration::from_secs(10),
+            || false,
+            || exited.store(true, std::sync::atomic::Ordering::SeqCst),
+        );
+        assert_eq!(exit, Ok(true), "app exit is not blocked by the dead host");
+        assert!(exited.load(std::sync::atomic::Ordering::SeqCst));
+        let retirement = state.graphs.read().unwrap().retirement.clone();
+        assert!(retirement.is_idle(), "the slot left the retirement");
+        assert!(f.closed(), "the Store closed");
+        // Released last, just after the slot leaves the map (`close_stopped`).
+        wait_for("the owner lease was never released", || lease_free(&lock));
+        assert_eq!(f.disk(), "- one\n");
+        assert!(drafted(), "the draft stays for recovery");
+        // The reopen: nothing to adopt, so a fresh Store and host.
+        assert!(retirement.adopt(&f.root).is_none());
+        let store = Arc::new(Store::open(&f.root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let mut fresh = GraphSlot::new(store, f.root.clone());
+        let host = PageHost::start_for_tests(&fresh.store, &f.app_data).unwrap();
+        *fresh.host.get_mut().unwrap() = PageHostSlot::Running(host);
+        let fresh = Arc::new(fresh);
+        assert!(state
+            .graphs
+            .write()
+            .unwrap()
+            .bind("graph-2".into(), fresh.clone())
+            .unwrap()
+            .is_none());
+        let recovered = json(running(&fresh, PageHost::draft_status));
+        wait_for(
+            &format!("the recovered draft was never saved: {recovered}"),
+            || f.disk() == "- two\n",
+        );
+        let window = window(&fresh);
+        submit(&fresh, &window, "- three\n").unwrap();
+        wait_for("the fresh host's write never landed", || {
+            f.disk() == "- three\n"
+        });
+        drop(fresh);
+        assert!(state.graphs.write().unwrap().remove("graph-2").is_none());
+        assert_eq!(retirement.wait_idle(Duration::from_secs(20)), Ok(()));
+    }
+
+    /// R1: a reopen that finds the root still retiring with a dead host
+    /// (before the retirement thread's next pass) never adopts it: it ends
+    /// that retirement itself, so the open claims the lease and starts a
+    /// fresh host instead.
+    #[cfg(desktop)]
+    #[test]
+    fn r1_a_reopen_never_adopts_a_host_whose_driver_ended() {
+        let f = Fixture::new("adopt-ended");
+        let mut registry = GraphRegistry::default();
+        let old = f.bind(&mut registry, "graph-1");
+        let lock = lease(&f, &old);
+        running(&old, PageHost::crash_driver_for_tests);
+        // Retiring, as `retire` leaves it, with no thread to finish it.
+        let retirement = registry.retirement.clone();
+        retirement
+            .0
+            .retiring
+            .lock()
+            .unwrap()
+            .insert(f.root.clone(), old.clone());
+        assert!(retirement.adopt(&f.root).is_none(), "never adopted");
+        assert!(retirement.is_idle());
+        assert!(matches!(*old.host_slot().unwrap(), PageHostSlot::Off));
+        assert!(f.closed());
+        assert!(lease_free(&lock));
+    }
+
+    /// R1 siblings: a graph switch retires the displaced binding the same
+    /// way, and `stop_pass` (retirement's pass and `tine serve`'s stop) ends
+    /// a dead host instead of panicking.
+    #[test]
+    fn r1_a_graph_switch_after_a_driver_panic_retires_the_old_host_for_good() {
+        let f = Fixture::new("switch-ended");
+        let other = Fixture::new("switch-target");
+        let mut registry = GraphRegistry::default();
+        let old = f.bind(&mut registry, "graph-1");
+        running(&old, PageHost::crash_driver_for_tests);
+        let next = Arc::new(GraphSlot::new(other.store.clone(), other.root.clone()));
+        assert!(
+            registry.bind("graph-1".into(), next).unwrap().is_none(),
+            "the displaced host retires"
+        );
+        assert_eq!(
+            registry.retirement.wait_idle(Duration::from_secs(10)),
+            Ok(())
+        );
+        assert!(f.closed());
+        assert!(matches!(*old.host_slot().unwrap(), PageHostSlot::Off));
+
+        let mut host = PageHostSlot::Running(
+            PageHost::start_for_tests(&other.store, &other.app_data).unwrap(),
+        );
+        host.running().unwrap().crash_driver_for_tests();
+        assert_eq!(stop_pass(&mut host, &mut Duration::from_secs(1)), None);
+        assert!(matches!(host, PageHostSlot::Off));
     }
 }

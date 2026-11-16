@@ -66,6 +66,18 @@ describe("published semantic answers and admission (OG-B-FRONT)", () => {
     const hits = await publishedBackend(async () => s).runGraphSearch("b", 0, 10, "quick-switch");
     expect(hits.hits[0].evidence?.[0].spans).toEqual([{start: 2, end: 3}]);
   });
+  it("block picker search lists whole words in any order before in-order fragments (OG's two legs)", async () => {
+    const s = structuredClone(snapshot);
+    s.pages[0].blocks = [
+      {id: "frag", raw: "qzfoo qzbarx tail", collapsed: false, children: []},
+      {id: "words", raw: "xx qzbar yy qzfoo", collapsed: false, children: []},
+    ];
+    const api = publishedBackend(async () => s);
+    const ids = async (q: string, limit = 20) => (await api.search(q, limit)).flatMap((g) => g.blocks).map((b) => b.id);
+    expect(await ids("qzbar qzfoo")).toEqual(["words"]);
+    expect(await ids("qzfoo qzbar")).toEqual(["words", "frag"]);
+    expect(await ids("qzfoo qzbar", 1)).toEqual(["words"]);
+  });
   it("resolves the authored ID instead of a fenced example", async () => {
     const s = structuredClone(snapshot);
     s.pages[0].blocks = [

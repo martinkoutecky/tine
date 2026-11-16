@@ -18,6 +18,7 @@ import { loadSourcePage } from "../sourcePage";
 import { bindingOwner } from "../owned";
 import { leadingMarker, taskCheckboxState } from "../markers";
 import { pushToast } from "../toasts";
+import { flashTaskToggle } from "../justToggled";
 import { formatForBlockId, toggleBlockCheckbox } from "./blockParts";
 import { noticeChangedResults, resolveResultRow, type ResultRow } from "./queryResultIdentity";
 
@@ -76,7 +77,10 @@ export function SourceTaskCheckbox(props: {
             const ref = props.target();
             const checked = state();
             if (!ref || checked === null) return;
-            void toggleTaskAtSource(ref, checked, props.result).catch(() => {
+            const box = e.currentTarget;
+            void toggleTaskAtSource(ref, checked, props.result).then((outcome) => {
+              if (outcome === "toggled") flashTaskToggle(box);
+            }).catch(() => {
               pushToast(msg("macro-source-task-checkbox-couldn-t-load-the-task-s-page-so-the-task"), "error");
             });
           }}

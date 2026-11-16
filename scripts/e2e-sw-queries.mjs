@@ -19,12 +19,12 @@ fs.writeFileSync(path.join(graph, "pages/Needle.md"), '- TODO Needle task\n');
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"), XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"), WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 const port = Number(process.env.E2E_DRIVER_PORT || 4918);
 const app = path.resolve(process.env.TINE_APP || "target/release/tine");
-const testedCommit = execFileSync("rtk", ["git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const testedCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const log = fs.openSync(path.join(out, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs(port, port + 1, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"), { env, stdio: ["ignore", log, log], detached: true });
 let browser;
 let journey = "startup";
-const screenshot = name => execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, name)], { env, timeout: 10000 });
+const screenshot = name => execFileSync("import", ["-window", "root", path.join(out, name)], { env, timeout: 10000 });
 const query = title => browser.execute(wanted => [...document.querySelectorAll(".query-block")].find(q => q.querySelector(".query-title")?.textContent.trim() === wanted)?.textContent, title);
 try {
   await sleep(1500);

@@ -11,9 +11,24 @@ use tine_core::query::ir::{
 use tine_core::query::print::PrintDialect;
 use tine_core::query::registry::Registry;
 pub(crate) use tine_core::query::wire_parse::{parse_query_pair, ParsedQuery, QueryTextDialect};
-use tine_store::{IrAnswer, IrRequest, WholeGraph};
+use tine_store::{Cancel, IrAnswer, IrRequest, WholeGraph};
 
 use crate::state::{slot_for_context, GraphContext};
+
+#[tauri::command]
+pub(crate) async fn register_query_subscription(
+    subscription: String,
+    request: Option<tine_store::QuerySubscription>,
+    state: GraphContext<'_>,
+) -> Result<tine_store::QueryRegistration, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.store
+            .register_reader_while_live(subscription, request, &slot.background_cancelled)
+            .map_err(|error| format!("query subscription failed: {error:?}"))
+    })
+    .await
+}
 
 fn validate_query_source(query: &str) -> Result<(), String> {
     if !tine_core::query::query_source_within_limit(query) {
@@ -50,9 +65,15 @@ fn print_query_text(
     )
 }
 
+/// A run stopped by its flag (the binding was revoked: graph switch or
+/// close) answers this, never a partial result.
+pub(crate) const QUERY_CANCELLED: &str = "query-cancelled: the graph was closed or switched";
+
 fn registry(graph: &WholeGraph) -> Result<Arc<Registry>, String> {
-    match graph.query_ir(IrRequest::Registry) {
-        Ok(IrAnswer::Registry(registry)) => Ok(registry),
+    // The registry request never checks its flag: it is built once per
+    // generation and shared.
+    match graph.query_ir(IrRequest::Registry, &Cancel::default()) {
+        Ok(Some(IrAnswer::Registry(registry))) => Ok(registry),
         Ok(_) => Err("query-registry: unexpected answer".into()),
         Err(error) => Err(error.to_string()),
     }
@@ -73,18 +94,34 @@ pub(crate) fn parse(
     ))
 }
 
+/// `query_run`'s answer on the wire: the result plus, for a day-relative
+/// query, the day it was resolved for (`QueryResult::as_of_day`, card hB3Lv8),
+/// which the result's own serde form never writes.
+#[derive(serde::Serialize)]
+pub(crate) struct QueryRunAnswer {
+    #[serde(flatten)]
+    result: QueryResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    as_of_day: Option<i64>,
+}
+
 pub(crate) fn run(
     graph: &WholeGraph,
     query: &Query,
     view: &ViewSettings,
     context: &ExecutionContext,
+    cancel: &Cancel,
 ) -> Result<QueryResult, String> {
-    match graph.query_ir(IrRequest::Run {
-        query,
-        view,
-        context,
-    }) {
-        Ok(answer) => QueryResult::try_from(answer),
+    match graph.query_ir(
+        IrRequest::Run {
+            query,
+            view,
+            context,
+        },
+        cancel,
+    ) {
+        Ok(Some(answer)) => QueryResult::try_from(answer),
+        Ok(None) => Err(QUERY_CANCELLED.into()),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -93,25 +130,32 @@ fn explain_empty(
     graph: &WholeGraph,
     query: &Query,
     context: &ExecutionContext,
+    cancel: &Cancel,
 ) -> Result<ExplainEmptyResult, String> {
-    match graph.query_ir(IrRequest::ExplainEmpty { query, context }) {
-        Ok(IrAnswer::ExplainEmpty(explained)) => Ok(explained),
+    match graph.query_ir(IrRequest::ExplainEmpty { query, context }, cancel) {
+        Ok(Some(IrAnswer::ExplainEmpty(explained))) => Ok(explained),
+        Ok(None) => Err(QUERY_CANCELLED.into()),
         Ok(_) => Err("query-explain-empty: unexpected answer".into()),
         Err(error) => Err(error.to_string()),
     }
 }
 
+/// Run a graph read on the blocking pool. The closure gets this request's own
+/// cancellation flag, registered on the binding for the request's lifetime and
+/// set when the binding is revoked (`GraphSlot::begin_query_run`); IR query
+/// runs pass it to `WholeGraph::query_ir`, other reads ignore it.
 async fn on_graph<T: Send + 'static>(
     state: &GraphContext<'_>,
-    read: impl FnOnce(&WholeGraph) -> Result<T, String> + Send + 'static,
+    read: impl FnOnce(&WholeGraph, &Cancel) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let slot = slot_for_context(state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let run = slot.begin_query_run();
         let graph = slot
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        read(&graph)
+        read(&graph, run.cancel())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -132,7 +176,7 @@ pub(crate) async fn query_parse(
     state: GraphContext<'_>,
 ) -> Result<ParsedQuery, String> {
     validate_query_source(&text)?;
-    on_graph(&state, move |graph| {
+    on_graph(&state, move |graph, _cancel| {
         parse(
             graph,
             &text,
@@ -178,7 +222,7 @@ pub(crate) async fn query_og_expressible(query: Query, view: ViewSettings) -> bo
 /// graph that is unbound, closed or failed to load.
 #[tauri::command]
 pub(crate) async fn query_registry(state: GraphContext<'_>) -> Result<RegistrySnapshot, String> {
-    on_graph(&state, |graph| {
+    on_graph(&state, |graph, _cancel| {
         registry(graph).map(|registry| registry.snapshot())
     })
     .await
@@ -198,9 +242,34 @@ pub(crate) async fn query_run(
     view: ViewSettings,
     context: Option<ExecutionContext>,
     state: GraphContext<'_>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryRunAnswer, String> {
     let context = context.unwrap_or_default();
-    on_graph(&state, move |graph| run(graph, &query, &view, &context)).await
+    on_graph(&state, move |graph, cancel| {
+        run(graph, &query, &view, &context, cancel).map(|result| QueryRunAnswer {
+            as_of_day: result.as_of_day,
+            result,
+        })
+    })
+    .await
+}
+
+/// GH #715: the "Pages tagged with" rows of a page or alias name: pages
+/// tagged with any name in its alias group, itself included when it tags
+/// itself so (`IrRequest::TaggedPages`). `(page-tags …)` through `query_run` stays
+/// literal. Same bounds as `query_run`; waits for the initial graph load.
+#[tauri::command]
+pub(crate) async fn tagged_pages(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<QueryResult, String> {
+    on_graph(&state, move |graph, cancel| {
+        match graph.query_ir(IrRequest::TaggedPages { name: &name }, cancel) {
+            Ok(Some(answer)) => QueryResult::try_from(answer),
+            Ok(None) => Err(QUERY_CANCELLED.into()),
+            Err(error) => Err(error.to_string()),
+        }
+    })
+    .await
 }
 
 /// SPEC §7.1 `query_explain_empty` (N19): why the query returned nothing — one
@@ -218,7 +287,10 @@ pub(crate) async fn query_explain_empty(
 ) -> Result<ExplainEmptyResult, String> {
     let _ = view;
     let context = context.unwrap_or_default();
-    on_graph(&state, move |graph| explain_empty(graph, &query, &context)).await
+    on_graph(&state, move |graph, cancel| {
+        explain_empty(graph, &query, &context, cancel)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -249,6 +321,54 @@ mod tests {
         (dir, graph)
     }
 
+    /// Card hB3Lv8: the app's `query_run` answer names the day a day-relative
+    /// result was resolved for, and nothing for a date-free one, while the
+    /// result's own serde form (quick share, CLI, memo checkpoint) stays
+    /// without it.
+    #[test]
+    fn query_run_answer_carries_the_day_of_a_day_relative_result_only() {
+        let (_dir, graph) = graph_with(&[
+            ("logseq/config.edn", "{}\n"),
+            (
+                "pages/Plans.md",
+                "- TODO plan\n  SCHEDULED: <2000-01-03 Mon>\n",
+            ),
+        ]);
+        let answer = |text: &str| {
+            let parsed = parse(&graph, text, QueryTextDialect::Tql, &[]).unwrap();
+            assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
+            let result = run(
+                &graph,
+                &parsed.query,
+                &parsed.view,
+                &ExecutionContext::none(),
+                &Cancel::default(),
+            )
+            .unwrap();
+            let bare = serde_json::to_value(&result).unwrap();
+            assert!(bare.get("as_of_day").is_none(), "{bare}");
+            serde_json::to_value(QueryRunAnswer {
+                as_of_day: result.as_of_day,
+                result,
+            })
+            .unwrap()
+        };
+        let today = tine_core::date::JournalDate::today().ordinal_key();
+        let relative = answer("scheduled between '-30d' and today");
+        // A run straddling midnight may name the next day; never another one.
+        let day = relative["as_of_day"]
+            .as_i64()
+            .expect("day-relative answer is stamped");
+        assert!(day >= today, "{day} vs {today}");
+        assert!(
+            relative.get("anchor").is_some(),
+            "the result stays flattened"
+        );
+        let fixed = answer("scheduled between '2000-01-01' and '2000-01-31'");
+        assert!(fixed.get("as_of_day").is_none(), "{fixed}");
+        assert_eq!(fixed["total"], 1);
+    }
+
     fn parse_and_run(graph: &WholeGraph, text: &str, dialect: QueryTextDialect) -> Vec<String> {
         let parsed = parse(graph, text, dialect, &[]).unwrap();
         assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
@@ -257,6 +377,7 @@ mod tests {
             &parsed.query,
             &parsed.view,
             &ExecutionContext::none(),
+            &Cancel::default(),
         )
         .unwrap();
         match result.rows {
@@ -326,6 +447,7 @@ mod tests {
             &parsed.query,
             &parsed.view,
             &ExecutionContext::none(),
+            &Cancel::default(),
         )
         .expect_err("an exceeded result is a refusal");
         assert!(
@@ -374,7 +496,13 @@ mod tests {
             &[],
         )
         .unwrap();
-        let explained = explain_empty(&graph, &parsed.query, &ExecutionContext::none()).unwrap();
+        let explained = explain_empty(
+            &graph,
+            &parsed.query,
+            &ExecutionContext::none(),
+            &Cancel::default(),
+        )
+        .unwrap();
         assert_eq!(explained.rows.len(), 2, "{:?}", explained.rows);
         assert!(explained.rows.iter().all(|line| line.without.is_some()));
         assert!(
@@ -429,6 +557,7 @@ mod tests {
                 &parsed.query,
                 &parsed.view,
                 &ExecutionContext::none(),
+                &Cancel::default(),
             )
             .unwrap();
             let rows = match &result.rows {
@@ -497,9 +626,15 @@ mod tests {
             let context = ExecutionContext {
                 current_page: page.map(str::to_string),
             };
-            match run(&graph, &parsed.query, &parsed.view, &context)
-                .unwrap()
-                .rows
+            match run(
+                &graph,
+                &parsed.query,
+                &parsed.view,
+                &context,
+                &Cancel::default(),
+            )
+            .unwrap()
+            .rows
             {
                 tine_core::query::ir::QueryRows::Block { groups } => groups
                     .into_iter()

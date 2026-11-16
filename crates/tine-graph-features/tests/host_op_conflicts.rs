@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tine_core::sync_diff::{DiffRow, RowKind};
 use tine_graph_features::conflicts;
-use tine_store::{FaultPoint, Input, PageHost, PageId, Store};
+use tine_store::{FaultPoint, PageHost, PageId, Store};
 
 const CONFIG: &str = "{:journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n";
 const WINNER: &str = "pages/Foo.md";
@@ -110,9 +110,7 @@ fn a_copy_gone_before_apply_leaves_the_page_untouched() {
         } else {
             fs::remove_file(root.join(COPY)).unwrap();
         }
-        let error = Fold::SyncCopy
-            .run(&store, Some(&host), &review)
-            .unwrap_err();
+        let error = Fold::SyncCopy.run(&store, &host, &review).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
         assert_eq!(error.to_string(), "the conflict copy is no longer on disk");
         assert_eq!(fs::read(root.join(WINNER)).unwrap(), original);
@@ -186,7 +184,7 @@ fn sync_review_changes_and_scalar_properties_preserve_both_sources() {
         let before = tree(&root);
         let result = conflicts::resolve_sync_conflict(
             &store,
-            Some(&host),
+            &host,
             WINNER,
             COPY,
             &decisions,
@@ -263,7 +261,7 @@ fn a_unicode_sync_copy_resolves_and_bad_pairings_keep_the_files() {
         let before = tree(&root);
         let error = conflicts::resolve_sync_conflict(
             &store,
-            Some(&host),
+            &host,
             winner,
             bad,
             &decisions,
@@ -283,7 +281,7 @@ fn a_unicode_sync_copy_resolves_and_bad_pairings_keep_the_files() {
     }
     conflicts::resolve_sync_conflict(
         &store,
-        Some(&host),
+        &host,
         winner,
         copy,
         &decisions,
@@ -326,6 +324,14 @@ impl Fold {
     }
 
     /// The fold of the pair as reviewed now: keep both sides of every row.
+    /// The winner's bytes after the fold keeps both sides of every row.
+    fn folded(self) -> &'static str {
+        match self {
+            Fold::SyncCopy => "- shared\n- mine\n- theirs\n",
+            Fold::DuplicateDay => "- shared line\n- only in canonical\n- only in stray\n",
+        }
+    }
+
     fn review(self, store: &Store) -> (HashMap<String, String>, String, String) {
         let (winner, other) = self.pair();
         let diff = match self {
@@ -342,7 +348,7 @@ impl Fold {
     fn run(
         self,
         store: &Store,
-        host: Option<&PageHost>,
+        host: &PageHost,
         (decisions, base, other): &(HashMap<String, String>, String, String),
     ) -> std::io::Result<()> {
         let (winner, copy) = self.pair();
@@ -366,42 +372,31 @@ impl Fold {
     }
 }
 
-/// A fold with a host leaves the graph byte-for-byte as the plain fold does,
-/// and the folded file's bytes stay recoverable in graph trash.
+/// A fold with a host writes the folded winner and removes the folded file
+/// (pinned to the bytes the deleted no-host fold wrote, host-only-writer
+/// S1), and the folded file's bytes stay
+/// recoverable in graph trash.
 #[test]
-fn a_fold_with_a_host_writes_what_the_plain_fold_writes() {
+fn a_fold_with_a_host_writes_the_folded_graph() {
     let _integration_guard = crate::integration_lock();
     for fold in [Fold::SyncCopy, Fold::DuplicateDay] {
-        let plain = graph("plain");
-        let store = open(&plain);
-        let review = fold.review(&store);
-        fold.run(&store, None, &review).unwrap();
-        store.close();
         let hosted = graph("hosted");
+        let mut expected = tree(&hosted);
         let app_data = tempfile::tempdir().unwrap();
         let store = open(&hosted);
         let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
         let review = fold.review(&store);
-        fold.run(&store, Some(&host), &review).unwrap();
+        fold.run(&store, &host, &review).unwrap();
         drop(host);
         store.close();
-        assert_eq!(
-            tree(&hosted),
-            tree(&plain),
-            "{fold:?}: a fold's bytes changed under a host"
-        );
-        let (_, other) = fold.pair();
-        assert!(!hosted.join(other).exists(), "{fold:?}: folded file kept");
-        let text = fs::read_to_string(plain.join(fold.pair().0)).unwrap();
-        assert!(
-            text.contains("theirs") || text.contains("only in stray"),
-            "{fold:?}: the other side was not folded in: {text:?}"
-        );
+        let (winner, other) = fold.pair();
+        expected.remove(other);
+        expected.insert(winner.to_owned(), fold.folded().as_bytes().to_vec());
+        assert_eq!(tree(&hosted), expected, "{fold:?}: the folded graph");
         assert!(
             trashed(&hosted.join("logseq/.tine-trash")).contains(&fold.other_text().to_owned()),
             "{fold:?}: the folded file's bytes are not recoverable in trash"
         );
-        let _ = fs::remove_dir_all(plain);
         let _ = fs::remove_dir_all(hosted);
     }
 }
@@ -419,14 +414,12 @@ fn fold_changed_meanwhile(
     let store = open(&root);
     let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let review = fold.review(&store);
-    let held = host
-        .reserve(|| vec![PageId::from(fold.pair().0)], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from(fold.pair().0)]);
     let result = std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, review) = (&store, &host, &review);
         scope.spawn(move || {
-            let _ = done.send(fold.run(store, Some(host), review));
+            let _ = done.send(fold.run(store, host, review));
         });
         // The fold reads and plans now; it cannot apply while the winner
         // is held.
@@ -524,7 +517,7 @@ fn crash_duplicate_day_fold_worker() {
     abort_before(Phase::TrashMove, 0);
     store.inject_fault(FaultPoint::AbortAfterStep(0));
     let host = PageHost::start_for_tests(&store, Path::new(&app_data)).unwrap();
-    let result = Fold::DuplicateDay.run(&store, Some(&host), &review);
+    let result = Fold::DuplicateDay.run(&store, &host, &review);
     panic!("the fold was not killed before the stray's removal: {result:?}");
 }
 
@@ -631,50 +624,36 @@ fn marker_review(store: &Store) -> (HashMap<String, String>, String) {
 
 fn resolve_markers(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     (decisions, base): &(HashMap<String, String>, String),
 ) -> std::io::Result<()> {
     conflicts::resolve_vcs_marker_conflict(store, host, MARKED, decisions, base, "union")
 }
 
-/// W8 (P3 combine): a marker resolution with a host writes what the plain
-/// one writes, and the marker bytes are in conflict trash, staged before the
-/// operation (DESIGN §3.4 pre).
+/// W8 (P3 combine): a marker resolution with a host writes the resolved
+/// page (pinned to the bytes the deleted no-host resolution wrote,
+/// host-only-writer S1), and the marker bytes are in
+/// conflict trash, staged before the operation (DESIGN §3.4 pre).
 #[test]
-fn a_marker_resolution_with_a_host_writes_what_the_plain_one_writes() {
+fn a_marker_resolution_with_a_host_writes_the_resolved_page() {
     let _integration_guard = crate::integration_lock();
-    let plain = graph("markers-plain");
-    fs::write(plain.join(MARKED), MARKED_TEXT).unwrap();
-    let store = open(&plain);
-    let review = marker_review(&store);
-    resolve_markers(&store, None, &review).unwrap();
-    store.close();
     let hosted = graph("markers-hosted");
     fs::write(hosted.join(MARKED), MARKED_TEXT).unwrap();
+    let mut expected = tree(&hosted);
     let app_data = tempfile::tempdir().unwrap();
     let store = open(&hosted);
     let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let review = marker_review(&store);
-    resolve_markers(&store, Some(&host), &review).unwrap();
+    resolve_markers(&store, &host, &review).unwrap();
     drop(host);
     store.close();
-    assert_eq!(
-        tree(&hosted),
-        tree(&plain),
-        "a resolution's bytes changed under a host"
-    );
-    let resolved = fs::read_to_string(hosted.join(MARKED)).unwrap();
-    assert!(!resolved.contains("<<<<<<<"), "{resolved:?}");
-    assert!(
-        resolved.contains("- mine") && resolved.contains("- theirs"),
-        "{resolved:?}"
-    );
+    expected.insert(MARKED.to_owned(), b"- before\n- mine\n- theirs\n".to_vec());
+    assert_eq!(tree(&hosted), expected, "the resolved graph");
     assert_eq!(
         trashed(&hosted.join("logseq/.tine-trash/conflicts")),
         vec![MARKED_TEXT.to_owned()],
         "the marker bytes are not recoverable in conflict trash"
     );
-    let _ = fs::remove_dir_all(plain);
     let _ = fs::remove_dir_all(hosted);
 }
 
@@ -690,14 +669,12 @@ fn a_marker_page_changed_after_the_plan_is_never_overwritten() {
     let store = open(&root);
     let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
     let review = marker_review(&store);
-    let held = host
-        .reserve(|| vec![PageId::from(MARKED)], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from(MARKED)]);
     let result = std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, review) = (&store, &host, &review);
         scope.spawn(move || {
-            let _ = done.send(resolve_markers(store, Some(host), review));
+            let _ = done.send(resolve_markers(store, host, review));
         });
         // The resolution reads, stages and plans now; it cannot apply while
         // the page is held.

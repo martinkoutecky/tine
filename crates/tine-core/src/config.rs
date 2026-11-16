@@ -20,7 +20,8 @@ pub struct Config {
     /// OG agenda horizon (signed integers are accepted by OG). None when
     /// config.edn omits it: the device's Settings value (default 7) applies.
     pub scheduled_future_days: Option<i32>,
-    /// Visible diagnostics for malformed journal configuration values.
+    /// Visible diagnostics for malformed journal configuration values and
+    /// journal date patterns with parts Tine does not support.
     pub journal_config_diagnostics: Vec<String>,
     /// Configured journal directory, relative to the graph root.
     pub journals_dir: String,
@@ -78,7 +79,8 @@ pub struct Config {
     /// folded with `property_key_norm` when matched.
     pub property_pages_excludelist: Vec<String>,
     /// `:default-templates {:journals "Name"}` — template applied to a new,
-    /// empty journal page.
+    /// empty journal page: trimmed, and a blank name is `None` (OG
+    /// `state/get-default-journal-template`).
     pub default_journal_template: Option<String>,
     /// `:default-home {:page "Name"}` — the graph's home page (OG
     /// `state/get-default-home`). Only a string `:page` directly inside a
@@ -134,6 +136,10 @@ pub struct Config {
     /// `:ui/show-brackets?` — OG default ON; only explicit false hides the
     /// brackets around page references.
     pub show_brackets: bool,
+    /// `:feature/enable-journals?` — OG default ON (`state/enable-journals?`:
+    /// `(not (false? …))`); only explicit false turns the journals feature off
+    /// (the sidebar offers the configured home page instead of Journals).
+    pub enable_journals: bool,
     /// `:shortcut/doc-mode-enter-for-new-block?` — when document mode is on,
     /// retain the normal Enter = new block mapping. Absent defaults to false.
     pub doc_mode_enter_for_new_block: bool,
@@ -244,6 +250,7 @@ impl Default for Config {
             enable_timetracking: true,
             enable_search_remove_accents: true,
             show_brackets: true,
+            enable_journals: true,
             doc_mode_enter_for_new_block: false,
             logical_outdenting: false,
             logbook: LogbookSettings::default(),
@@ -264,7 +271,8 @@ impl Default for LogbookSettings {
 
 impl Config {
     /// Parse supported EDN keys independently, defaulting missing or malformed
-    /// values. This does not report a validation error for a bad format string.
+    /// values. A journal date pattern with parts Tine does not support keeps its
+    /// value and adds a `journal_config_diagnostics` entry (card g4czVA).
     pub fn parse(edn: &str) -> Config {
         // Locate only direct root entries, as the graph-feature setters do.
         // Arbitrary unrelated forms need not fit the small sidecar value model.
@@ -309,8 +317,9 @@ impl Config {
         cfg.property_pages_enabled =
             bool_value(edn, ":property-pages/enabled?").unwrap_or(cfg.property_pages_enabled);
         cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
-        cfg.default_journal_template =
-            nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
+        cfg.default_journal_template = nested_string(edn, ":default-templates", ":journals")
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty());
         cfg.default_home =
             nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
@@ -320,11 +329,28 @@ impl Config {
         cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
-        cfg.journal_file_name_format =
-            string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
-        cfg.journal_page_title_format = string_value(edn, ":journal/page-title-format")
-            .filter(|s| !s.is_empty())
-            .or_else(|| string_value(edn, ":date-formatter").filter(|s| !s.is_empty()));
+        let file_format = string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
+        let title_format = [":journal/page-title-format", ":date-formatter"]
+            .into_iter()
+            .find_map(|key| {
+                string_value(edn, key)
+                    .filter(|s| !s.is_empty())
+                    .map(|v| (key, v))
+            });
+        for (key, pattern) in [
+            file_format
+                .as_deref()
+                .map(|p| (":journal/file-name-format", p)),
+            title_format.as_ref().map(|(key, p)| (*key, p.as_str())),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            cfg.journal_config_diagnostics
+                .extend(unsupported_journal_pattern_diagnostic(key, pattern));
+        }
+        cfg.journal_file_name_format = file_format;
+        cfg.journal_page_title_format = title_format.map(|(_, v)| v);
         // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
         // its schema also accepts the keyword form `:preferred-format :org` — read
         // both so a keyword-configured graph isn't silently treated as markdown.
@@ -356,6 +382,8 @@ impl Config {
                 })
                 .unwrap_or(cfg.enable_search_remove_accents);
         cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(cfg.show_brackets);
+        cfg.enable_journals =
+            bool_value(edn, ":feature/enable-journals?").unwrap_or(cfg.enable_journals);
         cfg.doc_mode_enter_for_new_block =
             bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?")
                 .unwrap_or(cfg.doc_mode_enter_for_new_block);
@@ -410,7 +438,7 @@ pub fn edn_str_end(s: &str, open: usize) -> usize {
 }
 
 /// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
-/// strings, `;` comments, and nested braces. End-of-string if unbalanced.
+/// strings, character literals, `;` comments, and nesting. EOF if unbalanced.
 pub fn match_close_brace(s: &str, open: usize) -> usize {
     match_close(s, open, b'{', b'}')
 }
@@ -426,8 +454,8 @@ fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
     let mut depth = 1usize;
     while i < b.len() {
         let c = b[i];
-        if c == b'"' {
-            i = edn_str_end(s, i);
+        if matches!(c, b'"' | b'\\') {
+            i = form_end(s, i);
             continue;
         }
         if c == b';' {
@@ -537,8 +565,8 @@ pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usi
     if i >= close {
         return None;
     }
-    if b[i] == b'"' {
-        return Some((i, edn_str_end(s, i).min(close), true));
+    if matches!(b[i], b'"' | b'\\') {
+        return Some((i, form_end(s, i).min(close), b[i] == b'"'));
     }
     let start = i;
     while i < close
@@ -611,6 +639,36 @@ fn journal_title(value: &crate::edn::Edn) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Card g4czVA: the visible warning for a journal date pattern with parts
+/// Tine does not support. Detection only; Tine renders the pattern as before.
+fn unsupported_journal_pattern_diagnostic(key: &str, pattern: &str) -> Option<String> {
+    use crate::date::UnsupportedHandling;
+    let mut parts: Vec<String> = Vec::new();
+    for token in crate::date::unsupported_tokens(pattern) {
+        let effect = match token.handling {
+            UnsupportedHandling::Literal => "written as literal text",
+            UnsupportedHandling::ShorterFields => "read as shorter date fields",
+            UnsupportedHandling::Quoted => "quote marks kept, letters inside read as date fields",
+        };
+        let part = format!("{} ({effect})", token.text);
+        if !parts.contains(&part) {
+            parts.push(part);
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let what = if key == ":journal/file-name-format" {
+        "file names"
+    } else {
+        "titles"
+    };
+    Some(format!(
+        "{key} \"{pattern}\" uses date pattern parts Tine does not support: {}. Tine may write and recognize journal {what} differently from Logseq; it renames and rewrites nothing.",
+        parts.join(", ")
+    ))
 }
 
 /// The three Logseq journal keys, returned rather than written into a `Config`
@@ -1064,10 +1122,14 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     map
 }
 
-/// `:macros {"name" "template" …}` — string→string map. Mirrors `parse_shortcuts`
-/// but with STRING keys (macro names) rather than keyword keys. Values are template
-/// strings (with `$1..$N` placeholders the frontend fills in). Stops cleanly on the
-/// first non-string key/value rather than desyncing on unexpected EDN.
+/// `:macros {"name" "template" :name "template" …}` — name→template map. Keys
+/// are strings or keywords, mixed freely (GH #854): OG looks a macro up by its
+/// name string, then by `(keyword name)` (`frontend/components/block.cljs`), so
+/// a keyword key `:ns/name` is the macro `ns/name` (namespace kept, as
+/// `(keyword "ns/name")` is `:ns/name`), and a string key wins over a keyword
+/// key of the same name. Values are template strings (with `$1..$N`
+/// placeholders the frontend fills in). Stops cleanly on the first other key or
+/// value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let Some(start) = read_keyword(edn, ":macros") else {
@@ -1079,16 +1141,48 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         return map;
     }
     let close = match_close_brace(edn, from);
+    let mut string_keys = std::collections::HashSet::new();
     let mut i = from + 1;
     while i < close {
         i = skip_blank(edn, i);
-        if i >= close || b[i] != b'"' {
-            break; // key must be a string
-        }
-        let Some(key) = read_string_at(edn, i) else {
+        if i >= close {
             break;
+        }
+        let (key, keyword) = match b[i] {
+            b'"' => {
+                let Some(key) = read_string_at(edn, i) else {
+                    break;
+                };
+                i = edn_str_end(edn, i);
+                (key, false)
+            }
+            b':' => {
+                let kstart = i + 1;
+                let mut j = kstart;
+                while j < close
+                    && !matches!(
+                        b[j],
+                        b' ' | b'\t'
+                            | b'\n'
+                            | b'\r'
+                            | b','
+                            | b'"'
+                            | b';'
+                            | b'{'
+                            | b'}'
+                            | b'['
+                            | b']'
+                            | b'('
+                            | b')'
+                    )
+                {
+                    j += 1;
+                }
+                i = j;
+                (edn[kstart..j].to_string(), true)
+            }
+            _ => break, // neither a string nor a keyword key
         };
-        i = edn_str_end(edn, i);
         let vfrom = skip_blank(edn, i);
         if vfrom >= close || b[vfrom] != b'"' {
             break; // value must be a string
@@ -1097,7 +1191,15 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
             break;
         };
         i = edn_str_end(edn, vfrom);
-        if !key.is_empty() {
+        if key.is_empty() {
+            continue;
+        }
+        if keyword {
+            if !string_keys.contains(&key) {
+                map.insert(key, val);
+            }
+        } else {
+            string_keys.insert(key.clone());
             map.insert(key, val);
         }
     }
@@ -1149,6 +1251,53 @@ mod tests {
             title.default_journal_queries[0].title.as_deref(),
             Some("Count 2")
         );
+    }
+
+    /// Card g4czVA: an unsupported journal pattern part is a visible
+    /// diagnostic naming the key that supplied the pattern; the configured
+    /// value itself is kept unchanged.
+    #[test]
+    fn unsupported_journal_pattern_parts_are_diagnosed() {
+        let cfg = Config::parse(
+            r#"{:journal/file-name-format "yyyy-MM-dd-ww" :journal/page-title-format "yyyy-MM-dd 'w'ww-E"}"#,
+        );
+        assert_eq!(
+            cfg.journal_config_diagnostics,
+            vec![
+                ":journal/file-name-format \"yyyy-MM-dd-ww\" uses date pattern parts Tine does not support: ww (written as literal text). Tine may write and recognize journal file names differently from Logseq; it renames and rewrites nothing.".to_string(),
+                ":journal/page-title-format \"yyyy-MM-dd 'w'ww-E\" uses date pattern parts Tine does not support: 'w' (quote marks kept, letters inside read as date fields), ww (written as literal text). Tine may write and recognize journal titles differently from Logseq; it renames and rewrites nothing.".to_string(),
+            ]
+        );
+        assert_eq!(
+            cfg.journal_file_name_format.as_deref(),
+            Some("yyyy-MM-dd-ww")
+        );
+        assert_eq!(
+            cfg.journal_page_title_format.as_deref(),
+            Some("yyyy-MM-dd 'w'ww-E")
+        );
+        // The legacy key is named when it supplies the title pattern; a
+        // repeated part is listed once.
+        let legacy = Config::parse(r#"{:date-formatter "yyyy dddd dddd"}"#);
+        assert_eq!(
+            legacy.journal_config_diagnostics,
+            vec![":date-formatter \"yyyy dddd dddd\" uses date pattern parts Tine does not support: dddd (read as shorter date fields). Tine may write and recognize journal titles differently from Logseq; it renames and rewrites nothing.".to_string()]
+        );
+        // A shadowed legacy pattern is not used, so it is not diagnosed.
+        let shadowed = Config::parse(
+            r#"{:journal/page-title-format "EEEE, dd.MM.yyyy" :date-formatter "ww"}"#,
+        );
+        assert!(shadowed.journal_config_diagnostics.is_empty());
+        for edn in [
+            "{}",
+            r#"{:journal/file-name-format "yyyy_MM_dd" :journal/page-title-format "MMM do, yyyy"}"#,
+            r#"{:journal/page-title-format "yyyy年MM月dd日"}"#,
+        ] {
+            assert!(
+                Config::parse(edn).journal_config_diagnostics.is_empty(),
+                "{edn}"
+            );
+        }
     }
 
     #[test]
@@ -1301,6 +1450,59 @@ mod tests {
         );
     }
 
+    /// GH #854: a Logseq `config.edn` names macros with keywords (`:bar`). OG
+    /// looks a macro up by its name string, then by `(keyword name)`, so both
+    /// forms work there; Tine used to stop at the first keyword key.
+    #[test]
+    fn parses_macros_with_keyword_keys() {
+        let edn = r#"{:macros {:bar "[:span {:class \"score s$1\"} $1]"
+                               :r "red $1"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(
+            cfg.macros.get("bar").map(String::as_str),
+            Some("[:span {:class \"score s$1\"} $1]")
+        );
+        assert_eq!(cfg.macros.get("r").map(String::as_str), Some("red $1"));
+    }
+
+    #[test]
+    fn a_keyword_macro_key_no_longer_drops_later_macros() {
+        let edn = r#"{:macros {"poem" "Roses are $1"
+                               :g "green $1", "greet" "Hello $1"
+                               ;; a comment between entries
+                               :o "orange"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(
+            cfg.macros.get("poem").map(String::as_str),
+            Some("Roses are $1")
+        );
+        assert_eq!(cfg.macros.get("g").map(String::as_str), Some("green $1"));
+        assert_eq!(
+            cfg.macros.get("greet").map(String::as_str),
+            Some("Hello $1")
+        );
+        assert_eq!(cfg.macros.get("o").map(String::as_str), Some("orange"));
+    }
+
+    /// OG tries the string name first, then `(keyword name)`: when a map has
+    /// both `"x"` and `:x`, the string entry wins whatever their order. A
+    /// namespaced `:ns/name` matches `{{ns/name}}`, because ClojureScript's
+    /// `(keyword "ns/name")` is the keyword `:ns/name`.
+    #[test]
+    fn macro_string_key_wins_over_keyword_key_and_namespaced_keyword_keeps_namespace() {
+        let edn = r#"{:macros {:x "from keyword" "x" "from string"
+                               "y" "from string" :y "from keyword"
+                               :ns/name "namespaced"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(cfg.macros.get("x").map(String::as_str), Some("from string"));
+        assert_eq!(cfg.macros.get("y").map(String::as_str), Some("from string"));
+        assert_eq!(
+            cfg.macros.get("ns/name").map(String::as_str),
+            Some("namespaced")
+        );
+        assert_eq!(cfg.macros.get("name"), None);
+    }
+
     #[test]
     fn no_macros_section_is_empty() {
         assert!(Config::parse(r#"{:preferred-format "Markdown"}"#)
@@ -1445,6 +1647,38 @@ mod tests {
             vec!["Inbox".to_string(), "Reading List".to_string()]
         );
         assert!(Config::parse("{}").favorites.is_empty());
+    }
+
+    #[test]
+    fn default_journal_template_is_trimmed_and_blank_is_none_as_in_og() {
+        // OG frontend.state/get-default-journal-template: `(when-not
+        // (string/blank? t) (string/trim t))`.
+        let template = |edn: &str| Config::parse(edn).default_journal_template;
+        assert_eq!(
+            template(r#"{:default-templates {:journals " Daily "}}"#).as_deref(),
+            Some("Daily")
+        );
+        assert_eq!(
+            template(r#"{:default-templates {:journals "Daily"}}"#).as_deref(),
+            Some("Daily")
+        );
+        assert_eq!(template(r#"{:default-templates {:journals "  "}}"#), None);
+        assert_eq!(template(r#"{:default-templates {:journals ""}}"#), None);
+        assert_eq!(template("{}"), None);
+    }
+
+    #[test]
+    fn enable_journals_is_on_unless_explicitly_false() {
+        // OG `state/enable-journals?`: `(not (false? (:feature/enable-journals? config)))`.
+        for (edn, enabled) in [
+            ("{}", true),
+            ("{:feature/enable-journals? true}", true),
+            ("{:feature/enable-journals? nil}", true),
+            ("{:feature/enable-journals? false}", false),
+            ("{;; :feature/enable-journals? false\n}", true),
+        ] {
+            assert_eq!(Config::parse(edn).enable_journals, enabled, "{edn}");
+        }
     }
 
     #[test]

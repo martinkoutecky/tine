@@ -7,9 +7,14 @@ import {
   registerTransientLayer,
 } from "../transientLayers";
 import { CalendarJump } from "./CalendarJump";
-import { bumpGraphEpoch } from "../graphSession";
+import { bumpGraphEpoch, bumpDataRev } from "../graphSession";
+import { applyChangeSummary } from "../changeSummary";
+import { applySidebarSession, rightSidebar } from "../ui";
+import { mainPaneRouter, route } from "../router";
+import { appNow, journalTitle } from "../journal";
 
 afterEach(() => {
+  applySidebarSession({ right: false, items: [] });
   clearTransientLayersForTest();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -35,6 +40,44 @@ function lowerSentinel(id: string) {
 }
 
 describe("CalendarJump transient ownership", () => {
+  it.each(["day", "today", "trigger"])("GH #740: Shift-click %s opens the journal in the sidebar and leaves the route alone", async (target) => {
+    mainPaneRouter.openPage("Calendar host", "page");
+    const before = route();
+    const { root, dispose } = mountCalendar();
+    try {
+      const trigger = root.querySelector<HTMLButtonElement>('button[title="Go to date"]')!;
+      if (target !== "trigger") trigger.click();
+      const button = target === "trigger" ? trigger : root.querySelector<HTMLButtonElement>(target === "today" ? ".dp-today" : ".dp-cell.today")!;
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+      expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: journalTitle(appNow()), pageKind: "journal" }));
+      expect(route()).toEqual(before);
+      expect(root.querySelector(".calendar-jump-pop")).toBeNull();
+    } finally { dispose(); }
+  });
+  it("keeps calendar dots on unrelated saves and reloads journal edits, full and gaps", async () => {
+    bumpGraphEpoch();
+    let rev = 0;
+    const publish = (journals = false, full = false) => {
+      applyChangeSummary({ rev: String(++rev), pages: [], blocks: [], linksTo: [], props: {}, inventoryChanged: false, full, journals });
+      bumpDataRev(true);
+    };
+    publish();
+    const mounted = mountCalendar();
+    const days = vi.mocked(backend().journalContentDays);
+    try {
+      mounted.root.querySelector<HTMLButtonElement>('button[title="Go to date"]')!.click();
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(1));
+      publish();
+      await Promise.resolve();
+      expect(days).toHaveBeenCalledTimes(1);
+      publish(true);
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(2));
+      publish(false, true);
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(3));
+      rev += 2; publish();
+      await vi.waitFor(() => expect(days).toHaveBeenCalledTimes(4));
+    } finally { mounted.dispose(); }
+  });
   it("drops old graph journal dots while the calendar stays open", async () => {
     let resolveOld!: (days: number[]) => void;
     const days = vi.spyOn(backend(), "journalContentDays")

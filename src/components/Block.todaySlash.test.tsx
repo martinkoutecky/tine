@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -38,15 +39,15 @@ function page(raw: string): PageDto {
   };
 }
 
-function inputAt(textarea: HTMLTextAreaElement, value: string, caret = value.length) {
+function inputAt(textarea: EditorDriver, value: string, caret = value.length) {
   textarea.focus();
-  textarea.value = value;
-  textarea.setSelectionRange(caret, caret);
-  textarea.dispatchEvent(new InputEvent("input", {
+  textarea.replaceText(value);
+  textarea.select(caret, caret);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
     data: value[caret - 1] ?? null,
-  }));
+  });
 }
 
 function choose(label: string) {
@@ -66,7 +67,7 @@ describe("/Today slash command (GH #220)", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       inputAt(textarea, "/today");
       await vi.waitFor(() => {
         const labels = [...document.body.querySelectorAll(".autocomplete .ac-label")]

@@ -67,6 +67,8 @@ export interface QueryPublicationRequest {
   folder?: string | null;
   replace?: boolean;
   assetBudgetBytes?: number | null;
+  /** "Include the query text" (off by default): only then does the export carry the query itself. */
+  includeQueryText?: boolean;
   name: string;
 }
 
@@ -74,11 +76,17 @@ export interface QueryPublicationPlan {
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
+  /** Selected by the query but not exported: `public:: false` pages and the exports page. */
+  leftOut: { name: string; path: string; reason: "private" | "exportsPage" }[];
+  /** The query's own page is among the exported pages. */
+  selectsHostPage: boolean;
   folder: string;
   path: string;
   exists: boolean;
   suggestedFolder: string | null;
   fingerprint: string;
+  /** Names in the existing leaf snapshot, excluding its synthetic home; absent when unavailable. */
+  previousPages?: string[] | null;
 }
 
 export interface PublicationReceipt {
@@ -116,6 +124,9 @@ export interface PageRead extends PageDto {
   id: string;
 }
 
+/** Native read provenance, including a source that supplied no page bytes. */
+export type PageReadSource = "disk" | "held-bytes" | "held-absent" | "held-unindexed";
+
 /** What the backend rename did; `unchanged`: nothing written — a case-only
  *  rename, an empty old name, or a name no file and no reference uses (e.g. a
  *  never-saved page nobody links to). `touched` lists every page file it moved,
@@ -131,6 +142,17 @@ export interface RenameDone {
   home_page?: string | null;
 }
 
+/** An owner-side rename uses the same refresh as the window's own rename. */
+export interface OwnerPageRename {
+  old: string;
+  name: string;
+  /** Null for a reference-only source or fileless namespace parent. */
+  path: string | null;
+  kind: PageKind;
+  report: RenameDone;
+  binding_generation: number;
+}
+
 /** One page file a rename or merge wrote. */
 export interface RenameTouchedPage {
   /** Graph-relative path before the rename: the loaded page's `id`. */
@@ -138,6 +160,15 @@ export interface RenameTouchedPage {
   /** The file left this path (moved, or trashed by a merge); otherwise it was
    *  rewritten in place. */
   moved: boolean;
+}
+
+/** `page_alias_group`: the other members of one page's alias group
+ *  (D-20261019-AL1/AL2), each list sorted case-insensitively. */
+export interface AliasGroup {
+  /** Names with no file of their own; a link opens the declaring page. */
+  aliases: string[];
+  /** Names a file claims; a link opens that file. */
+  pages: string[];
 }
 
 export type ResolvedPage =
@@ -159,7 +190,7 @@ export interface PageInventoryEntry {
 export interface PageInventory {
   rev: string;
   entries: PageInventoryEntry[];
-  /** Graph-relative paths whose page name couldn't be read; left out of `entries`
+  /** Graph-relative `path: reason` strings whose page name couldn't be read; left out of `entries`
    *  names but never failing the inventory. */
   unreadable?: string[];
 }
@@ -174,6 +205,8 @@ export interface PageModified {
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
+  /** Bodies are available; request the referenced-day merge after publication. */
+  references_pending?: boolean;
   pages: PageRead[];
   /** Referenced future days, nearest first; returned on the first page only. */
   upcoming?: PageRead[];
@@ -447,7 +480,7 @@ export interface MatchSpan {
 export interface MatchEvidence {
   clause_id: number;
   field: "page_name" | "visible_content";
-  mode: "contains" | "phrase" | "regex" | "fuzzy";
+  mode: "contains" | "phrase" | "regex" | "fuzzy" | "fragments" | "words";
   spans: MatchSpan[];
   score?: number;
 }
@@ -497,6 +530,9 @@ export interface QueryExecution {
   explanation: { branches: QueryExplainNode[] };
   /** Absent only when talking to an older backend or using an older test fixture. */
   has_more?: { pages: boolean; blocks: boolean };
+  /** A query-engine (dsl) answer names the result families its query asked for, so the workspace shows
+   *  only those (GH #619 c6). Absent for a friendly search, which always answers both. */
+  families?: ("page" | "block")[];
   cancelled: boolean;
 }
 
@@ -531,9 +567,17 @@ export interface GraphMeta {
   shortcuts: Record<string, string>;
   start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
+  /** `:property-pages/enabled?`; absent means enabled, as in OG. */
+  property_pages_enabled?: boolean;
   /** config.edn `:ref/linked-references-collapsed-threshold` (OG default 100; 0 = always collapsed). */
   linked_references_collapsed_threshold: number;
   default_journal_template: string | null;
+  /** `:feature/enable-journals?`; absent means enabled, as in OG. False swaps the
+   *  sidebar's Journals entry for the configured home page. */
+  enable_journals?: boolean;
+  /** Normalized property keys whose comma items render as page links (OG
+   *  `separated-by-commas?`); absent = the built-ins alias/aliases/tags. */
+  linkable_property_keys?: string[];
   /** config.edn `:default-home {:page "..."}`; absent/null = no home page. */
   default_home?: string | null;
   favorites: string[];

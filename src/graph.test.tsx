@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderEnglish, type UiText } from "./i18n";
 import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
+import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
 
 const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
 
@@ -109,7 +110,7 @@ async function loadHarness(
     graphEpoch: () => 0,
     bumpDataRev: vi.fn(),
     bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
-    setWorkflow: vi.fn(),
+    applyTaskWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
     seedFavorites: vi.fn(),
     favorites: () => [],
@@ -172,7 +173,7 @@ async function loadHarness(
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
   vi.doMock("./warmCache", () => ({ waitForWarmCache }));
-  vi.doMock("./pageIndex", () => ({ resetPageIndex }));
+  vi.doMock("./pageIndex", () => ({ resetPageIndex, linkPageKind: () => "page" }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
   vi.doMock("./platform", () => ({ isMobile: () => platform !== "desktop", platformKind: vi.fn(async () => platform) }));
@@ -183,9 +184,9 @@ async function loadHarness(
   const closeAllWorkspaceWindows = vi.fn((_reason: string) => { events.push("close-windows"); });
   vi.doMock("./workspaceWindows", () => ({ closeAllWorkspaceWindows }));
 
-  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
+  const { loadGraphPath, switchGraph, createNewGraph, chooseNewGraphParent, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
   return {
-    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, createPage, events, resetPageIndex, resetAt, waitForWarmCache,
+    loadGraphPath, switchGraph, createNewGraph, chooseNewGraphParent, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, createPage, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, resetFrozen, isFrozen, tryFreezeGraphRewrite,
     applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows,
   };
@@ -234,7 +235,22 @@ it("keeps canonical graph identity and an open workspace when reopening the curr
 // fa78c7b74): iOS opens and creates graphs only inside the app's own
 // On My iPhone / iCloud Drive containers, prepared natively first.
 describe("mobile graph folder picker", () => {
-  const OUTSIDE = "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.";
+  it("clones into an Android-picked local shared-storage parent instead of private app data", async () => {
+    const h = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "android", pickerResult: { status: "picked", path: META.root } });
+    await expect(h.chooseNewGraphParent(true)).resolves.toEqual({ kind: "chosen", dir: META.root });
+    expect(h.api.pickGraphFolder).toHaveBeenCalledOnce();
+    expect(h.api.defaultGraphParent).not.toHaveBeenCalled();
+  });
+
+  it("prepares the app-container parent before an iOS clone", async () => {
+    const h = await loadHarness(null, undefined, true, true, undefined, undefined,
+      { platform: "ios", pickerResult: { status: "picked", path: META.root } });
+    await expect(h.chooseNewGraphParent(true)).resolves.toEqual({ kind: "chosen", dir: META.root });
+    expect(h.api.prepareGraphFolder).toHaveBeenCalledWith(META.root);
+    expect(h.api.createGraph).not.toHaveBeenCalled();
+  });
+  const OUTSIDE = `Choose a folder inside On My iPhone → ${APP_IOS_DISPLAY_NAME} or iCloud Drive → ${APP_IOS_DISPLAY_NAME}. Other apps' folders and Files providers aren't supported yet.`;
 
   it("opens a picked graph from Tine's iOS Documents container", async () => {
     const harness = await loadHarness(null, undefined, true, true, undefined, undefined,
@@ -254,7 +270,7 @@ describe("mobile graph folder picker", () => {
     await expect(harness.loadGraphPath(stale)).resolves.toEqual({ kind: "loaded", root: META.root });
     expect(harness.api.prepareGraphFolder).toHaveBeenCalledWith(stale);
     expect(harness.api.inspectGraphAccess).toHaveBeenCalledWith(META.root);
-    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root);
+    expect(harness.api.loadGraph).toHaveBeenCalledWith(META.root, { relocatedFrom: stale });
     expect(localStorage.getItem("tine.graphPath")).toBe(META.root);
   });
 
@@ -488,6 +504,21 @@ describe("default journal template graph bind", () => {
     expect(saved.children[0].collapsed).toBe(true);
     expect(saved.raw).toBe("Folded\ncollapsed:: true");
     expect(saved.id).toBe("");
+  });
+  // BqbeQ: an empty today asks for the one configured template by name (which
+  // the backend answers from the graph's files before the graph-wide parse)
+  // instead of the whole template inventory.
+  it("asks for the configured template by name for an empty today", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api, createPage } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    api.listTemplates.mockClear();
+    api.resolvePage.mockClear();
+    createPage.mockClear();
+    expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+    expect(api.listTemplates.mock.calls).toEqual([["Daily"]]);
+    expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
+    expect(createPage).toHaveBeenCalledTimes(1);
+    expect(createPage.mock.calls[0][2]).toMatchObject({ baseRev: null });
   });
   // Master 5bb8ce020 (GH #266): graph open does not await the optional
   // default-journal template (a getPage + listTemplates that can wait for the
@@ -799,7 +830,7 @@ describe("external assets trust", () => {
 
     expect(api.confirm).toHaveBeenCalledWith(
       expect.stringContaining("/mnt/media/tine-assets"),
-      "Allow external assets directory?"
+      { title: "Allow external assets directory?", okLabel: "Allow and open", cancelLabel: "Don't allow" }
     );
     expect(api.approveExternalAssets).toHaveBeenCalledWith(
       META.root,

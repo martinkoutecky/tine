@@ -128,6 +128,48 @@ afterEach(() => {
 });
 
 describe("clipboard payload insertion and identity validation", () => {
+  it.each(["copy", "cut"] as const)("review %s transfers multiple nested histories in both format directions", async (op) => {
+    for (const sourceFormat of ["md", "org"] as const) {
+      const targetFormat = sourceFormat === "md" ? "org" : "md";
+      const drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]  \nopaque history row\n:END:";
+      const raw = (title: string) => `${title}\n${drawer}`;
+      await seed([
+        page("Source", [block("one", raw("DOING one"), [block("child", raw("child"))]), block("two", raw("two"))], { format: sourceFormat }),
+        page("Target", [block(HOST, "host")], { format: targetFormat }),
+      ]);
+      await record(op, "- one\n  - child\n- two", buildClipboardPayload(["one", "two"])!);
+      if (op === "cut") { deleteBlock("one"); deleteBlock("two"); }
+      await paste();
+      await flushPage("Target");
+      const blocks = files.get("Target")!.blocks;
+      expect(blocks.map(b => b.raw)).toEqual(["host", raw("DOING one"), raw("two")]);
+      expect(blocks[1].children.map(b => b.raw)).toEqual([raw("child")]);
+      if (op === "cut") {
+        await flushPage("Source");
+        expect(files.get("Source")!.blocks).toHaveLength(0);
+      }
+      clearClipboardSlot();
+      resetStore();
+    }
+  });
+  it.each(["md", "org"] as const)("review preserves cross-format clock history from %s", async (sourceFormat) => {
+    const drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+    const targetFormat = sourceFormat === "md" ? "org" : "md";
+    await seed([page("Source", [block("source", `DOING x\n${drawer}`)], {format: sourceFormat}), page("Target", [block(HOST, "host")], {format: targetFormat})]);
+    await record("copy", "- source", buildClipboardPayload(["source"])!);
+    await paste();
+    await flushPage("Target");
+    expect(files.get("Target")!.blocks.map(b => b.raw)).toEqual(["host", `DOING x\n${drawer}`]);
+  });
+
+  it.each(["md", "org"] as const)("review preserves clock-only paste target in %s", async (format) => {
+    const drawer = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+    await seed([page("Source", [block("source", "plain")], {format}), page("Target", [block(HOST, drawer)], {format})]);
+    await record("copy", "- plain", buildClipboardPayload(["source"])!);
+    await paste();
+    await flushPage("Target");
+    expect(files.get("Target")!.blocks.map(b => b.raw).join("\n")).toContain(drawer);
+  });
   it("keeps the in-memory key of a cut block without id::", async () => {
     await seed([page("Source", [block("plain-key", "plain")]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload(["plain-key"])!;

@@ -132,3 +132,68 @@ pub(super) fn fuzzy_evidence(
     }
     None
 }
+
+/// Evidence for `TextMatchMode::Fragments`: one span per fragment, taken from
+/// the same greedy leftmost, non-overlapping chain that decides membership.
+pub(super) fn fragments_evidence(
+    pred: &TextPredicate,
+    original: &str,
+    remove_accents: bool,
+) -> Option<MatchEvidence> {
+    let (hay, map) = folded_with_map(original, remove_accents);
+    let mut at = 0;
+    let mut picked = Vec::new();
+    let mut first = None;
+    for fragment in pred.value.split_whitespace() {
+        let needle = folded_chars(fragment, remove_accents);
+        if needle.is_empty() || needle.len() > hay.len().saturating_sub(at) {
+            return None;
+        }
+        let start = (at..=hay.len() - needle.len())
+            .find(|&start| hay[start..start + needle.len()] == needle)?;
+        first.get_or_insert(start);
+        let end = start + needle.len();
+        picked.push(MatchSpan {
+            start: map[start].start,
+            end: map[end - 1].end,
+        });
+        at = end;
+    }
+    let first = first?;
+    Some(MatchEvidence {
+        clause_id: pred.clause_id,
+        field: pred.field,
+        mode: pred.mode,
+        spans: merge_spans(picked),
+        score: Some(if first == 0 { 1000 } else { 500 }),
+    })
+}
+
+/// Evidence for `TextMatchMode::Words`: one UTF-16 span per group.
+pub(super) fn words_evidence(
+    pred: &TextPredicate,
+    original: &str,
+    remove_accents: bool,
+) -> Option<MatchEvidence> {
+    let (hay, map) = folded_with_map(original, remove_accents);
+    let folded: String = hay.iter().collect();
+    let ranges = WordsMatcher::new(&pred.value).ranges(&folded)?;
+    let char_at = |byte: usize| folded[..byte].chars().count();
+    let first = ranges.iter().map(|r| r.0).min()?;
+    let spans = ranges.iter().map(|&(start, end)| {
+        let (a, b) = (char_at(start), char_at(end));
+        MatchSpan {
+            start: map[a].start,
+            end: map[b - 1].end,
+        }
+    });
+    let mut spans: Vec<MatchSpan> = spans.collect();
+    spans.sort_by_key(|span| (span.start, span.end));
+    Some(MatchEvidence {
+        clause_id: pred.clause_id,
+        field: pred.field,
+        mode: pred.mode,
+        spans: merge_spans(spans),
+        score: Some(if first == 0 { 1000 } else { 500 }),
+    })
+}

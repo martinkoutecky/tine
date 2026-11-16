@@ -9,6 +9,9 @@ use std::path::Path;
 #[allow(dead_code)]
 #[path = "../../crates/tine-store/src/no_replace.rs"]
 mod no_replace;
+/// Lets the backup tests force the no-replace fallback (flag-refusing storage).
+#[cfg(test)]
+pub(crate) use no_replace::REFUSE_NOREPLACE_FLAG;
 
 // The app uses only the atomic writers of this shared source.
 #[allow(dead_code)]
@@ -116,6 +119,42 @@ pub(crate) fn import_asset_from_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn namespace_sync_preserves_results_and_uses_the_private_windows_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        sync_private_directory(dir.path()).unwrap();
+        let missing = dir.path().join("missing");
+        #[cfg(target_os = "windows")]
+        {
+            let (store, ..) = tine_store::Store::open(dir.path(), Default::default()).unwrap();
+            let before = store.diagnostics()["storage"]["windowsDirectoryFlush"]["apiFailed"]
+                .as_u64()
+                .unwrap();
+            sync_private_directory(&missing).unwrap();
+            let after = store.diagnostics()["storage"]["windowsDirectoryFlush"]["apiFailed"]
+                .as_u64()
+                .unwrap();
+            assert!(
+                after >= before + 1,
+                "namespace sync must attempt the private flush"
+            );
+            store.close();
+        }
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        ))]
+        {
+            let expected = directory_durability::sync_directory_witness(&missing).unwrap_err();
+            let actual = sync_private_directory(&missing).unwrap_err();
+            assert_eq!(actual.kind(), io::ErrorKind::NotFound);
+            assert_eq!(actual.kind(), expected.kind());
+            assert_eq!(actual.to_string(), expected.to_string());
+        }
+    }
 
     #[test]
     fn clipboard_file_import_streams_original_bytes_above_bitmap_budget() {
@@ -388,6 +427,14 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     atomic_file::atomic_write_with_check(path, bytes, || Ok(()), || {}, || {}, || {})
 }
 
+/// [`atomic_write`] for an app-data file that holds secrets: the temporary is
+/// owner-only from creation (0600 on Unix-family targets), so neither it nor
+/// the renamed file is ever readable by others (quick share records, DESIGN
+/// §1.5).
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_file::atomic_write_private(path, bytes)
+}
+
 /// Read–modify–write a small text file (config.edn, device settings) under a lock,
 /// committed via [`atomic_write`]. The ONE guarded path every settings writer goes
 /// through, so the discipline is uniform rather than re-derived per call site:
@@ -487,4 +534,20 @@ pub(crate) fn publish_directory_entry(from: &Path, to: &Path) -> io::Result<()> 
 
 fn sync_dir(dir: &Path) -> io::Result<()> {
     tine_store::directory_durability::sync_directory_entry(dir)
+}
+
+/// App-data renames need a strong witness. Add Store's best-effort private
+/// flush on Windows; its graph witness is a no-op there. Linux, Android, macOS
+/// and iOS retain the witness classification and error text below: Store's
+/// private helper instead returns the original sync error on Unsupported.
+pub(crate) fn sync_private_directory(dir: &Path) -> io::Result<()> {
+    #[cfg(target_os = "windows")]
+    directory_durability::sync_private_directory(dir)?;
+    match directory_durability::sync_directory_witness(dir)? {
+        directory_durability::DirectoryWitness::Durable => Ok(()),
+        directory_durability::DirectoryWitness::Unsupported => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "device directory sync has no durability witness",
+        )),
+    }
 }

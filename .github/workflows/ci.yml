@@ -5,7 +5,7 @@
 # Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
-run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }}${{ github.event_name == 'workflow_dispatch' && inputs.purpose == 'development' && ' / development' || '' }} / ${{ github.sha }}
 
 on:
   pull_request:
@@ -29,6 +29,16 @@ on:
           - android
           - performance
           - multiwindow
+          - macos
+          - linux
+      purpose:
+        description: release (default) checks release metadata; development skips only that check, and release.yml accepts such a run only with publish=false
+        required: false
+        default: release
+        type: choice
+        options:
+          - release
+          - development
 
 permissions:
   contents: read
@@ -39,11 +49,15 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
-          node-version: 20
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -96,18 +110,27 @@ jobs:
       - name: Rust core tests
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
+      # Real TS HostClient against a real native PageHost (builds the tine-store
+      # lib-test peer, reusing this job's target). Mandatory: it must not skip.
+      - name: Storage conformance (client vs native host)
+        run: npm run test:storage-conformance
+
   test:
     name: Full CI / Linux tests and release contracts
-    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'linux')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
-          node-version: 20
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -129,7 +152,7 @@ jobs:
       - name: Committed lsdoc WASM contract is current
         run: node scripts/check-wasm-pin.mjs
 
-      # og: website/demo is master's and is not checked here
+      # develop: website/demo is master's and is not checked here
       # (scripts/build-guide-demo.mjs header).
 
       - name: F-Droid clean-source WASM rebuild succeeds
@@ -160,10 +183,19 @@ jobs:
       - name: Performance A/B multi-round reliability fixtures
         run: node scripts/test-bench-ab.mjs
 
+      - name: Install the browser for deployed viewer compatibility
+        # Release readiness now exercises the deployed viewer in a browser.
+        # Development-purpose CI still skips the viewer-first release gate.
+        run: npx playwright install --with-deps chromium
+
       - name: UI regression catalog and release evidence contracts
         run: |
           npm run check:regressions
-          npm run check:release-readiness
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.purpose || 'release' }}" = development ]; then
+            echo "purpose=development: release readiness not checked; release.yml accepts this run only with publish=false"
+          else
+            npm run check:release-readiness
+          fi
 
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
@@ -180,20 +212,53 @@ jobs:
       - name: Frontend tests (vitest)
         run: npm test
 
+      # Independent of the frontend and contract steps: their failure still reports these.
       - name: Rust core tests
+        if: ${{ !cancelled() }}
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+
+      # The storage ledger records each tested volume's filesystem from this output.
+      - name: Linux tested volumes (filesystem types for the storage ledger)
+        if: ${{ !cancelled() }}
+        run: |
+          base="${XDG_DATA_HOME:-$HOME/.local/share}/$(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+          mkdir -p "$base"
+          for p in "$base" "$RUNNER_TEMP" "${TMPDIR:-/tmp}"; do
+            echo "Tested volume: $p $(findmnt -n -T "$p" -o TARGET,SOURCE,FSTYPE,OPTIONS)"
+          done
+      # F-M3S-1: ordinary saves, finite metadata interference and cold draft
+      # recovery on the runner's local volume and at the resolved app-data base.
+      - name: Linux storage volume acceptance (F-M3S-1)
+        if: ${{ !cancelled() }}
+        run: |
+          base="${XDG_DATA_HOME:-$HOME/.local/share}/$(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+          TINE_STORAGE_ACCEPT_ROOT="$RUNNER_TEMP" cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+          TINE_STORAGE_ACCEPT_ROOT="$base" TINE_HOST_FS_ROOT="$base" cargo test -p tine-store --lib m3_c6_ -- --nocapture --test-threads=1
+          TINE_STORAGE_ACCEPT_ROOT="$base" cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+
+      # Real TS HostClient against a real native PageHost (builds the tine-store
+      # lib-test peer, reusing this job's target). Mandatory: it must not skip.
+      - name: Storage conformance (client vs native host)
+        run: npm run test:storage-conformance
 
       # The app crate's own tests (commands, query wiring, IPC guards) ran
       # nowhere until GH #628 broke one unnoticed; they need the WebKitGTK headers.
       - name: App crate native dependencies
+        if: ${{ !cancelled() }}
         run: |
           sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev strace
 
       - name: App crate tests
+        if: ${{ !cancelled() }}
         run: |
           npm run build
           cargo test --no-fail-fast -p tine --lib
+
+      # The real fsync/rename/unlink order of launch backups (D7); the in-process
+      # op record cannot see a removed sync. Fails, never skips, under CI.
+      - name: Launch-backup syscall gate (strace)
+        run: node scripts/check-backup-syscalls.mjs
 
       # packaged_csp_tests compile only with custom-protocol (the production
       # context); without this step nothing ever ran them (discussion #564).
@@ -216,10 +281,14 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
-          node-version: 20
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
@@ -231,6 +300,46 @@ jobs:
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+      # The storage ledger records each tested volume's filesystem from this output.
+      - name: Windows tested volumes (filesystem types for the storage ledger)
+        if: ${{ !cancelled() }}
+        run: |
+          foreach ($p in @($env:RUNNER_TEMP, $env:TEMP, [Environment]::GetFolderPath('ApplicationData'))) {
+            $v = Get-Volume -DriveLetter ([IO.Path]::GetPathRoot($p).Substring(0,1))
+            Write-Output "Tested volume: $p drive=$($v.DriveLetter) filesystem=$($v.FileSystemType) type=$($v.DriveType)"
+          }
+      # F-M3S-1: ordinary saves, finite metadata interference and cold draft recovery on NTFS.
+      - name: Windows storage volume acceptance (F-M3S-1)
+        if: ${{ !cancelled() }}
+        env:
+          TINE_STORAGE_ACCEPT_ROOT: ${{ runner.temp }}
+        run: cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      # F-M3S-1 / F-DC-1: the same witnesses through a UNC path (the runner's
+      # loopback administrative share), so a UNC graph root is exercised on SMB.
+      - name: Windows UNC loopback storage acceptance (F-M3S-1, F-DC-1)
+        if: ${{ !cancelled() }}
+        run: |
+          $t = $env:RUNNER_TEMP
+          $unc = "\\localhost\" + $t.Substring(0,1) + "$" + $t.Substring(2) + "\unc-accept"
+          New-Item -ItemType Directory -Force -Path $unc | Out-Null
+          Write-Output "UNC acceptance base: $unc"
+          $env:TINE_STORAGE_ACCEPT_ROOT = $unc
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      # Match app_identity::app_data_dir_of / Tauri's app_data_dir, rather
+      # than runner.temp. Every witness owns and removes a fresh sandbox.
+      - name: Windows resolved app-data storage acceptance
+        if: ${{ !cancelled() }}
+        run: |
+          $identifier = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).identifier
+          $base = Join-Path ([Environment]::GetFolderPath('ApplicationData')) $identifier
+          New-Item -ItemType Directory -Force -Path $base | Out-Null
+          $base = (Resolve-Path -LiteralPath $base).Path
+          $env:TINE_STORAGE_ACCEPT_ROOT = $base
+          $env:TINE_HOST_FS_ROOT = $base
+          Write-Output "Resolved Tine app-data acceptance base: $base"
+          cargo test -p tine-store --lib m3_c6_ -- --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
       # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
       # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
       - name: Windows release rename availability (250 and 1000 referrers)
@@ -239,16 +348,137 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
+          cargo test --release -p tine-store --lib root_binding::tests::l9_measure_per_save_root_checks -- --ignored --exact --nocapture --test-threads=1
           cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+      # Independent of the core step: a core-test failure still reports these.
+      # tauri links its Common Controls v6 manifest into bins only, so the lib
+      # test exe fails to load (0xc0000139, TaskDialogIndirect). A side-by-side
+      # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
+      # is untouched.
+      # Include app C5 census/adoption, current-lease refusal, registry/retirement
+      # exclusion, owner fallback, app-data classification and private diagnostics.
+      - name: Windows backup, file-lock and owner tests (Expand-Archive opens a backup)
+        if: ${{ !cancelled() }}
+        run: |
+          $exe = cargo test -p tine --lib --no-run --message-format=json |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'tine_lib' -and $_.profile.test -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $exe) { throw 'no tine lib test executable' }
+          Set-Content -Encoding utf8 -Path "$exe.manifest" -Value @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          Push-Location src-tauri
+          & $exe backup:: file_lock:: owner:: owner_protection:: data_home:: root_identity:: host_retirement:: flight::tests::storage_report_is_copyable_and_private
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
+
+      - name: Windows CLI integration test (named-pipe round trip)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          $exe = cargo test -p tine --test integration --no-run --message-format=json |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'integration' -and $_.profile.test -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $exe) { throw 'no tine integration test executable' }
+          Set-Content -Encoding utf8 -Path "$exe.manifest" -Value @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          Push-Location src-tauri
+          & $exe windows_cli
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
+
+  # Launch backups on macOS (not part of `full`): the backup and file-lock
+  # tests on the runner's APFS, including `ditto -x -k` opening a backup, the
+  # destination fold probe, and a directory sync (F_FULLFSYNC) witness probe.
+  macos-backup:
+    name: Focused / macOS backup tests
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'macos'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      # custom-protocol: without it every `generate_context!` in the crate
+      # embeds Info.plist on macOS and the lib test fails to link
+      # (`_EMBED_INFO_PLIST` already defined).
+      - name: macOS backup, file-lock and owner tests (A-ONE-HOST, A-DRAFT-DURABLE)
+        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: owner:: owner_protection:: data_home:: root_identity:: host_retirement:: flight::tests::storage_report_is_copyable_and_private --nocapture"
+      - name: macOS resolved app-data storage acceptance
+        if: ${{ !cancelled() }}
+        run: |
+          identifier=$(node -p "require('./src-tauri/tauri.conf.json').identifier")
+          base="$HOME/Library/Application Support/$identifier"
+          mkdir -p "$base"
+          base=$(cd "$base" && pwd -P)
+          # The storage ledger records each tested volume's filesystem from this output.
+          for p in "$base" "$RUNNER_TEMP" "${TMPDIR:-/tmp}"; do
+            mp=$(df -P "$p" | tail -1 | awk '{print $NF}')
+            echo "Tested volume: $p mount=$mp $(mount | grep " on $mp (" | sed 's/.* (/(/')"
+          done
+          export TINE_STORAGE_ACCEPT_ROOT="$base"
+          export TINE_HOST_FS_ROOT="$base"
+          echo "Resolved Tine app-data acceptance base: $base"
+          cargo test -p tine-store --lib m3_c6_ -- --nocapture --test-threads=1
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
+        if: ${{ !cancelled() }}
+        run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"
+      # A-CASE-DISTINCT: the native C8 witness on default case-insensitive APFS, and
+      # F-M3S-1 volume acceptance on the same volume.
+      - name: macOS case-folding witness and storage volume acceptance (C8, F-M3S-1)
+        if: ${{ !cancelled() }}
+        env:
+          TINE_STORAGE_ACCEPT_ROOT: ${{ runner.temp }}
+        run: |
+          cargo test -p tine-store --lib m4_c8_native -- --nocapture
+          cargo test -p tine-store --lib storage_acceptance_tests -- --ignored --nocapture --test-threads=1
+      # The storage claim's macOS runtime acceptance (M4 environment families, s3.6
+      # replay, Unicode case aliases, write-site census): the whole store suite, as
+      # the Windows scope runs it.
+      - name: macOS store suite (storage-model acceptance)
+        if: ${{ !cancelled() }}
+        run: cargo test --no-fail-fast -p tine-store
 
   android-core-compile:
     name: Full CI / Android core compile
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: aarch64-linux-android
@@ -274,14 +504,122 @@ jobs:
       - name: Android app crate compiles (Android-only cfg paths)
         run: cargo check -p tine --target aarch64-linux-android
 
+  # Git on the phone (ADR 0078 slice 3): libgit2's commit, pull, push and
+  # repack, and a commit or push killed midway, with the graph on Android
+  # shared storage (MediaProvider's FUSE daemon). API 33 refuses the
+  # no-replace rename flag (GH #538-b); API 35 is current. Focused proof only:
+  # not part of `full`, and red by design until GS-S1 is decided:
+  # `a_pulled_case_only_rename_lands_on_the_graph_volume` fails on shared
+  # storage (a case-only rename keeps the old spelling). Keep it out of `full`.
+  android-git-storage:
+    name: Android git on shared storage (API ${{ matrix.label || matrix.api }})
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'android'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [33, 35]
+        target: [default]
+        # Android 16, the GH #811 reporter's, on the Google APIs image (the
+        # MediaProvider module devices ship). The 36.1 (16 QPR2) image did
+        # not boot on the hosted runner in 900 s (run 41177019433).
+        include:
+          - api: 36
+            target: google_apis
+          # With MediaProvider's Android FUSE passthrough on, as on devices
+          # (the script turns it on and reboots; page saves only). Before the
+          # GH #811 publication-check fix a replaced page's saves stayed
+          # Uncertain here (runs 41177645677, 41179037543).
+          - api: 36
+            target: google_apis
+            passthrough: true
+            label: 36-passthrough
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_INCREMENTAL: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: x86_64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: android-git-storage-x86_64
+          cache-on-failure: true
+      - name: Install pinned Android NDK compiler
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;26.3.11579264" >/dev/null
+          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CC_x86_64_linux_android=$TOOLCHAIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_x86_64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$TOOLCHAIN/x86_64-linux-android24-clang" >> "$GITHUB_ENV"
+      - name: Build the app crate's tests for the emulator
+        run: |
+          mkdir -p target
+          cargo test -p tine --lib --no-run --target x86_64-linux-android \
+            --message-format=json > target/android-git-storage-build.json
+          bin=$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.name == "tine_lib") | .executable' \
+            target/android-git-storage-build.json | tail -n 1)
+          test -x "$bin"
+          echo "TINE_ANDROID_TEST_BIN=$bin" >> "$GITHUB_ENV"
+          # The page host's saves on the same volume (GH #811).
+          cargo test -p tine-store --test integration --no-run --target x86_64-linux-android \
+            --message-format=json > target/android-store-build.json
+          store=$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.name == "integration") | .executable' \
+            target/android-store-build.json | tail -n 1)
+          test -x "$store"
+          echo "TINE_ANDROID_STORE_TEST_BIN=$store" >> "$GITHUB_ENV"
+          # F-M3S-1 storage volume acceptance on shared storage (GH #811).
+          cargo test -p tine-store --lib --no-run --target x86_64-linux-android \
+            --message-format=json > target/android-store-lib-build.json
+          store_lib=$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.name == "tine_store") | .executable' \
+            target/android-store-lib-build.json | tail -n 1)
+          test -x "$store_lib"
+          echo "TINE_ANDROID_STORE_LIB_TEST_BIN=$store_lib" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the git tests with the graph on shared storage
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TINE_FUSE_PASSTHROUGH: ${{ matrix.passthrough && '1' || '' }}
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: ${{ matrix.target }}
+          emulator-boot-timeout: 300
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/android-git-storage.sh "$TINE_ANDROID_TEST_BIN" "$TINE_ANDROID_STORE_TEST_BIN" "$TINE_ANDROID_STORE_LIB_TEST_BIN"
+      - name: Upload device evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-git-storage-api${{ matrix.label || matrix.api }}-${{ github.run_attempt }}
+          path: artifacts/android-git-storage
+          if-no-files-found: warn
+          retention-days: 14
+
   plugin-launch-e2e:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
-          node-version: 20
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -332,7 +670,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -350,19 +688,23 @@ jobs:
           echo "immutable=$(node -p "require('./scripts/bench-policy.json').immutableBaseline.ref")" >> "$GITHUB_OUTPUT"
           echo "previous=$(node -p "require('./scripts/bench-policy.json').previousRelease.ref")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.perf-policy.outputs.immutable }}
           path: .bench/immutable
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.perf-policy.outputs.previous }}
           path: .bench/previous
 
-      - uses: actions/setup-node@v4
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
-          node-version: 20
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
 
       - name: Install candidate and baseline dependencies
@@ -424,7 +766,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -487,10 +829,14 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
-          node-version: 20
+          version: 4.0.20
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2

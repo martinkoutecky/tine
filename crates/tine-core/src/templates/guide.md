@@ -9,7 +9,7 @@ icon:: 🧭
   - [[Start/Bring an existing graph]] — point Tine at your existing Logseq graph and learn what it reads and writes.
   - [[Project/Roadmap]] — try a few example tasks for your first steps.
 - ## Workflows
-  - [[Workflows/Keep context visible]] — park a source in the right sidebar, keep places in tabs and panes, and save the layout as a workspace.
+  - [[Workflows/Keep context visible]] — park a source in the right sidebar, organize **Open tabs** in the left sidebar, keep places in panes, and save the layout as a workspace.
   - [[Workflows/Structure repeated information]] — turn a small repeated outline into a table or board, then find and reuse its blocks before reaching for query syntax.
   - [[Workflows/Capture and plan your day]] — journal-first daily flow: tasks, priorities, dates, the agenda, and carrying leftovers forward.
   - [[Workflows/Find and revisit]] — jump back to anything with Ctrl+K and follow links and reference panels.
@@ -21,10 +21,11 @@ icon:: 🧭
   - [[Features/Formulas]] — build read-only computed columns with the visual formula editor.
   - [[Features/Quick capture]] — set up a global capture box that files notes into your graph.
   - [[Features/PDF annotation]] — highlight PDFs and turn those highlights into linked note blocks.
+  - [[Features/Share pages]] — share a page, or the pages a query selects, as a folder export or an encrypted link, then update or delete it.
 - ## Feature reference
   - [[Features/Plugins]] — install capability-limited extensions and token themes, review what they request, and keep them under your control.
-  - [[Features/Tips & shortcuts]] — learn Ctrl+K, slash commands, tabs, sidebars, focus mode, and daily shortcuts.
-  - [[Reference/Files, external edits, and backups]] — learn what Tine writes where, and where snapshots, conflict copies, and the trash live.
+  - [[Features/Tips & shortcuts]] — learn Ctrl+K, slash commands, tabs, sidebars, focus mode, commenting on a passage, and daily shortcuts.
+  - [[Reference/Files, external edits, and backups]] — learn what Tine writes where, and where snapshots, git history, conflict copies, and the trash live.
   - [[Reference/Troubleshooting and recovery]] — follow numbered recovery steps for the changed-on-disk banner, deleted pages, snapshots, conflict copies, duplicate days, a graph that will not open, and a region that fails to display.
   - [[Reference/Journals, tasks, and scheduling]] — map journal setup, task markers and priorities, scheduling dates, the agenda, time tracking, and repeating tasks.
   - [[Reference/Pages, links, references, and search]] — the exact rules for pages, links, tags, aliases, block references, reference panels, and every search surface.

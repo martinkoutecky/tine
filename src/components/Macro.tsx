@@ -2,19 +2,24 @@ import { focusOnMount } from "../focusOnMount";
 import { FailureBoundary } from "./FailureBoundary";
 import { msg, t, rawText, render as renderMessage, type UiText } from "../i18n";
 import { Rich } from "../i18n/Rich";
-import { youtubePlayerForTarget, registerYoutubePlayer, recordYoutubePlayback, unregisterYoutubePlayer, type YoutubePlayer } from "../youtubePlayer";
 export { youtubePlayerForTarget } from "../youtubePlayer";
+export { ClozeMacro, TweetMacro, VideoMacro, YoutubeTimestamp, ZoteroMacro, youtubeTimestampMacroFor } from "./MediaMacros";
 import { TableWrap } from "./TableWrap";
-import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createComputed, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, useContext, type JSX } from "solid-js";
+import { reservedGroupHeight } from "../reservedGroupHeight";
+import { preserveAboveViewport } from "../scrollContainer";
+import { SurfaceContext } from "./Block";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { openPageInSidebar, openBlockInSidebar, openQueryExport, switcherOpen } from "../ui";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { openShareDialog } from "../shareState";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { blockProperty, blockWritable, formatForBlock, formatForPage, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { createQueryFold } from "./macroFold";
 export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
@@ -26,7 +31,7 @@ import { QueryBuilder, createQueryRegistryAccess, type BuilderSession } from "./
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
-import { columnKey, compareCells, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
+import { columnKey, compareCells, defaultHostColumns, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
 import { queryMacroExtent, queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
@@ -51,7 +56,7 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
 import { QueryOgHint, QueryPageRows, QueryResultsRegion, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { QueryHit, RefGroup } from "../types";
+import type { Format, QueryHit, QueryPublicationRequest, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
@@ -62,17 +67,16 @@ import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDe
 import { blockDtoExternalId } from "../blockIdentity";
 import { QueryPrintRefusedError } from "../backend";
 import { readLatestOr, readOr } from "../resourceRead";
+import { createAnswerDay } from "../journal";
 import { focusedRouter, openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast, pushToastUnique } from "../toasts";
-import { ExternalLink } from "./ExternalLink";
 import {
   boundedFeature, cellText, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY,
   type BothFamilies, type QueryOperation, type Row,
 } from "./queryMacroSupport";
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
-import { mainWindow } from "../windowRealm";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask } from "./QueryResultTask";
 import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
@@ -196,6 +200,11 @@ export function QueryMacro(props: {
   builtIn?: boolean;
   /** App-inserted query from config.edn, with user-facing refusal copy. */
   configQuery?: boolean;
+  /** GH #855: the text of the block this query lives in, when it is shown away
+   *  from that block (a journal section on the journal feed, no `blockId`).
+   *  Its complete properties feed the same query and sheet readers as the live
+   *  block; without a blockId no host editing controls are offered. */
+  hostRaw?: { raw: string; format: Format };
 }): JSX.Element {
   return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
 }
@@ -212,12 +221,28 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // Ask the engine: removing the last builder row can print `(and)` or leave
   // only view directives. Those are the same no-condition query as blank text.
   const emptyDraft = () => arg() === "" || reading()?.og_hint?.no_conditions === true;
-  const hostProperties = createMemo<[string, string][]>(() => {
+  /** Every property of the host block: the live block, or the read-only
+   *  `hostRaw` of a query shown away from it (GH #855). */
+  const hostAllProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
-    const node = id ? docNode(id) : undefined;
-    if (!id || !node) return [];
-    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine.") || key === "query-table");
+    if (id) {
+      const node = docNode(id);
+      return node ? facetsOf(node.raw, formatForBlock(id)).properties : [];
+    }
+    return props.hostRaw ? facetsOf(props.hostRaw.raw, props.hostRaw.format).properties : [];
   }, [], { equals: sameJson });
+  /** One host property, matched case-insensitively like `blockProperty`. */
+  const hostProperty = (key: string): string | null => {
+    const lower = key.toLowerCase();
+    const found = hostAllProperties().find(([k]) => k.toLowerCase() === lower);
+    return found ? found[1].trim() : null;
+  };
+  const hostProperties = createMemo<[string, string][]>(
+    () => hostAllProperties().filter(([key]) => {
+      const lower = key.toLowerCase();
+      return lower.startsWith("tine.") || lower === "query-table";
+    }),
+    [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
     () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
     undefined,
@@ -276,24 +301,28 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       : props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
     return page ? { current_page: page } : undefined;
   };
+  // What exporting or sharing this block starts from: its query text, host properties and page.
+  const exportRequest = (): QueryPublicationRequest => {
+    // These renderer-only properties must also travel to the generated home.
+    // They do not belong to parseQuery's key (query-table itself does).
+    const legacyDisplay = hostAllProperties()
+      .filter(([key]) => key === "query-properties" || key === "query-sort-by" || key === "query-sort-desc");
+    return { argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
+      properties: [...hostProperties(), ...legacyDisplay], currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() };
+  };
   const friendlySearch = createMemo(() => {
     const s = runnable()?.query.source;
     return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;
   });
 
-  const sheet = createMemo(() => {
-    if (!props.blockId || !docNode(props.blockId)) return null;
-    return sheetConfig(facetsOf(docNode(props.blockId).raw, formatForBlock(props.blockId)).properties);
-  });
-  const currentView = (): QueryView => {
-    if (!props.blockId) return "list";
-    const view = blockProperty(props.blockId, "tine.view");
-    return view === "search" || view === "table" || view === "board" ? view : "list";
-  };
+  const sheet = createMemo(() => sheetConfig(hostAllProperties()));
+  const detachedOwnerId = createUniqueId();
+  const sheetOwnerId = () => props.blockId ?? detachedOwnerId;
+  const currentView = (): QueryView => reading()?.view.view ?? "list";
   const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
   const legacyTable = () => blockFace() === "list"
-    && (!props.blockId || blockProperty(props.blockId, "tine.view") === null)
+    && hostProperty("tine.view") === null
     && (reading()?.legacy_table ?? false);
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
@@ -319,12 +348,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const { collapsed, toggle: toggleCollapsed } = createQueryFold(loadCollapsed(collapseKey()), () => optionValues()?.collapsed ?? false,
     () => props.blockId, (v) => saveCollapsed(collapseKey(), v));
 
-  // A save anywhere in the graph bumps dataRev after 700 ms of quiet. Each
-  // distinct expanded request costs one whole-graph evaluation per revision;
-  // sharedQueryResult coalesces identical open blocks into one IPC (including
-  // the 20-block case), though each host still owns its rendered rows. A
-  // collapsed query fetches once for its count and skips save reruns. The
-  // 10k-graph 3/20-block save measurements are in RECEIPT-14Q4A.md.
+  // Host-classified dependencies share S3's publication gates. Graph-wide
+  // reruns wait for input quiet; identical requests still share one IPC.
+  // A collapsed query keeps its existing initial-count/skip-reruns policy.
+  const answerDay = createAnswerDay();
+  const subscription = createQuerySubscription(() => {
+    const query = runnable();
+    if (!query || emptyDraft()) return undefined;
+    // Search and the engine's independently re-read second family have no
+    // single plan at this boundary. Keep their safe full dependency.
+    return friendlySearch() !== null || bothKinds() ? { kind: "full" }
+      : { kind: "query", query: query.query, context: executionContext() ?? {} };
+  }, answerDay.day);
   const runRequest = createMemo(() => {
     const query = runnable();
     if (!query || emptyDraft()) return undefined;
@@ -341,20 +376,25 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const answerQuery = { ...query.query, source: source.kind === "advanced"
       ? { kind: source.kind, original: source.original } : { kind: source.kind } };
     const { view: _presentation, columns: _columns, group_by: _group, aggregates: _aggregates, ...answerView } = query.view;
-    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, collapsed(), both]);
+    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, both]);
     // A collapsed count is never acted on: neither saves nor epochs rerun it.
-    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
+    // The answer day reruns a day-relative query, collapsed or not, once the
+    // date has moved past the shown answer's (card hB3Lv8); like a save, it
+    // keeps that answer on screen until the new one lands.
+    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${answerDay.day()}\0${collapsed() ? "collapsed" : `${subscription.revision()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
   const [operation] = createMembershipResource(runRequest, () => runRequest()?.displayKey ?? "", async (request): Promise<QueryOperation | undefined> => {
+    if (!await subscription.ready()) return undefined;
+    const cacheKey = `${request.key}\0${subscription.publication()}`;
     const owner = latestOwner(runOwners, "run", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
     if (request.search !== null) {
       const searchSource = request.search;
       const landed = await readOwned(owner, sharedQueryResult(
         scope,
-        `friendly-search\0${request.key}`,
+        `friendly-search\0${cacheKey}`,
         () => request.query.page_match_scope
           ? backend().runGraphSearch(
             searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
@@ -380,12 +420,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         requestKey: request.displayKey,
         groups: [...grouped.values()], pages: null, diagnostics: [],
         report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
-        both: null,
+        asOfDay: null, both: null,
       };
     }
     const landed = await readOwned(owner, sharedQueryResult(
       scope,
-      `ir\0${request.key}`,
+      `ir\0${cacheKey}`,
       () => backend().queryRun(request.query.query, request.query.view, request.context),
     ));
     if (landed.kind === "stale") return undefined;
@@ -394,7 +434,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     let twinGroups: RefGroup[] = [];
     if (request.both) {
       const twin = await bothFamilies(owner, {
-        scope, key: request.key, query: request.query.query, view: request.query.view,
+        scope, key: cacheKey, query: request.query.query, view: request.query.view,
         context: request.context, own: result, hostBlockId: props.blockId, hostProperties: hostProperties(),
       });
       if (!twin) return undefined;
@@ -410,15 +450,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       statistics: result.statistics,
       search: null,
       matchedTotal: result.matched_total ?? null,
+      asOfDay: result.as_of_day ?? null,
       both,
     };
-  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true);
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true, subscription.revision);
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();
     const landed = readLatestOr(operation, undefined, "query run");
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
+  answerDay.follow(() => displayed()?.asOfDay);
   const groups = () => displayed()?.groups ?? [];
   /** The shown answer is awaiting a settled rerun. Own saves can keep actions
    * valid, but publication still delays adoption (queryResultsEpoch). */
@@ -445,7 +487,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       page: group.page,
       kind: group.kind,
       block,
-      display_text: visibleBody(block.raw).join(" "),
+      display_text: visibleBody(block.raw, formatForPage(group.page)).join(" "),
       evidence: [],
     })));
   });
@@ -535,6 +577,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const startedInSheet = sheetOpen();
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
+    // GH #911: an edit built on the reading of older block text (an external
+    // change still reparsing) would write that older query back.
+    if (!sameJson(parsed.latest?.request, parseRequest())) return refuseChanged();
     const rawAtStart = docNode(blockId).raw;
     const previousDisplay = displayEdit ? new Map(displayPropertyPatch(displayView())) : null;
     const previousGroup = displayEdit ? reading()?.view.group_by : undefined;
@@ -616,15 +661,32 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     if (crossing) setCrossed(blockId, boundedFeature(argument), startedInSheet);
     return true;
   };
-  /** Display uses the same guarded print and undo unit as a filter edit. */
+  /** Display edits share the guarded property/undo paths; filter changes also print. */
   const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    // OG table columns belong to the host's query-properties, not tine.columns.
+    // Keep the authored macro and its legacy table presentation intact.
+    if (legacyTable()) {
+      const { columns: before, ...rest } = displayView();
+      const { columns: after, ...nextRest } = view;
+      if (JSON.stringify(rest) === JSON.stringify(nextRest)) {
+        if (JSON.stringify(before) === JSON.stringify(after)) return Promise.resolve(true);
+        const id = props.blockId;
+        if (!id || isPublishedExport() || !blockWritable(id)) return Promise.resolve(false);
+        const columns = [...new Set(after ?? [])];
+        withUndoUnit(`query:columns:${id}`, [docNode(id)!.page], () => {
+          setBlockProperty(id, "query-properties", columns.length ? `[${columns.map(c => `:${c}`).join(" ")}]` : null);
+        });
+        return Promise.resolve(true);
+      }
+    }
     // Display rows can disappear or be replaced after their guarded save.
     // Keep focus on the panel's stable completion control before that happens.
     const panel = queryEl?.querySelector<HTMLElement>(".qc-panel");
     if (panel?.contains(panel.ownerDocument.activeElement)) panel.querySelector<HTMLElement>(".qc-done")?.focus();
     const current = reading();
-    if (current && view.view !== current.view.view
-      && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
+    const displayedView = displayView();
+    if (current && view.view !== displayedView.view
+      && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...displayedView, view: undefined })) {
       setQueryView(view.view ?? "list");
       return Promise.resolve(true);
     }
@@ -682,10 +744,33 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
   const [noticeFocused, setNoticeFocused] = createSignal(false);
   const [sheetOpen, setSheetOpen] = createSignal(false);
-  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
+  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text"; close?: boolean } | null>(null);
   const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
   const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
   let queryEl: HTMLDivElement | undefined;
+  // The query itself remounts before parsing/execution can produce group shells.
+  // Keep its complete measured box through that asynchronous gap as well (#810).
+  const hostSurface = useContext(SurfaceContext);
+  let hasAnswer = false;
+  createComputed(() => { hasAnswer = !!displayed(); });
+  const reservedQuery = reservedGroupHeight(() => props.blockId === undefined ? undefined
+    : JSON.stringify(["query-macro", hostSurface, props.blockId, props.body]), () => queryEl, () => hasAnswer);
+  const [answerShell, setAnswerShell] = createSignal(false);
+  let queryAlive = true;
+  onCleanup(() => { queryAlive = false; });
+  createEffect(() => {
+    if (!displayed()) setAnswerShell(false);
+    // The keyed group shells restore their own spacers in onMount. Keep the
+    // enclosing reserve until that commit finishes; a transient short box can
+    // otherwise clamp scrollTop at the bottom even if restored in the same frame.
+    else queueMicrotask(() => {
+      if (!queryAlive) return;
+      if (queryEl) preserveAboveViewport(queryEl, () => setAnswerShell(true), undefined, true);
+      else setAnswerShell(true);
+    });
+  });
+  /** GH #850: the gear closes the builder's inline editor when it is already open. */
+  const closeEdit = () => setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab: editRequest()?.tab ?? "filter", close: true });
   const closeDisplay = () => {
     setEditRequest(null);
     queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
@@ -744,12 +829,15 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
   const [paneStale, setPaneStale] = createSignal(false);
-  const effectiveDefaultColumns = createMemo(() => reading()?.query.anchor === "page"
+  const legacyDefaultColumns = createMemo(() => !legacyTable() ? [] : defaultHostColumns(groups().flatMap(group =>
+    group.blocks.flatMap(block => (block.properties ?? []).map(([key]) => key)))));
+  const effectiveDefaultColumns = createMemo(() => legacyTable() ? legacyDefaultColumns() : reading()?.query.anchor === "page"
     ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))]
     : queryBlockColumns(groups()));
   const displayView = (): ViewSettings => {
     const view = reading()?.view ?? {};
-    return { ...view, columns: view.columns?.length || props.blockId && blockProperty(props.blockId, "tine.columns") !== null
+    if (legacyTable()) return { ...view, columns: hostColumns(hostProperty("query-properties")) ?? legacyDefaultColumns() };
+    return { ...view, columns: view.columns?.length || hostProperty("tine.columns") !== null
       ? view.columns : undefined };
   };
 
@@ -764,10 +852,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // properties, like OG's query_table.cljs (audit #9); a header click then
   // overrides them for this view, as OG's click does (it also persists the
   // choice on the block; Tine keeps the click local and never rewrites the file).
-  const hostSortState = createMemo(() =>
-    props.blockId
-      ? hostSort(blockProperty(props.blockId, "query-sort-by"), blockProperty(props.blockId, "query-sort-desc"))
-      : null);
+  const hostSortState = createMemo(() => hostSort(hostProperty("query-sort-by"), hostProperty("query-sort-desc")));
   const [sortOverride, setSortOverride] = createSignal<TableSort | null>(null);
   const sortState = (): TableSort | null => sortOverride() ?? hostSortState();
   const rows = createMemo<Row[]>(() =>
@@ -779,19 +864,16 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
           props[k] = val;
           byKey[columnKey(k)] ??= val;
         }
-        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props, byKey };
+        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw, formatForPage(g.page)).join(" "), props, byKey };
       })
     )
   );
-  const hostCols = createMemo(() =>
-    props.blockId ? hostColumns(blockProperty(props.blockId, "query-properties")) : null);
+  const hostCols = createMemo(() => hostColumns(hostProperty("query-properties")));
   /** Column ids in display order: `block`, `page`, then property keys. */
   const cols = createMemo(() => {
     const named = hostCols();
     if (named) return named;
-    const keys = new Set<string>();
-    for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
-    return ["block", "page", ...keys];
+    return legacyDefaultColumns();
   });
   const cell = cellText;
   const sorted = createMemo(() => {
@@ -872,6 +954,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   return (
     <Show when={!hidden()}>
       <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        style={!answerShell() && reservedQuery() ? { "min-height": `${reservedQuery()}px` } : undefined}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
@@ -962,22 +1045,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </Show>{" "}
               <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
               <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
-                <QueryMacroActions current={runnable} groups={groups} pages={() => pageRows() ?? []}
+                <QueryMacroActions current={runnable} hostBlockId={props.blockId} groups={groups} pages={() => pageRows() ?? []}
                   editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
-                  edit={requestEdit}
+                  edit={requestEdit} editOpen={() => sheetOpen() && showBuilder()} closeEdit={closeEdit} both={bothKinds}
                   fold={blockFace() === "list" ? (collapsed) => {
                     void collapseQueryResults(groups(), collapsed).then(epochs => {
                       if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
                     });
                   } : undefined}
-                  export={() => openQueryExport({
-                      argument: executionArg() ?? arg(),
-                      dialect: macroTextDialect(macroName()),
-                      properties: hostProperties(),
-                      currentPage: executionContext()?.current_page,
-                      hostBlockId: props.blockId,
-                      name: titleText(),
-                    })} />
+                  export={() => openQueryExport(exportRequest())}
+                  exportRequest={exportRequest}
+                  share={() => openShareDialog({ query: exportRequest(), macro: `{{${macroName()} ${arg()}}}` })} />
               </Show>
             </div>
             <Show when={isAdvanced() && editRequest()?.tab === "display"}>
@@ -985,7 +1063,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 event.stopPropagation();
                 if (event.key === "Escape") { event.preventDefault(); closeDisplay(); }
               }}>
-                <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
                 {/* Which clauses Tine ran is editing context, not resting content (GH #502). */}
                 <Show when={advInfo()?.supported}>
                   <div class="query-adv-note">
@@ -993,6 +1070,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </div>
                 </Show>
                 <QueryDisplay inline registry={advancedRegistry} view={displayView} apply={applyDisplay} defaultColumns={effectiveDefaultColumns} rowKind={() => reading()?.query.anchor ?? "block"} />
+                <div class="qc-panel-actions">
+                  <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
+                </div>
               </div>
             </Show>
             {/* The builder edits a FILTER; an authored advanced query keeps its
@@ -1075,7 +1155,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                             <QueryPageRows
                               rows={both().pages}
                               view={simpleView()}
-                              groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                              groupBy={runnable()?.view.group_by ?? hostProperty("tine.group-by") ?? undefined}
                               columns={displayView().columns}
                             />
                           ),
@@ -1090,21 +1170,21 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                           // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
                             <Switch fallback={
-                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />}>
-                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
                               </Show>
                             }>
-                              <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
+                              <Match when={blockFace() === "table"}>
                                 <SheetContainer>
-                                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                                    queryDisplay={{ view: reading()?.view ?? {},
+                                  <SheetTable ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
+                                    queryDisplay={{ view: displayView(),
                                       ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
-                                      apply: (next) => void applyDisplay(next) }} />
+                                      apply: props.blockId ? (next) => void applyDisplay(next) : undefined }} />
                                 </SheetContainer>
                               </Match>
-                              <Match when={sheetFace() && !!props.blockId && blockFace() === "board"}>
+                              <Match when={blockFace() === "board"}>
                                 <SheetContainer>
-                                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                                  <SheetBoard ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
                                 </SheetContainer>
                               </Match>
                             </Switch>
@@ -1120,7 +1200,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                       <QueryPageRows
                         rows={pages()}
                         view={simpleView()}
-                        groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                        groupBy={runnable()?.view.group_by ?? hostProperty("tine.group-by") ?? undefined}
                         columns={displayView().columns}
                       />
                     </Show>
@@ -1128,19 +1208,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 </Match>
                 <Match when={sheetFace()}>
                   <Show when={groups().length > 0} fallback={empty()}>
-                    <Show when={!!props.blockId}>
                       <SheetContainer>
                         <Switch>
                           <Match when={blockFace() === "table"}>
-                            <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                              queryDisplay={{ view: reading()?.view ?? {}, statistics: displayed()?.statistics, statisticsView: runnable()?.view, apply: (next) => void applyDisplay(next) }} />
+                            <SheetTable ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groups={groups()}
+                              queryDisplay={{ view: displayView(), statistics: displayed()?.statistics, statisticsView: runnable()?.view,
+                                apply: props.blockId ? (next) => void applyDisplay(next) : undefined }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
-                            <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                            <SheetBoard ownerId={sheetOwnerId()} hostProperties={hostAllProperties()} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet().groupBy} groups={groups()} />
                           </Match>
                         </Switch>
                       </SheetContainer>
-                    </Show>
                   </Show>
                 </Match>
                 <Match when={currentView() === "search"}>
@@ -1222,11 +1301,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         <Show
                           when={globalSort()}
                           fallback={
-                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />
+                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
                           }
                         >
                           {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
+                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} hostBlockId={props.blockId} bulkFold={bulkFold()} />
                         </Show>
                       }
                     >
@@ -1241,257 +1320,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         </Switch>
       </div>
     </Show>
-  );
-}
-
-interface YoutubeApi {
-  Player: new (iframeId: string, options: { events?: { onReady?: () => void; onStateChange?: (event: { data: number }) => void } }) => YoutubePlayer;
-}
-
-type YoutubeWindow = Window & {
-  YT?: YoutubeApi;
-  onYouTubeIframeAPIReady?: () => void;
-};
-
-let youtubeApiLoading: Promise<YoutubeApi | null> | null = null;
-const YOUTUBE_API_SCRIPT_ID = "tine-youtube-iframe-api";
-
-// The API is intentionally fetched only from a mounted YouTube embed. OG does
-// the same mount-time load/register sequence (og-1.0.0 6e7afa8eb,
-// extensions/video/youtube.cljs:20-27, :45-53).
-function loadYoutubeApi(): Promise<YoutubeApi | null> {
-  if (typeof window === "undefined" || typeof document === "undefined") return Promise.resolve(null);
-  const ytWindow = window as YoutubeWindow;
-  if (ytWindow.YT?.Player) return Promise.resolve(ytWindow.YT);
-  if (youtubeApiLoading) return youtubeApiLoading;
-
-  youtubeApiLoading = new Promise((resolve) => {
-    let settled = false;
-    const settle = (api: YoutubeApi | undefined) => {
-      if (settled) return;
-      settled = true;
-      resolve(api?.Player ? api : null);
-    };
-    const priorReady = ytWindow.onYouTubeIframeAPIReady;
-    ytWindow.onYouTubeIframeAPIReady = () => {
-      try {
-        priorReady?.();
-      } finally {
-        settle(ytWindow.YT);
-      }
-    };
-    // The IFrame API is one process-wide script in the main realm's <head>.
-    let script = mainWindow.document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
-    if (!script) {
-      script = document.createElement("script");
-      script.id = YOUTUBE_API_SCRIPT_ID;
-      script.async = true;
-      script.src = "https://www.youtube.com/iframe_api";
-      document.head.appendChild(script);
-    }
-    script.addEventListener("error", () => settle(undefined), { once: true });
-  });
-  return youtubeApiLoading;
-}
-
-
-// The OG generator floors getCurrentTime before it formats the macro; with no
-// registered/ready player it produces NOTHING — the command is a no-op, no
-// macro is inserted (og-1.0.0 6e7afa8eb, extensions/video/youtube.cljs:113-122).
-export function youtubeTimestampMacroFor(target: Node): string | null {
-  const seconds = youtubePlayerForTarget(target)?.getCurrentTime();
-  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return null;
-  return `{{youtube-timestamp ${Math.max(0, Math.floor(seconds))}}}`;
-}
-
-function httpUrl(value: string): string | undefined {
-  if (!/^https?:\/\//i.test(value)) return undefined;
-  try {
-    const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// A {{video}} / {{youtube}} / {{vimeo}} / {{bilibili}} macro: embeds YouTube,
-// Vimeo or Bilibili as an iframe and direct media files as a <video>. Each of the
-// provider-named macros also accepts a bare id (e.g. `{{vimeo 12345}}`), matching
-// OG; the generic `{{video URL}}` sniffs the provider from the URL. Falls back to a
-// link. (`youtube-timestamp` is a SEPARATE macro — handled before this one.)
-export function VideoMacro(props: { body: string }): JSX.Element {
-  const iframeId = `youtube-player-${createUniqueId()}`;
-  const parsed = () => {
-    const m = /^(\w+)\s*([\s\S]*)$/.exec(props.body.trim());
-    const name = (m?.[1] ?? "video").toLowerCase();
-    const arg = (m?.[2] ?? "").trim().replace(/^\[\[|\]\]$/g, "");
-    return { name, arg };
-  };
-  const url = () => parsed().arg;
-  const safeUrl = () => httpUrl(url());
-  const embed = () => {
-    const { name, arg } = parsed();
-    // `?enablejsapi=1` matches OG (youtube.cljs:58) and enables timestamps.
-    const yt = safeUrl() && /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
-    if (yt) return `https://www.youtube.com/embed/${yt[1]}?enablejsapi=1`;
-    if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}?enablejsapi=1`;
-    const vimeo = safeUrl() && /vimeo\.com\/(\d+)/.exec(arg);
-    if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
-    if (name === "vimeo" && /^\d+$/.test(arg)) return `https://player.vimeo.com/video/${arg}`;
-    const bili = safeUrl() && /bilibili\.com\/video\/(BV[0-9A-Za-z]+)/i.exec(arg);
-    const bvid = bili ? bili[1] : name === "bilibili" && /^BV[0-9A-Za-z]+$/.test(arg) ? arg : null;
-    if (bvid) return `https://player.bilibili.com/player.html?bvid=${bvid}&high_quality=1`;
-    return null;
-  };
-  // OG parity (og-1.0.0 6e7afa8eb): the embed iframe's `allow`/`referrerpolicy`.
-  // YouTube (youtube.cljs:54-70) preserves an HTTP(S) parent's origin referrer.
-  // A custom-protocol desktop parent still needs native WebView identification
-  // (GH #600); this policy cannot manufacture a missing HTTP Referer header.
-  // https://developers.google.com/youtube/terms/required-minimum-functionality
-  // Vimeo (block.cljs:1290-1305) gets the same `allow` list
-  // minus picture-in-picture/web-share and NO referrerpolicy; bilibili sets
-  // neither (the `.embed-iframe` class already removes the border).
-  const embedAttrs = (): Record<string, string> => {
-    const src = embed() ?? "";
-    if (/(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(src))
-      return {
-        allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
-        referrerpolicy: "strict-origin-when-cross-origin",
-      };
-    if (src.includes("player.vimeo.com"))
-      return { allow: "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope" };
-    return {};
-  };
-  const isYoutubeEmbed = () => /(?:^|\/\/)(?:www\.)?(?:youtube\.com|youtube-nocookie\.com)\/embed\//.test(embed() ?? "");
-  let player: YoutubePlayer | undefined;
-  onMount(() => {
-    if (!isYoutubeEmbed()) return;
-    let mounted = true;
-    void loadYoutubeApi().then((api) => {
-      if (!mounted || !api) return;
-      try {
-        const registered = new api.Player(iframeId, { events: {
-          onReady: () => undefined,
-          onStateChange: (event) => {
-            if (mounted && event.data === 1) recordYoutubePlayback(iframeId);
-          },
-        } });
-        if (!mounted) {
-          registered.destroy?.();
-          return;
-        }
-        player = registered;
-        registerYoutubePlayer(iframeId, registered);
-      } catch {
-        // Offline, blocked, or malformed API responses leave the timestamp label usable.
-      }
-    });
-    onCleanup(() => {
-      mounted = false;
-      unregisterYoutubePlayer(iframeId, player);
-      player?.destroy?.();
-    });
-  });
-  return (
-    <Show
-      when={embed()}
-      fallback={
-        <Show
-          when={safeUrl() && /\.(mp4|webm|ogg)(\?|$)/i.test(url())}
-          fallback={safeUrl()
-            ? <ExternalLink dest={safeUrl()!}>{url()}</ExternalLink>
-            : <span>{url()}</span>}
-        >
-          <video class="embed-video" src={safeUrl()} controls />
-        </Show>
-      }
-    >
-      <div class="embed-iframe-wrap">
-        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title={t("macro-macro-video")} {...embedAttrs()} />
-      </div>
-    </Show>
-  );
-}
-
-// A {{tweet URL}} / {{twitter URL}} macro (`twitter` is OG's alias for `tweet`) —
-// rendered as a link (no third-party script embedding).
-export function TweetMacro(props: { body: string }): JSX.Element {
-  const url = () => props.body.replace(/^(tweet|twitter)\s*/i, "").trim();
-  const safeUrl = () => httpUrl(url());
-  return (
-    <Show when={safeUrl()} fallback={<span>🐦 {url()}</span>}>
-      <ExternalLink class="external-link tweet-link" dest={safeUrl()!}>🐦 {url()}</ExternalLink>
-    </Show>
-  );
-}
-
-// `{{youtube-timestamp <seconds>}}` seeks the shared selected YouTube player.
-export function YoutubeTimestamp(props: { body: string }): JSX.Element {
-  const secs = () => {
-    const raw = props.body.replace(/^youtube-timestamp\s*/i, "").trim();
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const label = () => {
-    const s = Math.max(0, secs());
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    const pad = (x: number) => String(x).padStart(2, "0");
-    return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
-  };
-  return (
-    <a
-      class="youtube-ts"
-      title={renderMessage(msg("media-youtube-timestamp-seek"))}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        // OG timestamp click stops the event and calls seekTo(seconds, true)
-        // on get-player's result (og-1.0.0 6e7afa8eb,
-        // extensions/video/youtube.cljs:103-111).
-        youtubePlayerForTarget(event.currentTarget)?.seekTo(secs(), true);
-      }}
-    >
-      ⏱ {label()}
-    </a>
-  );
-}
-
-// `{{cloze answer}}` (optionally `{{cloze answer\\cue}}`) — in OG this is hidden
-// only inside the SRS flashcard-review loop. Tine has no SRS engine, so we degrade
-// to a click-to-reveal: shows the cue (or `[...]`) until clicked, then the answer.
-export function ClozeMacro(props: { body: string }): JSX.Element {
-  const [revealed, setRevealed] = createSignal(false);
-  const parts = () => props.body.replace(/^cloze\s*/i, "").trim().split(/\\\\/);
-  const answer = () => (parts()[0] ?? "").trim();
-  const cue = () => parts()[1]?.trim();
-  return (
-    <span
-      class="cloze"
-      classList={{ revealed: revealed() }}
-      title={revealed() ? t("macro-macro-click-to-hide") : t("macro-macro-click-to-reveal")}
-      onClick={(e) => {
-        e.stopPropagation();
-        setRevealed((v) => !v);
-      }}
-    >
-      {revealed() ? answer() : (cue() ?? "[...]")}
-    </span>
-  );
-}
-
-// `{{zotero-imported-file ...}}` / `{{zotero-linked-file ...}}` — OG resolves the
-// Zotero item-key to a real attachment via its Zotero connector (data dir + item
-// metadata + storage config). Tine has no Zotero integration, so resolving would
-// yield a dead link; we degrade to a muted, non-navigating label rather than a
-// broken link. Flagged as a known parity gap (niche).
-export function ZoteroMacro(props: { body: string }): JSX.Element {
-  const arg = () => props.body.replace(/^zotero-(imported|linked)-file\s*/i, "").trim();
-  return (
-    <span class="zotero-ref" title={t("macro-macro-zotero-integration-isn-t-supported-in-tine")}>
-      📎 {arg() || t("macro-macro-zotero-attachment")}
-    </span>
   );
 }
 

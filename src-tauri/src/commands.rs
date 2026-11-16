@@ -1,3 +1,4 @@
+use crate::capture_asset::{import_asset_blocking, save_asset_blocking};
 #[cfg(desktop)]
 use crate::debug::diag_private;
 #[cfg(desktop)]
@@ -14,12 +15,15 @@ use tine_core::model::{
 use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
+mod device_reads;
 mod discovery;
+mod templates;
 use discovery::{
-    page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
+    alias_group_wire, page_inventory_wire, page_modified_wire, resolve_name, AliasGroupWire,
+    PageInventoryWire, PageModifiedWire, ResolvedWire,
 };
 
-fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
+pub(crate) fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
 }
 fn feature_pdf_error(error: std::io::Error) -> String {
@@ -30,64 +34,12 @@ fn feature_pdf_error(error: std::io::Error) -> String {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct PageWire {
-    id: String,
-    #[serde(flatten)]
-    doc: PageDto,
-}
-
-impl std::ops::Deref for PageWire {
-    type Target = PageDto;
-
-    fn deref(&self) -> &PageDto {
-        &self.doc
-    }
-}
-
-fn page_dto(read: tine_store::PageRead) -> PageWire {
-    let mut doc = read.doc;
-    doc.rev = Some(read.rev.into());
-    doc.read_only = read.read_only.is_some();
-    PageWire {
-        id: read.id.into(),
-        doc,
-    }
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ResolvedWire {
-    Existing { id: String, others: Vec<String> },
-    Alias { owners: Vec<String> },
-    Absent { id: String },
-}
-
-impl From<Resolved> for ResolvedWire {
-    fn from(value: Resolved) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&Resolved> for ResolvedWire {
-    fn from(value: &Resolved) -> Self {
-        let id = |id: &PageId| id.as_str().to_owned();
-        match value {
-            Resolved::Existing { id: first, others } => Self::Existing {
-                id: id(first),
-                others: others.iter().map(id).collect(),
-            },
-            Resolved::Alias { owners } => Self::Alias {
-                owners: owners.iter().map(id).collect(),
-            },
-            Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
-        }
-    }
-}
-
+mod page_read;
+pub(crate) use page_read::PageWire;
+use page_read::{page_dto, PagePathAnswer};
 fn store_error(error: StoreError) -> String {
     match error {
-        StoreError::NotFound => std::io::ErrorKind::NotFound.to_string(),
+        StoreError::NotFound(_) => std::io::ErrorKind::NotFound.to_string(),
         StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
             "invalid page path".into()
         }
@@ -101,7 +53,7 @@ fn store_error(error: StoreError) -> String {
 
 fn asset_error(error: StoreError) -> String {
     match error {
-        StoreError::NotFound => std::io::Error::from_raw_os_error(2).to_string(),
+        StoreError::NotFound(_) => std::io::Error::from_raw_os_error(2).to_string(),
         StoreError::InvalidTarget(_) | StoreError::PageSource(_) | StoreError::StreamSymlink(_) => {
             "invalid asset".into()
         }
@@ -171,15 +123,7 @@ mod device_read_tests {
 
     #[test]
     fn read_local_image_requires_a_bound_root_check_before_metadata() {
-        let source = include_str!("commands.rs");
-        let image = source
-            .rsplit("pub(crate) fn read_local_image(")
-            .next()
-            .unwrap();
-        let image = image
-            .split("pub(crate) async fn import_asset(")
-            .next()
-            .unwrap();
+        let image = include_str!("commands/device_reads.rs");
         assert!(image.contains("refuse_bound_graph_path"));
     }
 
@@ -311,10 +255,10 @@ mod result_bridge_budget_tests {
         );
     }
 }
-
 mod asset_ingress;
+mod asset_ranges;
 pub(crate) use asset_ingress::decode_asset_b64;
-
+pub(crate) use asset_ranges::{read_asset_range, stat_asset};
 /// The whole name inventory: physical pages and journals, aliases, and names
 /// that are only referenced. A thin adapter over `WholeGraph::inventory`; the
 /// frontend caches it in `pageIndex.ts` and keeps no other name map.
@@ -367,6 +311,25 @@ pub(crate) async fn get_page(
     .map_err(|error| error.to_string())?
 }
 
+/// The page header's alias group of `name` (D-20261019-AL1/AL2): its other
+/// names with no file of their own and the other names a file claims.
+/// O(component log P); waits for the initial load on the blocking pool.
+#[tauri::command]
+pub(crate) async fn page_alias_group(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<AliasGroupWire, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| alias_group_wire(&view, &name))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Waits for the initial load, so it runs on the blocking pool.
 #[tauri::command]
 pub(crate) async fn resolve_page(
@@ -376,6 +339,9 @@ pub(crate) async fn resolve_page(
 ) -> Result<ResolvedWire, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        if let Some(early) = templates::early_absent_journal(&slot, &name, kind) {
+            return early;
+        }
         slot.store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
@@ -399,7 +365,7 @@ mod wire_family_tests {
         );
         assert_eq!(
             read_asset_error(tine_graph_features::assets::AssetAccessError::Store(
-                StoreError::NotFound
+                StoreError::NotFound(tine_store::PageReadSource::Disk)
             )),
             "not-found",
             "{RULE}"
@@ -457,7 +423,7 @@ pub(crate) async fn copy_guide_into_graph(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::guide::copy_guide_into_graph(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &title,
         )
         .map_err(|error| error.to_string())
@@ -500,6 +466,26 @@ pub(crate) async fn get_backlink_filter_context(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn register_unlinked_reference(
+    subscription: String,
+    target: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.store
+            .register_reader_while_live(
+                subscription,
+                target.map(|name| tine_store::QuerySubscription::Unlinked { name }),
+                &slot.background_cancelled,
+            )
+            .map(|_| ())
+            .map_err(|error| format!("reader subscription failed: {error:?}"))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -563,6 +549,7 @@ pub(crate) async fn rename_page(
     expected_path: Option<String>,
     merge_into: Option<String>,
     unsaved_paths: Option<Vec<String>>,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<tine_graph_features::pages::RenameReport, String> {
     let slot = slot_for_context(&state)?;
@@ -570,16 +557,27 @@ pub(crate) async fn rename_page(
         // A rename is the page host's (STEP3 §7): a revoked slot is the
         // stale-binding refusal, an off one refuses with no write. One
         // statement-temporary guard (A-K3, `host_slot_guard_tests.rs`).
-        tine_graph_features::pages::rename_or_merge_page(
-            &slot.store,
-            slot.host_slot()?.running().ok_or("no page host")?,
-            &old,
-            &new,
-            expected_path.as_deref(),
-            merge_into.as_deref(),
-            unsaved_paths.as_deref().unwrap_or_default(),
+        // On a git graph that autocommits, bracketed by commits (ADR 0078).
+        crate::git_settings::around(
+            &slot.root_key,
+            || match &merge_into {
+                Some(_) => format!("Merge page \"{old}\" into \"{new}\""),
+                None => format!("Rename page \"{old}\" to \"{new}\""),
+            },
+            || {
+                tine_graph_features::pages::rename_or_merge_page(
+                    &slot.store,
+                    slot.host_slot()?.running()?,
+                    &old,
+                    &new,
+                    expected_path.as_deref(),
+                    merge_into.as_deref(),
+                    unsaved_paths.as_deref().unwrap_or_default(),
+                )
+                .map_err(|e| e.to_string())
+            },
         )
-        .map_err(|e| e.to_string())
+        .inspect(|report| crate::seen::page_renamed(&app, &slot, &old, report))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -902,9 +900,9 @@ pub(crate) async fn set_preferred_format(
 pub(crate) async fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     with_config_store(&state, move |store| {
-        tine_graph_features::config::set_journal_page_title_format(store, &format)
+        tine_graph_features::config::store_journal_page_title_format(store, &format)
             .map_err(|error| error.to_string())
     })
     .await
@@ -923,22 +921,27 @@ pub(crate) async fn read_custom_css(state: GraphContext<'_>) -> Result<String, S
 /// editor hand-off, so they refuse before touching the graph. Rust owns the path;
 /// the WebView supplies none. Cost: O(path components) plus one small create.
 #[tauri::command]
-pub(crate) async fn edit_custom_css(state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn edit_custom_css(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     #[cfg(not(desktop))]
     {
-        let _ = state;
+        let _ = (app, state);
         Err(
             "custom.css opens in a desktop editor; edit logseq/custom.css in the graph folder"
                 .into(),
         )
     }
     #[cfg(desktop)]
-    with_config_store(&state, move |store| {
-        let path = tine_graph_features::custom_css::ensure_custom_css(store)
-            .map_err(|error| error.to_string())?;
-        open_page_source_with_os(&path, false)
-    })
-    .await
+    {
+        let path = with_config_store(&state, move |store| {
+            tine_graph_features::custom_css::ensure_custom_css(store)
+                .map_err(|error| error.to_string())
+        })
+        .await?;
+        crate::css_files::open_css_with_os(app, path).await
+    }
 }
 
 #[tauri::command]
@@ -1074,7 +1077,7 @@ pub(crate) async fn capture_quick_switch(
 #[cfg(test)]
 mod capture_quick_switch_tests {
     use super::*;
-    use crate::state::{slot_for_bound_window, GraphRegistry, GraphSlot};
+    use crate::state::{capture_asset_slot, slot_for_bound_window, GraphRegistry, GraphSlot};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::{Mutex, RwLock};
@@ -1171,6 +1174,56 @@ mod capture_quick_switch_tests {
         std::fs::remove_dir_all(base).unwrap();
     }
 
+    // GH #835: pasting an image into Quick Capture failed with "no graph loaded
+    // for window capture": the asset commands resolve the window's own graph slot,
+    // and the capture window has none. Its narrow import resolves the graph the
+    // show was bound to instead.
+    #[test]
+    fn capture_asset_import_lands_in_the_selected_capture_graph_only() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        let slot = capture_asset_slot(&state, "capture", Some(generation)).unwrap();
+        use base64::Engine;
+        let png = base64::engine::general_purpose::STANDARD.encode(b"\x89PNG fixture bytes");
+        let stored = save_asset_blocking(&slot, "pasted.png", &png).unwrap();
+        assert!(base.join("selected").join("assets").join(&stored).is_file());
+        assert!(!base.join("other").join("assets").exists());
+        let source = base.join("clipboard-source.png");
+        std::fs::write(&source, b"\x89PNG file on the clipboard").unwrap();
+        let imported =
+            import_asset_blocking(&slot, source.to_str().unwrap(), Some("copied.png")).unwrap();
+        assert!(base
+            .join("selected")
+            .join("assets")
+            .join(&imported)
+            .is_file());
+        assert!(!base.join("other").join("assets").exists());
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn capture_asset_import_refuses_non_capture_callers_and_stale_generations() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_asset_slot(&state, "main", Some(generation))
+                .err()
+                .unwrap(),
+            "capture asset import is only available to quick capture"
+        );
+        assert_eq!(
+            capture_asset_slot(&state, "capture", Some(generation + 1))
+                .err()
+                .unwrap(),
+            "stale-graph-binding"
+        );
+        assert_eq!(
+            capture_asset_slot(&state, "capture", None).err().unwrap(),
+            "missing-graph-binding"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     #[test]
     fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
         let (state, base) = state_with_selected_graph();
@@ -1206,11 +1259,18 @@ pub(crate) async fn off_ui_graph_read<T: Send + 'static>(
     .map_err(|error| error.to_string())?
 }
 
+/// Every template, or with `name` at most the one graph-wide discovery picks
+/// for that exact name, answered early from the files when they settle it
+/// (BqbeQ; `templates::named_template`).
 #[tauri::command]
 pub(crate) async fn list_templates(
+    name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::TemplateDto>, String> {
-    off_ui_graph_read(&state, |view| Ok(view.templates())).await
+    let Some(name) = name else {
+        return off_ui_graph_read(&state, |view| Ok(view.templates())).await;
+    };
+    templates::named_template(slot_for_context(&state)?, name).await
 }
 
 #[tauri::command]
@@ -1260,7 +1320,7 @@ pub(crate) async fn preview_block(
 }
 
 #[tauri::command]
-pub(crate) fn read_asset(
+pub(crate) async fn read_asset(
     name: String,
     max_bytes: u64,
     state: GraphContext<'_>,
@@ -1270,9 +1330,12 @@ pub(crate) fn read_asset(
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
     let slot = slot_for_context(&state)?;
-    tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
-        .map(tauri::ipc::Response::new)
-        .map_err(read_asset_error)
+    crate::state::off_ui(move || {
+        tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
+            .map(tauri::ipc::Response::new)
+            .map_err(read_asset_error)
+    })
+    .await
 }
 
 /// Wire form of a failed `read_asset`. A missing file is the exact token
@@ -1281,7 +1344,7 @@ pub(crate) fn read_asset(
 /// reported to the user.
 fn read_asset_error(error: tine_graph_features::assets::AssetAccessError) -> String {
     match error {
-        tine_graph_features::assets::AssetAccessError::Store(StoreError::NotFound) => {
+        tine_graph_features::assets::AssetAccessError::Store(StoreError::NotFound(_)) => {
             "not-found".into()
         }
         other => feature_asset_access_error(other),
@@ -1387,33 +1450,11 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
 /// non-regular files and files over 64 MiB fail with a string error. The
 /// bounded read also stops if a regular file grows after metadata was read.
 #[tauri::command]
-pub(crate) fn read_local_image(
+pub(crate) async fn read_local_image(
     path: String,
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, String> {
-    // Read an image from an ABSOLUTE path OUTSIDE the graph, for raw-HTML `<img>`
-    // srcs the user has explicitly opted into (Settings → "Load local-file images").
-    // OFF by default; gated here too (defense in depth — the frontend also checks),
-    // restricted to image extensions + a size cap so an allowed note can't slurp an
-    // arbitrary file. Returns RAW bytes like `read_asset`. See ADR 0019.
-    if !crate::settings::device_bool(&app, "allow_local_file_images", false) {
-        return Err("local-file images are disabled".into());
-    }
-    let p = std::path::Path::new(&path);
-    let ext_ok = matches!(
-        p.extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "apng")
-    );
-    if !ext_ok {
-        return Err("not an image file".into());
-    }
-    let p = refuse_bound_graph_path(p, &state)?;
-    const MAX_BYTES: u64 = 64 * 1024 * 1024;
-    crate::device_io::read_regular_file_bounded(&p, MAX_BYTES).map(tauri::ipc::Response::new)
+    crate::state::off_ui(move || device_reads::read_local_image(&path, &app)).await
 }
 
 #[tauri::command]
@@ -1423,17 +1464,7 @@ pub(crate) async fn import_asset(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    crate::state::off_ui(move || {
-        crate::device_io::import_asset_from_path(&slot.store, &path, name.as_deref()).map_err(
-            |error| match error {
-                crate::device_io::DeviceAssetImportError::Name(message) => message,
-                crate::device_io::DeviceAssetImportError::Io(error) => {
-                    feature_asset_error(error, &slot)
-                }
-            },
-        )
-    })
-    .await
+    crate::state::off_ui(move || import_asset_blocking(&slot, &path, name.as_deref())).await
 }
 
 /// Import a bounded Android photo or voice memo by native cache-file capability.
@@ -1528,8 +1559,12 @@ pub(crate) async fn import_native_capture(
 /// Deliberately narrow: this caller-chosen path is restricted to the drop
 /// feature's delimited text types. `read_local_image` has a separate image gate.
 #[tauri::command]
-pub(crate) fn read_text_file(path: String, state: State<'_, AppState>) -> Result<String, String> {
-    read_text_file_from_path(std::path::Path::new(&path), &state)
+pub(crate) async fn read_text_file(path: String, app: tauri::AppHandle) -> Result<String, String> {
+    crate::state::off_ui(move || {
+        use tauri::Manager;
+        read_text_file_from_path(std::path::Path::new(&path), &app.state::<AppState>())
+    })
+    .await
 }
 
 fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<String, String> {
@@ -2126,7 +2161,7 @@ pub(crate) async fn apply_journal_filename_migrations(
         crate::backup::snapshot_before_rewrite(&app, &slot, "pre-journal-rename")?;
         let result = journals::migrate_journal_filenames(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &migrations,
         )
         .map_err(|error| error.to_string())?;
@@ -2146,7 +2181,7 @@ pub(crate) async fn trash_journal_file(
     crate::state::off_ui(move || {
         tine_graph_features::journals::trash_journal_file(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &name,
         )
         .map_err(|e| e.to_string())
@@ -2157,9 +2192,16 @@ pub(crate) async fn trash_journal_file(
 /// Raw contents of one journal file (by exact filename) — for inspecting a
 /// duplicate day's files before reconciling.
 #[tauri::command]
-pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result<String, String> {
+pub(crate) async fn read_journal_file(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::journals::read_journal_file(&slot.store, &name).map_err(|e| e.to_string())
+    crate::state::off_ui(move || {
+        tine_graph_features::journals::read_journal_file(&slot.store, &name)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI
@@ -2171,11 +2213,21 @@ pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result
 pub(crate) async fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
-) -> Result<Option<PageWire>, String> {
+) -> Result<PagePathAnswer, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || match slot.store.page(&PageId::from(path)) {
-        Ok(read) => Ok(Some(page_dto(read))),
-        Err(StoreError::NotFound | StoreError::InvalidTarget(_)) => Ok(None),
+        Ok(read) => Ok(PagePathAnswer {
+            source: Some(read.source),
+            page: Some(page_dto(read)),
+        }),
+        Err(StoreError::NotFound(source)) => Ok(PagePathAnswer {
+            source: Some(source),
+            page: None,
+        }),
+        Err(StoreError::InvalidTarget(_)) => Ok(PagePathAnswer {
+            source: None,
+            page: None,
+        }),
         Err(error) => Err(store_error(error)),
     })
     .await
@@ -2189,17 +2241,25 @@ pub(crate) async fn get_page_by_path(
 pub(crate) async fn merge_pages(
     src: String,
     dst: String,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::merge_pages(
-            &slot.store,
-            slot.host_slot()?.running(),
-            &src,
-            &dst,
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Merge \"{src}\" into \"{dst}\""),
+            || {
+                tine_graph_features::pages::merge_pages(
+                    &slot.store,
+                    slot.host_slot()?.running()?,
+                    &src,
+                    &dst,
+                )
+                .map_err(graph_write_error_to_wire)
+            },
         )
-        .map_err(graph_write_error_to_wire)
+        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[src.as_str()]))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2232,17 +2292,25 @@ fn graph_write_wire_keeps_rollback_incomplete_family() {
 pub(crate) async fn rename_file_to_page(
     path: String,
     new_name: String,
+    app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::rename_file_to_page(
-            &slot.store,
-            slot.host_slot()?.running(),
-            &path,
-            &new_name,
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Rename \"{path}\" to page \"{new_name}\""),
+            || {
+                tine_graph_features::pages::rename_file_to_page(
+                    &slot.store,
+                    slot.host_slot()?.running()?,
+                    &path,
+                    &new_name,
+                )
+                .map_err(|error| error.to_string())
+            },
         )
-        .map_err(|error| error.to_string())
+        .inspect(|()| crate::seen::page_gone(&app, &slot, None, &[path.as_str()]))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2255,12 +2323,7 @@ pub(crate) async fn save_asset(
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    crate::state::off_ui(move || {
-        let bytes = decode_asset_b64(&bytes_b64)?;
-        tine_graph_features::assets::save_asset(&slot.store, &name, &bytes)
-            .map_err(|error| feature_asset_error(error, &slot))
-    })
-    .await
+    crate::state::off_ui(move || save_asset_blocking(&slot, &name, &bytes_b64)).await
 }
 
 mod read_highlights_worker;
@@ -2303,7 +2366,7 @@ pub(crate) async fn write_highlights(
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::pdf::write_highlights(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &pdf,
             &label,
             &highlights,

@@ -13,6 +13,28 @@ pub(crate) struct BoundedGroups {
     pub pages: Vec<PageRow>,
     pub total: usize,
     pub exceeded: bool,
+    pub diagnostics: Vec<String>,
+}
+
+impl BoundedGroups {
+    /// Refused, unavailable and oversized answers have notices, never empty rows.
+    pub(crate) fn notice_html(&self) -> Option<String> {
+        if self.diagnostics.is_empty() {
+            return self.exceeded.then(|| format!(
+                "<div class=\"query query-too-large\">Query has {} matches; narrow it before publishing.</div>",
+                self.total
+            ));
+        }
+        let mut html = String::from("<div class=\"query query-refused\"><div class=\"query-head\">Query could not run</div>");
+        for message in &self.diagnostics {
+            html.push_str(&format!(
+                "<div class=\"query-diagnostic\">{}</div>",
+                crate::render::esc(message)
+            ));
+        }
+        html.push_str("</div>");
+        Some(html)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -56,6 +78,13 @@ impl QueryCache {
         }
         let bytes = key
             .source_len()
+            .saturating_add(
+                groups
+                    .diagnostics
+                    .iter()
+                    .map(|s| s.len() + 24)
+                    .sum::<usize>(),
+            )
             .saturating_add(tine_core::model::ref_groups_estimated_bytes(&groups.groups))
             .saturating_add(
                 groups
@@ -95,6 +124,7 @@ impl RenderGraph<'_> {
                 pages: Vec::new(),
                 total: 0,
                 exceeded: false,
+                diagnostics: vec!["Query could not be evaluated for this export.".into()],
             })
     }
 
@@ -109,7 +139,11 @@ impl RenderGraph<'_> {
         block_properties: &[(String, String)],
         current_page: Option<&str>,
     ) -> Option<(tine_core::query::wire_parse::ParsedQuery, BoundedGroups)> {
-        let Ok(IrAnswer::Registry(registry)) = self.whole.query_ir(IrRequest::Registry) else {
+        let Ok(IrAnswer::Registry(registry)) = self
+            .whole
+            .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+            .map(|answer| answer.expect("never cancelled"))
+        else {
             return None;
         };
         // Only the block's `tine.*` properties reach the engine, as in the live macro.
@@ -129,11 +163,18 @@ impl RenderGraph<'_> {
         let context = ExecutionContext {
             current_page: current_page.map(str::to_owned),
         };
-        let Ok(IrAnswer::Result(answer)) = self.whole.query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &view,
-            context: &context,
-        }) else {
+        let Ok(IrAnswer::Result(answer)) = self
+            .whole
+            .query_ir(
+                IrRequest::Run {
+                    query: &parsed.query,
+                    view: &view,
+                    context: &context,
+                },
+                &tine_store::Cancel::default(),
+            )
+            .map(|answer| answer.expect("never cancelled"))
+        else {
             return None;
         };
         let (groups, pages) = match answer.rows {
@@ -145,6 +186,12 @@ impl RenderGraph<'_> {
             pages,
             total: answer.total,
             exceeded: answer.exceeded,
+            diagnostics: answer
+                .diagnostics
+                .into_iter()
+                .filter(|d| !d.disabled)
+                .map(|d| d.message)
+                .collect(),
         };
         Some((parsed, bounded))
     }

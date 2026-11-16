@@ -9,9 +9,10 @@ import { backend } from "../backend";
 import type { EditKinds } from "../editKind";
 import type { PageDto } from "../types";
 import { bindTestHost } from "../document/host/wiring.test.support";
-import { favorites, seedFavorites, setRecentPages } from "../ui";
+import { contextMenu, favorites, seedFavorites, setContextMenu, setRecentPages } from "../ui";
 import { openJournals, route } from "../router";
 import { Sidebar } from "./Sidebar";
+import { ContextMenu } from "./ContextMenu";
 
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
 function setRect(el: Element, top: number) {
@@ -21,6 +22,12 @@ function setRect(el: Element, top: number) {
 const pointer = (type: string, x: number, y: number) =>
   new ((window as { PointerEvent?: typeof PointerEvent }).PointerEvent ?? MouseEvent)(type,
     { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1 }) as PointerEvent;
+
+const touch = (type: string, x: number, y: number) => {
+  const event = pointer(type, x, y);
+  Object.defineProperty(event, "pointerType", { value: "touch" });
+  return event;
+};
 
 /** What the page host was handed: each submitted page and its edit kinds. */
 let saved: { page: PageDto; kinds: EditKinds }[];
@@ -200,5 +207,231 @@ describe("favorites arrangement in the sidebar", () => {
     } finally { document.elementFromPoint = prev; }
     expect(document.documentElement.classList.contains("drag-selection-suppressed")).toBe(false);
     dispose();
+  });
+
+  // D-20261019-FT1: the sidebar Tabs list's touch gesture (GH #704) on Favorites:
+  // hold still to pick a row up, drag to reorder; a move before the hold scrolls.
+  describe("touch hold (D-20261019-FT1)", () => {
+    afterEach(() => { vi.useRealTimers(); setContextMenu(null); });
+    /** Hold `from` for the hold delay, then drag to `to` and release. */
+    function holdDrag(from: HTMLElement, to: HTMLElement, start: [number, number], end: [number, number], endTimers = true) {
+      from.dispatchEvent(touch("pointerdown", ...start));
+      vi.advanceTimersByTime(600);
+      const prev = document.elementFromPoint;
+      document.elementFromPoint = () => to;
+      try {
+        document.dispatchEvent(touch("pointermove", ...end));
+        document.dispatchEvent(touch("pointerup", ...end));
+      } finally { document.elementFromPoint = prev; }
+      if (endTimers) vi.advanceTimersByTime(10); // false: keep the click that ends the drag inside its suppression window
+    }
+
+    it("a finger that moves at once scrolls: nothing is reordered or persisted", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      const [alpha, , gamma] = rows();
+      alpha.dispatchEvent(touch("pointerdown", 10, 10));
+      const prev = document.elementFromPoint;
+      document.elementFromPoint = () => gamma;
+      try {
+        document.dispatchEvent(touch("pointermove", 10, 40));
+        document.dispatchEvent(touch("pointermove", 10, 85));
+        document.dispatchEvent(touch("pointerup", 10, 85));
+      } finally { document.elementFromPoint = prev; }
+      vi.advanceTimersByTime(1000); // a hold that was never cancelled would pick the row up now
+      expect(favorites().map((f) => f.name)).toEqual(["Alpha", "Beta", "Gamma"]);
+      expect(configWrites).toEqual([]);
+      expect(document.documentElement.classList.contains("drag-selection-suppressed")).toBe(false);
+      dispose();
+    });
+
+    it("a still hold then a drag reorders and persists exactly as the mouse drag does", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      const [alpha, , gamma] = rows();
+      holdDrag(alpha, gamma, [10, 10], [10, 85]);
+      vi.useRealTimers();
+      await settle();
+      expect(favorites().map((f) => f.name)).toEqual(["Beta", "Gamma", "Alpha"]);
+      expect(configWrites).toEqual([[["Beta", "Gamma", "Alpha"], null]]);
+      expect(saved).toEqual([]);
+      dispose();
+    });
+
+    it("a held row nests right of the grab point like the mouse drag", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      const [alpha, beta] = rows();
+      holdDrag(beta, alpha, [10, 40], [30, 20]);
+      vi.useRealTimers();
+      await settle();
+      expect(rows().map((row) => row.style.paddingLeft)).toEqual(["6px", "22px", "6px"]);
+      expect(saved[0].page.blocks.map((b) => [b.raw, b.children.map((c) => c.raw)])).toEqual([["[[Alpha]]", ["[[Beta]]"]], ["[[Gamma]]", []]]);
+      expect(configWrites.at(-1)).toEqual([["Alpha", "Beta", "Gamma"], "Favorites"]);
+      dispose();
+    });
+
+    it("a held group row drags too, with what it holds", async () => {
+      const { root, dispose, rows, layoutRows } = mount(["Alpha", "Beta"]);
+      root.querySelector<HTMLButtonElement>(".nav-fav-add-group")!.click();
+      await settle();
+      layoutRows();
+      drag(rows()[0], rows()[2], [10, 10], [30, 80]); // Alpha into the group, by mouse
+      await settle();
+      layoutRows();
+      const [beta, group] = rows();
+      vi.useFakeTimers();
+      holdDrag(group, beta, [150, 40], [150, 5]);
+      vi.useRealTimers();
+      await settle();
+      expect(saved.at(-1)!.page.blocks.map((b) => [b.raw, b.children.map((c) => c.raw)]))
+        .toEqual([["New group", ["[[Alpha]]"]], ["[[Beta]]", []]]);
+      dispose();
+    });
+
+    it("a tap still opens the favorite, and the click ending a held drag does not", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      rows()[1].dispatchEvent(touch("pointerdown", 10, 40));
+      document.dispatchEvent(touch("pointerup", 10, 40));
+      vi.advanceTimersByTime(10);
+      rows()[1].click();
+      expect(route()).toMatchObject({ kind: "page", name: "Beta" });
+      openJournals();
+      holdDrag(rows()[0], rows()[2], [10, 10], [10, 85], false);
+      rows()[2].click(); // the click a browser fires on the pointer-up of the drag
+      expect(route().kind).toBe("journals");
+      vi.advanceTimersByTime(10); // the drag's own cleanup timers must not outlive the case
+      dispose();
+    });
+
+    // GH #921: a still hold opens the row's own menu (as a right-click does);
+    // the platform's menu never opens; moving the held finger drags instead.
+    it("GH #921: a still hold opens the row's menu, not the platform's; the release keeps it open", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      const menuRoot = document.body.appendChild(document.createElement("div"));
+      const disposeMenu = render(() => <ContextMenu />, menuRoot);
+      layoutRows();
+      const beta = rows()[1];
+      beta.dispatchEvent(touch("pointerdown", 10, 40));
+      vi.advanceTimersByTime(600);
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta", x: 10, y: 40 });
+      const opened = contextMenu();
+      // Android's own hold menu, arriving over the open menu, neither opens nor closes anything.
+      const platform = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 40 });
+      menuRoot.querySelector(".ctx-overlay")!.dispatchEvent(platform);
+      expect(platform.defaultPrevented).toBe(true);
+      expect(contextMenu()).toBe(opened);
+      document.dispatchEvent(touch("pointerup", 10, 40));
+      // The release's compatibility click lands on the menu that opened under the finger.
+      menuRoot.querySelector(".ctx-overlay")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      vi.advanceTimersByTime(10);
+      expect(contextMenu()).toBe(opened);
+      expect(route().kind).toBe("journals");
+      expect(favorites().map((f) => f.name)).toEqual(["Alpha", "Beta", "Gamma"]);
+      // The next tap is the user's: it closes the menu as ever.
+      menuRoot.querySelector(".ctx-overlay")!.dispatchEvent(touch("pointerdown", 150, 150));
+      menuRoot.querySelector<HTMLElement>(".ctx-overlay")!.click();
+      expect(contextMenu()).toBeFalsy();
+      vi.useRealTimers();
+      // A mouse right-click still opens it.
+      beta.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 40 }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta" });
+      disposeMenu();
+      dispose();
+    });
+
+    it.each(["touch", "pen"])("GH #921: Escape after a released %s hold lets another row open its keyboard context menu", (pointerType) => {
+      vi.useFakeTimers();
+      const { dispose, rows } = mount();
+      const menuRoot = document.body.appendChild(document.createElement("div"));
+      const disposeMenu = render(() => <ContextMenu />, menuRoot);
+      const heldPointer = (type: string) => {
+        const event = pointer(type, 10, 40);
+        Object.defineProperty(event, "pointerType", { value: pointerType });
+        return event;
+      };
+      try {
+        rows()[1].dispatchEvent(heldPointer("pointerdown"));
+        vi.advanceTimersByTime(600);
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Beta" });
+        document.dispatchEvent(heldPointer("pointerup")); // no compatibility click
+        menuRoot.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        expect(contextMenu()).toBeFalsy();
+        rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, detail: 0 }));
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+      } finally {
+        document.dispatchEvent(heldPointer("pointerdown")); // retire ownership even on failure
+        vi.advanceTimersByTime(10);
+        disposeMenu();
+        dispose();
+      }
+    });
+
+    it("GH #921: moving the held finger closes the hold's menu and drags; a move before the hold opens none", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      const [alpha, , gamma] = rows();
+      alpha.dispatchEvent(touch("pointerdown", 10, 10));
+      document.dispatchEvent(touch("pointermove", 10, 40)); // before the hold: a scroll
+      vi.advanceTimersByTime(1000);
+      document.dispatchEvent(touch("pointerup", 10, 40));
+      expect(contextMenu()).toBeFalsy();
+      alpha.dispatchEvent(touch("pointerdown", 10, 10));
+      vi.advanceTimersByTime(600);
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+      const prev = document.elementFromPoint;
+      document.elementFromPoint = () => gamma;
+      try {
+        document.dispatchEvent(touch("pointermove", 13, 14)); // a still finger's jitter keeps the menu
+        expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+        document.dispatchEvent(touch("pointermove", 10, 85));
+        expect(contextMenu()).toBeFalsy();
+        document.dispatchEvent(touch("pointerup", 10, 85));
+      } finally { document.elementFromPoint = prev; }
+      vi.advanceTimersByTime(10);
+      vi.useRealTimers();
+      await settle();
+      expect(contextMenu()).toBeFalsy();
+      expect(favorites().map((f) => f.name)).toEqual(["Beta", "Gamma", "Alpha"]);
+      expect(configWrites).toEqual([[["Beta", "Gamma", "Alpha"], null]]);
+      dispose();
+    });
+
+    it("a mouse press never waits for a hold: a small move starts the drag at once", async () => {
+      vi.useFakeTimers();
+      const { dispose, rows, layoutRows } = mount();
+      layoutRows();
+      const [alpha, , gamma] = rows();
+      drag(alpha, gamma, [10, 10], [10, 85]); // no timer advanced
+      vi.useRealTimers();
+      await settle();
+      expect(favorites().map((f) => f.name)).toEqual(["Beta", "Gamma", "Alpha"]);
+      dispose();
+    });
+
+    it("a finger on a group's rename input neither holds nor drags", async () => {
+      const { root, dispose, rows, layoutRows } = mount(["Alpha", "Beta"]);
+      root.querySelector<HTMLButtonElement>(".nav-fav-add-group")!.click();
+      await settle();
+      layoutRows();
+      const group = rows()[2];
+      const before = saved.length;
+      vi.useFakeTimers();
+      group.querySelector(".nav-fav-group-name")!.dispatchEvent(touch("pointerdown", 20, 70));
+      vi.advanceTimersByTime(600);
+      expect(document.documentElement.classList.contains("drag-selection-suppressed")).toBe(false);
+      document.dispatchEvent(touch("pointerup", 20, 70));
+      vi.useRealTimers();
+      await settle();
+      expect(saved.length).toBe(before);
+      dispose();
+    });
   });
 });

@@ -1,9 +1,11 @@
 import { Rich } from "../i18n/Rich";
 import { t, msg, rawText } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { For, Show, createResource, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
 import { closeQueryExport, openSettings } from "../ui";
+import { queryExportAfter } from "../shareState";
 import { pushToast } from "../toasts";
 import { bindingOwner, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
@@ -11,6 +13,7 @@ import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
 import { activeWindow, listen } from "../windowRealm";
 import { registerTransientLayer } from "../transientLayers";
+import { FolderExportMembership } from "./FolderExportMembership";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -22,8 +25,10 @@ export function QueryExportDialog(props: { request: Accessor<QueryPublicationReq
 function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [name, setName] = createSignal(props.request.name);
   const [plannedName, setPlannedName] = createSignal(props.request.name);
-  const [destination, setDestination] = createSignal<"create" | "replace" | "separate">("create");
+  const [destination, setDestination] = createSignal<"create" | "replace" | "separate">(props.request.replace ? "replace" : "create");
   const [acknowledged, setAcknowledged] = createSignal(false);
+  // PK3: the query itself ships only when asked for; the default export is the page list.
+  const [includeQueryText, setIncludeQueryText] = createSignal(props.request.includeQueryText ?? false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const [overBudget, setOverBudget] = createSignal(false);
@@ -46,12 +51,16 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     setBusy(true);
     setError(""); setOverBudget(false);
     try {
-      const request = { ...props.request, name: plannedName(), folder: folder(), replace: destination() === "replace", assetBudgetBytes: queryExportBudgetBytes() };
+      const request = { ...props.request, name: plannedName(), folder: folder(), includeQueryText: includeQueryText(), replace: destination() === "replace", assetBudgetBytes: queryExportBudgetBytes() };
       const sheets = await exportSheets(undefined, { kind: "query", request });
       if (!owner()) return;
       const receipt = await writeOwned(owner, backend().publishQuery(request, selection.fingerprint, sheets));
       if (receipt.kind === "current") {
+        // What to do once the folder is written (the share dialog saves its definition then).
+        const after = queryExportAfter(props.request);
         closeQueryExport();
+        // The hook reports its own failures; a rejection it let through is shown, not dropped.
+        if (after) void Promise.resolve(after({ folder: request.folder! })).catch((cause) => pushToast(rawText(String((cause as Error)?.message ?? cause)), "error"));
         pushToast(msg("query-export-dialog-exported", { pages: String(receipt.value.pages), path: receipt.value.path, retired: receipt.value.retired ?? "", previous: receipt.value.retired ? 1 : 0 }), "success", { sticky: true });
         if (receipt.value.warnings.length) pushToast(rawText(receipt.value.warnings.join(" ")), "warn", { sticky: true });
       }
@@ -93,13 +102,26 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
           <Show when={plan.error}><div role="alert" class="query-export-refused">{String(plan.error)}</div></Show>
           <Show when={reviewed()}>{(selection) => <>
             <div class="query-export-summary">{t("query-export-dialog-summary", { results: String(selection().rowCount), pages: String(selection().pages.length) })}</div>
+            <FolderExportMembership plan={selection()} />
             <ul class="query-export-pages"><For each={selection().pages}>{(page) =>
               <li>{page.name} <small>{page.path}</small>{page.journal ? t("query-export-dialog-journal") : ""}</li>
             }</For></ul>
+            <Show when={selection().leftOut.length > 0}>
+              <div class="query-export-note query-export-left-out">{t("query-export-dialog-left-out", { count: selection().leftOut.length })}
+                <ul class="query-export-pages"><For each={selection().leftOut}>{(page) =>
+                  <li>{page.name} <small>{page.reason === "private" ? t("query-export-dialog-left-out-private") : t("query-export-dialog-left-out-exports-page")}</small></li>
+                }</For></ul>
+              </div>
+            </Show>
+            <Show when={selection().selectsHostPage}>
+              <div class="query-export-note query-export-host-note">{t("query-export-dialog-selects-host-page")}</div>
+            </Show>
             <Show when={selection().anchor === "block" && selection().pages.length > 0}>
               <label class="query-export-ack"><input type="checkbox" checked={acknowledged()}
                 onChange={(event) => setAcknowledged(event.currentTarget.checked)} />{t("query-export-dialog-all-blocks-on-these-pages-will-be-exported")}</label>
             </Show>
+            <label class="query-export-ack query-export-include-query"><input type="checkbox" checked={includeQueryText()}
+              onChange={(event) => setIncludeQueryText(event.currentTarget.checked)} />{t("query-export-dialog-include-query-text")}</label>
             <Show when={selection().exists}>
               <div role="group" aria-label={t("query-export-dialog-destination")}><Rich message={msg("query-export-dialog-existing", { folder: selection().folder })} /><label><input type="radio" name="query-export-destination" checked={destination() === "replace"}
                   onChange={() => setDestination("replace")} />{t("query-export-dialog-replace-it-the-previous-export-is-kept-in")}</label>
@@ -113,11 +135,10 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             <Show when={overBudget()}><button class="export-btn-secondary" onClick={() => { closeQueryExport(); openSettings("graph"); }}>{t("query-export-dialog-adjust-limit-in-settings")}</button></Show>
           </div></Show>
         </div>
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closeQueryExport}>{t("query-export-dialog-cancel")}</button>
-          <button class="export-btn-primary" disabled={!canExport()}
-            onClick={() => void publish()}>{busy() ? t("query-export-dialog-exporting") : t("query-export-dialog-export")}</button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={closeQueryExport}>{t("query-export-dialog-cancel")}</button>}
+          primary={<button class="export-btn-primary" disabled={!canExport()}
+            onClick={() => void publish()}>{busy() ? t("query-export-dialog-exporting") : t("query-export-dialog-export")}</button>} />
       </div>
     </div>
   );

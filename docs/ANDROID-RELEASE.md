@@ -122,6 +122,31 @@ machine, and we sign there:
    ```
    Install `tine-release-signed.apk`. The private key never touches the build host.
 
+## Google Play Developer API
+
+`.github/workflows/play-admin.yml` reads the app's Play state (tracks, releases,
+rollout) with `action: inspect`; it changes nothing. It authenticates with
+**Workload Identity Federation**: GitHub's OIDC token for the job is exchanged
+for a short-lived Google token, so no service-account key exists anywhere.
+
+- Google Cloud: a dedicated project holds the Android Publisher API, a workload
+  identity pool `github` with an OIDC provider for
+  `https://token.actions.githubusercontent.com`, and a service account with no
+  Cloud roles. The provider accepts a token only when
+  `assertion.repository_id` is this repository's id and `assertion.environment`
+  is `google-play`; the service account grants `roles/iam.workloadIdentityUser`
+  to that repository's principal set.
+- Play Console: the service account is a user of this app only, with view, release-to-production and
+  release-to-testing-tracks permissions; no store-listing, financial or
+  user-management rights.
+- GitHub: the `google-play` environment's deployment policy limits which refs
+  may use it (the stable and release branches and `v*` tags), and holds the
+  non-secret variables `PLAY_WIF_PROVIDER`, `PLAY_SERVICE_ACCOUNT` and
+  `PLAY_PACKAGE_NAME`.
+
+A manually dispatched workflow must exist on the default branch, so it can be
+run only once this file has reached it.
+
 ## Notes
 
 - Minification (R8/ProGuard) is currently **off** for release: Tauri mobile

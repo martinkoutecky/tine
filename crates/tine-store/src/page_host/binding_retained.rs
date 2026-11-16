@@ -1,6 +1,4 @@
-//! Retained writers' reservations, the single-page rename, and the
-//! switch/restore stop (STEP3 §6–§7): the binding commands that fence
-//! pages away from the host or run a page operation for a writer.
+//! Save-first input handling, single-page rename and switch/restore stop.
 use super::driver::{Deadline, Shared, State, Unanswered, Wait};
 use super::*;
 use crate::model::entry_identity::Identity;
@@ -13,8 +11,8 @@ use crate::RenameMap;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenameRefusal {
     /// `target` is another spelling of `source`'s own directory entry (a
-    /// case-folding volume, Q4): the caller moves it as a retained
-    /// transaction under a reservation of the page and `respell`s it.
+    /// case-folding volume, Q4): the caller plans its content as a HostOp;
+    /// apply follows it with the driver's byte-preserving spelling move.
     Alias,
     /// A page the rename would rewrite has unsaved input.
     Unsaved(PageId),
@@ -41,14 +39,14 @@ pub enum RenameRefusal {
     Busy,
 }
 
-/// Why a retained writer was given no reservation (§7).
+/// Why a host operation's input could not be saved.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReserveRefusal {
+pub(in crate::page_host) enum FlushRefusal {
     /// These pages have unsaved input (`Input::Refuse`), or their save
     /// cannot complete (`Input::Flush`), named by current spelling.
     Unsaved(BTreeSet<PageId>),
     /// A rename still finishing held one of the pages for `OPERATION_WAIT`
-    /// from the writer's start (M6); nothing is reserved.
+    /// from the caller's start (M6); nothing was admitted.
     Busy,
 }
 
@@ -62,7 +60,8 @@ pub(super) type HostState = State<ProductionIo, SystemClock>;
 
 /// The longest a host operation's caller waits for admission, then for its
 /// answer and every page's publication (Finding B, R1).
-pub const OPERATION_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// A held page's read waits as long for its owner (`watch::OBSERVED_WAIT`).
+pub const OPERATION_WAIT: std::time::Duration = crate::watch::OBSERVED_WAIT;
 
 /// What a caller's admitted operation came to, by precedence: Superseded,
 /// Applied, Unwritten, Uncertain (STEP3-DESIGN option 2; plan v3 N6).
@@ -102,68 +101,7 @@ impl Drop for ReplySlot {
     }
 }
 
-/// The pages a retained writer holds (§7 step 3): none of them can be
-/// opened, loaded, saved or drafted until it is dropped. Dropping it ends
-/// the retained transaction (§7 step 5), on every exit, a panic's unwind
-/// included (A-R1): the driver unreserves the keys and observes each,
-/// retrying a failed read with the save backoff. A save before that
-/// observation is safe: its guard check reads the writer's change. The
-/// transaction's index stands until that observation succeeds (V2).
-#[must_use = "dropping a reservation releases its pages"]
-pub struct Reservation {
-    keys: BTreeSet<PageKey>,
-    shared: Arc<HostShared>,
-    /// Whether the writer may have written: false while `reserve` still
-    /// checks the set, when a withdrawal hands nothing over.
-    handover: bool,
-}
-
-impl Reservation {
-    /// The reserved keys.
-    pub(crate) fn keys(&self) -> &BTreeSet<PageKey> {
-        &self.keys
-    }
-}
-
-impl std::fmt::Debug for Reservation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Reservation")
-            .field("keys", &self.keys)
-            .finish()
-    }
-}
-
-// Runs in `Reservation::drop` just before it takes the state lock (E90's
-// test plants a poison there).
-#[cfg(test)]
-thread_local! {
-    pub(super) static BEFORE_RELEASE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        let keys = std::mem::take(&mut self.keys);
-        #[cfg(test)]
-        if let Some(hook) = BEFORE_RELEASE.with(|hook| hook.borrow_mut().take()) {
-            hook();
-        }
-        // A notice, so it never waits or panics, an unwind included (E90):
-        // a driver that ended drops it with every page it held.
-        let handover = self.handover;
-        self.shared.notify(move |state| {
-            for key in keys {
-                state.progress.host.retained.remove(&key);
-                if handover {
-                    state.book.handover.insert(key.clone());
-                    state.observe.entry(key).or_default();
-                }
-            }
-        });
-    }
-}
-
-/// One step of a retained writer's reservation, decided on the driver
+/// One step of save-first input handling, decided on the driver
 /// ([`PageHost::bounded`]).
 enum Step<R> {
     Done(R),
@@ -171,8 +109,6 @@ enum Step<R> {
     Wait {
         renaming: bool,
     },
-    /// The host cannot serve the writer.
-    Failed,
 }
 
 /// The pages among `keys` with unsaved input (Q3), including an admitted
@@ -201,72 +137,6 @@ struct Rewrites {
 }
 
 impl PageHost {
-    /// Reserve the complete page set `discover` names for a retained
-    /// writer (§7 steps 2–3, R6). Waiting reservations hold no lock. Under
-    /// the reservation discovery runs again; a set it does not cover starts
-    /// over with the union fenced, never shrinking (Q-P2b-1): each restart
-    /// strictly grows a set bounded by the pages discovery can name, so a
-    /// discovery that alternates (a config flipping between plans) ends,
-    /// with a superset reserved. Then,
-    /// under that final reservation, the writer's input contract is checked
-    /// on every page in it (Q3): unsaved input is a buffer that is not
-    /// clean (typed, at risk or on an unknown base) or a submit or move the
-    /// host admitted but has not applied. `Refuse` returns those pages;
-    /// `Flush` releases, waits for their saves holding nothing, and retries,
-    /// returning the pages whose save cannot complete. A returned page is
-    /// named by its current spelling, never by its opaque key. The reservation
-    /// exists from the fence on, so an unwind out of the rediscovery or the
-    /// check withdraws it (A-R1). Every step, the fence, the check and the
-    /// flush, goes through [`Self::bounded`] with one deadline,
-    /// `OPERATION_WAIT` from entry (M6, REVIEW-3b-P2b-2 N1).
-    pub fn reserve(
-        &self,
-        mut discover: impl FnMut() -> Vec<PageId>,
-        input: Input,
-    ) -> Result<Reservation, ReserveRefusal> {
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
-        let mut keys = self.register_all(discover()).ok_or(ReserveRefusal::Busy)?;
-        loop {
-            let fence = keys.clone();
-            self.bounded(deadline, move |state| {
-                match state.progress.host.reserve(&fence) {
-                    Disposition::Applied => Step::Done(()),
-                    Disposition::Waiting => Step::Wait {
-                        renaming: state.progress.host.renaming(&fence),
-                    },
-                    // `Refused`, unreachable: every key was registered first.
-                    // Were it not, nothing would be reserved, so it refuses as a
-                    // host that stopped answering does.
-                    _ => Step::Failed,
-                }
-            })?;
-            let mut reservation = Reservation {
-                keys: keys.clone(),
-                shared: Arc::clone(&self.driver.shared),
-                handover: false,
-            };
-            let found = self.register_all(discover()).ok_or(ReserveRefusal::Busy)?;
-            if !found.is_subset(reservation.keys()) {
-                drop(reservation);
-                keys.extend(found);
-                continue;
-            }
-            let held = reservation.keys().clone();
-            let unsaved = self.bounded(deadline, move |state| {
-                Step::Done(unsaved(&state.progress.host, &held))
-            })?;
-            if unsaved.is_empty() {
-                reservation.handover = true;
-                return Ok(reservation);
-            }
-            drop(reservation);
-            if input == Input::Refuse {
-                return Err(ReserveRefusal::Unsaved(unsaved.into_values().collect()));
-            }
-            self.flush(&unsaved.into_keys().collect(), &keys, deadline)?;
-        }
-    }
-
     /// `pages`' keys, each registered; None when the host state is
     /// poisoned.
     pub(super) fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
@@ -280,7 +150,7 @@ impl PageHost {
             .collect()
     }
 
-    /// Every wait and check of a retained writer's reservation (M6,
+    /// Every save-first input wait and check (M6,
     /// REVIEW-3b-P2b-2 N1): the driver runs `step` until it is done, again
     /// after each of its steps. With each step: a host that cannot answer
     /// refuses `Busy` (the driver ended, or the host is down; in-scope
@@ -293,25 +163,24 @@ impl PageHost {
         &self,
         deadline: std::time::Instant,
         mut step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
-    ) -> Result<R, ReserveRefusal> {
+    ) -> Result<R, FlushRefusal> {
         let wait = move |state: &mut HostState| {
             if !state.progress.host.alive {
-                return Wait::Ready(Err(ReserveRefusal::Busy));
+                return Wait::Ready(Err(FlushRefusal::Busy));
             }
             match step(state) {
                 Step::Done(done) => Wait::Ready(Ok(done)),
-                Step::Failed => Wait::Ready(Err(ReserveRefusal::Busy)),
                 Step::Wait { renaming } => {
                     let now = std::time::Instant::now();
                     if now >= deadline && renaming {
-                        return Wait::Ready(Err(ReserveRefusal::Busy));
+                        return Wait::Ready(Err(FlushRefusal::Busy));
                     }
                     Wait::Until((now < deadline).then_some(deadline))
                 }
             }
         };
         let answer = self.driver.shared.wait(Deadline::Never, wait);
-        answer.unwrap_or(Err(ReserveRefusal::Busy))
+        answer.unwrap_or(Err(FlushRefusal::Busy))
     }
 
     /// `page_rename` (§7, F10): rename `source`'s page to the absent
@@ -390,15 +259,27 @@ impl PageHost {
                     let Some(old) = bytes else { return Ok(None) };
                     let spelling = &spellings[key];
                     let path = root.join(spelling);
-                    let rewritten = if moving {
-                        rewrite_move(old, &destination, &map, format)
-                    } else if let Some(new) =
-                        prepared(&PageId::from(spelling.as_str()), old, format)
-                    {
-                        reuse_rewrite(old, new, &path)
-                    } else {
-                        rewrite_refs(old, &path, &map, format)
-                    };
+                    // A parser panic on one malformed page (an external
+                    // editor, sync delivery or an import; og-gh644 F3)
+                    // makes that page unwritable for this rename, as a
+                    // refusal does, instead of unwinding through the
+                    // host's state and locks.
+                    let rewritten = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if moving {
+                            rewrite_move(old, &destination, &map, format)
+                        } else if let Some(new) =
+                            prepared(&PageId::from(spelling.as_str()), old, format)
+                        {
+                            reuse_rewrite(old, new, &path)
+                        } else {
+                            rewrite_refs(old, &path, &map, format)
+                        }
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err(crate::Why::Refused(crate::Refusal::ReadOnly(
+                            "page could not be parsed; Tine will not rewrite it".into(),
+                        )))
+                    });
                     let mut record = record.lock().unwrap();
                     let Ok(new) = rewritten else {
                         record.unwritable = Some(spelling.clone());
@@ -525,8 +406,8 @@ impl PageHost {
         let deadline = Arc::new(Mutex::new(deadline));
         let moving = deadline.clone();
         let id = slot.id;
-        // (answered, pages witnessed) at the last ask.
-        let mut progress = (false, 0);
+        // (answered, pages synced, pages indexed) at the last ask.
+        let mut progress = (false, 0, 0);
         let step = move |state: &mut HostState| {
             let host = &state.progress.host;
             let Some(reply) = host.order.slot(id) else {
@@ -541,14 +422,16 @@ impl PageHost {
                     if let Some(page) = &reply.superseded {
                         return Wait::Ready(Settled::Superseded(page.clone()));
                     }
-                    let now = (true, reply.witnessed.len());
+                    let now = (true, reply.witnessed.len(), reply.indexed.len());
                     if now != progress {
                         progress = now;
                         let mut at = moving.lock().unwrap();
                         *at = (*at).max(std::time::Instant::now() + OPERATION_WAIT);
                     }
-                    // `witnessed` holds answered pages only (`Order::published`).
-                    if reply.witnessed.len() == pages.len() {
+                    // Both sets hold answered pages only. A disk sync can
+                    // precede a deferred or failed index delivery, so neither
+                    // alone proves the operation complete to its caller.
+                    if reply.witnessed.len() == pages.len() && reply.indexed.len() == pages.len() {
                         return Wait::Ready(Settled::Applied);
                     }
                     // Per ask, the host's few stuck pages, not every answered
@@ -577,32 +460,6 @@ impl PageHost {
         };
         let settled = self.driver.shared.wait(Deadline::Moving(deadline), step);
         settled.unwrap_or(Settled::Uncertain)
-    }
-
-    /// The alias spelling move (§2, Q4): under its reservation the caller
-    /// moved `page`'s directory entry to `to`, another spelling of the same
-    /// entry. The page keeps its key, buffer, drafts and queued requests;
-    /// its I/O, path lock and held index follow `to`.
-    pub fn respell(&self, page: &PageId, to: &PageId) {
-        let graph = &self.store.graph;
-        let lock = graph.page_lock(&graph.root.join(to.as_str()));
-        let (store, page, to) = (self.store.clone(), page.clone(), to.clone());
-        // Holds change under the writer, which the driver takes first (lock
-        // order writer → state). The held index names the key, so it
-        // follows the host's spelling table; its installed rows move with
-        // it (A-H2).
-        let respell = move |state: &mut HostState| {
-            let host = &mut state.progress.host;
-            let Some(key) = host.key_spelled(page.as_str()) else {
-                return;
-            };
-            host.respell(&key, to.as_str(), lock);
-            let graph = &store.graph;
-            graph.respelled(&key, &graph.root.join(page.as_str()));
-            store.publish_retired();
-        };
-        // A host that ended holds nothing to respell.
-        let _ = self.driver.shared.call_writer(&self.store.writer, respell);
     }
 
     /// The key naming `page`'s directory entry (§2), by the one identity
@@ -681,10 +538,8 @@ impl PageHost {
                 .map(|key| PageId::from(fs.spelling(key)))
                 .collect()
         };
-        self.driver
-            .shared
-            .read(read)
-            .expect("page host driver ended")
+        // A driver that ended meanwhile names none (`StopState::Ended`).
+        self.driver.shared.read(read).unwrap_or_default()
     }
 
     /// A key's current spelling, as the page it names.
@@ -708,7 +563,7 @@ impl PageHost {
         pages: &BTreeSet<PageKey>,
         reserving: &BTreeSet<PageKey>,
         deadline: std::time::Instant,
-    ) -> Result<(), ReserveRefusal> {
+    ) -> Result<(), FlushRefusal> {
         #[cfg(test)]
         crate::store::pause_at_hook(&self.driver.shared.flush_pause);
         let (pages, reserving) = (pages.clone(), reserving.clone());
@@ -721,7 +576,7 @@ impl PageHost {
                 .map(|key| PageId::from(host.fs.spelling(key)))
                 .collect();
             if !stuck.is_empty() {
-                return Step::Done(Err(ReserveRefusal::Unsaved(stuck)));
+                return Step::Done(Err(FlushRefusal::Unsaved(stuck)));
             }
             if unsaved(host, &pages).is_empty() {
                 return Step::Done(Ok(()));
@@ -741,7 +596,8 @@ impl PageHost {
     /// closes and the driver saves every dirty page it can at once, before
     /// any draft of it. A failed save puts the page at risk, which drafts it
     /// in a switch (the model's switchReq, needed by no page a save-first
-    /// order leaves dirty). False: the window has more to drain.
+    /// order leaves dirty). False: the window has more to drain, or the
+    /// driver ended (nothing is left to stop).
     pub(crate) fn stop_begin(&self, consumed_last_id: u64, mode: StopMode) -> bool {
         let begin = self.driver.shared.call(move |state| {
             let closed = state
@@ -756,16 +612,14 @@ impl PageHost {
             }
             closed
         });
-        begin.expect("page host driver ended")
+        begin.unwrap_or(false)
     }
 
-    /// The stop's barrier (§6 step 4) and its abort condition (step 5).
+    /// The stop's barrier (§6 step 4) and its abort condition (step 5);
+    /// `Ended` once the driver ended.
     pub(crate) fn stop_state(&self) -> StopState {
         let read = |state: &HostState| stop_state(&state.progress, &state.book);
-        self.driver
-            .shared
-            .read(read)
-            .expect("page host driver ended")
+        self.driver.shared.read(read).unwrap_or(StopState::Ended)
     }
 
     /// Stop a host no window owns any more (plan v3 §3, `HostRetirement`;
@@ -779,16 +633,17 @@ impl PageHost {
     /// the stop may complete, or `stop_abort` on `Aborted` and asks again
     /// later. While known draft vehicles are cleanup debt (REVIEW-3b-P1
     /// R2), each call first re-probes draft I/O, the Retry no window is
-    /// left to press, so a repaired filesystem lets the stop complete.
+    /// left to press, so a repaired filesystem lets the stop complete. A
+    /// driver that ended (a host bug) answers `Ended`: the caller ends the
+    /// host with `stop_finish`.
     pub fn orphan_stop(&self) -> StopState {
         let debt = |state: &HostState| !state.progress.host.vehicle_debt.is_empty();
-        if self
-            .driver
-            .shared
-            .read(debt)
-            .expect("page host driver ended")
-        {
-            let _ = self.drafts_retry();
+        match self.driver.shared.read(debt) {
+            Ok(true) => {
+                let _ = self.drafts_retry();
+            }
+            Ok(false) => {}
+            Err(_) => return StopState::Ended,
         }
         let stopped = self.driver.shared.call(|state| {
             if state.progress.host.switch_confirmation.is_none() {
@@ -810,7 +665,14 @@ impl PageHost {
             }
             stop_state(&state.progress, &state.book)
         });
-        stopped.expect("page host driver ended")
+        stopped.unwrap_or(StopState::Ended)
+    }
+
+    /// Whether the driver ended (a host bug panicked it): the host answers
+    /// nothing more, and only `stop_finish` is left for it. A reopen of
+    /// its retiring root never adopts it.
+    pub fn ended(&self) -> bool {
+        self.driver.shared.ended()
     }
 
     /// Point page mail at the window that now owns the binding (plan v3 §3,
@@ -832,18 +694,30 @@ impl PageHost {
     /// host step runs on the driver and is delivered with it), and the
     /// watcher indexes every page again. The binding holds no host until
     /// `Stopped::relaunch`. Otherwise the host is handed back.
+    ///
+    /// A host whose driver ended (`StopState::Ended`, a host bug) stops here
+    /// for good, which never fails: the driver is joined and every page it
+    /// held goes back to the watcher, which rereads it from disk (s3b O6);
+    /// every draft it wrote stays on disk, where the next host of this graph
+    /// recovers it. The driver's panic was reported as it happened and does
+    /// not go on here, unlike the host's drop.
     pub fn stop_finish(self) -> Result<Stopped, Self> {
         let stopped = self.driver.shared.call(|state| {
             stop_state(&state.progress, &state.book) == StopState::Ready
                 && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied
         });
-        let stopped = stopped.expect("page host driver ended");
-        if stopped {
-            let launch = self.launch.clone();
-            drop(self);
-            Ok(Stopped { launch })
-        } else {
-            Err(self)
+        let launch = self.launch.clone();
+        match stopped {
+            Ok(true) => {
+                drop(self);
+                Ok(Stopped { launch })
+            }
+            Ok(false) => Err(self),
+            // Unanswered with no deadline: the driver ended.
+            Err(_) => {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(self)));
+                Ok(Stopped { launch })
+            }
         }
     }
 
@@ -852,8 +726,9 @@ impl PageHost {
     /// `consumed_last_id`, wait for its barrier, then stop. When it cannot
     /// complete without losing custody, admission reopens and the host
     /// comes back with the affected pages (none: the window had more to
-    /// drain, or trash custody cannot be listed), named by their current
-    /// spellings; today's restore likewise stops when its flush fails.
+    /// drain, trash custody cannot be listed, or the driver ended), named by
+    /// their current spellings; today's restore likewise stops when its
+    /// flush fails.
     pub fn stop_saved(
         self,
         consumed_last_id: u64,
@@ -883,6 +758,9 @@ impl PageHost {
                     host.stop_abort();
                     return Err((Box::new(host), pages));
                 }
+                // Nothing closes over a dead host's lost work; its window's
+                // close retires it (`stop_finish`).
+                StopState::Ended => return Err((Box::new(host), BTreeSet::new())),
             }
         }
     }

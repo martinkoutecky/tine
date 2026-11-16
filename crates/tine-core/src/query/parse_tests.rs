@@ -286,19 +286,16 @@ fn advanced_datalog_is_unsupported() {
 }
 
 #[test]
-fn advanced_exact_page_property_pair_matches_page_property_predicate() {
+fn advanced_entity_property_pair_refuses_instead_of_inventing_a_page_hop() {
     let source = r#"[:find (pull ?p [*])
                          :where
                          [?p :block/properties ?props]
                          [(get ?props :class)]]"#;
     let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
 
-    assert_eq!(
-        lowered.map(|query| query.filter),
-        Some(pred("(page-property :class)"))
-    );
-    assert_eq!(ran, vec!["page-property"]);
-    assert!(ignored.is_empty());
+    assert!(lowered.is_none());
+    assert!(ran.is_empty());
+    assert!(!ignored.is_empty());
 }
 
 #[test]
@@ -842,4 +839,95 @@ fn explaining_an_empty_result_is_linear_in_a_hostile_conjunct_count() {
     let hostile = explain(2_000);
     assert_eq!(hostile.probes.len(), 1);
     assert_eq!(count_leaves(&hostile), 2_000, "one probe, every leaf once");
+}
+
+/// OG `result.cljs` `(get query-m :remove-block-children? true)`: only the literals `false` and `nil`
+/// turn the top-level rule off, and only an advanced source can carry the key.
+#[test]
+fn remove_block_children_is_off_only_for_a_false_or_nil_advanced_option() {
+    let vector = r#"[:find (pull ?b [*]) :where [?b :block/marker "TODO"]]"#;
+    let removes = |source: &str, input| {
+        let (query, _) =
+            super::parse_query_input(source, input, TODAY, super::registry::Registry::none());
+        query.removes_block_children()
+    };
+    let advanced = |option: &str| {
+        removes(
+            &format!("{{:query {vector} {option}}}"),
+            super::QueryInput::Advanced,
+        )
+    };
+    assert!(advanced(""));
+    assert!(advanced(":remove-block-children? true"));
+    assert!(advanced(":remove-block-children? 1"));
+    assert!(
+        advanced(r#":title ":remove-block-children? false""#),
+        "a string is not an option"
+    );
+    assert!(
+        advanced(":remove-block-children? false :remove-block-children? true"),
+        "duplicates are unreadable"
+    );
+    assert!(!advanced(":remove-block-children? false"));
+    assert!(!advanced(":remove-block-children? nil"));
+    assert!(removes("(task TODO)", super::QueryInput::Og));
+    // GH #651: a BEGIN_QUERY map that embeds the simple DSL reaches the engine as the DSL plus the trailing
+    // options map, so that map carries the option (for a datalog vector as well).
+    let macro_text = |text: &str| removes(text, super::QueryInput::MacroQuery);
+    assert!(macro_text("(task TODO) {:table-view? true}"));
+    assert!(macro_text(
+        "(task TODO) {:table-view? true :remove-block-children? true}"
+    ));
+    assert!(!macro_text(
+        "(task TODO) {:table-view? true :remove-block-children? false}"
+    ));
+    assert!(!macro_text(&format!(
+        "{vector} {{:remove-block-children? nil}}"
+    )));
+}
+
+/// Card hB3Lv8: the binding says whether its answer depends on the execution
+/// day, so a window left open overnight re-asks exactly the day-relative
+/// queries. A relative token (OG, TQL, advanced bound or `:inputs` keyword, a
+/// timestamp bound) reads the day; fixed dates and date-free queries do not.
+#[test]
+fn resolve_for_execution_says_whether_the_answer_reads_today() {
+    let reads = |text: &str, input: super::QueryInput| {
+        let (parsed, _) = super::parse_query_input(text, input, TODAY, Registry::none());
+        resolve_for_execution(&parsed, &ExecutionContext::default(), TODAY).reads_today()
+    };
+    use super::QueryInput::{Advanced, Og, Tql};
+    assert!(reads("(between -7d today)", Og));
+    assert!(reads("(and (task TODO) (between journal -30d +7d))", Og));
+    assert!(reads("any(direct_refs, day > today)", Tql));
+    assert!(reads(
+        "task = 'TODO' and any(direct_refs, day between today and '+7d')",
+        Tql
+    ));
+    assert!(reads("scheduled between '-30d' and today", Tql));
+    assert!(reads("(between created_at -2h now)", Og));
+    assert!(reads(
+        "{:query [:find (pull ?b [*]) :in $ ?start ?end :where [?b :block/page ?p] [?p :block/journal-day ?d] [(>= ?d ?start)] [(<= ?d ?end)]] :inputs [:-7d :today]}",
+        Advanced,
+    ));
+    assert!(reads(
+        "[:find (pull ?b [*]) :where (between ?b -7d today)]",
+        Advanced,
+    ));
+
+    assert!(!reads("(task TODO)", Og));
+    assert!(!reads("(between 2026-01-01 2026-02-01)", Og));
+    assert!(!reads(
+        "scheduled between '2026-01-01' and '2026-02-01'",
+        Tql
+    ));
+    assert!(!reads("tags = 'project'", Tql));
+    assert!(!reads(
+        "[:find (pull ?b [*]) :where (task ?b #{\"TODO\"})]",
+        Advanced,
+    ));
+    assert!(!reads(
+        "{:query [:find (pull ?b [*]) :in $ ?start ?end :where [?b :block/page ?p] [?p :block/journal-day ?d] [(>= ?d ?start)] [(<= ?d ?end)]] :inputs [20260101 20260201]}",
+        Advanced,
+    ));
 }

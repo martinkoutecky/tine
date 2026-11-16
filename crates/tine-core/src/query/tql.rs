@@ -13,6 +13,14 @@
 //! shapes that must never reach lowering at all (subqueries, `EXISTS`,
 //! `IN (SELECT …)`, placeholders), so their rejection message names what they
 //! are rather than what position they appeared in.
+//!
+//! **The page selector.** `@page and name = 'Project'` (the printer's spelling
+//! of `@page name = 'Project'`) selects one page as a row, so a page with no
+//! blocks is selected; it is the "this page" term of an export definition
+//! (`docs/contracts/export-definitions.md`). OG's `(page "x")` is a different
+//! query: the page's blocks. Inside an export definition block a rename
+//! rewrites the quoted name (`page_name_literals`,
+//! `crate::export_definition`); in any other query block it stays, as in OG.
 
 use std::ops::ControlFlow;
 
@@ -24,8 +32,12 @@ use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
 mod boolean;
+mod calls;
 mod prepass;
+mod vocabulary;
+use calls::*;
 use prepass::*;
+use vocabulary::*;
 
 use crate::query::ir::{
     decode_raw_hex, encode_raw_hex, Anchor, Attr, CapsuleError, CmpOp, Diagnostic, DiagnosticKind,
@@ -61,6 +73,34 @@ pub(crate) fn parse_tql_with_options(
     og_options: String,
     registry: &crate::query::registry::Registry,
 ) -> (Query, ViewSettings) {
+    lower_tql(text, og_options, registry, None)
+}
+
+/// The page names an ACTIVE `name` comparison of `text` spells as a quoted
+/// literal (`name = '…'`, `!=`, `in (…)`, `not in (…)`, and a block row's
+/// `page.name`), as `(authored byte range, decoded name)` with the range
+/// covering the quotes. Read by the same lowering that gives the comparison
+/// its meaning, so a literal of any other field, a disabled `-- ` row and a
+/// `[[x]]` the pre-pass spelled as a literal are never reported. The rename of
+/// an export definition's page selector is the reader
+/// (`crate::export_definition`). O(text).
+pub(crate) fn page_name_literals(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut found = Vec::new();
+    lower_tql(
+        text,
+        String::new(),
+        crate::query::registry::Registry::none(),
+        Some(&mut found),
+    );
+    found
+}
+
+fn lower_tql(
+    text: &str,
+    og_options: String,
+    registry: &crate::query::registry::Registry,
+    name_literals: Option<&mut Vec<(std::ops::Range<usize>, String)>>,
+) -> (Query, ViewSettings) {
     let mut diagnostics = Vec::new();
     let pre = pre_pass(text, &mut diagnostics);
     let filter = match parse_expr_guarded(&pre.sql) {
@@ -79,6 +119,7 @@ pub(crate) fn parse_tql_with_options(
                     source_offset: pre.offset,
                     origins: &pre.origins,
                     not_applicable: None,
+                    name_literals,
                 };
                 let scope = match pre.anchor {
                     Anchor::Block => Scope::Block,
@@ -172,6 +213,11 @@ enum Scope {
     Page,
     /// The atom of one property key: the single identifier `value`.
     Atom,
+    /// One reference of a block's `direct_refs` (OG `:block/refs`): its
+    /// `name`, and the journal metadata OG derives for a referenced page
+    /// (`journal`, `day`, graph-parser `page-name->map`). Exactly what
+    /// `eval_direct_ref` answers, so no leaf here silently matches nothing.
+    Ref,
 }
 
 /// The left-hand side of a comparison, resolved.
@@ -185,6 +231,8 @@ enum Target {
     Prop { through_page: bool, key: String },
     /// The contextual `value` identifier inside a property-atom expression.
     Atom,
+    /// A field of one reference inside `any(direct_refs, …)` ([`Scope::Ref`]).
+    Ref { attr: Attr, ty: ValueType },
 }
 
 struct Lower<'a> {
@@ -217,9 +265,45 @@ struct Lower<'a> {
     /// the retained `Raw` capsule. Always consumed by the enclosing `leaf`
     /// call, so it never leaks across siblings.
     not_applicable: Option<(String, Vec<String>)>,
+    /// [`page_name_literals`]' collector; `None` for an ordinary parse.
+    name_literals: Option<&'a mut Vec<(std::ops::Range<usize>, String)>>,
 }
 
 impl Lower<'_> {
+    /// Record `operand` for [`page_name_literals`] when it is a quoted literal
+    /// the author typed in an active row (its authored bytes are the quoted
+    /// text itself, so a desugared `[[x]]` is skipped).
+    fn note_name_literal(&mut self, operand: &Expr) {
+        if self.disabled_depth > 0 || self.name_literals.is_none() {
+            return;
+        }
+        let Expr::Value(value) = operand else { return };
+        let (SqlValue::SingleQuotedString(name) | SqlValue::DoubleQuotedString(name)) =
+            &value.value
+        else {
+            return;
+        };
+        let span = operand.span();
+        let Some((start, end)) =
+            byte_offset(self.source, span.start).zip(byte_offset(self.source, span.end))
+        else {
+            return;
+        };
+        let Some((&from, &to)) = self.origins.get(start).zip(self.origins.get(end)) else {
+            return;
+        };
+        let authored = self.original.get(from..to).unwrap_or_default().as_bytes();
+        let quoted = authored.len() >= 2
+            && matches!(authored[0], b'\'' | b'"')
+            && authored[authored.len() - 1] == authored[0];
+        if quoted {
+            let name = name.clone();
+            if let Some(found) = self.name_literals.as_deref_mut() {
+                found.push((from..to, name));
+            }
+        }
+    }
+
     fn reject(&mut self, kind: DiagnosticKind, message: impl Into<String>) -> Filter {
         self.diagnose(Diagnostic::new(kind, message));
         Filter::False
@@ -430,6 +514,16 @@ impl Lower<'_> {
         let Some(target) = self.target(left, scope) else {
             return Filter::False;
         };
+        if matches!(
+            target,
+            Target::Attr {
+                attr: Attr::Name,
+                ..
+            }
+        ) && matches!(op, CmpOp::Eq | CmpOp::NotEq)
+        {
+            self.note_name_literal(right);
+        }
         let ty = self.value_type(&target, right);
         let Some(value) = self.value(right, ty) else {
             return Filter::False;
@@ -448,7 +542,7 @@ impl Lower<'_> {
             return Filter::False;
         };
         let ty = match &target {
-            Target::Attr { ty, .. } => *ty,
+            Target::Attr { ty, .. } | Target::Ref { ty, .. } => *ty,
             _ => ValueType::Text,
         };
         self.build(target, op, Value::None, ty)
@@ -458,6 +552,17 @@ impl Lower<'_> {
         let Some(target) = self.target(left, scope) else {
             return Filter::False;
         };
+        if matches!(
+            target,
+            Target::Attr {
+                attr: Attr::Name,
+                ..
+            }
+        ) {
+            for item in list {
+                self.note_name_literal(item);
+            }
+        }
         let ty = list
             .first()
             .map(|first| self.value_type(&target, first))
@@ -520,7 +625,7 @@ impl Lower<'_> {
             return Filter::False;
         };
         let ty = match &target {
-            Target::Attr { ty, .. } => *ty,
+            Target::Attr { ty, .. } | Target::Ref { ty, .. } => *ty,
             _ => ValueType::Text,
         };
         let Some(Value::Text { text }) = self.value(pattern, ValueType::Text) else {
@@ -545,6 +650,7 @@ impl Lower<'_> {
         if !op_applies(&target, op, ty) {
             let what = match &target {
                 Target::Attr { attr, .. } => format!("`{}`", attr_label(*attr)),
+                Target::Ref { attr, .. } => format!("a reference's `{}`", attr_label(*attr)),
                 Target::Prop { .. } | Target::Atom => format!("a {} property", ty.label()),
             };
             return self.reject(
@@ -557,6 +663,7 @@ impl Lower<'_> {
                 through_page, attr, ..
             } => self.hop(through_page, Filter::attr(attr, op, value)),
             Target::Atom => Filter::attr(Attr::Value, op, value),
+            Target::Ref { attr, .. } => Filter::attr(attr, op, value),
             Target::Prop { through_page, key } => {
                 let key_test = Filter::attr(Attr::Key, CmpOp::Eq, Value::text(key));
                 let leaf = match op {
@@ -613,6 +720,13 @@ impl Lower<'_> {
                 let name = ident.value.to_ascii_lowercase();
                 let resolved = match scope {
                     Scope::Atom => (name == "value").then_some(Target::Atom),
+                    Scope::Ref => {
+                        let resolved = ref_attr(&name).map(|(attr, ty)| Target::Ref { attr, ty });
+                        if resolved.is_none() {
+                            self.not_a_ref_field(&ident.value);
+                        }
+                        return resolved;
+                    }
                     Scope::Block => block_attr(&name).map(|(attr, ty)| Target::Attr {
                         through_page: false,
                         attr,
@@ -634,6 +748,10 @@ impl Lower<'_> {
                     .iter()
                     .map(|part| part.value.to_ascii_lowercase())
                     .collect::<Vec<_>>();
+                if scope == Scope::Ref {
+                    self.not_a_ref_field(&spelled.join("."));
+                    return None;
+                }
                 if scope == Scope::Block && spelled.len() == 2 && spelled[0] == "page" {
                     if let Some((attr, ty)) = page_attr(&spelled[1]) {
                         return Some(Target::Attr {
@@ -648,7 +766,17 @@ impl Lower<'_> {
             }
             Expr::Function(function) => {
                 let name = function_name(function);
+                if let Some(message) = function_modifier(function, &name)
+                    .or_else(|| non_positional_argument(function, &name))
+                {
+                    self.reject(DiagnosticKind::Syntax, message);
+                    return None;
+                }
                 let args = function_args(function);
+                if scope == Scope::Ref {
+                    self.not_a_ref_field(&format!("{name}(…)"));
+                    return None;
+                }
                 match (name.as_str(), args.len()) {
                     ("prop", 1) => self.string_arg(args[0]).map(|key| Target::Prop {
                         through_page: false,
@@ -718,6 +846,15 @@ impl Lower<'_> {
         self.diagnose(self.suggested(diagnostic, name));
     }
 
+    /// An identifier inside `any(direct_refs, …)` that a reference does not
+    /// have. Not a property-key typo, so no registry suggestions.
+    fn not_a_ref_field(&mut self, name: &str) {
+        self.diagnose(Diagnostic::new(
+            DiagnosticKind::UnknownIdent,
+            format!("`{name}` is not a field of a reference; a reference has `name`, `journal` and `day`"),
+        ));
+    }
+
     /// Attach the registry's nearest keys to a diagnostic that named an
     /// identifier the vocabulary does not have.
     fn suggested(&self, mut diagnostic: Diagnostic, name: &str) -> Diagnostic {
@@ -740,7 +877,7 @@ impl Lower<'_> {
     /// the same printed query answers correctly under either.
     fn value_type(&mut self, target: &Target, operand: &Expr) -> ValueType {
         match target {
-            Target::Attr { ty, .. } => *ty,
+            Target::Attr { ty, .. } | Target::Ref { ty, .. } => *ty,
             Target::Prop { .. } | Target::Atom => literal_type(operand),
         }
     }
@@ -850,6 +987,23 @@ impl Lower<'_> {
 
     fn function(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
         let name = function_name(function);
+        if let Some(message) = function_modifier(function, &name) {
+            return self.reject(DiagnosticKind::Syntax, message);
+        }
+        // A reference has fields, not relations or page conditions: only the
+        // `off(…)` wrapper applies to a condition on one.
+        if scope == Scope::Ref && name != "off" {
+            return self.reject(
+                DiagnosticKind::Syntax,
+                format!("`{name}(…)` is not a condition on a reference; compare its `name`, `journal` or `day`"),
+            );
+        }
+        if name == "near" {
+            return self.near(function, scope);
+        }
+        if let Some(message) = non_positional_argument(function, &name) {
+            return self.reject(DiagnosticKind::Syntax, message);
+        }
         let args = function_args(function);
         match (name.as_str(), args.len()) {
             ("ref", 1) => match self.string_arg(args[0]) {
@@ -937,12 +1091,103 @@ impl Lower<'_> {
         }
     }
 
+    /// `near(<seeds>, <k> [, '<dir>'])` (`docs/contracts/tql-links-near.md`).
+    /// Positional arguments only; any other shape is a syntax diagnostic,
+    /// never a silently different search. A fourth argument, and any named
+    /// argument (the prototype's `through => …`), is reserved for hub control
+    /// (D-20261018-T1) and refused with a message that says so.
+    fn near(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
+        match scope {
+            Scope::Page => {}
+            Scope::Block => {
+                self.park_not_applicable("near", scope, Vec::new());
+                return Filter::False;
+            }
+            Scope::Atom | Scope::Ref => {
+                return self.reject(
+                    DiagnosticKind::Syntax,
+                    "`near` is a page condition, not a property value test",
+                )
+            }
+        }
+        const USAGE: &str =
+            "`near` takes seeds, a number of steps, and an optional 'out', 'in' or 'both'";
+        const RESERVED: &str = "`near` takes at most three arguments: seeds, a number of steps, and 'out', 'in' or 'both'; a fourth argument is reserved for a later version";
+        let FunctionArguments::List(list) = &function.args else {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        };
+        if list.duplicate_treatment.is_some() || !list.clauses.is_empty() {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        }
+        if list.args.len() > 3
+            || list.args.iter().any(|arg| {
+                matches!(
+                    arg,
+                    FunctionArg::Named { .. } | FunctionArg::ExprNamed { .. }
+                )
+            })
+        {
+            return self.reject(DiagnosticKind::Syntax, RESERVED);
+        }
+        let mut positional = Vec::new();
+        for arg in &list.args {
+            match arg {
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => positional.push(expr),
+                _ => return self.reject(DiagnosticKind::Syntax, USAGE),
+            }
+        }
+        if !(2..=3).contains(&positional.len()) {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        }
+        let k = match positional[1] {
+            Expr::Value(value) => match &value.value {
+                SqlValue::Number(text, _) => text.parse::<u32>().ok(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(k) = k else {
+            return self.reject(
+                DiagnosticKind::Syntax,
+                format!(
+                    "`near` takes a whole number of steps, not `{}`",
+                    positional[1]
+                ),
+            );
+        };
+        let dir = match positional.get(2) {
+            None => crate::query::ir::NearDir::Both,
+            Some(Expr::Value(value)) => match &value.value {
+                SqlValue::SingleQuotedString(text) => {
+                    match crate::query::ir::NearDir::from_tql_name(text) {
+                        Some(dir) => dir,
+                        None => {
+                            return self.reject(
+                                DiagnosticKind::Syntax,
+                                format!("`near` goes 'out', 'in' or 'both', not '{text}'"),
+                            )
+                        }
+                    }
+                }
+                _ => return self.reject(DiagnosticKind::Syntax, USAGE),
+            },
+            Some(_) => return self.reject(DiagnosticKind::Syntax, USAGE),
+        };
+        let seeds = self.filter(positional[0], Scope::Page);
+        Filter::near(seeds, k, dir)
+    }
+
     fn quantified(&mut self, quant: Quant, over: &Expr, pred: &Expr, scope: Scope) -> Filter {
         // `every(prop('k'), value op v)`: the collection is the atoms of one key
         // and the predicate is the atom test, conjoined with the key equality
         // that scopes it (§3.3).
         if let Expr::Function(function) = over {
             let name = function_name(function);
+            if let Some(message) = function_modifier(function, &name)
+                .or_else(|| non_positional_argument(function, &name))
+            {
+                return self.reject(DiagnosticKind::Syntax, message);
+            }
             let args = function_args(function);
             if matches!(name.as_str(), "prop" | "page_prop") && args.len() == 1 {
                 let Some(key) = self.string_arg(args[0]) else {
@@ -984,13 +1229,35 @@ impl Lower<'_> {
                     pred,
                 )
             }
+            // OG `:block/refs`, the references authored on this block. Its
+            // element is one reference: `name`, `journal`, `day` (card BhkrU:
+            // `any(direct_refs, day > today)` is "mentions a day after today").
+            ("direct_refs", Scope::Block) => {
+                let pred = self.filter(pred, Scope::Ref);
+                Filter::rel(Rel::DirectRefs, quant, pred)
+            }
             ("blocks", Scope::Page) => {
                 let pred = self.filter(pred, Scope::Block);
                 Filter::rel(Rel::Blocks, quant, pred)
             }
+            // The link table's two directions (docs/contracts/tql-links-near.md):
+            // the element is a page row.
+            (name @ ("links" | "linked_by"), Scope::Page) => {
+                let pred = self.filter(pred, Scope::Page);
+                Filter::rel(
+                    if name == "links" {
+                        Rel::Links
+                    } else {
+                        Rel::LinkedBy
+                    },
+                    quant,
+                    pred,
+                )
+            }
             // The relation exists — on the other row (§7.4).
             (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Page)
-            | (name @ "blocks", Scope::Block) => {
+            | (name @ ("blocks" | "links" | "linked_by"), Scope::Block)
+            | (name @ "direct_refs", Scope::Page) => {
                 self.park_not_applicable(name, scope, Vec::new());
                 Filter::False
             }
@@ -1076,213 +1343,6 @@ fn byte_offset(text: &str, location: sqlparser::tokenizer::Location) -> Option<u
         }
     }
     (line == location.line && column == location.column).then_some(text.len())
-}
-
-fn block_attr(name: &str) -> Option<(Attr, ValueType)> {
-    Some(match name {
-        "content" => (Attr::Content, ValueType::Text),
-        "task" => (Attr::Task, ValueType::Text),
-        "priority" => (Attr::Priority, ValueType::Text),
-        "scheduled" => (Attr::Scheduled, ValueType::Date),
-        "deadline" => (Attr::Deadline, ValueType::Date),
-        "created_at" => (Attr::CreatedAt, ValueType::Date),
-        "last_modified_at" => (Attr::LastModifiedAt, ValueType::Date),
-        _ => return None,
-    })
-}
-
-fn page_attr(name: &str) -> Option<(Attr, ValueType)> {
-    Some(match name {
-        "name" => (Attr::Name, ValueType::Text),
-        "journal" => (Attr::Journal, ValueType::Checkbox),
-        "day" => (Attr::Day, ValueType::Date),
-        "namespace" => (Attr::Namespace, ValueType::Text),
-        "used_as_tag" => (Attr::UsedAsTag, ValueType::Checkbox),
-        _ => return None,
-    })
-}
-
-fn attr_label(attr: Attr) -> &'static str {
-    match attr {
-        Attr::Content => "content",
-        Attr::Task => "task",
-        Attr::Priority => "priority",
-        Attr::Scheduled => "scheduled",
-        Attr::Deadline => "deadline",
-        Attr::CreatedAt => "created at",
-        Attr::LastModifiedAt => "last modified at",
-        Attr::Name => "name",
-        Attr::Journal => "journal",
-        Attr::Day => "day",
-        Attr::Namespace => "namespace",
-        Attr::UsedAsTag => "used as tag",
-        Attr::Key => "key",
-        Attr::Value => "value",
-        Attr::AtomCount => "atom count",
-    }
-}
-
-fn op_label(op: CmpOp) -> &'static str {
-    match op {
-        CmpOp::Eq => "=",
-        CmpOp::NotEq => "!=",
-        CmpOp::Lt => "<",
-        CmpOp::Le => "<=",
-        CmpOp::Gt => ">",
-        CmpOp::Ge => ">=",
-        CmpOp::Between => "between",
-        CmpOp::In => "in",
-        CmpOp::NotIn => "not in",
-        CmpOp::Like => "like",
-        CmpOp::StartsWith => "like",
-        CmpOp::Match => "match",
-        CmpOp::Regex => "regexp",
-        CmpOp::IsSet => "is not null",
-        CmpOp::IsNotSet => "is null",
-        CmpOp::IsBlank => "= ''",
-    }
-}
-
-/// The comparison a SQL binary operator names. `sqlparser` has dozens of
-/// operators the query language does not, so this match alone keeps a rest arm.
-fn binary_cmp(binary: &BinaryOperator) -> Option<CmpOp> {
-    Some(match binary {
-        BinaryOperator::Eq => CmpOp::Eq,
-        BinaryOperator::NotEq => CmpOp::NotEq,
-        BinaryOperator::Lt => CmpOp::Lt,
-        BinaryOperator::LtEq => CmpOp::Le,
-        BinaryOperator::Gt => CmpOp::Gt,
-        BinaryOperator::GtEq => CmpOp::Ge,
-        BinaryOperator::Match => CmpOp::Match,
-        _ => return None,
-    })
-}
-
-/// SPEC §4.2.3 operator × type matrix (K9). Anything absent here is a `Syntax`
-/// diagnostic naming the operator and the type.
-fn op_applies(target: &Target, op: CmpOp, ty: ValueType) -> bool {
-    let on_property = matches!(target, Target::Prop { .. } | Target::Atom);
-    match op {
-        CmpOp::Eq | CmpOp::NotEq => true,
-        CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge | CmpOp::Between => {
-            matches!(ty, ValueType::Number | ValueType::Date)
-        }
-        CmpOp::In | CmpOp::NotIn => !matches!(ty, ValueType::Date | ValueType::Checkbox),
-        CmpOp::Like | CmpOp::StartsWith => matches!(ty, ValueType::Text | ValueType::Ref),
-        CmpOp::Match => matches!(
-            target,
-            Target::Attr {
-                attr: Attr::Content,
-                ..
-            }
-        ),
-        // `regexp` is permitted only on `content` with a text pattern, and is
-        // forbidden on every other row and type in the §4.2.3 matrix.
-        CmpOp::Regex => {
-            ty == ValueType::Text
-                && matches!(
-                    target,
-                    Target::Attr {
-                        attr: Attr::Content,
-                        ..
-                    }
-                )
-        }
-        CmpOp::IsSet | CmpOp::IsNotSet => {
-            on_property
-                || matches!(
-                    target,
-                    Target::Attr {
-                        attr: Attr::Task
-                            | Attr::Priority
-                            | Attr::Scheduled
-                            | Attr::Deadline
-                            | Attr::CreatedAt
-                            | Attr::LastModifiedAt,
-                        ..
-                    }
-                )
-        }
-        CmpOp::IsBlank => on_property,
-    }
-}
-
-/// The type a literal spells. It decides how the IR stores the VALUE; the atom
-/// it is compared against is typed by the registry at evaluation (§6.3).
-fn literal_type(expr: &Expr) -> ValueType {
-    match expr {
-        Expr::Nested(inner) => literal_type(inner),
-        Expr::UnaryOp {
-            op: UnaryOperator::Minus,
-            expr,
-        } => literal_type(expr),
-        Expr::Identifier(ident) if ident.value.eq_ignore_ascii_case("today") => ValueType::Date,
-        Expr::Value(value) => match &value.value {
-            SqlValue::Number(text, _) => {
-                if is_day_ordinal(text) {
-                    ValueType::Date
-                } else {
-                    ValueType::Number
-                }
-            }
-            SqlValue::Boolean(_) => ValueType::Checkbox,
-            SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => {
-                if is_date_literal(text) {
-                    ValueType::Date
-                } else {
-                    ValueType::Text
-                }
-            }
-            _ => ValueType::Text,
-        },
-        _ => ValueType::Text,
-    }
-}
-
-fn is_day_ordinal(text: &str) -> bool {
-    text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// `'2026-09-04'` or a SIGNED relative `'-7d'` / `'+2w'` / `'-1m'` / `'-1y'`:
-/// the subset of the [`DateToken`](crate::query::DateToken) grammar that types
-/// a quoted TQL literal as a date (Rule 3: one grammar, no local recognizer).
-/// An out-of-range offset still types as a date, so it is diagnosed.
-fn is_date_literal(text: &str) -> bool {
-    use crate::query::DateToken;
-    if text != text.trim() {
-        return false;
-    }
-    match DateToken::parse(text) {
-        Some(DateToken::Relative { .. } | DateToken::OutOfRange) => {
-            matches!(text.as_bytes().first(), Some(b'+' | b'-'))
-        }
-        Some(DateToken::Stem(_)) => text.len() == 10 && text.as_bytes()[4] == b'-',
-        _ => false,
-    }
-}
-
-fn function_name(function: &sqlparser::ast::Function) -> String {
-    function
-        .name
-        .0
-        .iter()
-        .filter_map(|part| part.as_ident())
-        .map(|ident| ident.value.to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn function_args(function: &sqlparser::ast::Function) -> Vec<&Expr> {
-    let FunctionArguments::List(list) = &function.args else {
-        return Vec::new();
-    };
-    list.args
-        .iter()
-        .filter_map(|arg| match arg {
-            FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(expr),
-            _ => None,
-        })
-        .collect()
 }
 
 #[cfg(test)]

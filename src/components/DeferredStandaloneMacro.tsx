@@ -1,6 +1,7 @@
 import { Show, type JSX } from "solid-js";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { visibleBody } from "../render/block";
+import { formatForBlock } from "../document";
 
 /** Bound standalone query/embed mounting to the near-viewport budget shared by
  * ordinary block bodies. The placeholder preserves source visibility without
@@ -14,7 +15,7 @@ export function DeferredStandaloneMacro(props: {
   return (
     <Show
       when={observe.near()}
-      fallback={<span ref={observe} class="ast-fallback ast-deferred">{visibleBody(props.raw).join("\n")}</span>}
+      fallback={<span ref={observe} class="ast-fallback ast-deferred">{visibleBody(props.raw, formatForBlock(props.blockId)).join("\n")}</span>}
     >
       {props.children}
     </Show>

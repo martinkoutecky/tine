@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
@@ -17,10 +18,10 @@ function mount() {
   startEditing("picker", 0);
   const root = document.createElement("div"); document.body.append(root);
   const dispose = render(() => <Block id="picker" />, root);
-  const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+  const textarea = editorIn(root);
   const input = (value: string) => {
-    textarea.focus(); textarea.value = value; textarea.setSelectionRange(value.length, value.length);
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value.at(-1) }));
+    textarea.focus(); textarea.replaceText(value); textarea.select(value.length, value.length);
+    textarea.reportInput({ bubbles: true, inputType: "insertText", data: value.at(-1) });
   };
   return { dispose, textarea, input };
 }
@@ -46,9 +47,9 @@ it("keeps pending, failure, retry and empty block-picker answers visibly distinc
     document.querySelector<HTMLButtonElement>(".autocomplete button")!.click();
     await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(document.querySelector(".autocomplete")?.textContent).toContain("No matched blocks"));
-    expect(m.textarea.value).toBe("((target");
+    expect(m.textarea.value()).toBe("((target");
     expect(toasts()).toEqual([]);
-    m.textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    m.textarea.keydown({ key: "Escape", bubbles: true, cancelable: true });
     await vi.waitFor(() => expect(document.querySelector(".autocomplete")).toBeNull());
   } finally { work.resolve([]); m.dispose(); }
 });

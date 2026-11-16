@@ -1,3 +1,4 @@
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
@@ -217,7 +218,7 @@ describe("SheetBoard", () => {
 
     journalCard.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
     await tick();
-    expect(root.querySelector("textarea.block-editor")).toBeNull();
+    expect(maybeEditorIn(root)).toBeNull();
     journalCard.click();
     expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
     expect(doc.byId[shared].raw).toBe("TODO Loaded page row");
@@ -697,7 +698,7 @@ describe("SheetBoard", () => {
         startEditing("outside");
         await tick();
       }
-      const editor = root.querySelector<HTMLTextAreaElement>(focusSource === "block editor" ? "textarea.block-editor" : "[data-outside-editor]")!;
+      const editor = focusSource === "block editor" ? editorIn(root).element : root.querySelector<HTMLTextAreaElement>("[data-outside-editor]")!;
       editor.focus();
       expect(document.activeElement).toBe(editor);
       const card = root.querySelector<HTMLElement>('.sheet-board-card[data-block-id="todo"]')!;
@@ -711,7 +712,7 @@ describe("SheetBoard", () => {
       if (focusSource === "block editor") {
         await tick();
         expect(editingId()).toBeNull();
-        expect(root.querySelector("textarea.block-editor")).toBeNull();
+        expect(maybeEditorIn(root)).toBeNull();
       }
       const range = document.createRange();
       range.selectNodeContents(card);

@@ -32,7 +32,8 @@ let confirmedTemplate: { root: string; value: string | null } | null = null;
  *  meta so the UI reflects it immediately. Writes run one at a time in call
  *  order; a failure always shows a sticky error, and reverts the UI to the last
  *  persisted value only when it belongs to the newest choice in the same graph.
- *  Cost: one config write per call. */
+ *  Cost: one guarded config write per call, retaining parsed pages. Native
+ *  publication may still read page preambles and rebuild in-memory indexes. */
 export function setJournalTemplate(name: string | null) {
   const binding = captureBinding();
   const m = graphMeta();
@@ -65,10 +66,8 @@ export function bumpGraphEpoch() {
 // Bumped after a save batch lands (the Rust cache now reflects the edit), so
 // derived whole-graph views — {{query}} results, backlinks — can recompute.
 // This is Tine's stand-in for OG's reactive-DB query invalidation.
-export const [dataRev, setDataRev] = createSignal(0);
-export function bumpDataRev() {
-  setDataRev((n) => n + 1);
-}
+// The counter itself is read only through changeKeys (dataRevision.ratchet.test.ts).
+export { bumpDataRev } from "./dataRevision";
 // Page-name inventory changes are much rarer than ordinary content saves. Keep
 // their invalidation separate so navigation can refresh canonical names after a
 // create/delete without turning every keystroke save into a whole-page-list IPC.

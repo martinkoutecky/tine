@@ -5,6 +5,12 @@
 use super::*;
 
 impl Store {
+    /// Record an actual device-local draft namespace move, including one whose
+    /// directory durability witness failed. Memory only; O(1), no I/O.
+    pub fn record_draft_namespace_adoption(&self, reason: crate::DraftAdoptionReason) {
+        self.graph.storage_diag.adopted(reason);
+    }
+
     /// A JSON object of numbers and closed status tokens for the diagnostics
     /// dump: `launch`, `onDemandBuilds`, `fullDiffs`, `assetWalks`, `pageWriterWaits`, `saves`, `checkpoint`
     /// (launch checkpoint load and writes, ADR 0070) and `shape`. It
@@ -20,6 +26,7 @@ impl Store {
             LoadStatus::Closed => "closed",
         };
         let mut report = self.graph.diag.snapshot(status);
+        report["storage"] = self.graph.storage_diag.snapshot();
         let began = std::time::Instant::now();
         let shape = match self.graph.peek_pages() {
             Some(pages) => crate::model::shape_stats::shape(

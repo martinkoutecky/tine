@@ -128,6 +128,12 @@ tab-bar-show-all-tabs = Show all tabs
 
 tab-bar-open-tabs = Open tabs
 
+tab-bar-move-out-of-group = Move out of group
+
+tab-bar-expand-group = Expand
+
+tab-bar-collapse-group = Collapse
+
 tab-bar-reorder = Reorder { $title }
 
 tab-bar-drag-to-reorder-alt-up-down-moves-the = Drag to reorder; Alt+Up/Down moves the focused tab
@@ -143,6 +149,8 @@ topbar-overflow-menu-more-toolbar-actions = More toolbar actions
 topbar-overflow-menu-calendar = Calendar
 
 topbar-overflow-menu-journals = Journals
+
+topbar-overflow-menu-share = Share this page
 
 topbar-overflow-menu-toggle-theme = Toggle theme
 

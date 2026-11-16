@@ -1,15 +1,18 @@
+import { editorIn, maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { type JSX } from "solid-js";
+import { createSignal, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { flushAll, isDirty, pageByName, readPageProperty, resetStore } from "../document";
+import { flushAll, insertEmptyChildBlock, isDirty, pageByName, readPageProperty, resetStore } from "../document";
 import { backend } from "../backend";
 import { editingId } from "../editorController";
 import { pagePropsPanel, closePageProps } from "../ui";
 import type { BlockDto, PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { ensurePageLoaded, forgetPage, reloadPage } from "../document/workingSet";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
+import { adoptResults, captureResultsTicket, installResultsPendingGate, resultsSettled } from "../queryResultsEpoch";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
 // References as its properties row. OG lists the referencing page's
@@ -52,12 +55,39 @@ const propertyRow = (raw = HEADER): BlockDto => ({
   id: "page-property:Page:source", raw, collapsed: false, children: [], page_property: true,
 });
 
-const replaceValue = (textarea: HTMLTextAreaElement, value: string) => {
-  textarea.value = value;
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+const replaceValue = (textarea: EditorDriver, value: string) => {
+  textarea.replaceText(value);
+  textarea.reportInput({ bubbles: true, inputType: "insertText", data: value });
 };
 
 describe("page properties in Linked References (GH #486)", () => {
+  it("keeps the rendered properties row when its source page is re-admitted unchanged (GH #886)", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(sourcePage());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={[propertyRow()]} surface="ref" eager />);
+    try {
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      const row = await vi.waitFor(() => {
+        const el = root.querySelector(".page-property-reference");
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      const key = row.querySelector(".prop-key");
+      expect(key).not.toBeNull();
+      // A source evicted from the working set and loaded again (or a watcher
+      // reload with identical text) must not rebuild every property row: on a
+      // page with hundreds of groups that churn tripled renderer memory.
+      forgetPage("Source");
+      await Promise.resolve();
+      expect(ensurePageLoaded(sourcePage())).toBeNull();
+      await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
+      await Promise.resolve();
+      expect(root.querySelector(".page-property-reference")).toBe(row);
+      expect(row.querySelector(".prop-key")).toBe(key);
+    } finally {
+      dispose();
+    }
+  });
+
   it("restores identical read-only markup in both groups after header editing (GH #753)", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(sourcePage());
     const { root, dispose } = mount(() => <>
@@ -68,13 +98,15 @@ describe("page properties in Linked References (GH #486)", () => {
       await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
       const before = [...root.querySelectorAll(".page-property-reference .block-content")].map(el => el.innerHTML);
       expect(before).toHaveLength(2);
+      expect([...root.querySelectorAll(".page-property-reference .prop-key a.page-ref")].map(el => el.textContent))
+        .toEqual(["tags", "typo-key", "tags", "typo-key"]);
       for (let attempt = 0; attempt < 2; attempt++) {
         root.querySelector<HTMLElement>(".page-property-reference .block-content")!.click();
         const editor = await vi.waitFor(() => {
-          expect(root.querySelector("textarea")).not.toBeNull();
-          return root.querySelector<HTMLTextAreaElement>("textarea")!;
+          expect(maybeEditorIn(root)).not.toBeNull();
+          return editorIn(root);
         });
-        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
         await vi.waitFor(() => expect(editingId()).toBeNull());
         expect([...root.querySelectorAll(".page-property-reference .block-content")].map(el => el.innerHTML)).toEqual(before);
       }
@@ -91,11 +123,11 @@ describe("page properties in Linked References (GH #486)", () => {
       await vi.waitFor(() => expect(pageByName("Source")).toBeDefined());
       root.querySelector<HTMLElement>(".page-property-reference .block-content")!.click();
       const editor = await vi.waitFor(() => {
-        expect(root.querySelector("textarea")).not.toBeNull();
-        return root.querySelector<HTMLTextAreaElement>("textarea")!;
+        expect(maybeEditorIn(root)).not.toBeNull();
+        return editorIn(root);
       });
       replaceValue(editor, "");
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      editor.keydown({ key: "Escape", bubbles: true, cancelable: true });
       await vi.waitFor(() => expect(editingId()).toBeNull());
       expect(root.textContent).not.toContain("typo-key");
       expect(readPageProperty("Source", "tags")).toBeNull();
@@ -120,13 +152,13 @@ describe("page properties in Linked References (GH #486)", () => {
       });
       row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
       const textarea = await vi.waitFor(() => {
-        const el = root.querySelector("textarea");
+        const el = maybeEditorIn(root);
         expect(el).not.toBeNull();
-        return el as HTMLTextAreaElement;
+        return el!;
       });
-      expect(textarea.value).toBe(HEADER);
+      expect(textarea.value()).toBe(HEADER);
       replaceValue(textarea, "tags:: Target\ntype:: book");
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      textarea.keydown({ key: "Escape", bubbles: true, cancelable: true });
       await vi.waitFor(() => expect(editingId()).toBeNull());
       expect(readPageProperty("Source", "type")).toBe("book");
       expect(readPageProperty("Source", "typo-key")).toBeNull();
@@ -161,9 +193,105 @@ describe("page properties in Linked References (GH #486)", () => {
       await vi.waitFor(() => expect(pagePropsPanel()?.scope).toEqual({ kind: "page", name: "Source" }));
       closePageProps();
       expect(root.querySelector(".page-property-reference .block-content")!.innerHTML).toBe(before);
-      expect(root.querySelector("textarea")).toBeNull();
+      expect(maybeEditorIn(root)).toBeNull();
     } finally {
       dispose();
     }
+  });
+});
+
+// Card hCP6Js: a query result group that lists a page's properties row next to an
+// ordinary block of the same page decides live vs static for the WHOLE group. The
+// user's own editing leaves results unsettled (the page-open handshake, then every
+// keystroke until the save is published) without moving the epoch, and that must
+// not swap the group's rows for static copies: it would unmount the editor they
+// are typing in (editable everywhere, PRINCIPLES 6).
+describe("page-properties row beside an ordinary row in a query group (card hCP6Js)", () => {
+  const body = (): BlockDto => ({ id: "body", raw: "Body block", collapsed: false, children: [] });
+  const liveBody = (root: HTMLElement) => root.querySelector('.ls-block:not(.ref-block)[data-block-id="body"]');
+  const openBody = async (root: HTMLElement) => {
+    await vi.waitFor(() => expect(liveBody(root)).not.toBeNull());
+    const content = root.querySelector<HTMLElement>('[data-block-id="body"] .block-content')!;
+    for (const type of ["mousedown", "mouseup", "click"]) {
+      content.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    }
+    return await vi.waitFor(() => { expect(maybeEditorIn(root)).not.toBeNull(); return editorIn(root); });
+  };
+  const stays = async (root: HTMLElement, editor: EditorDriver) => {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(editorIn(root).element).toBe(editor.element);
+    expect(editorIn(root).value()).toBe("Body block typed");
+    expect(editingId()).toBe("body");
+    expect(liveBody(root)).not.toBeNull();
+  };
+
+  it("keeps the editor mounted while the user's own typing leaves results unsettled", async () => {
+    // Only the own-work gate: the editor opens, then the save window starts.
+    const [typing, setTyping] = createSignal(false);
+    installResultsPendingGate(typing, "own-work");
+    ensurePageLoaded(sourcePage());
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      const editor = await openBody(root);
+      replaceValue(editor, "Body block typed");
+      setTyping(true);
+      expect(resultsSettled()).toBe(false);
+      await stays(root, editor);
+      setTyping(false);
+      await stays(root, editor);
+    } finally { setTyping(false); dispose(); }
+  });
+
+  it("opens an editor and keeps it through the page-open handshake and the first keystroke (wired host)", async () => {
+    const host = await bindTestHost();
+    answerOpensFromDocument(host);
+    ensurePageLoaded(sourcePage());
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      const editor = await openBody(root);
+      await vi.waitFor(() => expect(resultsSettled()).toBe(true));
+      replaceValue(editor, "Body block typed");
+      // The premise: typing alone makes the answer unsettled, without moving the epoch.
+      expect(resultsSettled()).toBe(false);
+      await stays(root, editor);
+    } finally { dispose(); }
+  });
+
+  // A structural edit moves the results epoch (every non-field setDoc), but it
+  // reassigns no runtime id: like an ordinary mounted row (resolveResultRow
+  // "mount", UI-QUERY-RESULT-EPOCH-FLICKER), the synthetic row stays live while
+  // the source page instance is unchanged.
+  it.each(["another page", "the source page"])("keeps the editor mounted through a structural edit on %s", async (where) => {
+    ensurePageLoaded(sourcePage());
+    ensurePageLoaded({ id: "pages/Other.md", name: "Other", title: "Other", kind: "page", format: "md", pre_block: null,
+      blocks: [{ id: "other", raw: "Other block", collapsed: false, children: [] }] } as PageRead);
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      const editor = await openBody(root);
+      replaceValue(editor, "Body block typed");
+      expect(insertEmptyChildBlock(where === "another page" ? "other" : "body", 0)).not.toBeNull();
+      await stays(root, editor);
+    } finally { dispose(); }
+  });
+
+  it("shows static rows once the source page is replaced, until the rerun lands", async () => {
+    ensurePageLoaded(sourcePage());
+    const rows = [propertyRow(), body()];
+    adoptResults(rows, captureResultsTicket());
+    const { root, dispose } = mount(() => <LiveRefGroup page="Source" kind="page" blocks={rows} surface="query" eager />);
+    try {
+      await vi.waitFor(() => expect(liveBody(root)).not.toBeNull());
+      // A watcher or conflict reload installs changed backend content over the loaded page.
+      const changed = sourcePage();
+      reloadPage({ ...changed, rev: "r2", blocks: [...changed.blocks, { id: "extra", raw: "Extra block", collapsed: false, children: [] }] } as PageRead);
+      await vi.waitFor(() => expect(liveBody(root)).toBeNull());
+      expect(root.textContent).toContain("Body block");
+    } finally { dispose(); }
   });
 });

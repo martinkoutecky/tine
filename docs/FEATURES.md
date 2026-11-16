@@ -118,7 +118,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))` — including the labeled
   form `[text](((id)))` — and `{{embed}}`, all clickable, with autocomplete on
   `[[`, `#`, `((`, and `/`.
-- **Page icons on inline references.** If a page has an `icon::` (emoji or
+- **Page icons on inline references.** If a page has a `tine.icon::` (or Logseq's `icon::`; emoji or
   character), it shows as a prefix on every inline `[[reference]]` and `#tag` to
   that page — like Logseq, and like Tine's own page title / namespace listing. (Emoji
   render as Twemoji SVG, since WebKitGTK paints color-emoji fonts blank.)
@@ -455,8 +455,9 @@ within a column; merged cells are still v2+.
 - Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible
   **namespace tree** in the sidebar, the **`{{namespace X}}`** macro (a bold
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
-  (breadcrumb paths of descendant pages) on any namespaced page, and read-only
-  **"aka" alias chips** on pages reachable by another name.
+  (breadcrumb paths of descendant pages) on any namespaced page, and the page's
+  **alias group** under its title: "Also called" names with no page of their own,
+  then the group's other real pages, each a link.
 - **Collapsible navigation sections** — Favorites and Recent fold independently and
   remember their state per graph. Right-sidebar pages/blocks also fold independently;
   a compact menu collapses, expands, or closes all items, committing active edits
@@ -491,7 +492,7 @@ within a column; merged cells are still v2+.
 - ⊕ **Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small
   always-on-top box pops from *any* app, with the full editor (autocomplete, slash
   commands, the date picker, nested blocks), filing a bullet to today's journal.
-- **Page icons** — a page's `icon::` emoji shows next to its title and in the
+- **Page icons** — a page's `tine.icon::` (or `icon::`) emoji shows next to its title and in the
   namespace tree. Emoji render as bundled **Twemoji SVG** images (not a font), so
   they show in every engine — including WebKitGTK, which paints color-emoji webfonts
   blank — and work offline.

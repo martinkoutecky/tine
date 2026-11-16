@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js";
 
-/** Shared presentation for reference/query disclosures; the host owns the action. */
+/** Shared presentation for disclosures; the host owns the action. */
 export function ReferenceDisclosure(props: {
   collapsed: boolean;
   class?: string;

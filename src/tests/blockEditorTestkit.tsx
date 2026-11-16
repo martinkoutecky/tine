@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { emptyPage, resetStore } from "../document";
 import type { BlockDto, PageDto } from "../types";
+import type { EditorDriver } from "./editorDriver";
 
 // PageDto values are constructed only through document/convert.ts (boundary guard
 // "I-12 PageDto construction stays in convert"), so the kit starts from emptyPage().
@@ -39,6 +40,12 @@ export function page(name: string, blocks: BlockDto[]): PageDto {
 
 export function journal(name: string, blocks: BlockDto[]): PageDto {
   return { ...emptyPage(name, "journal"), blocks };
+}
+
+export function pressEditorEnter(editor: EditorDriver, caret: number) {
+  editor.focus();
+  editor.select(caret, caret);
+  editor.keydown({ key: "Enter", bubbles: true, cancelable: true });
 }
 
 export function pressEnter(ta: HTMLTextAreaElement, caret: number) {

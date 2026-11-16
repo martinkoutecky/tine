@@ -46,10 +46,6 @@ editor-autocomplete-no-matched-blocks = No matched blocks
 
 external-change-bar-this-page-changed-on-disk-you-asked-to = This page changed on disk. You asked to be told rather than shown, so Tine is still displaying the version you were reading.
 
-external-change-bar-reload-from-disk = Reload from disk
-
-external-change-bar-keep-mine = Keep mine
-
 failure-boundary-copy-details = Copy details
 
 failure-boundary-retry = Retry
@@ -79,6 +75,8 @@ graph-publish-export-html-and-read-only-app = Export HTML and read-only app…
 graph-publish-choose-a-destination-outside-the-graph-the-export = Choose a destination outside the graph. The export stays on your device until you share it.
 
 in-page-find-find-in-page = Find in page
+in-page-find-retired-days = { $count } older days not searched
+in-page-find-search-journals = search all journals
 
 in-page-find-find-and-replace = Find and replace
 

@@ -14,7 +14,7 @@ welcome-copy-details = 复制详情
 
 welcome-nothing-was-changed-on-disk-you-can = 磁盘内容未更改。你也可在下方打开其他图谱。
 
-welcome-on-iphone-and-ipad-graphs-can-live = 在 iPhone 和 iPad 上，图谱可存放于“我的 iPhone → TineOutline”或“iCloud Drive → TineOutline”。目前不支持其他应用的文件夹（如 Logseq）或“文件”提供商。
+welcome-on-iphone-and-ipad-graphs-can-live = 在 iPhone 和 iPad 上，图谱可存放于“我的 iPhone → { $app }”或“iCloud Drive → { $app }”。目前不支持其他应用的文件夹（如 Logseq）或“文件”提供商。
 
 welcome-open-an-existing-graph = 打开已有图谱
 

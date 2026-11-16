@@ -166,6 +166,9 @@ impl Unreadable {
             Err(error) if store_failed(&error) => Err(error),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine unreadable file producer=conflict-read",
+                );
                 self.files.insert(path.to_owned(), error.to_string());
                 Ok(None)
             }
@@ -682,7 +685,7 @@ pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
 /// four attempts.
 pub fn resolve_sync_conflict(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     winner: &str,
     conflict: &str,
     decisions: &HashMap<String, String>,
@@ -727,18 +730,17 @@ pub fn resolve_sync_conflict(
 /// per the row decisions and trashed recoverably. Unsaved input in either
 /// page is refused as a change on disk would be, so the fold never drops it.
 ///
-/// With a host, one host operation (DESIGN §3.1) planned from the bytes the
+/// One host operation (DESIGN §3.1) planned from the bytes the
 /// fold read: the winner's write, and for a duplicate day the stray's
 /// deletion as a move's source (the winner's new bytes hold the stray's
 /// rows), so a crash between them completes at relaunch rather than leaving
 /// the stray to fold in again. A sync copy is no page (`Store::as_page`), so
 /// it is trashed after the operation applied, guarded by the bytes the fold
-/// read (DESIGN §3.4, post): a copy changed since is kept. With no host, one
-/// transaction under the retained-writer route, as before P3.
+/// read (DESIGN §3.4, post): a copy changed since is kept.
 #[allow(clippy::too_many_arguments)]
 fn fold_pair(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     (win, conf): (&FileId, &FileId),
     decisions: &HashMap<String, String>,
     revs: (&str, &str),
@@ -767,7 +769,7 @@ fn fold_pair(
         )
     };
     let transaction = |fold: &Folded, include_source: bool| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[
                 tine_store::EditKind::ReplacePage,
@@ -782,15 +784,6 @@ fn fold_pair(
         }
         tx
     };
-    let Some(running) = host else {
-        let discover = || Ok(crate::retained::pages(store, [win, conf]));
-        return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
-            crate::retry_on_conflict(EXHAUSTED, || {
-                let fold = fold()?;
-                Ok(crate::commit_retry(transaction(&fold, true).commit())?.then_some(()))
-            })
-        });
-    };
     let mut copy_rev = None;
     let plan = || {
         let fold = fold()?;
@@ -799,13 +792,13 @@ fn fold_pair(
         }
         let mut op = crate::retained::plan(transaction(&fold, copy.is_some()))?;
         if let Some(source) = &copy {
-            op.moved = Some((page.clone(), source.clone()));
+            op.moves.push((page.clone(), source.clone()));
         }
         Ok(Some(op))
     };
     let touched = crate::retained::pages(store, [win, conf]);
     let applied = crate::retained::operation(
-        running,
+        host,
         Input::Refuse,
         &touched,
         "the merge",
@@ -962,11 +955,53 @@ pub fn trash_sync_conflict(
         let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
         let rev = match store.read(&conf, max) {
             Ok((_, rev)) => rev,
-            Err(tine_store::StoreError::NotFound) => return Err(copy_gone()),
+            Err(tine_store::StoreError::NotFound(_)) => return Err(copy_gone()),
             Err(error) => return Err(crate::store_error(error)),
         };
         trash_copy(store, &conf, rev)
     })
+}
+
+/// Trash the sync copies whose bytes equal their page's (GH #875). Such a
+/// copy holds nothing the page lacks, yet the queue would keep showing it as
+/// "nothing to decide": Syncthing can deliver several identical copies of one
+/// page, and resolving one leaves the others matching the page. Candidates
+/// are the queue's copies with no decidable row; each is compared byte for
+/// byte and trashed recoverably over the revision it was read at, so a copy
+/// that changed since, or that differs in any byte, is kept. A copy that is
+/// already gone is skipped. Returns the copies trashed, after re-deriving
+/// their queue entries. Cost O(candidate copy + page bytes).
+pub fn trash_identical_sync_copies(
+    store: &Store,
+    queue: &ConflictQueue,
+) -> io::Result<Vec<String>> {
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let mut trashed = Vec::new();
+    for (copy, winner) in queue.undecided_copies() {
+        let (Ok(conf), Ok(win)) = (id(store, &copy), id(store, &winner)) else {
+            continue;
+        };
+        // The pairing is path arithmetic, re-proved here (C3 L01).
+        if sync_copy_winner(conf.as_str()).as_deref() != Some(win.as_str()) {
+            continue;
+        }
+        let read = |file: &FileId| match store.read(file, max) {
+            Ok(read) => Ok(Some(read)),
+            Err(tine_store::StoreError::NotFound(_)) => Ok(None),
+            Err(error) => Err(crate::store_error(error)),
+        };
+        let (Some((theirs, rev)), Some((mine, _))) = (read(&conf)?, read(&win)?) else {
+            continue;
+        };
+        if theirs == mine && trash_copy(store, &conf, rev)?.is_some() {
+            trashed.push(copy);
+        }
+    }
+    if !trashed.is_empty() {
+        let files: Vec<FileId> = trashed.iter().cloned().map(FileId::from).collect();
+        queue.refresh_files(store, &files)?;
+    }
+    Ok(trashed)
 }
 
 /// Two-way diff of a duplicate journal day's canonical file against one stray
@@ -1001,7 +1036,7 @@ pub fn duplicate_journal_diff(
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_duplicate_journal_day(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     canonical: &str,
     stray: &str,
     decisions: &HashMap<String, String>,
@@ -1115,7 +1150,7 @@ pub fn vcs_marker_conflict_diff(
 /// four attempts.
 pub fn resolve_vcs_marker_conflict(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     rel: &str,
     decisions: &HashMap<String, String>,
     base_rev: &str,
@@ -1139,7 +1174,7 @@ pub fn resolve_vcs_marker_conflict(
         Ok((content, rev, merged))
     };
     let transaction = |rev, merged: &PageDto| {
-        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(tine_store::EditKind::ReplacePage));
         tx.save_page(
             &[tine_store::EditKind::ReplacePage],
             &page,
@@ -1147,15 +1182,6 @@ pub fn resolve_vcs_marker_conflict(
             merged,
         );
         tx
-    };
-    let Some(running) = host else {
-        let discover = || Ok(vec![page.clone()]);
-        return crate::retained::reserved(None, Input::Refuse, discover, refused, |_| {
-            crate::retry_on_conflict(EXHAUSTED, || {
-                let (_, rev, merged) = reviewed()?;
-                Ok(crate::commit_retry(transaction(rev, &merged).commit())?.then_some(()))
-            })
-        });
     };
     // C4: the durable non-page marker copy precedes the read-only planner.
     let (content, rev, merged) = reviewed()?;
@@ -1168,7 +1194,7 @@ pub fn resolve_vcs_marker_conflict(
         crate::retained::plan(transaction(rev, &merged)).map(Some)
     };
     crate::retained::operation(
-        running,
+        host,
         Input::Refuse,
         std::slice::from_ref(&page),
         "resolving the merge",

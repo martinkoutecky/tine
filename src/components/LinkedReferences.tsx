@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
-import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, mergeProps, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
@@ -27,6 +27,9 @@ import { activeSurface } from "../editorController";
 import { navigationName } from "../pageIndex";
 import { readPageProperty, setPageProperty } from "../document";
 import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
+import { referenceKey, referenceRevision, registerUnlinkedReader } from "../referenceKeys";
+import { createCollapsedRevision } from "../collapsedRevision";
+import { StaleReferenceCount } from "./StaleReferenceCount";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -113,7 +116,12 @@ export function LinkedReferences(props: { name: string; journalFeed?: boolean })
 }
 
 /** Shared filter and rendering owner for linked and plain-text references. */
-export function ReferenceSection(props: { name: string; unlinked?: boolean; journalFeed?: boolean }): JSX.Element {
+export function ReferenceSection(input: { name: string; unlinked?: boolean; journalFeed?: boolean }): JSX.Element {
+  // The routed caller resolves its page through the working-set index. A source
+  // load invalidates that getter even when the target name is unchanged. Keep
+  // section resets, subscriptions and group props behind the consumed value.
+  const name = createMemo(() => input.name);
+  const props = mergeProps(input, { get name() { return name(); } });
   const section = props.unlinked ? "unlinked" : "linked";
   const heading = () => t(props.unlinked ? "references-unlinked" : "references-linked");
   const savedFilterKey = () => props.unlinked ? `unlinked\0${props.name}` : props.name;
@@ -121,14 +129,29 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   let alive = true;
   onCleanup(() => { alive = false; });
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
+  const registration = registerUnlinkedReader(() => props.unlinked ? props.name : undefined);
+  const dependency = referenceRevision(() => referenceKey(props.unlinked ? "text" : "links", props.name));
+  // The first answer establishes the count, including when initially folded.
+  const [loadedCount, setLoadedCount] = createSignal(0);
+  const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;
+  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(savedCollapse());
+  const collapsed = () => collapsedOverride() ?? loadedCount() >= referenceCollapseThreshold();
+  const freshness = createCollapsedRevision(dependency.revision, collapsed, () => props.name);
+  const answerRevisions = new WeakMap<RefGroup[], string>();
   const [groupsResource] = createMembershipResource(
     () => props.name,
     () => props.name,
     async (n) => {
+      const token = freshness.revision();
       const owner = latestOwner(readScope, "backlinks", graphOwner(() => alive && props.name === n));
       setLoadError(null);
       try {
+        if (props.unlinked) await registration();
+        if (!owner()) return [];
         const result = await readOwned(owner, props.unlinked ? backend().getUnlinkedRefs(n) : backend().getBacklinks(n));
+        if (result.kind === "current") {
+          answerRevisions.set(result.value, token);
+        }
         return result.kind === "current" ? result.value : [];
       } catch (error) {
         if (owner()) setLoadError(classifyReferenceLoadError(error));
@@ -139,13 +162,22 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     // backlinks change. Only an editor inside the result surface needs its
     // answer retained until blur; source edits may follow published revisions.
     (groups, id) => (!props.journalFeed || !!activeSurface()?.startsWith("ref:")) && groupsContainEdit(groups, id),
+    undefined, false, freshness.revision,
   );
   // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
+  createEffect(() => {
+    const adopted = groups();
+    dependency.remember(adopted ?? []);
+    if (!adopted) return;
+    // A late response may have been rejected while an edited result is held.
+    // Only adopted membership can change the threshold or count freshness.
+    setLoadedCount(mergedGroups().reduce((count, group) => count + group.blocks.length, 0));
+    const token = answerRevisions.get(adopted);
+    if (token !== undefined) freshness.remember(token);
+  });
   // Unlinked's saved override is historically "open", linked's is "collapsed".
-  const savedCollapse = () => props.unlinked ? !(sectionOverride(section, props.name) ?? false) : sectionOverride(section, props.name) ?? null;
-  const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(savedCollapse());
   const setCollapsedOverride = (value: boolean) => {
     setSectionOverride(section, props.name, props.unlinked ? !value : value);
     setCollapsedOverrideSignal(value);
@@ -167,8 +199,11 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   const filters = createMemo<FilterMap>(() => Object.fromEntries(
     Object.entries(rawFilters()).map(([name, state]) => [navigationName(name), state])
   ));
+  // Working-set membership changes may invalidate the page lookup, but only a
+  // changed filter value should rebuild the visible groups.
+  const filterProperty = createMemo(() => props.unlinked ? null : readPageProperty(props.name, "filters"));
   createEffect(() => {
-    const property = props.unlinked ? null : readPageProperty(props.name, "filters");
+    const property = filterProperty();
     setFilters(property === null ? loadFilters(savedFilterKey()) : parseReferenceFilters(property) ?? {});
   });
   const persistFilters = (f: FilterMap) => {
@@ -323,7 +358,6 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
-  const collapsed = () => collapsedOverride() ?? totalCount() >= referenceCollapseThreshold();
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
     let total = 0;
@@ -368,8 +402,14 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
       <div class={`${section}-references`}>
         <div class="references-header" onClick={() => setCollapsedOverride(!collapsed())}>
           <ReferenceDisclosure collapsed={collapsed()} />
-          {heading()} <span class="references-count">{count()}</span>
+          {heading()} <span class="references-count" title={t("references-count-title", { blocks: count(), pages: shown().filter((g) => g.blocks.length > 0).length })}>{count()}</span>
+          <StaleReferenceCount stale={freshness.stale()} />
           <Show when={props.unlinked && groupsResource.loading && groups() === undefined}><span class="references-loading"> {t("references-loading")}</span></Show>
+          <Show when={!collapsed() && shown().length > 1}>
+            <span class="reference-bulk-controls" role="group" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>
+              <button type="button" onClick={(event) => { event.stopPropagation(); setAllGroups(bulkCollapseTarget(shown(), groupCollapsed)); }}>{t(bulkCollapseTarget(shown(), groupCollapsed) ? "references-collapse-all" : "references-expand-all")}</button>
+            </span>
+          </Show>
           <button type="button" class="reference-export-toggle"
             aria-label={t(props.unlinked ? "references-copy-unlinked" : "references-copy-linked")} title={t(props.unlinked ? "references-copy-unlinked-title" : "references-copy-linked-title")}
             disabled={!count()}
@@ -466,11 +506,6 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
               </Show>
             </div>
           </Show>
-          <Show when={shown().length > 1}>
-            <div class="reference-bulk-controls" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>
-              <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(shown(), groupCollapsed))}>{t(bulkCollapseTarget(shown(), groupCollapsed) ? "references-collapse-all" : "references-expand-all")}</button>
-            </div>
-          </Show>
           <For each={shown().map(groupKey)}>
             {(key) => {
               const group = () => shownByKey().get(key)!;
@@ -526,6 +561,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
                     data-inpage-find-surface={`linked:${props.name}:${group().kind}:${group().page}`}
                   >
                     <LiveRefGroup
+                      heightKey={`page-refs:${props.name}`}
                       page={group().page}
                       kind={group().kind}
                       blocks={group().blocks}

@@ -3,7 +3,10 @@ import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
-import { requestFrame } from "./windowRealm";
+import { activeWindow, isElementTag, requestFrame } from "./windowRealm";
+import { clearOnBindingInvalidated } from "./binding";
+import { recordDiagnostic } from "./debug";
+import type { EditorFocusGuard, EditorFocusMissed } from "./backendTypes";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -13,7 +16,11 @@ import { requestFrame } from "./windowRealm";
 // Where layout is unavailable, Up falls back to the last source line.
 // Structural edits keep the same editor projection, so a selection is expressed
 // in textarea coordinates (unlike numeric raw-block targets) (#519).
-export type EditorSelection = { start: number; end: number; direction: "forward" | "backward" | "none" };
+export type EditorSelection = {
+  start: number; end: number; direction: "forward" | "backward" | "none";
+  /** Visible-source body start, retaining code mode across a structural remount. */
+  codeBodyStart?: number;
+};
 export type CaretPos = number | { col: number; edge: "first" | "last" } | EditorSelection;
 
 export type EndEditReason =
@@ -26,6 +33,7 @@ export type EndEditReason =
   | "page-navigation"
   | "query-builder"
   | "redo"
+  | "rendered-selection"
   | "select-block"
   | "sidebar-collapse"
   | "undo";
@@ -42,6 +50,20 @@ const [editingOwner, setEditingOwner] = createSignal<string | null>(null);
 // bind the editor to the current stable SurfaceContext key.
 const [editingSurface, setEditingSurface] = createSignal<string | null>(null);
 const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPos } | null>(null);
+let editIntentRevision = 0;
+
+/** Async navigation may complete only until the next edit intent, even when
+ * that intent targets the very same block and occurrence. */
+export function captureEditIntent(): () => boolean {
+  const revision = editIntentRevision;
+  const id = editingId();
+  const owner = editingOwner();
+  const surface = editingSurface();
+  const focusedSurface = activeSurface();
+  return () => editIntentRevision === revision
+    && editingId() === id && editingOwner() === owner
+    && editingSurface() === surface && activeSurface() === focusedSurface;
+}
 
 // Surface-aware edit focus. A block uuid can render in SEVERAL surfaces at once
 // (the main pane and each right-sidebar item). `activeSurface` tracks which
@@ -55,6 +77,15 @@ const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPo
 const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
 const pendingFocusSurface = new Map<string, string>();
 
+// A refused editor commit must be resolved before a mode change can unmount
+// its only live buffer. The mounted editor owns and releases its guard.
+const editExitGuards = new Set<() => boolean>();
+clearOnBindingInvalidated(() => editExitGuards.clear());
+export function registerEditExitGuard(guard: () => boolean): () => void {
+  editExitGuards.add(guard);
+  return () => editExitGuards.delete(guard);
+}
+const canExitEdit = () => [...editExitGuards].every(guard => guard());
 // Native property inputs hold a draft outside the document. Editor handoffs
 // must commit it before replacing/focusing another editor, even without blur.
 const editEntryGuards = new Set<() => boolean>();
@@ -215,14 +246,78 @@ export function noteSurfaceFocused(surfaceKey: string) {
   setActiveSurface(surfaceKey);
 }
 
+/** GH #939: at most one `editor_focus_missed` record per this many ms. A
+ * stuck state misses on every edit request until it clears; one record per
+ * episode tells the causes apart, and the bound keeps a repeating miss from
+ * evicting older events out of the recorder's shared 1 MiB ring. */
+export const EDITOR_FOCUS_MISS_INTERVAL_MS = 5 * 60_000;
+let editorFocusMissAt = -Infinity;
+// Counts edit requests only: `endEdit` (e.g. a blur after a focus thief) must
+// not cancel the pending check the way it bumps `editIntentRevision`.
+let editRequest = 0;
+
+const FOCUS_TAGS = new Set<string>(["textarea", "input", "button", "select", "iframe", "a", "div", "span", "body"]);
+
+/** The block whose editor `el` is (a textarea editor or a CodeMirror one), else null. */
+function blockEditorId(el: Element | null): string | null {
+  if (isElementTag(el, "textarea") && el.classList.contains("block-editor")) {
+    return el.closest("[data-block-id]")?.getAttribute("data-block-id") ?? "";
+  }
+  return el?.getAttribute("data-cm6-editor") ?? null;
+}
+
+/** GH #939: one frame after an edit request, record (content-free) why no
+ * editor of `id` holds focus. A newer request supersedes this check. Cost on
+ * the normal path: one frame callback and one look at the focused element;
+ * the mounted editors are scanned only on a miss. */
+function checkEditorFocus(id: string, entry: EditorFocusMissed["entry"], guard: EditorFocusGuard) {
+  const request = ++editRequest;
+  if (performance.now() - editorFocusMissAt < EDITOR_FOCUS_MISS_INTERVAL_MS) return;
+  const win = activeWindow();
+  const doc = win.document;
+  // Node unit tests run without a DOM, or with a stub document.
+  if (typeof doc?.hasFocus !== "function") return;
+  requestFrame(win, () => {
+    if (request !== editRequest) return;
+    const documentHasFocus = doc.hasFocus();
+    const active = doc.activeElement;
+    const activeBlock = blockEditorId(active);
+    if (guard === "none" && documentHasFocus && activeBlock === id) return;
+    let targetMounted = false;
+    let targetFocused = false;
+    for (const target of historyEditorTargets) {
+      if (target.blockId !== id) continue;
+      targetMounted = true;
+      if (target.focused?.()) targetFocused = true;
+    }
+    if (guard === "none" && documentHasFocus && targetFocused) return;
+    editorFocusMissAt = performance.now();
+    const tag = active?.localName ?? "none";
+    void recordDiagnostic("editor_focus_missed", { editorFocus: {
+      entry,
+      documentHasFocus,
+      guard,
+      targetMounted,
+      activeTag: tag === "none" || FOCUS_TAGS.has(tag) ? tag as EditorFocusMissed["activeTag"] : "other",
+      activeIsBlockEditor: activeBlock !== null,
+    } });
+  });
+}
+
 export function startEditing(
   id: string,
   offset: CaretPos = 0,
   owner: string | null = null,
   surface: string | null = null,
   preserveHistoryRestore = false,
+  entry: EditorFocusMissed["entry"] = "other",
 ) {
-  if (!prepareEditEntry()) return;
+  // Even a refused newer request supersedes pending async navigation.
+  editIntentRevision++;
+  // Resolve a refused commit first, then commit a property input's draft.
+  if (!canExitEdit()) return checkEditorFocus(id, entry, "exit-guard");
+  if (!prepareEditEntry()) return checkEditorFocus(id, entry, "entry-guard");
+  checkEditorFocus(id, entry, "none");
   revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);
@@ -262,6 +357,8 @@ export function startEditing(
 }
 
 export function endEdit(_reason: EndEditReason) {
+  editIntentRevision++;
+  if (!canExitEdit()) return;
   batch(() => {
     setPendingHistoryEditorRestore(null);
     setEditingId(null);

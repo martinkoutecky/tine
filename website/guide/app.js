@@ -4,7 +4,7 @@
   var blocks = window.__tineBlocks || [];
 
   function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function basename(p) {
     var parts = String(p).split('/');
@@ -22,7 +22,7 @@
     var lis = items.map(function (p) {
       var file = p.slug + '.html';
       var cls = basename(file) === here ? ' class="active"' : '';
-      return '<li><a href="' + file + '"' + cls + '>' + esc(p.title) + '</a></li>';
+      return '<li><a href="' + file + '" data-ref="' + esc(p.ref) + '"' + cls + '>' + esc(p.title) + '</a></li>';
     }).join('');
     return '<div class="sec"><h3>' + esc(title) + '</h3><ul>' + lis + '</ul></div>';
   }
@@ -101,6 +101,16 @@
         var first = results && results.querySelector('a.res');
         if (first) { ev.preventDefault(); location.href = first.getAttribute('href'); }
       }
+    });
+  }
+
+  // ---- narrow screens: the page list folds behind a toggle (style.css) ----
+  var sidebar = nav && nav.parentNode;
+  var toggle = sidebar && sidebar.querySelector('.pages-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      var open = sidebar.classList.toggle('pages-open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
   }
 

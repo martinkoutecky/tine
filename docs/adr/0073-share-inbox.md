@@ -30,6 +30,13 @@ Application Support when the App Group is not provisioned), Android
 `<filesDir>/share-inbox/`. Desktop has none.
 
 Layout, one directory per item:
+- The shared envelope limit is `MAX_ITEM_BYTES = 1024 * 1024` (1 MiB), inclusive,
+  measured on the exact UTF-8 JSON bytes, including escaping, metadata and resource
+  descriptions. Rust's reader, Swift `maxItemBytes` and Kotlin
+  `MAX_SHARE_ITEM_BYTES` agree on this limit (L7s4-02). Producers refuse larger
+  envelopes before writing `item.json` or publishing; they never truncate or
+  report success for a refused share. Threat: a valid but oversized share from
+  another app that the bounded reader could not ingest. The format is unchanged.
 - `<id>/item.json`: `{version: 1, source: "android"|"ios", created, text?, title?, url?, resources: [{file, name, type}]}`
   plus the resource files. `source` selects the producer's OG shaping path
   (src/shareShape.ts). Producers write `.tmp-<id>/`, sync every file and the

@@ -7,15 +7,15 @@
 //! `resolving_markers_stages_the_preresolution_file_in_recoverable_trash`,
 //! plus og's crash and rollback proofs for the staged copy.
 
+use crate::{
+    EditKind, FaultPoint, OpenOptions, PageId, Refusal, SaveBase, SaveOutcome, Store, TxOutcome,
+    Why,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
-use tine_store::{
-    EditKind, FaultPoint, OpenOptions, PageId, Refusal, SaveBase, SaveOutcome, Store, TxOutcome,
-    Why,
-};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -73,7 +73,7 @@ fn staged_copies(root: &Path) -> Vec<Vec<u8>> {
 
 #[test]
 fn marker_bearing_page_is_never_rewritten_by_save() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("refuse");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -126,21 +126,21 @@ fn marker_bearing_page_is_never_rewritten_by_save() {
 
 #[test]
 fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("resolve");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
     let store = open(&root);
     let id = PageId::from("pages/Merge.md");
     let rev = store.read(&id.file(), None).unwrap().1;
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &id,
         SaveBase::ResolvingMarkers(rev),
         &page("mine"),
     );
-    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    assert!(matches!(tx.commit_internal(), TxOutcome::Committed { .. }));
     assert_eq!(fs::read_to_string(&file).unwrap(), "- mine\n");
     assert_eq!(
         staged_copies(&root),
@@ -179,7 +179,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
 
 #[test]
 fn a_stale_resolution_writes_and_stages_nothing() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("stale");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -189,14 +189,14 @@ fn a_stale_resolution_writes_and_stages_nothing() {
     // The VCS rewrote the file after the review was computed.
     let newer = format!("{MARKED}- appended by the merge\n");
     fs::write(&file, &newer).unwrap();
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &id,
         SaveBase::ResolvingMarkers(rev),
         &page("mine"),
     );
-    let outcome = tx.commit();
+    let outcome = tx.commit_internal();
     assert!(
         matches!(
             outcome,
@@ -217,7 +217,7 @@ fn a_stale_resolution_writes_and_stages_nothing() {
 
 #[test]
 fn a_failed_resolution_restores_the_file_and_withdraws_its_copy() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("rollback");
     let file = root.join("pages/Merge.md");
     fs::write(&file, MARKED).unwrap();
@@ -227,7 +227,7 @@ fn a_failed_resolution_restores_the_file_and_withdraws_its_copy() {
     let plain = PageId::from("pages/Plain.md");
     let rev = store.read(&id.file(), None).unwrap().1;
     let plain_rev = store.read(&plain.file(), None).unwrap().1;
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &id,
@@ -244,7 +244,7 @@ fn a_failed_resolution_restores_the_file_and_withdraws_its_copy() {
         &plain_doc,
     );
     store.inject_fault(FaultPoint::MidStepIoAt(1));
-    let outcome = tx.commit();
+    let outcome = tx.commit_internal();
     assert!(
         matches!(
             outcome,
@@ -269,20 +269,20 @@ fn a_failed_resolution_restores_the_file_and_withdraws_its_copy() {
 
 #[test]
 fn a_marker_page_refusal_names_its_refusal_family() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let root = scratch("family");
     fs::write(root.join("pages/Merge.md"), MARKED).unwrap();
     let store = open(&root);
     let id = PageId::from("pages/Merge.md");
     let read = store.page(&id).unwrap();
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &id,
         SaveBase::Existing(read.rev),
         &read.doc,
     );
-    let outcome = tx.commit();
+    let outcome = tx.commit_internal();
     assert!(
         matches!(
             outcome,
@@ -298,7 +298,7 @@ fn a_marker_page_refusal_names_its_refusal_family() {
 
 #[test]
 fn crash_marker_resolution_worker() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     let Ok(root) = std::env::var("TINE_F8_CRASH_ROOT") else {
         return;
     };
@@ -307,7 +307,7 @@ fn crash_marker_resolution_worker() {
     let store = open(root);
     let id = PageId::from("pages/Merge.md");
     let rev = store.read(&id.file(), None).unwrap().1;
-    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    let mut tx = store.page_plan(Some(EditKind::ReplacePage));
     tx.save_page(
         &[EditKind::ReplacePage],
         &id,
@@ -319,7 +319,7 @@ fn crash_marker_resolution_worker() {
     } else {
         FaultPoint::AbortAfterStep(0)
     });
-    let _ = tx.commit();
+    let _ = tx.commit_internal();
     panic!("the marker resolution fault did not abort");
 }
 
@@ -328,13 +328,13 @@ fn crash_marker_resolution_worker() {
 /// the new state and the pre-resolution bytes survive in trash either way.
 #[test]
 fn a_crash_during_resolution_never_loses_a_side() {
-    let _integration_guard = crate::integration_lock();
+    let _integration_guard = crate::test_transactions::integration_lock();
     for (boundary, expected_live) in [("stage", MARKED), ("written", "- mine\n")] {
         let root = scratch("crash");
         fs::write(root.join("pages/Merge.md"), MARKED).unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("f8_vcs_markers::crash_marker_resolution_worker")
+            .arg("test_transactions::f8_vcs_markers::crash_marker_resolution_worker")
             .arg("--nocapture")
             .env("TINE_F8_CRASH_ROOT", &root)
             .env("TINE_F8_CRASH_BOUNDARY", boundary)

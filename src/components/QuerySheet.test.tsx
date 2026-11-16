@@ -1153,4 +1153,26 @@ describe("GH #619: Any status, In a journal page, no advanced chip for builder s
       builder.dispose();
     }
   });
+
+  // GH #619 c6 (Q4): the root list is implicit, so a root that is not "all of" must say so. A root `or`
+  // of two groups and a loose row used to draw as if everything were required.
+  it("labels a root any-of, keeps group boundaries as parsed, and leaves an all-of root unlabelled", async () => {
+    const A = taskFilter(["TODO"]), B = propertyFilter("a", "1"), C = propertyFilter("b", "2"), D = propertyFilter("c", "3"), E = propertyFilter("d", "4");
+    // the reporter's shape: or( or(A, B), or(C, D), E ), as the TQL parser answers it
+    const root: Filter = { kind: "or", items: [{ kind: "or", items: [A, B] }, { kind: "or", items: [C, D] }, E] };
+    const builder = mountBuilder(root);
+    try {
+      const sheet = builder.open();
+      expect(sheet.querySelector(".qs-root-op")?.textContent).toBe("any of");
+      const top = sheet.querySelector(".qs-rows")!;
+      // two nested groups of two rows each, then the loose row, all siblings under the root
+      expect([...top.children].map((child) => child.matches(".qs-listitem") ? `group(${child.querySelectorAll(".qs-row").length})` : "row"))
+        .toEqual(["group(2)", "group(2)", "row"]);
+      expect(sheet.querySelectorAll(".qs-group-op")).toHaveLength(2);
+    } finally { builder.dispose(); }
+    const all = mountBuilder({ kind: "and", items: [A, { kind: "or", items: [B, C] }] });
+    try {
+      expect(all.open().querySelector(".qs-root-op")).toBeNull();
+    } finally { all.dispose(); }
+  });
 });

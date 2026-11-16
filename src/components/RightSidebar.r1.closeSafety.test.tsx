@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,24 +94,24 @@ async function beginEdit(root: HTMLElement, text: string) {
   content.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
   content.click();
   const editor = await vi.waitFor(() => {
-    const found = root.querySelector<HTMLTextAreaElement>(".rs-item-body textarea.block-editor");
+    const found = maybeEditorIn(root.querySelector<HTMLElement>(".rs-item-body")!);
     expect(found).not.toBeNull();
     return found!;
   });
-  editor.focus();
-  editor.value = text;
-  editor.setSelectionRange(text.length, text.length);
-  editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+  editor.element.focus();
+  editor.replaceText(text);
+  editor.select(text.length, text.length);
+  editor.reportInput({ bubbles: true, inputType: "insertText" });
   expect(editingId()).toBe(BLOCK_ID);
   expect(doc.byId[BLOCK_ID].raw).toBe(text);
   return editor;
 }
 
-function escape(target: HTMLElement, init: { composing?: boolean; keyCode?: number } = {}) {
+function escape(target: HTMLElement | EditorDriver, init: { composing?: boolean; keyCode?: number } = {}) {
   const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
   if (init.composing) Object.defineProperty(event, "isComposing", { value: true });
   if (init.keyCode != null) Object.defineProperty(event, "keyCode", { value: init.keyCode });
-  target.dispatchEvent(event);
+  if ("kind" in target) target.keydown(event); else target.dispatchEvent(event);
   return event;
 }
 
@@ -139,7 +140,7 @@ type CloseCase = {
   name: string;
   mobile?: boolean;
   collectionOnly?: boolean;
-  close: (root: HTMLElement, editor: HTMLTextAreaElement) => void;
+  close: (root: HTMLElement, editor: EditorDriver) => void;
 };
 
 const closeCases: CloseCase[] = [
@@ -203,7 +204,7 @@ describe("GH #161 R1 right-sidebar close safety", () => {
 
     entry.close(root, editor);
 
-    await vi.waitFor(() => expect(root.querySelector(".rs-item-body textarea.block-editor")).toBeNull());
+    await vi.waitFor(() => expect(maybeEditorIn(root.querySelector<HTMLElement>(".rs-item-body")!)).toBeNull());
     expect(editingId()).toBeNull();
     expect(doc.byId[BLOCK_ID].raw).toBe(text);
     expect(rightSidebarOpen()).toBe(entry.collectionOnly ? true : false);

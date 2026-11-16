@@ -26,11 +26,17 @@ loadSingle({ name: "Thread", title: "Thread", kind: "page", pre_block: null, for
     { id: "before", raw: "Unrelated preceding sibling", collapsed: false, children: [] },
     { id: "parent", raw: "Parent with wrapped text\nSecond line", collapsed: false, children: [
       { id: "middle", raw: "Middle ancestor", collapsed: false, children: [
-        { id: "focus", raw: "Focused block", collapsed: false, children: [] },
+        { id: "deep", raw: "Fourth ancestor", collapsed: false, children: [
+          { id: "repeat", raw: "Palette repeats", collapsed: false, children: [
+            { id: "focus", raw: "Focused block", collapsed: false, children: [] },
+          ] },
+        ] },
         { id: "after", raw: "Unrelated following sibling", collapsed: false, children: [] },
       ] },
     ] },
-    { id: "last", raw: "Another branch", collapsed: false, children: [] },
+    { id: "last", raw: "Another branch", collapsed: false, children: [
+      { id: "unrelated-child", raw: "Ordinary guide stays visible", collapsed: false, children: [] },
+    ] },
   ] },
 ] });
 render(() => <main class="main-content" style={{ padding: "40px", width: "min(640px, calc(100vw - 80px))" }}><Block id="root" /></main>, document.getElementById("root")!);

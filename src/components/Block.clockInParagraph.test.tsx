@@ -1,18 +1,25 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
-import { startEditing, endEdit } from "../editorController";
+import { startEditing, endEdit, editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
-import { pageByName, resetStore } from "../document";
+import { pageByName, resetStore, setRaw } from "../document";
+import { setMarker } from "../editor/marker";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
+import { pageToDto } from "../document/convert";
+import { trailingVisibleEmptyLeaf } from "../document/tree";
 import { timestampText, renderedBlockText } from "../render/renderedText";
 import { visibleBody } from "../render/block";
 import { logbookInfo } from "../logbook";
+import { toasts, setToasts, dismissToast } from "../toasts";
+import * as properties from "../editor/properties";
 import type { TimestampInline } from "../render/ast";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { setWorkflow } from "../ui";
 
 // GH #741: typing DOING makes Tine write the :LOGBOOK: clock-in immediately.
 // (1) Text typed after it must stay on the task line, not land after `:END:`.
@@ -35,10 +42,10 @@ afterEach(() => {
 });
 
 let seq = 0;
-function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md") {
+function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md", next = false) {
   const name = `Clock${++seq}`;
   const block: BlockDto = { id: `clock-${seq}`, raw, collapsed: false, children: [] };
-  const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
+  const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block, ...(next ? [{id: `next-${seq}`, raw: "next", collapsed: false, children: []}] : [])], format };
   loadSingle(page);
   if (editing) startEditing(block.id, 0);
   const root = document.createElement("div");
@@ -47,17 +54,190 @@ function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md") {
     () => (<For each={pageByName(name)?.roots ?? []}>{(id): JSX.Element => <Block id={id} />}</For>),
     root,
   );
-  return { root, dispose, blockId: block.id, textarea: root.querySelector("textarea.block-editor") as HTMLTextAreaElement | null };
+  return { root, dispose, blockId: block.id, textarea: maybeEditorIn(root) as EditorDriver | null };
 }
 
-function typeChar(ta: HTMLTextAreaElement, ch: string) {
-  const caret = ta.selectionStart;
-  ta.value = ta.value.slice(0, caret) + ch + ta.value.slice(ta.selectionEnd);
-  ta.setSelectionRange(caret + ch.length, caret + ch.length);
-  ta.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
+function typeChar(ta: EditorDriver, ch: string) {
+  const caret = ta.selection()[0];
+  ta.replaceText(ta.value().slice(0, caret) + ch + ta.value().slice(ta.selection()[1]));
+  ta.select(caret + ch.length, caret + ch.length);
+  ta.reportInput({ bubbles: true, inputType: "insertText", data: ch });
 }
 
 const CLOCK = "CLOCK: [2026-10-21 Wed 08:54:45]";
+
+it.each(['md', 'org'] as const)('GH741 F2 typing DONE over bare DOING closes its clock (%s)', format => {
+  const { textarea, blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, true, format);
+  try {
+    textarea!.replaceText(''); textarea!.select(0, 0);
+    textarea!.reportInput({ bubbles: true, inputType: 'deleteContentBackward' });
+    for (const ch of 'DONE') typeChar(textarea!, ch);
+    const info = logbookInfo(doc.byId[blockId].raw, format);
+    expect(info.rows).toHaveLength(1);
+    expect(info.rows[0].end).not.toBeNull();
+    expect(doc.byId[blockId].raw.split('\n')[0]).toBe('DONE');
+  } finally { dispose(); }
+});
+
+it.each(['md', 'org'] as const)('GH741 F2 Ctrl+Enter on bare DOING completes it (%s)', format => {
+  const { textarea, blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, true, format);
+  try {
+    textarea!.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(doc.byId[blockId].raw.split('\n')[0].trim()).toBe('DONE');
+    expect(logbookInfo(doc.byId[blockId].raw, format).rows[0].end).not.toBeNull();
+  } finally { dispose(); }
+});
+
+it.each(['md', 'org'] as const)('GH741 F2 explicit marker command on full raw closes the bare task clock (%s)', format => {
+  const { blockId, dispose } = mountPage(`DOING\n:LOGBOOK:\n${CLOCK}\n:END:`, false, format);
+  try {
+    setRaw(blockId, setMarker(doc.byId[blockId].raw, 'DONE'));
+    expect(doc.byId[blockId].raw.split('\n')[0].trim()).toBe('DONE');
+    const info = logbookInfo(doc.byId[blockId].raw, format);
+    expect(info.rows).toHaveLength(1);
+    expect(info.rows[0].end).not.toBeNull();
+  } finally { dispose(); }
+});
+
+it('review r2 refused Org edit survives switching blocks', () => {
+  const raw = `plain\n:PROPERTIES:\n:collapsed: false\n:END:\n:LOGBOOK:\n${CLOCK}\n:END:`;
+  const {root, textarea, blockId, dispose} = mountPage(raw,true,'org',true);
+  const errors:unknown[]=[];
+  const onError=(e:ErrorEvent)=>{errors.push(e.error);e.preventDefault();};
+  window.addEventListener('error',onError);
+  try {
+    setToasts([]);
+    const typed = 'plain\n:PROPERTIES:\n:COLLAPSED: true\n:END:\nmy newly typed text';
+    textarea!.replaceText(typed);
+    textarea!.reportInput({bubbles:true,inputType:'insertFromPaste'});
+    textarea!.reportInput({bubbles:true,inputType:'insertText'});
+    const next = root.querySelector(`[data-block-id="next-${seq}"] .block-content-wrapper`)!;
+    next.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,cancelable:true}));
+    document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
+    startEditing(blockId,0);
+    expect(maybeEditorIn(root)?.value()).toContain('my newly typed text');
+    expect(errors).toEqual([]);
+    expect(toasts()).toEqual([]);
+    expect(logbookInfo(doc.byId[blockId].raw, 'org').rows).toHaveLength(1);
+  } finally {window.removeEventListener('error',onError);dispose();}
+});
+
+it.each(['md', 'org'] as const)('review r2 refused genuine join keeps the buffer and reports recovery (%s)', format => {
+  const raw = `plain\n:LOGBOOK:\n${CLOCK}\n:END:`;
+  const { root, textarea, blockId, dispose } = mountPage(raw, true, format, true);
+  // Exercise a release-kernel refusal independently of the casing correction.
+  const join = vi.spyOn(properties, 'joinProps').mockImplementation(() => {
+    throw new Error('Drawer reattachment refused: metadata ownership would change');
+  });
+  const onError = (e: ErrorEvent) => e.preventDefault();
+  let disposed = false;
+  window.addEventListener('error', onError);
+  try {
+    setToasts([]);
+    const typed = 'my newly typed text';
+    textarea!.replaceText(typed);
+    textarea!.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
+    expect(doc.byId[blockId].raw).toBe(raw);
+    expect(toasts()).toHaveLength(1);
+    expect(toasts()[0]).toMatchObject({ kind: 'error', sticky: true, copyText: typed });
+    expect(toasts()[0].message).toContain('Copy');
+    const next = root.querySelector(`[data-block-id="next-${seq}"] .block-content-wrapper`)!;
+    next.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, cancelable: true }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+    endEdit('blur');
+    startEditing(blockId, 0);
+    expect(editingId()).toBe(blockId);
+    expect(textarea!.element.isConnected).toBe(true);
+    expect(textarea!.value()).toBe(typed);
+    expect(doc.byId[blockId].raw).toBe(raw);
+    // Correcting the buffer releases the edit hold; ordinary navigation works.
+    join.mockRestore();
+    textarea!.reportInput({ bubbles: true, inputType: 'insertText' });
+    expect(doc.byId[blockId].raw).toContain(typed);
+    expect(logbookInfo(doc.byId[blockId].raw, format).rows).toHaveLength(1);
+    startEditing(`next-${seq}`, 0);
+    expect(maybeEditorIn(root)?.value()).toBe('next');
+    startEditing(blockId, 0);
+    expect(maybeEditorIn(root)?.value()).toBe(typed);
+    // Dismissing an error then closing the surface still retains its last
+    // refused buffer through the ordinary error toast's Copy recovery.
+    const refusedAgain = vi.spyOn(properties, 'joinProps').mockImplementation(() => {
+      throw new Error('metadata ownership would change');
+    });
+    try {
+      const reopened = maybeEditorIn(root)!;
+      const finalText = typed + ' before closing';
+      reopened.replaceText(finalText);
+      reopened.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
+      for (const toast of toasts()) dismissToast(toast.id);
+      dispose();
+      disposed = true;
+      expect(toasts()).toHaveLength(1);
+      expect(toasts()[0]).toMatchObject({ kind: 'error', sticky: true, copyText: finalText });
+      expect(doc.byId[blockId].raw).not.toContain('before closing');
+      expect(logbookInfo(doc.byId[blockId].raw, format).rows).toHaveLength(1);
+      // Identical errors in another editor must retain both recovery copies.
+      const other = mountPage(raw, true, format);
+      try {
+        other.textarea!.replaceText('another refused draft');
+        other.textarea!.reportInput({ bubbles: true, inputType: 'insertFromPaste' });
+      } finally { other.dispose(); }
+      expect(toasts().map(toast => toast.copyText)).toEqual([finalText, 'another refused draft']);
+    } finally { refusedAgain.mockRestore(); }
+  } finally {
+    join.mockRestore();
+    window.removeEventListener('error', onError);
+    if (!disposed) dispose();
+    setToasts([]);
+  }
+});
+
+it.each(['md','org'] as const)('review manual drawer typing preserves subsequent text (%s)', format => {
+  const { textarea, blockId, dispose } = mountPage('plain', true, format);
+  try {
+    textarea!.select(5, 5);
+    const typed = `\n:LOGBOOK:\n${CLOCK}\n:END: suffix`;
+    for (const ch of typed) typeChar(textarea!,ch);
+    expect(doc.byId[blockId].raw).toBe('plain'+typed);
+    expect(textarea!.value()).toBe('plain'+typed);
+  } finally {dispose();}
+});
+
+it.each(['md', 'org'] as const)('manual drawer prefixes and Escape retain the authored save buffer (%s)', async format => {
+  const { root, textarea, blockId, dispose } = mountPage('plain', true, format);
+  const typed = `plain\n:LOGBOOK:\n${CLOCK}\n:END: suffix`;
+  try {
+    textarea!.select(5, 5);
+    let prefix = 'plain';
+    for (const ch of typed.slice(5)) {
+      if (ch === '\n') {
+        textarea!.keydown(new KeyboardEvent("keydown", { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }));
+        await new Promise<void>(resolve => queueMicrotask(resolve));
+      } else typeChar(textarea!, ch);
+      prefix += ch;
+      // The textarea pairs the timestamp bracket until its closer is typed.
+      const buffer = prefix.includes('[') && !prefix.includes(']') ? prefix + ']' : prefix;
+      expect(textarea!.value()).toBe(buffer);
+      expect(doc.byId[blockId].raw).toBe(buffer);
+      // Save trims convenience spaces; soft newlines still reach the host.
+      expect(pageToDto(doc.byId[blockId].page)!.blocks[0].raw).toBe(buffer.endsWith(' ') ? buffer.slice(0, -1) : buffer);
+    }
+    textarea!.keydown(new KeyboardEvent("keydown", { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(maybeEditorIn(root)).toBeNull();
+    expect(pageToDto(doc.byId[blockId].page)!.blocks[0].raw).toBe(typed);
+  } finally { dispose(); }
+});
+
+it.each(["md", "org"] as const)("Backspace preserves a titleless logbook-only first block (%s)", (format) => {
+  const raw = `:LOGBOOK:\n${CLOCK}\n:END:`;
+  const { textarea, blockId, dispose } = mountPage(raw, true, format, true);
+  try {
+    expect(textarea!.value()).toBe("");
+    expect(trailingVisibleEmptyLeaf({roots: [blockId]})).toBeNull();
+    textarea!.keydown(new KeyboardEvent("keydown", {key: "Backspace", bubbles: true, cancelable: true}));
+    expect(doc.byId[blockId]?.raw).toBe(raw);
+  } finally { dispose(); }
+});
 
 describe("a CLOCK line outside a recognised drawer renders (GH #741)", () => {
   it.each([
@@ -95,7 +275,7 @@ describe("no reader of a clock/logbook date throws on a damaged logbook (GH #741
   }
   const readers = (raw: string, format: "md" | "org") => {
     logbookInfo(raw, format);
-    visibleBody(raw);
+    visibleBody(raw, "md");
     renderedBlockText(raw, format, { typographicGlyphs: false, stripLinks: false, removeTags: false, removeProperties: false });
   };
   it("the parse-only readers never throw", () => {
@@ -145,9 +325,9 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
       for (const ch of "DOING test") typeChar(textarea!, ch);
       const raw = doc.byId[blockId].raw;
       expect(raw).toMatch(/^DOING test\n:LOGBOOK:\nCLOCK: \[\d{4}-\d\d-\d\d \w{3} \d\d:\d\d:\d\d\]\n:END:$/);
-      expect(textarea!.value).toBe(raw);
-      expect(textarea!.selectionStart).toBe("DOING test".length);
-      expect(textarea!.selectionEnd).toBe("DOING test".length);
+      expect(textarea!.value()).toBe("DOING test");
+      expect(textarea!.selection()[0]).toBe("DOING test".length);
+      expect(textarea!.selection()[1]).toBe("DOING test".length);
     } finally {
       dispose();
     }
@@ -158,7 +338,7 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
     try {
       for (const ch of "DOING test") typeChar(textarea!, ch);
       expect(doc.byId[blockId].raw).toMatch(/^DOING test\n:LOGBOOK:\nCLOCK: \[[^\]]+\]\n:END:$/);
-      expect(textarea!.selectionStart).toBe("DOING test".length);
+      expect(textarea!.selection()[0]).toBe("DOING test".length);
     } finally {
       dispose();
     }
@@ -167,10 +347,10 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
   it("a caret inside the title survives the clock-in of a longer task", () => {
     const { textarea, blockId, dispose } = mountPage("TODO task", true);
     try {
-      textarea!.setSelectionRange(0, 4);
+      textarea!.select(0, 4);
       for (const ch of "DOING") typeChar(textarea!, ch); // select "TODO", type over it
       expect(doc.byId[blockId].raw).toMatch(/^DOING task\n:LOGBOOK:\nCLOCK: \[[^\]]+\]\n:END:$/);
-      expect(textarea!.selectionStart).toBe(5);
+      expect(textarea!.selection()[0]).toBe(5);
       typeChar(textarea!, "!");
       expect(doc.byId[blockId].raw).toMatch(/^DOING! task\n:LOGBOOK:/);
     } finally {
@@ -184,17 +364,73 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
 // textarea must take the store's text, or the next keystroke commits the
 // pre-transition text and drops the clock change (review R1 of GH #741).
 describe("a command marker change keeps its clock change when you keep typing (GH #741)", () => {
-  const ctrlEnter = (ta: HTMLTextAreaElement) =>
-    ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+  const ctrlEnter = (ta: EditorDriver) =>
+    ta.keydown(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
   const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+  it.each(["md", "org"] as const)("GH829 Ctrl+Enter twice then Enter preserves the clock on the original task (%s)", async format => {
+    setWorkflow("todo");
+    const { root, textarea, blockId, dispose } = mountPage("", true, format);
+    try {
+      for (const ch of "测试") typeChar(textarea!, ch);
+      ctrlEnter(textarea!);
+      await flush();
+      expect(textarea!.value()).toBe("TODO 测试");
+      ctrlEnter(textarea!);
+      await flush();
+      expect(textarea!.value()).toBe("DOING 测试");
+      expect(textarea!.selection()).toEqual([8, 8]);
+      const clocked = doc.byId[blockId].raw;
+      expect(logbookInfo(clocked, format).rows).toHaveLength(1);
+      textarea!.keydown({ key: "Enter" });
+      await flush();
+      expect(doc.byId[blockId].raw).toBe(clocked);
+      const sibling = maybeEditorIn(root)!;
+      expect(sibling.blockId).not.toBe(blockId);
+      expect(sibling.value()).toBe("");
+      sibling.type("next block");
+      expect(doc.byId[sibling.blockId!].raw).toBe("next block");
+      expect(root.textContent).not.toMatch(/LOGBOOK|CLOCK:|:END:/);
+    } finally { dispose(); setWorkflow("now"); }
+  });
+
+  it.each(["md", "org"] as const)("GH829 a mid-title split or DONE cycle keeps the drawer with its task (%s)", async format => {
+    setWorkflow("todo");
+    try { for (const done of [false, true]) {
+      const { root, textarea, blockId, dispose } = mountPage("", true, format);
+      try {
+        for (const ch of "first second") typeChar(textarea!, ch);
+        ctrlEnter(textarea!);
+        await flush();
+        ctrlEnter(textarea!);
+        await flush();
+        if (done) {
+          ctrlEnter(textarea!);
+          await flush();
+          expect(textarea!.value()).toBe("DONE first second");
+          expect(logbookInfo(doc.byId[blockId].raw, format).rows[0].end).not.toBeNull();
+        }
+        const prefix = done ? "DONE first " : "DOING first ";
+        const drawer = doc.byId[blockId].raw.slice(doc.byId[blockId].raw.indexOf("\n"));
+        textarea!.select(prefix.length);
+        textarea!.keydown({ key: "Enter" });
+        await flush();
+        expect(doc.byId[blockId].raw).toBe(prefix + drawer);
+        const sibling = maybeEditorIn(root)!;
+        expect(sibling.value()).toBe("second");
+        expect(doc.byId[sibling.blockId!].raw).toBe("second");
+        expect(root.textContent).not.toMatch(/LOGBOOK|CLOCK:|:END:/);
+      } finally { dispose(); }
+    } } finally { setWorkflow("now"); }
+  });
 
   it("DOING to DONE clocks out and stays clocked out", async () => {
     const { textarea, blockId, dispose } = mountPage(`DOING taskA\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:00:00]\n:END:`, true);
     try {
-      textarea!.setSelectionRange(11, 11);
+      textarea!.select(11, 11);
       ctrlEnter(textarea!);
       await flush();
-      expect(textarea!.value).toBe(doc.byId[blockId].raw);
+      expect(textarea!.value()).toBe("DONE taskA");
       typeChar(textarea!, "x");
       expect(doc.byId[blockId].raw).toMatch(/^DONE taskAx\n:LOGBOOK:\nCLOCK: \[2026-10-21 Wed 08:00:00\]--\[[^\]]+\] =>\s+\d{2,}:\d\d:\d\d\n:END:$/);
     } finally {
@@ -206,7 +442,7 @@ describe("a command marker change keeps its clock change when you keep typing (G
     const closed = "CLOCK: [2026-10-20 Tue 08:00:00]--[2026-10-20 Tue 09:00:00] =>  01:00:00";
     const { textarea, blockId, dispose } = mountPage(`TODO taskB\n:LOGBOOK:\n${closed}\n:END:`, true);
     try {
-      textarea!.setSelectionRange(10, 10);
+      textarea!.select(10, 10);
       ctrlEnter(textarea!);
       await flush();
       expect(doc.byId[blockId].raw.match(/CLOCK:/g)).toHaveLength(2);

@@ -53,8 +53,6 @@ pub(super) enum Owner {
     Watcher,
     /// The driver's publication consumer, in host event order.
     Consumer,
-    /// A retained writer's reservation: its transaction publishes.
-    Reservation,
 }
 
 /// A watcher read or a released reservation the driver must observe (§5, §7).
@@ -73,6 +71,11 @@ pub(super) struct State<F: HostIo, C: Clock> {
     wake_seq: u64,
     /// Keys whose disk state the driver owes the host an observation of.
     pub observe: BTreeMap<PageKey, Observation>,
+    /// Held pages' reads waiting for a key's owed observation (A-H1).
+    pub observed: BTreeMap<PageKey, Vec<crate::watch::Observed>>,
+    /// Those whose observation settled, told once the step that settled it
+    /// has been delivered: its publication is indexed by then.
+    settled: Vec<(crate::watch::Observed, Result<(), IoFailure>)>,
     /// Keys whose path lock another thread held at the driver's last try:
     /// consecutive misses and the retry instant (A4, REVIEW-3a). A path lock
     /// is a physical resource, so its retry runs on the monotonic clock, not
@@ -89,8 +92,35 @@ pub(super) struct State<F: HostIo, C: Clock> {
 }
 
 impl<F: HostIo, C: Clock> State<F, C> {
+    /// GH #875: typing can make a conflicted draft equal to disk without
+    /// another watcher event. Re-read once after a taken conflicted input;
+    /// the host's exact-byte read table decides, never a stale observation
+    /// or the resolver's block diff. Existing observation retries retain
+    /// input and the conflict when the disk cannot be read.
+    fn collect(&mut self) -> Delivery {
+        let delivery = self.book.collect(&mut self.progress);
+        for (key, mail, _) in &delivery.mail {
+            if mail.answer.as_ref().is_some_and(|answer| answer.took)
+                && mail.page.as_ref().is_some_and(|page| page.conflict)
+            {
+                self.observe.entry(key.clone()).or_default();
+            }
+        }
+        delivery
+    }
+
     fn wake(&mut self) {
         self.wake_seq = self.wake_seq.wrapping_add(1);
+    }
+
+    /// Tell held pages' reads their observations settled (A-H1), after the
+    /// delivery of the step that settled them.
+    fn tell_settled(&mut self) {
+        for (done, outcome) in self.settled.drain(..) {
+            let _ = done.send(outcome.map_err(|failure| {
+                crate::watch::observation_failed(failure.os_error, failure.operation)
+            }));
+        }
     }
 
     /// Tests' quiescence rounds (`PageHost::quiesce_for_tests`).
@@ -158,10 +188,19 @@ impl<F: HostIo, C: Clock> State<F, C> {
             .find(|(key, o)| o.due <= now && self.observable(key))
             .map(|(key, o)| (key.clone(), o.forwarded));
         if let Some((key, forwarded)) = owed {
-            let observe = || self.progress.with_host(|host| host.observe(&key));
-            let result = observation(forwarded, observe);
+            let observe = || self.progress.with_host(|host| host.observe_read(&key));
+            let read = observation(forwarded, observe);
             if self.progress.host.lock_request.is_some() {
                 return Disposition::Waiting;
+            }
+            let (result, outcome) = match read {
+                Ok(result) => (result, Ok(())),
+                Err(failure) => (Disposition::Refused, Err(failure)),
+            };
+            if !matches!(result, Disposition::Waiting) {
+                for done in self.observed.remove(&key).unwrap_or_default() {
+                    self.settled.push((done, outcome));
+                }
             }
             match result {
                 Disposition::Refused => {
@@ -177,7 +216,6 @@ impl<F: HostIo, C: Clock> State<F, C> {
                 Disposition::Waiting => {}
                 _ => {
                     self.observe.remove(&key);
-                    self.book.handover.remove(&key);
                     self.book.observe_errors.remove(&key);
                     return Disposition::Applied;
                 }
@@ -625,6 +663,11 @@ impl<F: HostIo, C: Clock> Drop for Ended<'_, F, C> {
         }
         // Under the inbox mutex, so nothing is queued after: every caller
         // still waiting sees its request dropped unanswered.
+        // A held page's read waiting on an observation reads again now.
+        if let Ok(mut state) = self.0.state.lock() {
+            state.observed.clear();
+            state.settled.clear();
+        }
         let mut inbox = self.0.inbox.lock().unwrap_or_else(|e| e.into_inner());
         self.0.ended.store(true, Ordering::SeqCst);
         let dropped = std::mem::take(&mut *inbox);
@@ -651,6 +694,8 @@ where
                 progress: Progress::new(host, clock),
                 wake_seq: 0,
                 observe: BTreeMap::new(),
+                observed: BTreeMap::new(),
+                settled: Vec::new(),
                 contended: BTreeMap::new(),
                 stepped: Instant::now(),
                 book: Book::default(),
@@ -830,7 +875,7 @@ fn dispatch<F: HostIo, C: Clock>(
     wait: bool,
 ) -> Dispatched<F, C> {
     let writer = command.writer.clone();
-    let _writer = match writer.as_deref() {
+    let writer = match writer.as_deref() {
         None => None,
         Some(writer) if wait => Some(writer.lock().unwrap()),
         Some(writer) => match writer.try_lock() {
@@ -839,20 +884,37 @@ fn dispatch<F: HostIo, C: Clock>(
             Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
         },
     };
-    if !claim(&command.claim, QUEUED) {
-        return Dispatched::Done;
+    let run = move || {
+        if !claim(&command.claim, QUEUED) {
+            return Dispatched::Done;
+        }
+        let state = shared.state.lock().unwrap();
+        let (state, again) = (command.run)(shared, state);
+        drop(state);
+        debug_assert!(
+            again.is_none() || command.writer.is_none(),
+            "a writer request waits"
+        );
+        match park(command, again) {
+            Some((command, at)) => Dispatched::Waiting(command, at),
+            None => Dispatched::Done,
+        }
+    };
+    match writer {
+        Some(writer) => under_writer(writer, run),
+        None => run(),
     }
-    let state = shared.state.lock().unwrap();
-    let (state, again) = (command.run)(shared, state);
-    drop(state);
-    debug_assert!(
-        again.is_none() || command.writer.is_none(),
-        "a writer request waits"
-    );
-    match park(command, again) {
-        Some((command, at)) => Dispatched::Waiting(command, at),
-        None => Dispatched::Done,
-    }
+}
+
+/// Run `work` holding the store writer `guard`, and release it before a
+/// panic in `work` (a host bug) unwinds on: the driver still ends, but an
+/// unpoisoned writer lets the Store's other writers and `Store::close` go on
+/// (s3b O6). The host's drop hands its pages back to the watcher, which
+/// rereads them from disk.
+pub(super) fn under_writer<R>(guard: std::sync::MutexGuard<'_, ()>, work: impl FnOnce() -> R) -> R {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+    drop(guard);
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// Start an ask of a request that is `from` (queued or parked); false when
@@ -919,6 +981,8 @@ fn host_stats<F: HostIo>(host: &Host<F>) {
 const WRITER_RETRY: (Duration, Duration) = (Duration::from_millis(1), Duration::from_millis(20));
 
 fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
+    // `Store::page` never runs here: a held page's read can wait for us.
+    crate::watch::mark_observer_thread();
     let _ended = Ended(shared);
     // The next bench `host_stats` (None: events off).
     let mut stats = crate::bench_events::enabled().then(|| Instant::now() + HOST_STATS_EVERY);
@@ -979,10 +1043,7 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
                     host_stats(&state.progress.host);
                     stats = Some(Instant::now() + HOST_STATS_EVERY);
                 }
-                let delivery = {
-                    let state = &mut *state;
-                    state.book.collect(&mut state.progress)
-                };
+                let delivery = state.collect();
                 let idle =
                     !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
                 (delivery, idle)
@@ -992,6 +1053,9 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
             drop(state);
             pending = deliver(shared, sink, delivery, false);
             state = shared.state.lock().unwrap();
+        }
+        if pending.is_none() {
+            state.tell_settled();
         }
         // A finished job or worker step may answer a waiting request; every
         // step chain ends here.
@@ -1056,14 +1120,38 @@ fn deliver<F: HostIo, C: Clock>(
         let state = shared.state.lock().unwrap();
         state.book.owner(key, &state.progress.host)
     };
+    let evicted: Vec<_> = delivery
+        .evicted
+        .iter()
+        .map(|(key, _)| key.clone())
+        .collect();
     let results = match sink.deliver(delivery, &owner, wait) {
         Ok(results) => results,
         Err(delivery) => return Some(delivery),
     };
-    if !results.is_empty() {
+    if !results.is_empty() || !evicted.is_empty() {
         // Collect again: an eviction or a notice may now be due.
         let mut state = shared.state.lock().unwrap();
         let now = state.progress.clock.now_ms();
+        for key in evicted {
+            // End the handoff only after the bridge returned the source
+            // to the watcher. Admission may have reclaimed it while this
+            // delivery waited for the writer; then its receiver stays held.
+            if state.book.owner(&key, &state.progress.host) == Owner::Watcher {
+                state.progress.host.order.released(&key);
+            }
+        }
+        for (publication, indexing) in &results {
+            if matches!(indexing, Indexing::Indexed) {
+                if let Some((version, _)) = &publication.own {
+                    state
+                        .progress
+                        .host
+                        .order
+                        .indexed(&publication.key, *version);
+                }
+            }
+        }
         state.book.record(results, now);
         state.wake();
     }

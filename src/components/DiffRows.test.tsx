@@ -220,6 +220,11 @@ describe("narrow-container segment variants", () => {
 });
 
 describe("the Apply-all-suggested sweep vs artifact proposals", () => {
+  it("keeps the current choice on a row with no suggestion (GH #901)", () => {
+    const plain: DiffRow = { id: "1", kind: "modified", mine: { uuid: "", text: "a", child_count: 0 }, theirs: { uuid: "", text: "b", child_count: 0 }, children: [] };
+    expect(seedSuggestedExceptArtifact([plain], { "1": "mine" })).toEqual({ "1": "mine" });
+  });
+
   it("re-applies a COMPUTED merged suggestion like any other", () => {
     expect(seedSuggestedExceptArtifact([mergedRow], { "1": "mine" })).toEqual({ "1": "merged" });
   });

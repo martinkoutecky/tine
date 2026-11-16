@@ -291,7 +291,7 @@ pub fn trash_asset(store: &Store, name: &str) -> io::Result<TrashOutcome> {
     let moved = crate::retry_on_conflict("asset changed repeatedly during trash", || {
         let rev = match store.read(&id, None) {
             Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
+            Err(StoreError::NotFound(_)) => {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"))
             }
             Err(error) => return Err(store_error(error)),

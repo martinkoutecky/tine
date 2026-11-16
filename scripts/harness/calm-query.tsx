@@ -10,13 +10,19 @@ import { initParser } from "../../src/render/parse";
 import { setDoc } from "../../src/document/model";
 import { openPage } from "../../src/router";
 import { Block } from "../../src/components/Block";
-import type { ParsedQuery, QueryResult } from "../../src/editor/queryIr";
-import { taskFilter } from "../../src/editor/queryBuilder";
+import type { Filter, ParsedQuery, QueryResult } from "../../src/editor/queryIr";
+import { propertyFilter, taskFilter } from "../../src/editor/queryBuilder";
 
 await initParser();
 const params = new URLSearchParams(location.search);
 const queryIds = Array.from({ length: Math.min(40, Math.max(1, Number(params.get("queries") ?? 1))) }, (_, index) => index === 0 ? "query" : `query-${index}`);
 const rowCount = Math.min(100, Math.max(3, Number(params.get("rows") ?? 3)));
+// ?filter=nested draws the reporter's GH #619 c6 tree: or( or(task, B), or(deadline, contents), priority ).
+const nested: Filter = { kind: "or", items: [
+  { kind: "or", items: [taskFilter(["TODO", "DOING", "NOW"]), propertyFilter("priority", "B")] },
+  { kind: "or", items: [propertyFilter("deadline", "soon"), propertyFilter("topic", "contents")] },
+  propertyFilter("priority", "A"),
+] };
 const started = performance.now();
 const blocks = Array.from({ length: rowCount }, (_, index) => ["Plan the trip", "Book the train", "Pack the bag"][index] ?? `Travel task ${index}`).map((text, index) => ({ id: `task-${index}`, raw: `TODO ${text}\nowner:: Martin`, marker: "TODO", collapsed: false, children: [], properties: [["owner", "Martin"]] as [string, string][] }));
 setDoc({ byId: Object.fromEntries([
@@ -26,7 +32,7 @@ setDoc({ byId: Object.fromEntries([
 openPage("Travel");
 const b = backend();
 b.parseQuery = async (_text, _dialect, properties = []): Promise<ParsedQuery> => ({
-  query: { anchor: "block", filter: taskFilter(["TODO"]), diagnostics: [], source: { kind: "og", original: "(task TODO)", og_options: '{:title "Travel tasks"}' } },
+  query: { anchor: "block", filter: params.get("filter") === "nested" ? nested : taskFilter(["TODO"]), diagnostics: [], source: { kind: "og", original: "(task TODO)", og_options: '{:title "Travel tasks"}' } },
   view: { view: (properties.find(([key]) => key === "tine.view")?.[1] ?? "list") as "list" | "table" | "board" | "search" },
 });
 b.queryOgExpressible = async () => true;

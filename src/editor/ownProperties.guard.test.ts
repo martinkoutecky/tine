@@ -21,8 +21,8 @@ it("I-12: Org reattachment and hide policies are the kernel's; exemplar editor/p
   expect(join).toContain("editorTextJoin(visible, hidden, format)");
   expect(join).not.toMatch(/\.test\(|\.exec\(|RegExp|startsWith\(\"(?:SCHEDULED|DEADLINE|CLOSED|:PROPERTIES:)/);
   const hides = source.slice(source.indexOf("export function hides"), source.indexOf("export function hides") + 200);
-  expect(hides).toContain("hidePolicyHides(policyText(policy), key)");
+  expect(hides).toContain("hidePolicyHides(policyText(policy), key, properties)");
   const session = readFileSync(new URL("./propertySession.ts", import.meta.url), "utf8");
-  expect(session).toContain("p.primary && hides(hide, p.key)");
+  expect(session).toContain("own.some((p) => hides(hide, p.key, properties))");
   expect(session).not.toMatch(/seedFacets|cache\.set|regionCache\.set/);
 });

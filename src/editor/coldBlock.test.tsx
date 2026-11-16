@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "../tests/editorDriver";
 import { expect, it, vi } from "vitest";
 
 it("cold capture Block mounts before parser init and publishes identity when ready", async () => {
@@ -17,11 +18,11 @@ it("cold capture Block mounts before parser init and publishes identity when rea
   let dispose: (() => void) | undefined;
   try {
     dispose = render(() => Block({ id: "scratch" }), root);
-    expect(root.querySelector("textarea.block-editor")).not.toBeNull();
+    expect(maybeEditorIn(root)).not.toBeNull();
     expect(root.querySelector(".ls-block")?.hasAttribute("data-block-ref")).toBe(false);
     await initParser();
     expect(root.querySelector(".ls-block")?.getAttribute("data-block-ref")).toBe("scratch");
-    expect(root.querySelector("textarea.block-editor")).not.toBeNull();
+    expect(maybeEditorIn(root)).not.toBeNull();
   } finally {
     dispose?.();
     endEdit("page-navigation");

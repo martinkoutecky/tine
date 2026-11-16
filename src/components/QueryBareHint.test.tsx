@@ -90,6 +90,16 @@ function reading(argument: string): ParsedQuery {
         no_conditions: true,
         rewrites: [{ rewrite: "priorities", query: og(text, list("priority", ["A", "B", "C"])) }],
       });
+    case "(and (priority) (task))":
+      return hinted({ kind: "and", items: [list("priority", []), list("task", [])] }, {
+        bare: ["task", "priority"],
+        no_conditions: true,
+        rewrites: [
+          { rewrite: "open_tasks", query: og(text, { kind: "and", items: [list("priority", []), list("task", OPEN)] }) },
+          { rewrite: "any_task", query: og(text, { kind: "and", items: [list("priority", []), list("task", ANY)] }) },
+          { rewrite: "priorities", query: og(text, { kind: "and", items: [list("priority", ["A", "B", "C"]), list("task", [])] }) },
+        ],
+      });
     case "":
       return { query: { ...og(text, { kind: "true" }), anchor: "page" }, view: {}, og_hint: { bare: [], no_conditions: true, rewrites: [] } };
     default:
@@ -196,6 +206,28 @@ describe("GH #422: the on-query hint for Logseq's no-condition forms", () => {
       expect(print).toHaveBeenCalledWith(og("(task)", list("task", OPEN)), {}, "og");
       expect(undo()).toBe(true);
       expect(raw()).toBe("{{query (task)}}");
+    } finally {
+      dispose();
+    }
+  });
+
+  // Discussion #422 (Dieterbe, 2026-10-14): when EVERY clause is non-constraining
+  // the query ran nothing, so the cue says so and no empty-result chrome
+  // ("No results" / "why empty?") competes with it.
+  it("every clause non-constraining: the cue and the add-a-condition prompt, no empty-result chrome", async () => {
+    load("{{query (and (priority) (task))}}");
+    arrange();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const shown = await hint(root);
+      expect(shown.textContent).toContain("(task) without markers adds no condition");
+      expect(shown.textContent).toContain("(priority) without levels adds no condition");
+      expect(buttons(shown)).toEqual(["Open tasks", "Any task", "A, B or C"]);
+      await vi.waitFor(() => expect(root.querySelector(".query-empty")?.textContent).toContain("Add a condition to see results."));
+      await settle();
+      expect(root.textContent).not.toContain("No results");
+      expect(root.querySelector(".query-why-empty")).toBeNull();
+      expect(root.querySelectorAll(".query-empty")).toHaveLength(1);
     } finally {
       dispose();
     }

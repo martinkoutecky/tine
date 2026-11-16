@@ -857,6 +857,19 @@ describe("filterPhrase / querySentence", () => {
       .toBe("Blocks where task: TODO or task: DONE");
   });
 
+  it("reads link conditions without a builder row: relations by name, near as advanced", () => {
+    const linksTo: Filter = {
+      kind: "leaf",
+      leaf: { kind: "rel", rel: "links", quant: "any", pred: { kind: "true" } },
+    };
+    expect(filterLabel(linksTo)).toContain("links");
+    const near: Filter = {
+      kind: "leaf",
+      leaf: { kind: "near", seeds: pageRefFilter("seed"), k: 2, dir: "both" },
+    };
+    expect(filterLabel(near)).toBe(renderEnglish(ADVANCED_PHRASE));
+  });
+
   it("bounds a 64-deep hostile query to a short sentence (I-22)", () => {
     let deep: Filter = pageRefFilter("bottom");
     for (let i = 0; i < 64; i++) deep = { kind: "and", items: [pageRefFilter(`level${i}`), deep] };

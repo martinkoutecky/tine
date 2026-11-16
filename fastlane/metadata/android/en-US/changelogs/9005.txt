@@ -1,0 +1,1 @@
+Fifth Tine 0.9 Beta. Long pages with block embeds scroll up without jumping back. The Android keyboard keeps the edited line just above the toolbar. Linked references stay still and keep your reading position. The comment margin can be hidden. Query editor and query result fixes. Pasting images into Quick Capture works. Switching apps commits pending edits. CLI write fixes.

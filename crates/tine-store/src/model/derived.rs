@@ -21,7 +21,10 @@
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
-//! whole build decides at the held epoch it checks again under the lock.
+//! whole build decides at the held epoch it checks again under the lock,
+//! and so does a name memo (the page list, the claimant index): one walked
+//! outside it installs only if neither the generation nor the held epoch
+//! moved since the walk began ([`Graph::install_name_memo`]).
 //! Holds, releases and respellings are one ownership transition
 //! ([`Graph::transition`], REVIEW-3a4): under the cache lock it changes the
 //! held map, bumps the held epoch and settles every row and error whose
@@ -153,6 +156,9 @@ pub(crate) struct Derived {
     /// invisibly.
     page_index_failures: RwLock<Vec<String>>,
     unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
+    /// Retryable reads inside the racy window. Storage guards still need
+    /// this uncertainty even though automatic notices wait for settling.
+    unsettled_reads: RwLock<Arc<HashMap<PathBuf, String>>>,
     discovery_errors: RwLock<Vec<(crate::FileId, crate::IoError)>>,
     /// Memoized `list_pages()`, keyed by `cache_gen` (which every page
     /// create, delete and rename bumps), so quick-switch and `[[` complete
@@ -177,6 +183,17 @@ pub(crate) struct Derived {
     /// anchor line ([`Graph::vcs_anchor_state`]). A superset is harmless; a
     /// subset would hide a conflicted page. Checkpointed (FORMAT 6).
     vcs_anchored: RwLock<HashSet<PathBuf>>,
+    /// Every path whose cached row [`Graph::put_row`] or
+    /// [`Graph::retire_row`] changed since the last snapshot capture took
+    /// them ([`Graph::take_touched`]). A publication names the files it
+    /// publishes, but the cache can hold more than that: a failed
+    /// transaction caches its own files and an outside writer's together and
+    /// publishes them separately. The capture patches every per-page index
+    /// by these paths too, so no generation misses a mutation its pages root
+    /// contains. A leaf lock; a superset only costs a redundant patch.
+    touched: Mutex<BTreeSet<PathBuf>>,
+    /// Moves made while no cache is installed (`derived_cold.rs`).
+    cold_moves: Mutex<cold::ColdMoves>,
 }
 
 impl Default for Derived {
@@ -187,12 +204,15 @@ impl Default for Derived {
             observed_mtimes: RwLock::new(Arc::new(SharedMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
+            unsettled_reads: RwLock::new(Arc::new(HashMap::new())),
             discovery_errors: RwLock::new(Vec::new()),
             page_list_cache: RwLock::new(None),
             find_entry_cache: RwLock::new(None),
             launch_listing: RwLock::new(None),
             disk_revs: RwLock::new(HashMap::new()),
             vcs_anchored: RwLock::new(HashSet::new()),
+            touched: Mutex::new(BTreeSet::new()),
+            cold_moves: Default::default(),
         }
     }
 }
@@ -343,6 +363,71 @@ impl Graph {
         self.derived.cache.read().unwrap().is_some()
     }
 
+    /// Apply the published day's existing claimant order to its parsed rows.
+    /// Only this day's claimants are visited. A promoted file is read once;
+    /// held files use their owner's published bytes, never a new disk read.
+    pub(crate) fn reconcile_journal_claimants(&self, entries: &[PageEntry]) -> Vec<PathBuf> {
+        let Some(winner) = entries.first() else {
+            return Vec::new();
+        };
+        let mut changed = Vec::new();
+        {
+            let mut cache = self.derived.cache.write().unwrap();
+            if let Some(pages) = cache.as_mut() {
+                for entry in &entries[1..] {
+                    if pages.positions.contains_key(entry.rel_path_str()) {
+                        self.retire_row(Some(Arc::make_mut(pages)), &entry.path, false);
+                        changed.push(entry.path.clone());
+                    }
+                }
+            }
+            if !changed.is_empty() {
+                let paths: Vec<_> = changed.iter().map(PathBuf::as_path).collect();
+                self.move_generation(cache.is_none(), &paths);
+            }
+        }
+        if self.with_cached(&winner.path, |row| row.is_some()) == Some(true) {
+            return changed;
+        }
+        // A claimant without a path, or whose file is gone, is stale (the
+        // watcher's removal follows); neither is an unreadable page.
+        if winner.path.as_os_str().is_empty() {
+            return changed;
+        }
+        match self.source(&winner.path) {
+            Source::Disk => {
+                if let SyncFileResult::ReadFailed(error) =
+                    self.sync_file_internal(&winner.path, None)
+                {
+                    if let Some(error) =
+                        unreadable_error(error, "Tine unreadable file producer=journal-claimant")
+                    {
+                        let id = crate::FileId::from(winner.rel_path_str().to_owned());
+                        let mut errors = self.derived.unreadable_pages.write().unwrap();
+                        if !errors.iter().any(|(known, _)| *known == id) {
+                            Arc::make_mut(&mut errors).push((id, error.to_string()));
+                        }
+                    }
+                }
+            }
+            Source::Held(bytes) => {
+                if let Some(row) = self
+                    .held_key(&winner.path)
+                    .and_then(|key| self.owned_row(&key, &bytes, None))
+                {
+                    let mut cache = self.derived.cache.write().unwrap();
+                    if let Some(pages) = cache.as_mut() {
+                        self.put_row(Arc::make_mut(pages), row);
+                        self.move_generation(false, &[&winner.path]);
+                    }
+                }
+            }
+            Source::HeldAbsent | Source::HeldUnindexed => {}
+        }
+        changed.push(winner.path.clone());
+        changed
+    }
+
     /// `f` over the cached row for `path` (None when not cached), under the
     /// cache read lock; None when the cache is not built.
     pub(super) fn with_cached<T>(
@@ -379,6 +464,48 @@ impl Graph {
     }
 
     pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
+        let mut rows = self.reported_unreadable_pages();
+        let pending = Arc::clone(&self.derived.unsettled_reads.read().unwrap());
+        if pending.is_empty() {
+            return rows;
+        }
+        let mut memo = Memo::default();
+        Arc::make_mut(&mut rows).extend(
+            pending
+                .iter()
+                .filter(|(path, _)| self.disk_sourced_in(&mut memo, path))
+                .map(|(path, reason)| (crate::FileId::from(self.rel_path(path)), reason.clone())),
+        );
+        Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        Arc::make_mut(&mut rows).dedup_by(|a, b| a.0 == b.0);
+        rows
+    }
+
+    pub(crate) fn note_unsettled_read(&self, path: &Path, reason: Option<String>) {
+        let mut pending = self.derived.unsettled_reads.write().unwrap();
+        match reason {
+            Some(reason) => {
+                Arc::make_mut(&mut pending).insert(path.to_path_buf(), reason);
+            }
+            None if pending.contains_key(path) => {
+                Arc::make_mut(&mut pending).remove(path);
+            }
+            None => {}
+        }
+    }
+
+    pub(crate) fn unsettled_read_paths(&self) -> Vec<PathBuf> {
+        self.derived
+            .unsettled_reads
+            .read()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Only settled read failures belong in the published automatic notice.
+    pub(crate) fn reported_unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
         let mut rows = Arc::clone(&self.derived.unreadable_pages.read().unwrap());
         Arc::make_mut(&mut rows).extend(
             self.derived
@@ -455,6 +582,8 @@ impl Graph {
         }
         let mut memo = Memo::default();
         entries.retain(|entry| self.disk_sourced_in(&mut memo, &entry.path));
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.certify_pause);
         for (key, bytes) in self.held.published() {
             if let Some(entry) = self.owned_entry(&key, &bytes) {
                 if kind.is_none_or(|kind| kind == entry.kind) {
@@ -465,30 +594,55 @@ impl Graph {
         Certified(entries)
     }
 
+    /// The cache generation and the held epoch a name memo is derived at.
+    fn name_stamp(&self) -> (u64, u64) {
+        (self.cache_gen.load(Ordering::Acquire), self.held.epoch())
+    }
+
+    /// Run `install` for a name memo derived since `stamp` only while
+    /// neither moved, checked under the cache lock: a transition moves the
+    /// held map and bumps the epoch inside it. A release or an open's hold
+    /// moves no generation, so a walk whose certify read the held map on both
+    /// sides of one (the page dropped, or listed twice) would otherwise stand
+    /// for the whole generation (REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE).
+    /// None: the caller walks again.
+    fn install_name_memo<T>(&self, stamp: (u64, u64), install: impl FnOnce() -> T) -> Option<T> {
+        let _cache = self.derived.cache.read().unwrap();
+        (self.name_stamp() == stamp).then(install)
+    }
+
     /// Every page and journal in the graph, one per duplicate journal day.
     pub(crate) fn list_pages_shared(&self) -> Arc<Vec<PageEntry>> {
-        let gen = self.cache_gen.load(Ordering::Acquire);
-        if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
-            if *g == gen {
-                return Arc::clone(entries);
+        loop {
+            let stamp = self.name_stamp();
+            if let Some((g, entries)) = self.derived.page_list_cache.read().unwrap().as_ref() {
+                if *g == stamp.0 {
+                    return Arc::clone(entries);
+                }
+            }
+            let entries = self.certify(list_graph_pages(self), None);
+            // A duplicate-day journal (canonical + leftover title-named file)
+            // shows once in quick-switch and All Pages: both resolve to one page.
+            let entries = Arc::new(dedup_journal_days(
+                entries.0,
+                &self.current_journal_format(),
+                self.current_config().file_name_format,
+            ));
+            let installed = self.install_name_memo(stamp, || {
+                *self.derived.page_list_cache.write().unwrap() =
+                    Some((stamp.0, Arc::clone(&entries)));
+            });
+            if installed.is_some() {
+                return entries;
             }
         }
-        let entries = self.certify(list_graph_pages(self), None);
-        // A duplicate-day journal (canonical + leftover title-named file)
-        // shows once in quick-switch and All Pages: both resolve to one page.
-        let entries = Arc::new(dedup_journal_days(
-            entries.0,
-            &self.current_journal_format(),
-            self.current_config().file_name_format,
-        ));
-        *self.derived.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&entries)));
-        entries
     }
 
     pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         let key = (kind, tine_core::refs::page_key(name));
         loop {
-            let gen = self.cache_gen.load(Ordering::Acquire);
+            let stamp = self.name_stamp();
+            let gen = stamp.0;
             if let Some(found) = self.cached_claimants(&key, gen) {
                 return found;
             }
@@ -496,7 +650,7 @@ impl Graph {
             let mut built = FindEntryIndex::new();
             built.entries = page_claimants(self, &listed.0);
             built.mark_kind_loaded(kind);
-            let found = {
+            let found = self.install_name_memo(stamp, || {
                 let mut guard = self.derived.find_entry_cache.write().unwrap();
                 match guard.as_mut() {
                     Some((g, index)) if *g == gen => {
@@ -515,8 +669,8 @@ impl Graph {
                         found
                     }
                 }
-            };
-            if self.cache_gen.load(Ordering::Acquire) == gen {
+            });
+            if let Some(found) = found {
                 return found;
             }
         }
@@ -607,6 +761,14 @@ impl Graph {
     pub(crate) fn named_entry(&self, path: &Path) -> Named {
         match self.authority(path) {
             Authority::Disk => match self.entry_for_path(path) {
+                // A late/retired path is not proof of a physical file. Name
+                // discovery falls back to its filename on read errors, which
+                // is useful for proposed paths but must not create a claimant
+                // after an external move (GH #905). Check after discovery so
+                // a disappearance during its preamble read is absent too.
+                Some(_) if matches!(fs::symlink_metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound) => {
+                    Named::Absent
+                }
                 Some(entry) => Named::Entry(entry),
                 None => Named::NotAPage,
             },
@@ -640,6 +802,12 @@ impl Graph {
     /// Paths a transition settled since the last capture (E105).
     pub(crate) fn take_retired(&self) -> BTreeSet<PathBuf> {
         std::mem::take(&mut self.held.retired.lock().unwrap())
+    }
+
+    /// Paths whose cached rows changed since the last capture (see
+    /// `Derived::touched`).
+    pub(crate) fn take_touched(&self) -> BTreeSet<PathBuf> {
+        std::mem::take(&mut self.derived.touched.lock().unwrap())
     }
 
     /// Whether a transition settled paths no capture has taken yet.
@@ -694,16 +862,32 @@ impl Graph {
         }
     }
 
-    /// Record that `path`'s parse panicked (its page is no longer indexed).
+    /// Isolate a parser failure to `path`, retiring only its indexed row.
+    /// Capture can promote a journal mid-publication, so the cache must stay
+    /// built for unrelated pages and for the rest of that capture.
     /// A held page's index is its owner's, never a disk parse's.
     pub(super) fn record_index_failure(&self, path: &Path) {
-        let _cache = self.derived.cache.read().unwrap();
+        let mut cache = self.derived.cache.write().unwrap();
         if self.disk_sourced(path) {
-            self.derived
-                .page_index_failures
-                .write()
-                .unwrap()
-                .push(self.rel_path(path));
+            // A quiet retry must not erase an already reported launch error.
+            self.retire_row(cache.as_mut().map(Arc::make_mut), path, false);
+            let rel = self.rel_path(path);
+            let mut failures = self.derived.page_index_failures.write().unwrap();
+            if !failures.contains(&rel) {
+                failures.push(rel.clone());
+            }
+            drop(failures);
+            // A checkpoint launch also reconciles through this boundary.
+            // Replacing a whole-cache rebuild must retain its per-page error
+            // reporting, including when the watcher defers its own notice.
+            let mut unreadable = self.derived.unreadable_pages.write().unwrap();
+            let id = crate::FileId::from(rel);
+            if !unreadable.iter().any(|(known, _)| *known == id) {
+                tine_core::diag_line::diagnostic_line("Tine unreadable file producer=index-panic");
+                Arc::make_mut(&mut unreadable).push((id, ParserPanicked.to_string()));
+            }
+            drop(unreadable);
+            self.move_generation(cache.is_none(), &[path]);
         }
     }
 
@@ -714,7 +898,11 @@ impl Graph {
     pub(super) fn record_name_discovery(&self, path: &Path, failure: Option<io::Error>) {
         let id = crate::FileId::from(self.rel_path(path));
         let _cache = self.derived.cache.read().unwrap();
-        let record = failure.filter(|_| self.disk_sourced(path));
+        let record = failure
+            .filter(|_| self.disk_sourced(path))
+            .and_then(|error| {
+                unreadable_error(error, "Tine unreadable file producer=direct-name-discovery")
+            });
         #[cfg(test)]
         crate::store::pause_at_hook(&self.discovery_record_pause);
         let mut known = self.derived.discovery_errors.write().unwrap();
@@ -737,6 +925,13 @@ impl Graph {
         let failures: Vec<_> = failures
             .into_iter()
             .filter(|(id, _)| self.disk_sourced_in(&mut memo, &self.root.join(id.as_str())))
+            .filter_map(|(id, error)| {
+                unreadable_error(
+                    error,
+                    "Tine unreadable file producer=listing-name-discovery",
+                )
+                .map(|error| (id, error))
+            })
             .collect();
         let mut known = self.derived.discovery_errors.write().unwrap();
         known.retain(|(id, _)| match kind {
@@ -839,7 +1034,13 @@ impl Graph {
             rows.extend(owned.row);
         }
         if let Some(discovery) = discovery {
-            *self.derived.discovery_errors.write().unwrap() = discovery;
+            *self.derived.discovery_errors.write().unwrap() = discovery
+                .into_iter()
+                .filter_map(|(id, error)| {
+                    unreadable_error(error, "Tine unreadable file producer=launch-discovery")
+                        .map(|error| (id, error))
+                })
+                .collect();
         }
         unreadable.extend(
             self.derived
@@ -882,6 +1083,7 @@ impl Graph {
         *self.derived.cache_index.write().unwrap() = Some(index);
         *self.derived.disk_revs.write().unwrap() = revs;
         *self.derived.vcs_anchored.write().unwrap() = anchored;
+        self.forget_cold_moves();
         if replace {
             // A replaced cache is new content under the old generation: the
             // generation-keyed page list, name index and block index must
@@ -905,7 +1107,21 @@ impl Graph {
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
-    /// Install a loaded checkpoint's page cache: false when a cache exists
+    /// Why a checkpoint's rows would not install now (the checks
+    /// [`Self::install_checkpoint_rows`] makes under the cache lock), or
+    /// None. Asked early, without the writer (`ChangeFeed::launch_race`).
+    pub(crate) fn checkpoint_race(&self) -> Option<crate::store::checkpoint::Fallback> {
+        use crate::store::checkpoint::Fallback;
+        if self.cache_built() {
+            Some(Fallback::CacheBuilt)
+        } else if !self.held.is_empty() {
+            Some(Fallback::PageHeld)
+        } else {
+            None
+        }
+    }
+
+    /// Install a loaded checkpoint's page cache: refused when a cache exists
     /// or any page is held. A checkpoint's rows, indexes and claimants carry
     /// no owner provenance, so a held page makes the launch a full build
     /// (R2): the whole checkpoint is declined. The caller holds the store
@@ -917,11 +1133,15 @@ impl Graph {
         failures: Vec<String>,
         (disk_revs, vcs_anchored): (Vec<(PathBuf, String)>, Vec<PathBuf>),
         (cache_generation, list): (u64, Arc<Vec<PageEntry>>),
-    ) -> bool {
+    ) -> Result<(), crate::store::checkpoint::Fallback> {
+        use crate::store::checkpoint::Fallback;
         let index = build_page_cache_index(pages);
         let mut guard = self.derived.cache.write().unwrap();
-        if guard.is_some() || !self.held.is_empty() {
-            return false;
+        if guard.is_some() {
+            return Err(Fallback::CacheBuilt);
+        }
+        if !self.held.is_empty() {
+            return Err(Fallback::PageHeld);
         }
         *guard = Some(Arc::clone(pages));
         *self.derived.observed_mtimes.write().unwrap() = Arc::clone(observed_mtimes);
@@ -933,9 +1153,10 @@ impl Graph {
         // The loaded generation keeps its number, so the evaluator, the
         // reference index and the generation-keyed listing agree with it.
         self.cache_gen.store(cache_generation, Ordering::Release);
+        self.forget_cold_moves();
         *self.derived.page_list_cache.write().unwrap() = Some((cache_generation, list));
         drop(guard);
-        true
+        Ok(())
     }
 
     /// The cache rows a checkpoint captures with `pages`, the published
@@ -1012,7 +1233,7 @@ impl Graph {
     /// builders install under (a read guard excludes their install), so a
     /// build that read the earlier bytes declines. False when a cache was
     /// installed meanwhile.
-    pub(super) fn cold_reconcile_bump(&self) -> bool {
+    pub(super) fn cold_reconcile_bump(&self, path: &Path) -> bool {
         let cache = self.derived.cache.read().unwrap();
         if cache.is_some() {
             return false;
@@ -1020,7 +1241,7 @@ impl Graph {
         *self.derived.page_list_cache.write().unwrap() = None;
         *self.derived.find_entry_cache.write().unwrap() = None;
         *self.derived.cache_index.write().unwrap() = None;
-        self.cache_gen.fetch_add(1, Ordering::Release);
+        self.move_generation(true, &[path]);
         true
     }
 
@@ -1039,8 +1260,11 @@ impl Graph {
         }
     }
 
-    pub(crate) fn transaction_bump_generation(&self) {
-        let before = self.cache_gen.fetch_add(1, Ordering::Release);
+    /// Move the generation for a publication of `paths` that moved none.
+    pub(crate) fn transaction_bump_generation(&self, paths: &[&Path]) {
+        let cache = self.derived.cache.read().unwrap();
+        let before = self.move_generation(cache.is_none(), paths);
+        drop(cache);
         self.retag_name_memos(before, before + 1);
     }
 
@@ -1050,6 +1274,7 @@ impl Graph {
     /// file time, all under the held cache lock.
     fn put_row(&self, pages: &mut Pages, (entry, doc, disk): Row) {
         let path = entry.path.clone();
+        self.derived.touched.lock().unwrap().insert(path.clone());
         let rel = entry.rel_path_str().to_owned();
         match self.cached_page_index_for_path(pages, &entry.path) {
             Some(i) => {
@@ -1096,11 +1321,21 @@ impl Graph {
         }
         Arc::make_mut(&mut self.derived.unreadable_pages.write().unwrap())
             .retain(|(id, _)| id.as_str() != rel);
+        self.derived
+            .page_index_failures
+            .write()
+            .unwrap()
+            .retain(|failed| *failed != rel);
     }
 
     /// Remove `path`'s row from `pages` with its revision, anchor and file
     /// time; with `errors`, also its error bookkeeping. True when a row went.
     fn retire_row(&self, pages: Option<&mut Pages>, path: &Path, errors: bool) -> bool {
+        self.derived
+            .touched
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf());
         let mut removed = false;
         if let Some(pages) = pages {
             if let Some(i) = self.cached_page_index_for_path(pages, path) {
@@ -1141,6 +1376,13 @@ impl Graph {
     /// holds ((G)): a held page keeps its owner's row, and an unindexed or
     /// unknown one has none.
     pub(super) fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk: DiskObs) {
+        // Every lsdoc parse the snapshot's indexes read runs here, before
+        // any lock is taken or state moves: a parser panic then unwinds into
+        // the caller's per-page isolation (sync and transaction publication
+        // both catch it and record this one page as an index failure)
+        // instead of escaping later from the capture under the writer lock,
+        // which would poison it (one bad file must never stop the graph).
+        prime_projections(&doc);
         // Fill runtime ids for any block that lacks one (e.g. PDF-highlight
         // writes) from this physical owner. Blocks saved from the frontend
         // already carry live ids, which the in-memory save path keeps.
@@ -1163,9 +1405,28 @@ impl Graph {
         // sees the new document, so a derived result computed at generation G
         // reflects every edit whose generation is <= G. The bump is
         // unconditional, even on a cold cache, so a racing lock-free build
-        // detects the mutation and retries.
-        self.cache_gen.fetch_add(1, Ordering::Release);
+        // detects the mutation (and the launch pass re-derives the path).
+        self.move_generation(guard.is_none(), &[&path]);
         drop(guard);
+    }
+
+    /// Retire error-only files too: a failed first read may never have installed
+    /// a page entry or watcher baseline. True when a reported row was removed.
+    pub(crate) fn forget_unreadable(&self, path: &Path) -> bool {
+        let guard = self.derived.cache.write().unwrap();
+        if !self.disk_sourced(path) {
+            return false;
+        }
+        let rel = self.rel_path(path);
+        let reported = self
+            .reported_unreadable_pages()
+            .iter()
+            .any(|(id, _)| id.as_str() == rel);
+        if reported {
+            self.retire_row(None, path, true);
+            self.move_generation(guard.is_none(), &[path]);
+        }
+        reported
     }
 
     /// Drop one physical page from the cache after its file disappears,
@@ -1173,14 +1434,12 @@ impl Graph {
     /// page: its row is its owner's (R1).
     pub(super) fn cache_remove_path(&self, entry: &PageEntry) {
         let mut guard = self.derived.cache.write().unwrap();
-        if let Some(pages) = guard.as_mut() {
-            if !matches!(self.authority(&entry.path), Authority::Owner(..)) {
-                self.retire_row(Some(Arc::make_mut(pages)), &entry.path, false);
-            }
+        if !matches!(self.authority(&entry.path), Authority::Owner(..)) {
+            self.retire_row(guard.as_mut().map(Arc::make_mut), &entry.path, true);
         }
         // Bump AFTER the removal is published (under the cache lock); see
         // `cache_upsert`.
-        self.cache_gen.fetch_add(1, Ordering::Release);
+        self.move_generation(guard.is_none(), &[&entry.path]);
         drop(guard);
     }
 
@@ -1219,6 +1478,9 @@ pub(super) type CheckpointRows = (Vec<String>, Vec<(PathBuf, String)>, Vec<PathB
 
 #[path = "derived_owners.rs"]
 mod owners;
+
+#[path = "derived_cold.rs"]
+mod cold;
 
 #[cfg(test)]
 #[path = "derived_tests.rs"]

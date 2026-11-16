@@ -1,29 +1,53 @@
 //! The owner endpoint end to end, in process: a real Store and page host,
 //! a real socket, the client's handshake and calls (CLI PROTOCOL §2–5),
 //! and the app lease through retirement and adoption (§3.1–3.2).
-// The endpoint is Unix-only in slice 1a (PROTOCOL §10: Windows has none yet).
-#![cfg(unix)]
+// Shared protocol and lifecycle tests run on all three desktop transports.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 use super::client::{dial, Conn, Failure};
 use super::endpoint::{After, Endpoint, Gate, Handler, YieldRequest};
 use super::lease::{hello, Claimed};
 use super::lock::OwnerLock;
 use super::namespace::GraphPaths;
+#[cfg(windows)]
+use super::windows::Stream as RawStream;
 use super::wire::{ErrorBody, Request};
 use super::OwnerError;
 use crate::state::{GraphRegistry, GraphSlot, PageHostSlot};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as RawStream;
 
 const UUID: &str = "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f";
 
 #[path = "owner_tests/lifecycle_tests.rs"]
 mod lifecycle;
+
+#[path = "owner_tests/proof.rs"]
+mod proof;
+
+#[path = "owner_tests/page_tests.rs"]
+mod page_tests;
+
+#[path = "owner_tests/parallel_write_tests.rs"]
+mod parallel_writes;
+
+#[cfg(desktop)]
+#[path = "owner_tests/git_run_tests.rs"]
+mod git_run;
+
+#[cfg(desktop)]
+#[path = "owner_tests/git_pull_tests.rs"]
+mod git_pull;
+
+#[cfg(desktop)]
+#[path = "owner_tests/git_sync_cycle_tests.rs"]
+mod git_sync_cycle;
 
 struct Graph {
     _dir: tempfile::TempDir,
@@ -55,6 +79,7 @@ impl Graph {
         )
         .unwrap();
         std::fs::write(graph.join("pages/ns___child.md"), "- in a namespace\n").unwrap();
+        std::fs::write(graph.join("pages/dup.md"), "- same\n- same\n").unwrap();
         let app_data = dir.path().join("app");
         let owners = dir.path().join("owners");
         std::fs::create_dir_all(&app_data).unwrap();
@@ -81,7 +106,14 @@ impl Graph {
     fn paths(&self) -> GraphPaths {
         GraphPaths {
             lock: self.owners.join("g.lock"),
+            #[cfg(unix)]
             socket: self.owners.join("g.sock"),
+            #[cfg(windows)]
+            socket: super::windows_security::pipe_name(&format!(
+                "{:016x}",
+                crate::settings::graph_hash(&self.root)
+            ))
+            .unwrap(),
             start_log: self.owners.join("g.start.log"),
         }
     }
@@ -215,6 +247,7 @@ fn the_read_verbs_answer_over_the_socket() {
 }
 
 /// GH #771: on macOS an accepted socket inherits the listener's O_NONBLOCK.
+#[cfg(unix)]
 #[test]
 fn an_accepted_connection_is_made_blocking() {
     use std::os::unix::io::AsRawFd;
@@ -292,7 +325,7 @@ fn an_oversized_or_malformed_line_is_answered_and_closed() {
 /// Write `bytes`, half-close, and read whatever comes back.
 fn raw(socket: &Path, bytes: &[u8]) -> String {
     use std::io::{Read, Write};
-    let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+    let mut stream = RawStream::connect(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -319,6 +352,23 @@ fn closing_the_endpoint_removes_its_path_and_drops_its_connections() {
 }
 
 #[test]
+fn a_successor_can_listen_while_a_closed_client_handle_still_exists() {
+    let graph = Graph::new();
+    let slot = Arc::new(graph.slot());
+    let (first, _gate) = endpoint(&graph, slot.clone());
+    let mut old = graph.connect();
+    drop(first);
+    assert!(matches!(
+        old.call("pages", Value::Null),
+        Err(Failure::Lost(_))
+    ));
+    let (_next, _gate) = endpoint(&graph, slot);
+    assert!(graph.connect().call("pages", Value::Null).is_ok());
+    drop(old);
+}
+
+#[test]
+#[cfg(unix)]
 fn a_dead_owners_socket_path_is_replaced_by_the_next_holder() {
     let graph = Graph::new();
     // A crashed owner leaves its path; the lock went with the process.
@@ -349,9 +399,9 @@ fn the_app_lease_follows_the_host_through_retirement_and_adoption() {
 
     // A reservation keeps the host from stopping until it is adopted.
     let reservation = match &*old.host.read().unwrap() {
-        PageHostSlot::Running(host) => host
-            .reserve(|| vec![PageId::from("pages/a.md")], Input::Refuse)
-            .unwrap(),
+        PageHostSlot::Running(host) => {
+            Box::new(host.pause_for_tests(&[PageId::from("pages/a.md")]))
+        }
         _ => panic!("no host"),
     };
     assert!(registry.remove("graph-1").is_none(), "retiring");
@@ -444,9 +494,67 @@ fn serve_yields_only_into_its_own_draft_namespace() {
     assert_eq!(gate.state(), "stopping", "admits nothing more");
 }
 
+#[test]
+fn app_handover_takes_the_lock_only_after_serve_stops_and_closes() {
+    let graph = Graph::new();
+    let serving = lifecycle::Serving::new(&graph);
+    let slot = serving.slot.clone();
+    let finished = serving.run();
+    let claimed = super::client::take_over(
+        &graph.root,
+        &graph.paths(),
+        super::wire::Drafts {
+            app_data: graph.app_data.display().to_string(),
+            graph_id: "test-graph".into(),
+        },
+        Duration::from_secs(5),
+        |_| {},
+        |_| {},
+    )
+    .unwrap()
+    .expect("app took ownership");
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(!matches!(
+        &*slot.host.read().unwrap(),
+        PageHostSlot::Running(_)
+    ));
+    assert!(OwnerLock::try_take(&graph.paths().lock, "other")
+        .unwrap()
+        .is_none());
+    assert!(dial(&graph.paths().socket, &graph.root).unwrap().is_none());
+    drop(claimed);
+    assert!(OwnerLock::try_take(&graph.paths().lock, "next")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+#[cfg(unix)]
+fn long_namespace_retains_the_owner_lock_without_a_command_endpoint() {
+    let graph = Graph::new();
+    let data = tempfile::tempdir().unwrap();
+    let owners = data.path().join("d".repeat(120));
+    let paths = super::namespace::Namespace::at(owners)
+        .unwrap()
+        .graph(Path::new("/g"))
+        .unwrap();
+    let lock = OwnerLock::try_take(&paths.lock, "app").unwrap().unwrap();
+    let slot = Arc::new(graph.slot());
+    let lease = super::lease::Claimed::from_lock(lock, paths.clone()).serve_app(&slot);
+    assert!(!lease.has_endpoint());
+    assert!(matches!(
+        lease.endpoint_error(),
+        Some(OwnerError::Unsafe(_))
+    ));
+    assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_none());
+    drop(lease);
+    assert!(OwnerLock::try_take(&paths.lock, "serve").unwrap().is_some());
+}
+
 /// §1: the namespace is a private directory of this account, and a path
 /// the socket cannot bind is refused before anything binds it.
 #[test]
+#[cfg(unix)]
 fn the_namespace_is_private_and_fits_a_socket_path() {
     use super::namespace::Namespace;
     use std::os::unix::fs::PermissionsExt;
@@ -472,21 +580,19 @@ fn the_namespace_is_private_and_fits_a_socket_path() {
 
     let deep = dir.path().join("d".repeat(120));
     let namespace = Namespace::at(deep).unwrap();
-    assert!(matches!(
-        namespace.graph(Path::new("/g")),
-        Err(OwnerError::Unsafe(_))
-    ));
+    let paths = namespace.graph(Path::new("/g")).unwrap();
+    assert!(super::namespace::check_socket_path(&paths.socket).is_err());
 }
 
 /// AGENTS.md §2: a platform `cfg` family names every shipped target. The
-/// namespace's arms cover Linux and macOS (an endpoint) and refuse on
-/// Windows, iOS and Android; the catch-all means "not a Tine platform".
+/// namespace's arms cover desktop locks and mobile sandbox exclusion;
+/// the catch-all means "not a Tine platform".
 #[test]
 fn the_namespace_names_every_shipped_target() {
     let source = include_str!("namespace.rs");
     assert_eq!(
         source.matches("fn account_dir()").count(),
-        4,
+        5,
         "one account_dir per platform family"
     );
     let cfgs: Vec<&str> = source
@@ -511,30 +617,69 @@ fn the_namespace_names_every_shipped_target() {
     }
 }
 
-/// PROTOCOL §6: the endpoint is the command line's alone. No Tauri command
-/// in the owner module, and the app's invoke handler names nothing of it,
-/// so neither the webview nor a plugin (whose capabilities are semantic
-/// verbs, ADR 0052) can reach the endpoint.
+/// PROTOCOL §6: no owner Tauri commands or invoke handlers expose the CLI endpoint to a webview/plugin (ADR 0052).
 #[test]
 fn the_endpoint_has_no_webview_or_plugin_door() {
     for (name, source) in [
+        ("add", include_str!("add.rs")),
+        ("arena", include_str!("arena.rs")),
         ("client", include_str!("client.rs")),
         ("endpoint", include_str!("endpoint.rs")),
+        ("git_autocommit", include_str!("git_autocommit.rs")),
+        (
+            "git_autocommit_tests",
+            include_str!("git_autocommit_tests.rs"),
+        ),
+        ("git_identity", include_str!("git_identity.rs")),
+        ("git_ignore_setup", include_str!("git_ignore_setup.rs")),
+        ("git_lifecycle", include_str!("git_lifecycle.rs")),
+        ("git_mobile_tests", include_str!("git_mobile_tests.rs")),
+        (
+            "git_separate_dir_tests",
+            include_str!("git_separate_dir_tests.rs"),
+        ),
+        ("git_pull", include_str!("git_pull.rs")),
+        ("git_run", include_str!("git_run.rs")),
+        ("git_status", include_str!("git_status.rs")),
+        (
+            "index_lock_identity",
+            include_str!("git_run/index_lock_identity.rs"),
+        ),
+        ("git_run_open", include_str!("git_run/open.rs")),
+        ("git_sync", include_str!("git_sync.rs")),
+        ("git_sync_clone", include_str!("git_sync/clone.rs")),
+        (
+            "git_sync_credentials",
+            include_str!("git_sync/credentials.rs"),
+        ),
+        (
+            "git_sync_line_endings",
+            include_str!("git_sync/line_endings.rs"),
+        ),
+        ("git_stale_lock", include_str!("git_stale_lock.rs")),
+        ("git_sync_cycle", include_str!("git_sync_cycle.rs")),
+        ("git_sync_http", include_str!("git_sync/http.rs")),
         ("lease", include_str!("lease.rs")),
         ("lock", include_str!("lock.rs")),
         ("mod", include_str!("mod.rs")),
         ("namespace", include_str!("namespace.rs")),
+        ("pages", include_str!("pages.rs")),
+        ("seen", include_str!("seen.rs")),
+        ("seen_tests", include_str!("seen_tests.rs")),
         ("serve", include_str!("serve.rs")),
         ("terminal", include_str!("terminal.rs")),
         ("verbs", include_str!("verbs.rs")),
+        ("window", include_str!("window.rs")),
         ("wire", include_str!("wire.rs")),
+        ("windows", include_str!("windows.rs")),
+        ("windows_security", include_str!("windows_security.rs")),
+        ("write", include_str!("write.rs")),
     ] {
         assert!(
             !source.contains(concat!("tauri::", "command")),
             "owner/{name}.rs: no Tauri command may reach the owner endpoint (PROTOCOL §6)"
         );
     }
-    // Every owner file is scanned: a new one joins the list above.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owner");
     let files = std::fs::read_dir(dir)
         .unwrap()
@@ -544,7 +689,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 10, "scan every owner/*.rs file");
+    assert_eq!(files, 32, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -651,31 +796,39 @@ fn a_yield_closes_the_other_connections_before_it_replies() {
 /// and each request with `reply` (or never, when `None`).
 fn fake_owner(socket: &Path, hello: Value, reply: Option<Value>) {
     use std::io::{BufRead, BufReader, Write};
+    #[cfg(unix)]
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { return };
-            let hello = hello.clone();
-            let reply = reply.clone();
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut writer = stream;
-                let mut line = String::new();
+    #[cfg(windows)]
+    let listener = super::windows::Listener::bind(socket).unwrap();
+    std::thread::spawn(move || loop {
+        let stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(_) => return,
+        };
+        let hello = hello.clone();
+        let reply = reply.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            let _ = writeln!(writer, "{hello}");
+            loop {
+                line.clear();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     return;
                 }
-                let _ = writeln!(writer, "{hello}");
-                loop {
-                    line.clear();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                        return;
-                    }
-                    if let Some(reply) = &reply {
-                        let _ = writeln!(writer, "{reply}");
-                    }
+                if let Some(reply) = &reply {
+                    let _ = writeln!(writer, "{reply}");
                 }
-            });
-        }
+            }
+        });
     });
 }
 
@@ -698,13 +851,17 @@ fn the_client_checks_the_owners_hello_and_each_replys_id() {
         dial(&socket, &graph.root),
         Err(OwnerError::Mismatch(_))
     ));
-    std::fs::remove_file(&socket).unwrap();
+    // Use separate graph endpoints: Windows pipe names stay occupied while
+    // the fake owner's accept thread lives, rather than an unlinkable path.
+    let second = Graph::new();
+    let socket = second.paths().socket;
     fake_owner(&socket, owner_hello(&root, None), None);
     assert!(matches!(
         dial(&socket, &graph.root),
         Err(OwnerError::Protocol(_))
     ));
-    std::fs::remove_file(&socket).unwrap();
+    let third = Graph::new();
+    let socket = third.paths().socket;
     fake_owner(
         &socket,
         owner_hello(&root, Some("serve")),
@@ -747,14 +904,79 @@ fn a_wedged_owner_cannot_hold_the_handover_past_its_bound() {
             app_data: "a".into(),
             graph_id: "g".into(),
         };
-        let result =
-            super::client::take_over(&root, &paths, drafts, Duration::from_secs(2), |_| {});
+        let result = super::client::take_over(
+            &root,
+            &paths,
+            drafts,
+            Duration::from_secs(2),
+            |_| {},
+            |_| {},
+        );
         let _ = done.send(result.is_err());
     });
     assert_eq!(
         finished.recv_timeout(Duration::from_secs(15)),
         Ok(true),
         "the handover outlived its bound"
+    );
+}
+
+#[test]
+fn timed_out_owner_retries_wait_for_outstanding_io_workers() {
+    use std::io::{BufRead, BufReader, Write};
+    let graph = Graph::new();
+    let paths = graph.paths();
+    let held = OwnerLock::try_take(&paths.lock, "serve").unwrap().unwrap();
+    #[cfg(unix)]
+    let listener = std::os::unix::net::UnixListener::bind(&paths.socket).unwrap();
+    #[cfg(windows)]
+    let listener = super::windows::Listener::bind(&paths.socket).unwrap();
+    let hello = owner_hello(&graph.root.display().to_string(), Some("serve"));
+    let (requested, requests) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept: {error}"),
+            }
+        };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        writeln!(stream, "{hello}").unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.contains("owner.yield"));
+        requested.send(()).unwrap();
+        released.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    let attempt = || {
+        super::client::take_over(
+            &graph.root,
+            &paths,
+            super::wire::Drafts {
+                app_data: "a".into(),
+                graph_id: "g".into(),
+            },
+            Duration::ZERO,
+            |_| {},
+            |_| {},
+        )
+    };
+    assert!(attempt().is_err());
+    requests.recv_timeout(Duration::from_secs(5)).unwrap();
+    let blocked = (0..4)
+        .all(|_| matches!(attempt(), Err(message) if message.contains("previous owner handover")));
+    release.send(()).unwrap();
+    server.join().unwrap();
+    drop(held);
+    assert!(
+        blocked,
+        "a timed-out handover must retain its worker reservation until I/O finishes"
     );
 }
 
@@ -867,4 +1089,1408 @@ fn a_connection_accepted_after_a_yields_sweep_is_closed() {
         _ => false,
     };
     assert!(!served, "a connection accepted after the sweep was served");
+}
+
+/// One verb against the slot, as the endpoint would answer it.
+fn verb(slot: &GraphSlot, name: &str, args: Value) -> Result<Value, ErrorBody> {
+    super::verbs::answer_verb(
+        slot,
+        &Request {
+            id: 1,
+            verb: name.into(),
+            args,
+        },
+    )
+}
+
+fn error_code(result: Result<Value, ErrorBody>) -> (String, Value) {
+    let body = result.expect_err("an error");
+    (body.code, body.detail.unwrap_or(Value::Null))
+}
+
+fn block_handle(page: &Value, index: usize) -> String {
+    page["page"]["blocks"][index]["handle"]
+        .as_str()
+        .expect("a handle")
+        .to_string()
+}
+
+#[test]
+fn block_edit_identity_ignores_a_nonprimary_id_lookalike() {
+    let graph = Graph::new();
+    let file = graph.root.join("pages/lookalike.org");
+    let raw = format!("one\nbody\n:PROPERTIES:\n:id: {UUID}\n:END:");
+    let regions = tine_core::block_regions::parse(&raw, true);
+    assert!(regions.property("id").is_some());
+    assert!(regions.id.is_none());
+    std::fs::write(&file, format!("* {raw}\n")).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "lookalike"})).unwrap();
+    let supplied = "650e8400-e29b-41d4-a716-446655440000";
+    let text = format!(
+        "edited\n:PROPERTIES:\n:id: {supplied}\n:END:\nbody\n:PROPERTIES:\n:id: {UUID}\n:END:"
+    );
+    verb(
+        &slot,
+        "block.edit",
+        json!({"handle": format!("lookalike/{}", block_handle(&read, 0)), "text": text}),
+    )
+    .unwrap();
+    let doc = graph
+        .store
+        .page(&PageId::from("pages/lookalike.org"))
+        .unwrap()
+        .doc;
+    let regions = tine_core::block_regions::parse(&doc.blocks[0].raw, true);
+    assert_eq!(regions.id.unwrap().value, supplied);
+    assert!(doc.blocks[0]
+        .raw
+        .contains(&format!("body\n:PROPERTIES:\n:id: {UUID}\n:END:")));
+}
+
+#[test]
+fn block_edit_identity_accepts_case_equivalent_uuid_values() {
+    const ID: &str = "650e8400-e29b-41d4-a716-446655440000";
+    for org in [false, true] {
+        for uppercase_current in [false, true] {
+            let graph = Graph::new();
+            let file = graph.root.join(if org {
+                "pages/identity.org"
+            } else {
+                "pages/identity.md"
+            });
+            let (current, supplied) = if uppercase_current {
+                (ID.to_ascii_uppercase(), ID.to_string())
+            } else {
+                (ID.to_string(), ID.to_ascii_uppercase())
+            };
+            let initial = if org {
+                format!("* one\n:PROPERTIES:\n:id: {current}\n:END:\n")
+            } else {
+                format!("- one\n  id:: {current}\n")
+            };
+            std::fs::write(&file, initial).unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+            let slot = graph.slot();
+            let read = verb(&slot, "page.show", json!({"name": "identity"})).unwrap();
+            let text = if org {
+                format!("edited\n:PROPERTIES:\n:ID: {supplied}  \n:END:")
+            } else {
+                format!("edited\nID:: {supplied}  ")
+            };
+            verb(
+                &slot,
+                "block.edit",
+                json!({"handle": format!("identity/{}", block_handle(&read, 0)), "text": text}),
+            )
+            .unwrap();
+            let doc = graph
+                .store
+                .page(&PageId::from(if org {
+                    "pages/identity.org"
+                } else {
+                    "pages/identity.md"
+                }))
+                .unwrap()
+                .doc;
+            assert_eq!(
+                tine_core::block_regions::parse(&doc.blocks[0].raw, org)
+                    .id
+                    .unwrap()
+                    .value
+                    .trim(),
+                supplied
+            );
+            // The old spelling still resolves to this block by the existing UUID rule.
+            verb(
+                &slot,
+                "block.edit",
+                json!({"handle": current, "text": "resolved"}),
+            )
+            .unwrap();
+            assert!(std::fs::read_to_string(&file).unwrap().contains("resolved"));
+        }
+    }
+}
+
+#[test]
+fn block_edit_refuses_a_different_identity_without_writing() {
+    const OTHER: &str = "650e8400-e29b-41d4-a716-446655440000";
+    for org in [false, true] {
+        let graph = Graph::new();
+        if org {
+            std::fs::write(
+                graph.root.join("pages/identity.org"),
+                format!("* one\n:PROPERTIES:\n:id: {UUID}\n:END:\n"),
+            )
+            .unwrap();
+            graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        }
+        let slot = graph.slot();
+        let target = if org { "identity" } else { "a" };
+        let read = verb(&slot, "page.show", json!({"name": target})).unwrap();
+        let handle = format!("{target}/{}", block_handle(&read, 0));
+        let file = graph.root.join(if org {
+            "pages/identity.org"
+        } else {
+            "pages/a.md"
+        });
+        let before = std::fs::read(&file).unwrap();
+        let text = if org {
+            format!("edited\n:PROPERTIES:\n:ID: {OTHER}\n:END:")
+        } else {
+            format!("edited\nID:: {OTHER}")
+        };
+        let error = verb(&slot, "block.edit", json!({"handle": handle, "text": text}))
+            .expect_err("identity change must be refused");
+        assert_eq!(error.code, "refused");
+        assert_eq!(error.detail.as_ref().unwrap()["reason"], "identity-change");
+        let error_text = serde_json::to_string(&error).unwrap();
+        assert!(
+            error_text.contains(UUID) && error_text.contains(OTHER),
+            "{error_text}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        for text in [
+            if org {
+                format!("same\n:PROPERTIES:\n:id: {UUID}\n:END:")
+            } else {
+                format!("same\nid:: {UUID}")
+            },
+            "omitted".to_string(),
+            if org {
+                format!("literal\n#+BEGIN_SRC\n:id: {OTHER}\n#+END_SRC")
+            } else {
+                format!("literal\n```\nid:: {OTHER}\n```")
+            },
+        ] {
+            let read = verb(&slot, "page.show", json!({"name": target})).unwrap();
+            let handle = format!("{target}/{}", block_handle(&read, 0));
+            verb(&slot, "block.edit", json!({"handle": handle, "text": text})).unwrap();
+            let doc = graph
+                .store
+                .page(&PageId::from(if org {
+                    "pages/identity.org"
+                } else {
+                    "pages/a.md"
+                }))
+                .unwrap()
+                .doc;
+            assert_eq!(
+                tine_core::block_regions::parse(&doc.blocks[0].raw, org)
+                    .property("id")
+                    .unwrap()
+                    .value,
+                UUID
+            );
+        }
+    }
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    verb(&slot, "block.edit", json!({"handle": format!("a/{}", block_handle(&read, 1)), "text": format!("new identity\nid:: {OTHER}")})).unwrap();
+    let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+    assert_eq!(
+        tine_core::block_regions::parse(&doc.blocks[1].raw, false)
+            .property("id")
+            .unwrap()
+            .value,
+        OTHER
+    );
+}
+
+#[test]
+fn edit_and_prop_write_through_the_host_and_keep_hidden_properties() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 0);
+    let two = block_handle(&read, 1);
+    assert!(
+        one.starts_with("1~") && two.starts_with("2~"),
+        "{one} {two}"
+    );
+    assert!(read["page"]["blocks"][0]["children"][0]["handle"]
+        .as_str()
+        .unwrap()
+        .starts_with("1.1~"));
+
+    let written = verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{one}"), "text": "ONE, edited" }),
+    )
+    .unwrap();
+    assert_eq!(written["kind"], "written");
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert_eq!(
+        text,
+        format!("- ONE, edited\n  id:: {UUID}\n\t- under one\n- two\n"),
+        "the hidden id:: and the child stay; other blocks keep their bytes"
+    );
+    let new_one = written["blocks"][0].as_str().unwrap().to_string();
+    assert_ne!(
+        new_one, one,
+        "the reply hands back the edited block's new handle"
+    );
+
+    // The old handle no longer names a block: stale, not a guess.
+    let (stale, _) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{one}"), "text": "again" }),
+    ));
+    assert_eq!(stale, "stale");
+
+    // By id:: and by the returned handle.
+    verb(
+        &slot,
+        "block.prop",
+        json!({ "handle": UUID, "key": "status", "value": "done" }),
+    )
+    .unwrap();
+    verb(
+        &slot,
+        "block.prop",
+        json!({ "handle": format!("a/{two}"), "key": "owner", "value": "agent" }),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert!(text.contains("status:: done"), "{text}");
+    assert!(text.contains("- two\n  owner:: agent"), "{text}");
+    verb(
+        &slot,
+        "block.prop",
+        json!({ "handle": UUID, "key": "status" }),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert!(!text.contains("status::"), "{text}");
+    assert!(text.contains(&format!("id:: {UUID}")), "{text}");
+}
+
+#[test]
+fn add_places_forests_and_attributes_every_created_block_only() {
+    for placement in ["under", "after", "before", "page"] {
+        let graph = Graph::new();
+        let slot = graph.slot();
+        let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+        let mut args = json!({"content": "- added\n\t- nested\n- last", "author": "Ada"});
+        args[placement] = if placement == "page" {
+            json!("a")
+        } else {
+            json!(format!("a/{}", block_handle(&read, 1)))
+        };
+        let request_bytes =
+            serde_json::to_vec(&json!({"id": 1, "verb": "block.add", "args": args}))
+                .unwrap()
+                .len()
+                + 1;
+        let before_bytes = std::fs::metadata(graph.root.join("pages/a.md"))
+            .unwrap()
+            .len();
+        let reply = verb(&slot, "block.add", args).unwrap();
+        eprintln!("add {placement}: page {before_bytes} -> {} bytes; one NDJSON request {request_bytes} bytes, reply {} bytes; 3 created blocks", std::fs::metadata(graph.root.join("pages/a.md")).unwrap().len(), serde_json::to_vec(&json!({"id": 1, "ok": reply})).unwrap().len() + 1);
+        assert_eq!(reply["kind"], "written");
+        assert_eq!(reply["blocks"].as_array().unwrap().len(), 3);
+        assert_eq!(reply["more"], 0);
+        let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+        let added = if placement == "under" {
+            &doc.blocks[1].children
+        } else {
+            &doc.blocks[if placement == "before" { 1 } else { 2 }..]
+        };
+        assert!(added[0].raw.starts_with("added\n"));
+        assert!(added[1].raw.starts_with("last\n"));
+        for block in [&added[0], &added[0].children[0], &added[1]] {
+            assert_eq!(
+                tine_core::block_regions::parse(&block.raw, false)
+                    .property("tine.author")
+                    .map(|p| p.value.as_str()),
+                Some("Ada")
+            );
+        }
+        let anchor = &doc.blocks[if placement == "before" { 3 } else { 1 }];
+        let regions = tine_core::block_regions::parse(&anchor.raw, false);
+        assert!(regions.property("tine.author").is_none());
+        assert_eq!(
+            regions.id.is_some(),
+            placement != "page",
+            "lazy anchor id for {placement}"
+        );
+        assert_eq!(doc.blocks[0].raw, format!("one\nid:: {UUID}"));
+        assert_eq!(doc.blocks[0].children[0].raw, "under one");
+        // Returned handles really chain into a subsequent write, with no author added.
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle": reply["blocks"][0], "text": "edited"}),
+        )
+        .unwrap();
+        let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+        // The edit keeps the block's author and adds none (#840).
+        assert_eq!(bytes.matches("tine.author::").count(), 3);
+        assert!(!bytes.contains("tine.author:: agent"));
+    }
+}
+
+#[test]
+fn block_edit_preserves_comment_metadata_and_ordinary_author() {
+    for (content, expected) in [
+        ("ordinary\ntine.author:: Ada", "edited\ntine.author:: Ada"),
+        (
+            "comment\ntine.quote:: one\ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada",
+            "edited\ntine.quote:: one\ntine.quote-prefix:: before\ntine.quote-suffix:: after\ntine.author:: Ada",
+        ),
+    ] {
+        let graph = Graph::new();
+        let slot = graph.slot();
+        let added = verb(
+            &slot,
+            "block.add",
+            json!({"page": "a", "content": content, "author": "Ada"}),
+        )
+        .unwrap();
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle": added["blocks"][0], "text": "edited"}),
+        )
+        .unwrap();
+        let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+        assert_eq!(doc.blocks.last().unwrap().raw, expected);
+    }
+}
+
+/// One block's raw text after `block.edit` on a one-block page. `extra` merges
+/// into the verb's arguments.
+fn gh840_edit(org: bool, raw: &str, text: &str, extra: Value) -> Result<String, ErrorBody> {
+    let graph = Graph::new();
+    let (rel, file) = if org {
+        ("pages/p.org", format!("* {raw}\n"))
+    } else {
+        ("pages/p.md", format!("- {}\n", raw.replace('\n', "\n  ")))
+    };
+    std::fs::write(graph.root.join(rel), file).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "p"})).unwrap();
+    let mut args = json!({"handle": format!("p/{}", block_handle(&read, 0)), "text": text});
+    for (key, value) in extra.as_object().unwrap() {
+        args[key] = value.clone();
+    }
+    verb(&slot, "block.edit", args)?;
+    Ok(graph.store.page(&PageId::from(rel)).unwrap().doc.blocks[0]
+        .raw
+        .clone())
+}
+
+fn gh840_values(raw: &str, org: bool, key: &str) -> Vec<String> {
+    tine_core::block_regions::parse(raw, org)
+        .properties
+        .iter()
+        .filter(|p| p.primary && p.key.eq_ignore_ascii_case(key))
+        .map(|p| p.value.clone())
+        .collect()
+}
+
+#[test]
+fn gh840_block_edit_keeps_properties_not_named_in_the_text() {
+    // The reporter's three shapes. Intentional difference from OG and from the
+    // app's editor buffer: OG has no command line (D-20261101-CLIE).
+    for (raw, text, expected) in [
+        (
+            "plain block\ntine.author:: claude",
+            "x",
+            "x\ntine.author:: claude",
+        ),
+        (
+            "with status\nstatus:: done\ntine.author:: claude",
+            "x",
+            "x\nstatus:: done\ntine.author:: claude",
+        ),
+        (
+            "comment\ntine.quote:: words\ntine.author:: claude",
+            "x",
+            "x\ntine.quote:: words\ntine.author:: claude",
+        ),
+        // Bytes of a kept row stay exact, including trailing space.
+        (
+            "a\nsrc:: https://x.test/1  ",
+            "x",
+            "x\nsrc:: https://x.test/1  ",
+        ),
+        // A named key replaces its row and leaves the others, in any spelling.
+        (
+            "a\nstatus:: done\ntine.author:: claude",
+            "x\nstatus:: doing",
+            "x\nstatus:: doing\ntine.author:: claude",
+        ),
+        (
+            "a\nstatus:: done\ntine.author:: claude",
+            "x\nSTATUS:: doing",
+            "x\nSTATUS:: doing\ntine.author:: claude",
+        ),
+        // A new key joins the one group OG reads.
+        (
+            "a\nsrc:: one",
+            "x\nbody\nowner:: Ada",
+            "x\nbody\nowner:: Ada\nsrc:: one",
+        ),
+        // Multi-line bodies keep one group too.
+        ("a\nsrc:: one\nbody", "x\ny", "x\nsrc:: one\ny"),
+        ("a\nsrc:: one", "", "\nsrc:: one"),
+    ] {
+        let edited = gh840_edit(false, raw, text, json!({})).unwrap();
+        assert_eq!(edited, expected, "{raw:?} <- {text:?}");
+        assert!(
+            tine_core::block_regions::parse(&edited, false)
+                .property_regions
+                .len()
+                <= 1,
+            "{edited:?}"
+        );
+    }
+    let org = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:status: done\n:tine.author: claude\n:END:\nbody",
+        "x",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&org, true, "status"), ["done"], "{org}");
+    assert_eq!(gh840_values(&org, true, "tine.author"), ["claude"], "{org}");
+    assert!(org.starts_with('x') && !org.contains("body"), "{org}");
+    let named = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:status: done\n:tine.author: claude\n:END:",
+        "x\n:PROPERTIES:\n:STATUS: doing\n:END:",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&named, true, "status"), ["doing"], "{named}");
+    assert_eq!(
+        gh840_values(&named, true, "tine.author"),
+        ["claude"],
+        "{named}"
+    );
+}
+
+#[test]
+fn gh840_read_then_edit_keeps_one_copy_and_fences_stay_text() {
+    for raw in [
+        format!("a\nid:: {UUID}\nstatus:: done\ntine.author:: claude"),
+        "a\nstatus:: done\nbody\ntine.author:: claude".to_string(),
+    ] {
+        // The raw text a read returns, sent back unchanged or changed only in
+        // its title, gains no second copy of anything.
+        for text in [raw.clone(), raw.replacen('a', "b", 1)] {
+            let edited = gh840_edit(false, &raw, &text, json!({})).unwrap();
+            for key in ["status", "tine.author"] {
+                assert_eq!(gh840_values(&edited, false, key).len(), 1, "{edited:?}");
+            }
+            assert_eq!(edited.matches("id::").count(), raw.matches("id::").count());
+        }
+    }
+    let org = "a\n:PROPERTIES:\n:status: done\n:author: claude\n:END:";
+    let edited = gh840_edit(true, org, org, json!({})).unwrap();
+    assert_eq!(edited, org);
+    // A fenced lookalike is text: it names nothing, so the row stays.
+    let fenced = "x\n```\nstatus:: example\n```";
+    let edited = gh840_edit(false, "a\nstatus:: done", fenced, json!({})).unwrap();
+    assert_eq!(
+        gh840_values(&edited, false, "status"),
+        ["done"],
+        "{edited:?}"
+    );
+    assert!(edited.contains("```\nstatus:: example\n```"), "{edited:?}");
+    // History stays as well, with visible rows around it.
+    let drawer = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+    let edited = gh840_edit(
+        false,
+        &format!("a\nstatus:: done\n{drawer}"),
+        "x",
+        json!({}),
+    )
+    .unwrap();
+    assert_eq!(
+        gh840_values(&edited, false, "status"),
+        ["done"],
+        "{edited:?}"
+    );
+    assert!(edited.contains(drawer), "{edited:?}");
+}
+
+#[test]
+fn gh840_explicit_author_replaces_and_empty_refuses() {
+    let name = json!({"author_property": "codex"});
+    for (raw, text, expected) in [
+        ("a", "x", "x\ntine.author:: codex"),
+        ("a\ntine.author:: claude", "x", "x\ntine.author:: codex"),
+        ("a\nTine.Author:: claude", "x", "x\nTine.Author:: codex"),
+        (
+            "a\ntine.author:: claude",
+            "x\ntine.author:: typed",
+            "x\ntine.author:: codex",
+        ),
+        (
+            "a\ntine.quote:: words\ntine.author:: claude",
+            "x",
+            "x\ntine.quote:: words\ntine.author:: codex",
+        ),
+    ] {
+        assert_eq!(
+            gh840_edit(false, raw, text, name.clone()).unwrap(),
+            expected
+        );
+    }
+    let org = gh840_edit(
+        true,
+        "a\n:PROPERTIES:\n:tine.author: claude\n:END:",
+        "x",
+        name,
+    )
+    .unwrap();
+    assert_eq!(gh840_values(&org, true, "tine.author"), ["codex"], "{org}");
+    // The `author` every write carries (TINE_AUTHOR) names commits, not the block.
+    let edited = gh840_edit(false, "a\ntine.author:: Ada", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(edited, "x\ntine.author:: Ada");
+    let plain = gh840_edit(false, "a", "x", json!({"author": "env"})).unwrap();
+    assert_eq!(plain, "x");
+    for bad in ["", "  ", "two\nlines"] {
+        let error = gh840_edit(
+            false,
+            "a\ntine.author:: Ada",
+            "x",
+            json!({"author_property": bad}),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "refused", "{bad:?}");
+    }
+}
+
+#[test]
+fn add_creates_page_and_journal_through_create_new_and_bounds_handles() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    for (target, value, path) in [
+        ("page", "new page", "pages/new page.md"),
+        ("journal", "2026-10-18", "journals/2026_10_18.md"),
+    ] {
+        let mut args = json!({"content": "plain first block"});
+        args[target] = json!(value);
+        let reply = verb(&slot, "block.add", args).unwrap();
+        assert_eq!(reply["page"], path);
+        let text = std::fs::read_to_string(graph.root.join(path)).unwrap();
+        assert!(
+            text.contains("- plain first block\n  tine.author:: agent"),
+            "{text}"
+        );
+        // Existing pages append rather than overwrite.
+        let mut args = json!({"content": "- second"});
+        args[target] = json!(value);
+        verb(&slot, "block.add", args).unwrap();
+        let text = std::fs::read_to_string(graph.root.join(path)).unwrap();
+        assert!(text.contains("plain first block") && text.contains("second"));
+    }
+    let content = (0..205)
+        .map(|n| format!("- block {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reply = verb(
+        &slot,
+        "block.add",
+        json!({"page": "bounded", "content": content}),
+    )
+    .unwrap();
+    assert_eq!(
+        reply["blocks"].as_array().unwrap().len(),
+        super::write::REPLY_HANDLES
+    );
+    assert_eq!(reply["more"], 5);
+}
+
+#[test]
+fn add_refusals_leave_page_bytes_and_new_targets_absent() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let before = std::fs::read(graph.root.join("pages/a.md")).unwrap();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let anchor = format!("a/{}", block_handle(&read, 1));
+    let missing = "00000000-0000-4000-8000-000000000001";
+    for target in [
+        json!({"under": anchor}),
+        json!({"page": "missing"}),
+        json!({"journal": "2026-10-19"}),
+    ] {
+        let mut args = target;
+        args["content"] = json!(format!("- broken (({missing}))"));
+        let (code, detail) = error_code(verb(&slot, "block.add", args));
+        assert_eq!(code, "refused");
+        assert_eq!(detail["reason"], "broken-ref");
+        assert_eq!(detail["uuid"], missing);
+        assert_eq!(detail["admitted"], false);
+    }
+    for args in [
+        json!({"under": anchor, "content": "- x", "rev": "wrong"}),
+        json!({"under": "a/99~aaaaaa", "content": "- x"}),
+        json!({"under": anchor, "content": ""}),
+        json!({"under": anchor, "page": "missing", "content": "- x"}),
+        json!({"page": "missing", "content": "- x", "author": "Ada\n- injected"}),
+    ] {
+        assert!(verb(&slot, "block.add", args).is_err());
+    }
+    assert_eq!(
+        std::fs::read(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+    assert!(!graph.root.join("pages/missing.md").exists());
+    assert!(!graph.root.join("journals/2026_10_19.md").exists());
+    let readonly = "* a\n*** c\n";
+    std::fs::write(graph.root.join("pages/readonly.org"), readonly).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.add",
+        json!({"page": "readonly", "content": "* x"}),
+    ));
+    assert_eq!(code, "refused");
+    assert_eq!(detail["reason"], "read-only");
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/readonly.org")).unwrap(),
+        readonly
+    );
+    verb(
+        &slot,
+        "block.add",
+        json!({"under": anchor, "content": format!("- valid (({UUID}))\n  id:: {UUID}")}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert_eq!(
+        text.matches(&format!("id:: {UUID}")).count(),
+        1,
+        "live id collision dropped"
+    );
+}
+
+#[test]
+fn add_to_org_uses_page_grammar_and_property_drawers() {
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/org.org"), "* anchor\n").unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "org"})).unwrap();
+    let reply = verb(&slot, "block.add", json!({"under": format!("org/{}", block_handle(&read, 0)), "content": "* root\n** child", "author": "Ada"})).unwrap();
+    assert_eq!(reply["blocks"].as_array().unwrap().len(), 2);
+    let text = std::fs::read_to_string(graph.root.join("pages/org.org")).unwrap();
+    assert!(
+        text.contains("** root") && text.contains("*** child"),
+        "{text}"
+    );
+    assert_eq!(text.matches(":tine.author: Ada").count(), 2, "{text}");
+    assert!(text.contains(":id:"), "{text}");
+    let doc = graph
+        .store
+        .page(&PageId::from("pages/org.org"))
+        .unwrap()
+        .doc;
+    assert!(tine_core::block_regions::parse(&doc.blocks[0].raw, true)
+        .property("tine.author")
+        .is_none());
+}
+
+#[test]
+fn gh930_add_refuses_blank_authors_without_writing() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let file = graph.root.join("pages/a.md");
+    let before = std::fs::read(&file).unwrap();
+    for author in ["", " \t\n", "\u{2003}"] {
+        let result = verb(
+            &slot,
+            "block.add",
+            json!({"page":"a", "content":"- new", "author":author}),
+        );
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            before,
+            "blank author changed the page"
+        );
+        let (code, detail) = error_code(result);
+        assert_eq!(code, "refused");
+        assert_eq!(detail["reason"], "kernel");
+    }
+    verb(
+        &slot,
+        "block.add",
+        json!({"page":"a", "content":"- new", "author":"  Ada  "}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(text.contains("tine.author:: Ada\n"), "{text}");
+    assert!(!text.contains("tine.author::   "), "{text}");
+}
+
+#[test]
+fn gh930_author_property_set_refuses_blank_and_remove_still_works() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let file = graph.root.join("pages/a.md");
+    let before = std::fs::read(&file).unwrap();
+    let result = verb(
+        &slot,
+        "block.prop",
+        json!({"handle":UUID, "key":"tine.author", "value":" \t"}),
+    );
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    assert_eq!(error_code(result).0, "refused");
+    verb(
+        &slot,
+        "block.prop",
+        json!({"handle":UUID, "key":"tine.author", "value":"  Ada  "}),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(&file)
+        .unwrap()
+        .contains("tine.author:: Ada\n"));
+    verb(
+        &slot,
+        "block.prop",
+        json!({"handle":UUID, "key":"tine.author", "value":null}),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(file).unwrap(), before);
+}
+
+#[test]
+fn add_resolves_author_environment_and_explicit_override() {
+    // A child process owns its environment, so parallel owner tests never see
+    // a process-global env mutation.
+    if std::env::var_os("TINE_ADD_AUTHOR_TEST_CHILD").is_none() {
+        for (environment, expected) in [
+            ("  Environment Author  ", "Environment Author"),
+            ("", "agent"),
+            (" \t\u{2003}", "agent"),
+        ] {
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "owner::owner_tests::add_resolves_author_environment_and_explicit_override"
+                ])
+                .env("TINE_ADD_AUTHOR_TEST_CHILD", expected)
+                .env("TINE_AUTHOR", environment)
+                .status()
+                .unwrap()
+                .success());
+        }
+        return;
+    }
+    let graph = Graph::new();
+    let slot = graph.slot();
+    verb(
+        &slot,
+        "block.add",
+        json!({"page": "env", "content": "- from env"}),
+    )
+    .unwrap();
+    verb(
+        &slot,
+        "block.add",
+        json!({"page": "env", "content": "- explicit", "author": "Ada"}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/env.md")).unwrap();
+    let expected = std::env::var("TINE_ADD_AUTHOR_TEST_CHILD").unwrap();
+    assert!(
+        text.contains(&format!("tine.author:: {expected}\n")),
+        "{text}"
+    );
+    assert!(text.contains("tine.author:: Ada"), "{text}");
+}
+
+#[test]
+fn add_depth_refusal_writes_neither_the_anchor_id_nor_the_forest() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let before = std::fs::read(graph.root.join("pages/a.md")).unwrap();
+    let content = (0..128)
+        .map(|depth| format!("{}- node {depth}", "\t".repeat(depth)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.add",
+        json!({"under": format!("a/{}", block_handle(&read, 1)), "content": content}),
+    ));
+    assert_eq!(code, "refused");
+    assert_eq!(detail["reason"], "kernel:depth_cap");
+    assert_eq!(
+        std::fs::read(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn a_write_refuses_what_would_not_read_back_and_a_moved_rev() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let two = block_handle(&read, 1);
+    let before = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{two}"), "text": "two\n- a new block?" }),
+    ));
+    assert_eq!(
+        (code.as_str(), detail["reason"].as_str()),
+        ("refused", Some("does-not-round-trip"))
+    );
+    assert_eq!(detail["admitted"], false);
+
+    let (code, _) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": "a/2", "text": "x", "rev": "0000000000000000" }),
+    ));
+    assert_eq!(code, "stale");
+    let (code, _) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": "a/2", "text": "x" }),
+    ));
+    assert_eq!(code, "bad-args", "a bare position needs --rev");
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+
+    let rev = read["rev"].as_str().unwrap();
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": "a/2", "text": "TWO", "rev": rev }),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(graph.root.join("pages/a.md"))
+        .unwrap()
+        .ends_with("- TWO\n"));
+}
+
+#[test]
+fn identical_blocks_are_stale_with_candidates_never_position_first() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "dup" })).unwrap();
+    let first = block_handle(&read, 0);
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("dup/{first}"), "text": "changed" }),
+    ));
+    assert_eq!(code, "stale");
+    assert_eq!(detail["candidates"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/dup.md")).unwrap(),
+        "- same\n- same\n"
+    );
+}
+
+#[test]
+fn move_carries_the_subtree_and_refuses_a_cycle() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 0);
+    let two = block_handle(&read, 1);
+    let moved = verb(
+        &slot,
+        "block.move",
+        json!({ "handle": format!("a/{one}"), "to": format!("a/{two}"), "at": "after" }),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        format!("- two\n- one\n  id:: {UUID}\n\t- under one\n"),
+        "the block moves with its child and keeps its bytes"
+    );
+    assert!(
+        moved["blocks"][0].as_str().unwrap().starts_with("a/2~"),
+        "{moved}"
+    );
+
+    // Under its own child: the kernel's cycle refusal, nothing written.
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 1);
+    let child = read["page"]["blocks"][1]["children"][0]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let before = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.move",
+        json!({ "handle": format!("a/{one}"), "to": format!("a/{child}"), "at": "under" }),
+    ));
+    assert_eq!(
+        (code.as_str(), detail["reason"].as_str()),
+        ("refused", Some("kernel:cycle"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.move",
+        json!({ "handle": format!("a/{one}"), "to": "b/1", "at": "after", "rev": "x" }),
+    ));
+    assert_eq!(
+        (code.as_str(), detail["reason"].as_str()),
+        ("refused", Some("cross-page"))
+    );
+}
+
+#[test]
+fn cli_delete_requires_confirmation_and_returns_removed_text() {
+    use super::terminal::{error_json, error_text, exit_code, render};
+    for org in [false, true] {
+        let graph = Graph::new();
+        let (rel, removed, survivor) = if org {
+            (
+                "pages/proof.org",
+                format!("* one\n:PROPERTIES:\n:id: {UUID}\n:END:\n** child\n*** grandchild\n"),
+                "* two\n",
+            )
+        } else {
+            (
+                "pages/a.md",
+                format!("- one\n  id:: {UUID}\n\t- child\n\t\t- grandchild\n"),
+                "- two\n",
+            )
+        };
+        // Keep a.md present but unrelated when the UUID lives on the Org page.
+        std::fs::write(graph.root.join("pages/a.md"), "- unrelated\n").unwrap();
+        let before = format!("{removed}{survivor}");
+        std::fs::write(graph.root.join(rel), &before).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let other_before = std::fs::read(graph.root.join("pages/b.md")).unwrap();
+        let err = verb(&slot, "block.delete", json!({"handle": UUID})).unwrap_err();
+        assert_eq!(err.code, "refused");
+        assert_eq!(exit_code(&err.code), 6);
+        let json: Value = serde_json::from_str(&error_json(&err)).unwrap();
+        assert_eq!(json["error"]["detail"]["admitted"], false);
+        assert_eq!(json["error"]["detail"]["reason"], "confirmation");
+        assert_eq!(json["error"]["detail"]["broken_refs"], 1);
+        let text = error_text(&err);
+        for expected in ["1", "--yes", "--force", "nothing changed"] {
+            assert!(text.contains(expected), "{text}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        assert_eq!(
+            std::fs::read(graph.root.join("pages/b.md")).unwrap(),
+            other_before
+        );
+        let stale = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": UUID, "yes": true, "rev": "old"}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            stale.code, "stale",
+            "confirmation must retain the revision guard"
+        );
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        let deleted = verb(&slot, "block.delete", json!({"handle": UUID, "yes": true})).unwrap();
+        assert_eq!(deleted["broken_refs"], 1);
+        assert_eq!(deleted["removed_text"], removed);
+        assert_eq!(deleted["removed_text_omitted_bytes"], 0);
+        assert_eq!(deleted["format"], if org { "org" } else { "md" });
+        let mut text = String::new();
+        render(&deleted, &mut text);
+        assert!(text.contains(&removed), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            survivor
+        );
+        // No confirmation needed for an unreferenced block; its reply carries text too.
+        // Address through the current page handle rather than the removed UUID.
+        let name = deleted["name"].as_str().unwrap();
+        let read = verb(&slot, "page.show", json!({"name": name})).unwrap();
+        let handle = block_handle(&read, 0);
+        let last = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": format!("{name}/{handle}")}),
+        )
+        .unwrap();
+        assert_eq!(last["removed_text"], survivor);
+    }
+}
+
+#[test]
+fn cli_delete_checks_incoming_references_to_children() {
+    for org in [false, true] {
+        let graph = Graph::new();
+        let (rel, removed, survivor) = if org {
+            (
+                "pages/proof.org",
+                format!("* parent\n** child\n:PROPERTIES:\n:id: {UUID}\n:END:\n"),
+                "* keep\n",
+            )
+        } else {
+            (
+                "pages/proof.md",
+                format!("- parent\n\t- child\n\t  id:: {UUID}\n"),
+                "- keep\n",
+            )
+        };
+        std::fs::write(graph.root.join("pages/a.md"), "- unrelated\n").unwrap();
+        let before = format!("{removed}{survivor}");
+        std::fs::write(graph.root.join(rel), &before).unwrap();
+        graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+        let slot = graph.slot();
+        let page = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+        let handle = format!("proof/{}", block_handle(&page, 0));
+        let err = verb(&slot, "block.delete", json!({"handle": handle})).unwrap_err();
+        assert_eq!(err.detail.unwrap()["broken_refs"], 1);
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            before
+        );
+        let deleted = verb(
+            &slot,
+            "block.delete",
+            json!({"handle": handle, "yes": true}),
+        )
+        .unwrap();
+        assert_eq!(deleted["removed_text"], removed);
+        assert_eq!(
+            std::fs::read_to_string(graph.root.join(rel)).unwrap(),
+            survivor
+        );
+    }
+}
+
+#[test]
+fn cli_delete_internal_references_need_no_confirmation() {
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/b.md"), "- unrelated\n").unwrap();
+    let removed = format!("- one\n  id:: {UUID}\n\t- back (({UUID}))\n");
+    std::fs::write(graph.root.join("pages/a.md"), &removed).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let deleted = verb(&slot, "block.delete", json!({"handle": UUID})).unwrap();
+    assert_eq!(deleted["broken_refs"], 0);
+    assert_eq!(deleted["removed_text"], removed);
+    assert!(std::fs::read_to_string(graph.root.join("pages/a.md"))
+        .unwrap()
+        .trim()
+        .is_empty());
+}
+
+#[test]
+fn cli_delete_bounds_removed_text_at_a_utf8_boundary() {
+    let graph = Graph::new();
+    let removed = format!("- {}\n", "界".repeat(22_000));
+    std::fs::write(graph.root.join("pages/a.md"), &removed).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({"handle": format!("a/{}", block_handle(&read, 0))}),
+    )
+    .unwrap();
+    let text = deleted["removed_text"].as_str().unwrap();
+    assert!(text.len() <= 65_536);
+    assert!(text.len() + '界'.len_utf8() > 65_536);
+    assert!(removed.starts_with(text));
+    assert_eq!(
+        deleted["removed_text_omitted_bytes"],
+        removed.len() - text.len()
+    );
+    let mut output = String::new();
+    super::terminal::render(&deleted, &mut output);
+    assert!(
+        output.contains("truncated at 65536 UTF-8 bytes"),
+        "{output}"
+    );
+    assert!(output.contains(&(removed.len() - text.len()).to_string()));
+}
+
+#[test]
+fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let child = read["page"]["blocks"][0]["children"][0]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // A reference inside the deleted subtree goes with it: not broken.
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{child}"), "text": format!("back (({UUID}))") }),
+    )
+    .unwrap();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 0);
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({ "handle": format!("a/{one}"), "yes": true }),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        "- two\n",
+        "the block goes with its child; the rest keeps its bytes"
+    );
+    assert_eq!(deleted["kind"], "deleted");
+    assert_eq!(deleted["deleted"], format!("a/{one}"));
+    assert_eq!(
+        deleted["broken_refs"], 1,
+        "page b's reference breaks; the child's went with it: {deleted}"
+    );
+
+    // The page's last block: the page stays, empty, and nothing is broken.
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let two = block_handle(&read, 0);
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({ "handle": format!("a/{two}") }),
+    )
+    .unwrap();
+    assert_eq!(deleted["broken_refs"], 0);
+    assert!(graph.root.join("pages/a.md").exists());
+}
+
+/// Review 5 B1: an `id::` on two pages names no single block. A write by that
+/// id refuses `ambiguous` (case-insensitively) and writes neither page.
+#[test]
+fn a_write_by_an_id_on_two_pages_is_ambiguous_and_writes_nothing() {
+    let graph = Graph::new();
+    let twin = format!("- twin\n  id:: {}\n", UUID.to_ascii_uppercase());
+    std::fs::write(graph.root.join("pages/c.md"), &twin).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let a = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    for (verb_name, args) in [
+        ("block.edit", json!({ "handle": UUID, "text": "which?" })),
+        ("block.delete", json!({ "handle": UUID })),
+    ] {
+        let (code, detail) = error_code(verb(&slot, verb_name, args));
+        assert_eq!(code, "ambiguous", "{verb_name}: {detail}");
+        assert_eq!(detail["admitted"], false);
+        assert_eq!(detail["candidates"].as_array().map(Vec::len), Some(2));
+    }
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        a
+    );
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/c.md")).unwrap(),
+        twin
+    );
+}
+
+/// Review 5 R4: a write's request carries page text past the hello's 1 MiB
+/// cap (PROTOCOL §2.1).
+#[test]
+fn a_write_request_larger_than_one_mebibyte_is_answered() {
+    let graph = Graph::new();
+    let slot = Arc::new(graph.slot());
+    let (_endpoint, _gate) = endpoint(&graph, slot);
+    let mut conn = graph.connect();
+    let text = "x".repeat(2 << 20);
+    let written = conn
+        .call("block.edit", json!({ "handle": UUID, "text": text }))
+        .unwrap();
+    assert_eq!(written["kind"], "written");
+    let page = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert!(page.contains(&text), "the 2 MiB text was written");
+}
+
+/// Review 5 R5: `block show` prints the handles a page read prints, with
+/// page-absolute positions, so a write can name the block it shows.
+#[test]
+fn block_show_prints_page_absolute_handles_a_write_accepts() {
+    let graph = Graph::new();
+    let deep = "7d1e0f2a-3b4c-4d5e-8f60-718293a4b5c6";
+    std::fs::write(
+        graph.root.join("pages/deep.md"),
+        format!("- first\n- second\n\t- nested\n\t  id:: {deep}\n\t\t- leaf\n"),
+    )
+    .unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let shown = verb(&slot, "block.show", json!({ "uuid": deep })).unwrap();
+    let root = &shown["block"]["group"]["blocks"][0];
+    let handle = root["handle"].as_str().unwrap();
+    assert!(handle.starts_with("2.1~"), "{handle}");
+    let leaf = root["children"][0]["handle"].as_str().unwrap();
+    assert!(leaf.starts_with("2.1.1~"), "{leaf}");
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("deep/{leaf}"), "text": "leaf, edited" }),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/deep.md")).unwrap();
+    assert!(text.contains("\t\t- leaf, edited\n"), "{text}");
+}
+
+/// Review 6: `block show` takes the text it shows and fingerprints from the
+/// same host read. With the store behind the file (`U` reads "old" there,
+/// while on disk `U` says "new" and another block says "old"), its handle
+/// must name `U`, never the other block.
+#[test]
+fn block_show_fingerprints_the_text_the_host_holds() {
+    let graph = Graph::new();
+    let u = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d";
+    let path = graph.root.join("pages/lag.md");
+    std::fs::write(&path, format!("- old\n  id:: {u}\n")).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    // The file changes; the store's whole-graph view is not refreshed.
+    std::fs::write(&path, format!("- new\n  id:: {u}\n- old\n")).unwrap();
+    let shown = verb(&slot, "block.show", json!({ "uuid": u })).unwrap();
+    let root = &shown["block"]["group"]["blocks"][0];
+    assert!(root["raw"].as_str().unwrap().starts_with("new"), "{root}");
+    let handle = root["handle"].as_str().unwrap().to_string();
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("lag/{handle}"), "text": "U, edited" }),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        format!("- U, edited\n  id:: {u}\n- old\n")
+    );
+}
+
+/// Review 7: `block show` names the page the index resolved, not the name its
+/// bytes now declare. `a.md` takes `title:: b` after indexing while `b.md`
+/// holds a block with the same text; a handle shown for `U` must not edit
+/// `b.md`.
+#[test]
+fn block_show_names_the_page_it_read_not_its_new_title() {
+    let graph = Graph::new();
+    let u = "6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e";
+    let a = graph.root.join("pages/a.md");
+    let b = graph.root.join("pages/b.md");
+    std::fs::write(&a, format!("- new\n  id:: {u}\n")).unwrap();
+    std::fs::write(&b, "- new\n").unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    std::fs::write(&a, format!("title:: b\n\n- new\n  id:: {u}\n")).unwrap();
+    let shown = verb(&slot, "block.show", json!({ "uuid": u })).unwrap();
+    let group = &shown["block"]["group"];
+    assert_eq!(group["page"], "a", "{group}");
+    let handle = group["blocks"][0]["handle"].as_str().unwrap().to_string();
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{handle}"), "text": "U, edited" }),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&b).unwrap(), "- new\n");
+    assert!(
+        std::fs::read_to_string(&a)
+            .unwrap()
+            .contains("- U, edited\n"),
+        "{}",
+        std::fs::read_to_string(&a).unwrap()
+    );
+}
+
+/// Review 7: the host preview charges each node as the store's projector
+/// does. A root whose text fits the byte bound but whose projected properties
+/// do not is omitted (`truncated` 1), as the store preview omits it.
+#[test]
+fn block_show_charges_projected_properties_against_the_byte_bound() {
+    let graph = Graph::new();
+    let u = "7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
+    let big = "x".repeat(17 << 20);
+    std::fs::write(
+        graph.root.join("pages/big.md"),
+        format!("- root\n  id:: {u}\n  p:: {big}\n"),
+    )
+    .unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let shown = verb(&slot, "block.show", json!({ "uuid": u })).unwrap();
+    let block = &shown["block"];
+    assert_eq!(block["truncated"], 1, "{}", block["group"]["page"]);
+    assert_eq!(block["group"]["blocks"].as_array().unwrap().len(), 0);
+}
+
+/// The zips `tine serve`'s launch backup published for `graph`.
+fn launch_zips(graph: &Graph) -> Vec<String> {
+    let mut zips = graph
+        .app_data
+        .join("backups")
+        .join(crate::backup::root_backup_id(&graph.root));
+    zips.as_mut_os_string().push(".zips");
+    let mut names: Vec<String> = std::fs::read_dir(zips)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".zip"))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn serve_takes_the_apps_launch_backup_once_it_has_gone_quiet() {
+    // Journal D-20261019-QC item 3: a graph only `tine serve` opens is backed
+    // up like one the app opens (one zip, after the warm and a quiet turn).
+    let graph = Graph::new();
+    let finished = lifecycle::Serving::new(&graph).run();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while launch_zips(&graph).is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "serve took no launch backup"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut yielding = graph.connect();
+    assert!(yielding.call("owner.yield", Value::Null).is_ok());
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(launch_zips(&graph).len(), 1);
+}
+
+#[test]
+fn a_stop_during_the_quiet_wait_ends_serves_backup_before_it_returns() {
+    let graph = Graph::new();
+    let finished = lifecycle::Serving::new(&graph).run();
+    let mut yielding = graph.connect();
+    assert!(yielding.call("owner.yield", Value::Null).is_ok());
+    // Inside the 5 s quiet turn: returning means the worker was joined.
+    finished.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(
+        launch_zips(&graph).is_empty(),
+        "a stopped serve published a backup"
+    );
 }

@@ -34,7 +34,7 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
     )
     .unwrap();
     let store = open(root);
-    let review = tine_store::publish::query_publication_destination(&store, "tasks").unwrap();
+    let review = tine_store::publish::query_publication_destination(&store, "tasks", None).unwrap();
     assert!(review.1);
     assert_eq!(review.2.as_deref(), Some("tasks-2"));
     let result = store
@@ -263,8 +263,8 @@ fn review_suggestions_remain_portable_at_the_folder_limit() {
     let folder = "a".repeat(80);
     fs::create_dir_all(dir.path().join("published-queries").join(&folder)).unwrap();
     let store = open(dir.path());
-    let (_, exists, suggestion) =
-        tine_store::publish::query_publication_destination(&store, &folder).unwrap();
+    let (_, exists, suggestion, _) =
+        tine_store::publish::query_publication_destination(&store, &folder, None).unwrap();
     assert!(exists);
     let suggestion = suggestion.unwrap();
     assert!(suggestion.len() <= 80);
@@ -293,6 +293,6 @@ fn review_refuses_an_unsafe_existing_leaf() {
     )
     .unwrap();
     let store = open(dir.path());
-    assert!(tine_store::publish::query_publication_destination(&store, "tasks").is_err());
+    assert!(tine_store::publish::query_publication_destination(&store, "tasks", None).is_err());
     store.close();
 }

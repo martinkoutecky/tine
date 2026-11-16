@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
@@ -148,7 +149,6 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     if (typeof props.which === "object" && "field" in props.which) commitDraft();
   };
   const pick = (d: number) => selectDate({ ...view(), d });
-  const pickToday = () => selectDate({ y: today.getFullYear(), m: today.getMonth(), d: today.getDate() });
   const isToday = (d: number) =>
     view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
   const isSel = (d: number) => chosen().y === view().y && chosen().m === view().m && chosen().d === d;
@@ -217,6 +217,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
                   tabIndex={cursor().y === view().y && cursor().m === view().m && cursor().d === d ? 0 : -1}
                   onFocus={() => setCursor({ ...view(), d: d! })}
                   classList={{ today: isToday(d!), selected: isSel(d!) }}
+                  aria-current={isToday(d!) ? "date" : undefined}
                   onClick={() => pick(d!)}
                 >
                   {d}
@@ -284,10 +285,9 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
             </Show>
           </div>
         </Show>
-        <div class="dp-foot">
-          <button class="dp-btn" onClick={commitDraft}>{t("date-date-picker-done")}</button>
-          <button class="dp-btn" onClick={pickToday}>{t("date-date-picker-today")}</button>
-          <Show when={sel}>
+        <DialogActions
+          class="dp-foot"
+          aux={<Show when={sel}>
             <button
               class="dp-btn dp-clear"
               onClick={() => {
@@ -300,8 +300,8 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
               }}
             >
               {t("date-date-picker-clear")}</button>
-          </Show>
-        </div>
+          </Show>}
+          primary={<button class="dp-btn" onClick={commitDraft}>{t("date-date-picker-done")}</button>} />
       </div>
     </div>
   );

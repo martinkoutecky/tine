@@ -34,11 +34,15 @@ fn raws(graph: &WholeGraph, q: &str) -> Vec<String> {
         Registry::none(),
     );
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("query_ir(Run) returns a result");
@@ -61,11 +65,15 @@ fn page_names(graph: &WholeGraph, q: &str) -> BTreeSet<String> {
         Registry::none(),
     );
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("query_ir(Run) returns a result");
@@ -122,6 +130,28 @@ fn priority_accepts_the_vector_form_like_og() {
     ] {
         assert_eq!(set(&graph, q), ab, "{q}");
     }
+}
+
+/// card BqlaU / D-20261018-M2 Q6: OG `graph-parser/block.cljs` `with-page-refs`
+/// concatenates `[marker priority]` into the block's refs (since 2021-05-12), so a
+/// header `[#A]` references the page "A" (`:block/name "a"`) and `[[A]]` / `[[a]]`
+/// find the block through `:block/path-refs`. A mid-text `[#A]` is no priority.
+#[test]
+fn a_priority_marker_is_a_page_reference_in_queries_like_og() {
+    let _integration_guard = crate::integration_lock();
+    let (_dir, graph) = fixture();
+    let a: BTreeSet<String> = ["[#A] urgent", "[#A] other urgent"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(set(&graph, "[[A]]"), a);
+    assert_eq!(set(&graph, "[[a]]"), a);
+    assert_eq!(set(&graph, "(and [[A]] (priority A))"), a);
+    let b: BTreeSet<String> = ["[#B] mid"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(set(&graph, "[[B]]"), b);
+    // The marker is the sibling half of the same `[marker priority]` concat.
+    let todo: BTreeSet<String> = ["TODO open"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(set(&graph, "(and [[TODO]] [[Work]])"), todo);
 }
 
 #[test]
@@ -732,11 +762,15 @@ fn simple_namespace_is_immediate_children_only_while_advanced_stays_recursive() 
         Registry::none(),
     );
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("query_ir(Run) returns a result");

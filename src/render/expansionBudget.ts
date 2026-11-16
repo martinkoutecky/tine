@@ -12,6 +12,22 @@ export const MAX_MACRO_EXPANSIONS = 1000;
 export const MAX_MACRO_EXPANDED_BYTES = 256 * 1024;
 export const MACRO_EXPANSION_LIMIT_LABEL = "macro expansion limit";
 
+/** Count substitution output without building it. Stop counting once no tree
+ * can admit it; repeated arguments can otherwise allocate enormous strings. */
+export function templateExpansionSize(template: string, args: string[]): number {
+  let size = 0, end = 0;
+  for (const match of template.matchAll(/\$(\d+)/g)) {
+    size += match.index - end + (args[Number(match[1]) - 1] ?? match[0]).length;
+    if (size > MAX_MACRO_EXPANDED_BYTES) return size;
+    end = match.index + match[0].length;
+  }
+  return size + template.length - end;
+}
+
+export function expandTemplate(template: string, args: string[]): string {
+  return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
+}
+
 export interface ExpansionGate {
   /** Run `render` as one expansion of `bytes` expanded bytes. Past the depth
    *  cap returns `onDepth()`; past the tree's budget returns `onBudget()`.

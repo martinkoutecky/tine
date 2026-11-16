@@ -13,6 +13,7 @@ import { rescanGraphNowFromSettings } from "../reloadOnFocus";
 import { pushToast } from "../toasts";
 import { ErrorToastHistory } from "./ErrorToastHistory";
 import { GraphVerification } from "./GraphVerification";
+import { refreshEverything, setRefreshEverything } from "../changeKeys";
 import "../styles/diagnostics.css";
 
 export const DIAGNOSTIC_PREVIEW_LIMIT = 64 * 1024;
@@ -103,6 +104,10 @@ export function DiagnosticsTab(): JSX.Element {
   return (
     <section class="diagnostics-tab settings-section">
       <h2>{t("diagnostics-tab-help-diagnostics")}</h2>
+      <label class="settings-row">
+        <input type="checkbox" checked={refreshEverything()} onChange={event => setRefreshEverything(event.currentTarget.checked)} />
+        <span>{t("diagnostics-refresh-everything")}</span>
+      </label>
       <p>{t("diagnostics-tab-tine-keeps-a-small-bounded-flight-recorder-of")}</p>
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-it-does-not-record-graph-content-file-paths")}</p>
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-a-report-also-carries-statistics-about-your-graph")}</p>

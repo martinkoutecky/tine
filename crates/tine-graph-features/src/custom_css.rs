@@ -28,7 +28,7 @@ pub fn ensure_custom_css(store: &Store) -> io::Result<std::path::PathBuf> {
         // is `TooLarge` (still a regular file), a directory is `InvalidTarget`.
         match store.read(&id, Some(0)) {
             Ok(_) | Err(StoreError::TooLarge { .. }) => return Ok(Some(())),
-            Err(StoreError::NotFound) => {}
+            Err(StoreError::NotFound(_)) => {}
             Err(StoreError::InvalidTarget(_)) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,

@@ -24,6 +24,8 @@ pub struct FeedPage<T> {
     /// not be listed or read (one bad file never blocks the feed, I-22; the
     /// caller reports these, I-2). Empty in the common case.
     pub unreadable: Vec<String>,
+    /// File-backed days are usable; referenced-only days await the graph.
+    pub references_pending: bool,
 }
 
 /// What one feed row load found.
@@ -56,6 +58,7 @@ where
             done,
             as_of_day,
             unreadable: Vec::new(),
+            references_pending: false,
         });
     }
     let mut out = Vec::new();
@@ -70,7 +73,12 @@ where
         match load(&id)? {
             Loaded::Page(value) => out.push(value),
             Loaded::Gone => {}
-            Loaded::Unreadable(reason) => unreadable.push(format!("{}: {reason}", id.as_str())),
+            Loaded::Unreadable(reason) => {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine unreadable file producer=journal-feed-read",
+                );
+                unreadable.push(format!("{}: {reason}", id.as_str()));
+            }
         }
         if out.len() == limit {
             break;
@@ -84,6 +92,7 @@ where
         done,
         as_of_day,
         unreadable,
+        references_pending: false,
     })
 }
 
@@ -119,43 +128,81 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
     }
 }
 
-/// Page the dated journal feed by day, including referenced fileless dates.
+/// Page file-backed journal days immediately, always leaving graph-wide
+/// additions pending for a separate completion request, even on a Ready graph.
 /// Unreadable files are skipped and named; store/index failures fail the read.
 /// Cost O((J + D) log(J + D) + R + returned page bytes), plus indexed alias
-/// lookups for date-shaped names. J is journal files, R indexed reference names,
+/// lookups for date-shaped names on completion. J is journal files, R indexed reference names,
 /// D referenced dates. No reference-content scan or graph file write.
 pub fn feed_page(
     store: &Store,
     limit: usize,
     before_day: Option<i64>,
 ) -> Result<FeedPage<FeedRead>, io::Error> {
+    feed_page_through(store, limit, before_day, None, false)
+}
+
+/// As [`feed_page`], extending the window through an already displayed day.
+/// Late referenced days can be inserted without dropping the visible suffix.
+/// `include_references` waits via the ordinary whole-graph read; false never
+/// consults the graph. Only returned journal bodies are read in either mode.
+pub fn feed_page_through(
+    store: &Store,
+    limit: usize,
+    before_day: Option<i64>,
+    through_day: Option<i64>,
+    include_references: bool,
+) -> Result<FeedPage<FeedRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
     let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
-    let referenced: std::collections::BTreeSet<_> = store
-        .whole_graph()
-        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?
-        .inventory(tine_store::InventoryScope::ReferencedJournals)
-        .0
-        .iter()
-        .filter_map(|entry| entry.day)
-        .collect();
+    let graph = if include_references {
+        Some(
+            store
+                .whole_graph()
+                .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?,
+        )
+    } else {
+        None
+    };
+    let referenced: std::collections::BTreeSet<_> = graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .inventory(tine_store::InventoryScope::ReferencedJournals)
+                .0
+                .iter()
+                .filter_map(|entry| entry.day)
+                .collect()
+        })
+        .unwrap_or_default();
     let mut days: BTreeMap<_, _> = entries.into_iter().collect();
     for day in referenced.iter().filter(|day| day.0 <= as_of_day) {
         days.entry(*day).or_insert_with(|| store.journal_id(*day));
     }
     let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
-    let entries = days.into_iter().rev().collect();
+    let entries: Vec<_> = days.into_iter().rev().collect();
+    let limit = through_day.map_or(limit, |through| {
+        limit.max(
+            entries
+                .iter()
+                .filter(|(day, _)| {
+                    day.0 >= through && before_day.is_none_or(|before| day.0 < before)
+                })
+                .count(),
+        )
+    });
     let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
         Ok(match store.page(id) {
             Ok(read) => Loaded::Page(feed_read(read)),
-            Err(StoreError::NotFound) if referenced.contains(&by_id[id]) => {
+            Err(StoreError::NotFound(_)) if referenced.contains(&by_id[id]) => {
                 Loaded::Page(virtual_day(store, by_id[id]))
             }
-            Err(StoreError::NotFound) => Loaded::Gone,
+            Err(StoreError::NotFound(_)) => Loaded::Gone,
             Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
             Err(error) => Loaded::Unreadable(store_error(error).to_string()),
         })
     })?;
+    page.references_pending = graph.is_none();
     // The listing's own unreadable entries are reported with the first page
     // only, so a paged feed names each one once per load.
     if before_day.is_none() {
@@ -170,6 +217,10 @@ pub fn feed_page(
     }
     Ok(page)
 }
+
+#[cfg(test)]
+#[path = "journals_ready_tests.rs"]
+mod journals_ready_tests;
 
 #[cfg(test)]
 mod journal_feed_tests {
@@ -332,6 +383,30 @@ mod journal_feed_tests {
         assert_eq!(page.next_before_day, Some(2));
         assert!(!page.done);
     }
+}
+
+/// The file a journal day no file claims would be created as, answered
+/// without the graph-wide parse (BqbeQ: saving an empty today's daily
+/// template opened the page through `resolve_page`, which waited for it).
+/// A journal is claimed by its files alone and no alias resolves a journal, so
+/// such a day resolves to `Resolved::Absent` at its configured id, the id the
+/// feed gives the same virtual day (`Store::journal_id`). `None` when `name` is
+/// not a day under the current title or file-name format, or a file claims it:
+/// the graph answers then, with every claimant. Cost: one `page_named` lookup
+/// (a file-name listing check before Ready; one file read if a file claims the
+/// day) and O(path bytes). No write.
+pub fn absent_journal_id(store: &Store, name: &str) -> Result<Option<PageId>, StoreError> {
+    let fmt = format(store);
+    let Some(date) = fmt.parse(name) else {
+        return Ok(None);
+    };
+    if store
+        .page_named(name, tine_core::model::PageKind::Journal)?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    Ok(Some(store.journal_id(Day(date.ordinal_key()))))
 }
 
 fn format(store: &Store) -> JournalFormat {
@@ -528,7 +603,7 @@ pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilen
 /// migrated file bytes).
 pub fn migrate_journal_filenames(
     store: &Store,
-    host: Option<&PageHost>,
+    host: &PageHost,
     confirmed: &[JournalFilenameMigration],
 ) -> io::Result<MigrationResult> {
     let fmt = format(store);
@@ -566,22 +641,12 @@ pub fn migrate_journal_filenames(
         let Ok(to) = store.file_id(Area::Journals, &target) else {
             continue; // `migration_plan` already refused an invalid name.
         };
-        let moved = match (host, store.as_page(&entry), store.as_page(&to)) {
-            (Some(running), Some(from), Some(page)) => {
-                migrate_hosted(store, running, (&entry, from), (&to, page), &target)
+        let moved = match (store.as_page(&entry), store.as_page(&to)) {
+            (Some(from), Some(page)) => {
+                migrate_hosted(store, host, (&entry, from), (&to, page), &target)
             }
-            // No host: the transaction under the retained-writer route, as before P3.
-            _ => {
-                let pages = crate::retained::pages(store, [&entry, &to]);
-                crate::retained::reserved(
-                    host,
-                    Input::Flush,
-                    || Ok(pages.clone()),
-                    crate::retained::unsaved,
-                    |_| Ok(migrate_one(store, &entry, &to)),
-                )
-                .and_then(|moved| moved)
-            }
+            // Not a page (Store::as_page): the plain move, no host fence.
+            _ => migrate_one(store, &entry, &to),
         };
         match moved {
             Ok(()) => {
@@ -600,9 +665,9 @@ pub fn migrate_journal_filenames(
 /// error is the reason the proposal is skipped.
 fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
     let (_, rev) = migration_source(store, entry)?;
-    tx_error(migration_transaction(store, entry, to, rev).commit())
-        .map(drop)
-        .map_err(migration_error)
+    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.move_file(entry, rev, to, None);
+    tx_error(tx.commit()).map(drop).map_err(migration_error)
 }
 
 fn migration_error(error: io::Error) -> io::Error {
@@ -611,17 +676,6 @@ fn migration_error(error: io::Error) -> io::Error {
     } else {
         io::Error::other(format!("move refused: {error}"))
     }
-}
-
-fn migration_transaction<'a>(
-    store: &'a Store,
-    entry: &FileId,
-    to: &FileId,
-    rev: tine_store::FileRev,
-) -> tine_store::Transaction<'a> {
-    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-    tx.move_file(entry, rev, to, None);
-    tx
 }
 
 /// One eligible journal file's move to `to` as one host operation (DESIGN
@@ -638,8 +692,9 @@ fn migrate_hosted(
 ) -> io::Result<()> {
     let plan = || {
         let (_, rev) = migration_source(store, entry)?;
-        migration_transaction(store, entry, to, rev)
-            .plan()
+        let mut tx = store.page_plan(Some(tine_store::EditKind::RenamePage));
+        tx.move_file(entry, rev, to, None);
+        tx.plan()
             .map(Some)
             .map_err(crate::why_error)
             .map_err(migration_error)
@@ -742,32 +797,23 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 
 /// Trash one top-level journal with a revision guard, retrying an external
 /// conflict four times. Cost O(file bytes) per attempt.
-/// With a host, one host operation deletes the page (DESIGN §3.1); the host
+/// One host operation deletes the page (DESIGN §3.1); the host
 /// keeps the deleted bytes in graph trash. The page's unsaved input is saved
 /// first (`Input::Flush`).
-pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) -> io::Result<()> {
+pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
     let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
-    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
-        // No host: the transaction under the retained-writer route, as before P2.
-        let discover = || Ok(crate::retained::pages(store, [&id]));
-        return crate::retained::reserved(
-            host,
-            Input::Flush,
-            discover,
-            crate::retained::unsaved,
-            |_| {
-                crate::retry_on_conflict("journal changed repeatedly during trash", || {
-                    crate::trash_current(store, &id, max, "no such journal file")
-                })
-            },
-        );
+    let Some(page) = store.as_page(&id) else {
+        // Not a page (Store::as_page): the guarded trash, no host fence.
+        return crate::retry_on_conflict("journal changed repeatedly during trash", || {
+            crate::trash_current(store, &id, max, "no such journal file")
+        });
     };
     let plan = || {
         let rev = match store.read(&id, max) {
             Ok((_, rev)) => rev,
-            Err(StoreError::NotFound) => {
+            Err(StoreError::NotFound(_)) => {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     "no such journal file",
@@ -775,13 +821,15 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             }
             Err(error) => return Err(store_error(error)),
         };
-        crate::retained::plan(crate::trash_transaction(store, &id, rev)).map(Some)
+        let mut tx = store.page_plan(Some(tine_store::EditKind::DeletePage));
+        tx.trash(&id, rev, tine_store::TrashIf::Any);
+        crate::retained::plan(tx).map(Some)
     };
     crate::retained::operation(
-        running,
+        host,
         Input::Flush,
         std::slice::from_ref(&page),
-        "moving the journal to trash",
+        "moving the journal to trash at logseq/.tine-trash/pages",
         "journal changed repeatedly during trash",
         crate::retained::unsaved,
         plan,

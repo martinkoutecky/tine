@@ -17,7 +17,7 @@ it("I-20: snapshot projects held sources, never live pages; exemplar publish_que
   expect(body).not.toContain("store.page(");
 });
 it("I-21: sheet render latches retire with the binding; exemplar SheetBoard renderedBoardCards", () => {
-  expect(source("src/components/SheetTable.tsx")).toContain("clearOnBindingInvalidated(() => renderedSheetRows.clear())");
+  expect(source("src/components/SheetTableBody.tsx")).toContain("clearOnBindingInvalidated(() => renderedSheetRows.clear())");
 });
 it("I-22: formula consumers bound fan-out, recursive rename and inherited members; exemplar formula/eval.ts", () => {
   const evalSource = source("src/sheet/formula/eval.ts");

@@ -1,15 +1,24 @@
+import { PageIcon } from "./PageIcon";
+import { pageIcon } from "../pageIconBatch";
 import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
 import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperties, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting, clearSelection } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
+import { PaneContext, focusedPaneId, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
-import { graphEpoch, dataRev, graphMeta } from "../graphSession";
-import { captureBinding, graphScopedSignal } from "../binding";
+import { openShareDialog } from "../shareState";
+import { ShareIcon } from "./ShareIcon";
+import { QuickShareAll } from "./QuickShareAll";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { changed } from "../changeKeys";
+import { PageLoadError, createPinnedPathRecovery, pageOpenMismatch, recordPageOpenRefusal, routeAdoptsRead, type PinnedPathRefusal } from "./pageLoadRecovery";
+import { EXPORTS_MARKER, JOURNAL_SECTIONS_MARKER, hasMarker } from "../tineKeys";
+import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "../binding";
+import { createTagTableResource } from "../tagTable";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
@@ -21,32 +30,43 @@ import { focusPageTrailing } from "./pageTrailing";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
+import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { JournalSectionsHeader, TodaySections } from "./TodaySections";
 import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { aliasNamesOf, visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody, isRenderHiddenPageProp } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
-import type { JournalFeedPage, PageRead, RefGroup } from "../types";
+import type { JournalFeedPage, PageRead, PageReadSource, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { PropertyKey } from "../render/PropertyKey";
 import { PageConflictPanel } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
 import { pageIdentityKey } from "../pageIdentity";
 import { ExternalChangeBar } from "./ExternalChangeBar";
-import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow } from "../windowRealm";
+import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
+import { captureReadingViewport } from "./readingViewportAnchor";
+import { revealCommentMarginFor } from "../commentMargin";
+import { createMarginSurface } from "./MarginColumn";
+import { MarginContext } from "./marginContext";
+import { JournalFeedDays } from "./JournalFeedDays";
+import { SeenHeader, SeenRemoved, SeenRows } from "../seen/SeenHeader";
+import { createPageSeen } from "../seen/pageSeen";
+import { markSeenOnLeave } from "../seen/leave";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -71,6 +91,16 @@ let publishedFeedEpoch: number | null = null;
 let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
+let feedReferencesPending = false;
+let paintedFeedGeneration: number | null = null;
+const feedViewportAnchors = new Set<() => (() => void) | undefined>();
+const journalCompletionOwners = new Set<JournalsFeedOwner>();
+clearOnBindingInvalidated(() => { feedViewportAnchors.clear(); journalCompletionOwners.clear(); feedReferencesPending = false; });
+const oldestFeedDay = () => {
+  const name = feedNames().at(-1);
+  const date = name ? parseJournalTitle(name) : null;
+  return date ? localDayKey(date) : null;
+};
 const feedOwners = {};
 const [upcomingFeed, setUpcomingFeed] = graphScopedSignal<{ epoch: number; pages: PageRead[] }>();
 const upcomingDays = () => upcomingFeed()?.epoch === graphEpoch() ? upcomingFeed()!.pages : [];
@@ -155,6 +185,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
   const date = appNow();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
+  if (hasPublishedFeed(owner.graphEpoch) && feedReferencesPending && journalAsOfDay === day) return restartJournalFeed(owner);
   if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner, false, rollover);
   const current = journalRefreshFlight;
   if (current && current.graphEpoch === owner.graphEpoch && current.day === day) {
@@ -173,14 +204,16 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
       && !pageHasActiveEdit(journalTitle(date)) && (rollover || !feedHasActiveEdit()));
     const liveOwner = flight.owner;
     if (typeof ensured === "object") {
+      // One day's template step never blanks the feed (GH #811): say that the
+      // template was not applied, then show the journals without it. The next
+      // refresh (reopening Journals, a watcher change, day rollover) tries it
+      // again. No retry is armed here: a retry that fails on every feed change
+      // would rewrite today's page in a loop.
       recordFeedReason("template-error", ensured.error);
       if (ownerIsLive(liveOwner)) {
-        pendingFeedRestart = true;
-        pushToast(msg("page-ui-could-not-load-journal-feed-it-will-retry-when"), "error");
+        pushToast(msg("page-ui-journal-template-not-applied", { error: String(ensured.error) }), "error");
       }
-      return ensured.error;
-    }
-    if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
+    } else if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
       recordFeedReason(localDayKey() !== day ? "template-day-changed"
         : ensured !== "ready" ? `template-${ensured}` : "owner-retired");
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
@@ -214,9 +247,11 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   // must not steal the generation from a live request that is about to land.
   if (!ownerIsLive(owner)) { recordFeedReason("owner-retired"); return null; }
   if (windowUnbound()) { recordFeedReason("window-unbound"); return null; }
+  const mergeReferences = hasPublishedFeed(owner.graphEpoch) && feedReferencesPending && journalAsOfDay === localDayKey();
+  const preserve = rollover || mergeReferences;
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
-  if (!rollover && feedHasActiveEdit()) {
+  if (!preserve && feedHasActiveEdit()) {
     recordFeedReason("active-edit");
     pendingFeedRestart = true;
     return null;
@@ -224,7 +259,9 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   const browserDay = localDayKey();
   loadingGeneration = generation;
   try {
-    const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, null));
+    const result = await readOwned(requestOwner, mergeReferences
+      ? backend().journalFeedPage(FEED_PAGE, null, false, oldestFeedDay())
+      : backend().journalFeedPage(FEED_PAGE, null));
     if (result.kind === "stale") { recordFeedReason("read-stale"); return null; }
     const response = result.value;
     reportUnreadableJournals(response);
@@ -240,18 +277,21 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     // Clear the deferred flag before loadFeed synchronously updates doc.feed;
     // otherwise the intentionally reactive pending-retry effect observes the
     // old true value during that store write and starts a duplicate restart.
-    if (generation !== feedGeneration || !ownerIsLive(owner) || (!rollover && feedHasActiveEdit())) {
+    if (generation !== feedGeneration || !ownerIsLive(owner) || (!preserve && feedHasActiveEdit())) {
       recordFeedReason(generation !== feedGeneration ? "generation-changed"
         : !ownerIsLive(owner) ? "owner-retired" : "active-edit");
       if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
       return null;
     }
     pendingFeedRestart = false;
+    const restoreAnchors = preserve ? [...feedViewportAnchors].map(capture => capture()) : [];
     const loaded = loadFeed(withToday(response.pages), {
       endEdit: false,
-      preserveExisting: rollover,
+      preserveExisting: preserve,
+      mergeByDay: mergeReferences,
       isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
     });
+    for (const restore of restoreAnchors) restore?.();
     if (loaded === "stale") { recordFeedReason("admission-stale"); return null; }
     // The whole window is withheld, as master defers its feed atomically: a
     // published feed never shows another file as a requested day.
@@ -266,6 +306,11 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     journalAsOfDay = response.as_of_day;
     nextBeforeDay = response.next_before_day;
     feedDone = response.done;
+    feedReferencesPending = response.references_pending === true;
+    requestFrame(undefined, () => {
+      if (generation === feedGeneration) paintedFeedGeneration = generation;
+    });
+    if (feedReferencesPending) void completeJournalFeed(owner, generation, browserDay);
     return null;
   } catch (error) {
     recordFeedReason("feed-error", error);
@@ -281,10 +326,46 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   }
 }
 
-// Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as "aka" chips above. `icon` stays editable here as well as decorating the
-// title, matching OG's editable-built-in-properties. Hide internal tag-table metadata.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table"]);
+/** One waiting read, rather than polling the journal directory while loading.
+ * It admits only new days; already mounted bodies, drafts and undo stay owned
+ * by their existing working-set objects. A changed loaded window is reread
+ * through its new oldest day so inserts never leave gaps above the cursor. */
+async function completeJournalFeed(owner: JournalsFeedOwner, generation: number, day: number): Promise<void> {
+  // The feed is shared: closing the initiating pane transfers completion to
+  // another still-visible Journals surface of the same graph and generation.
+  const currentOwner = () => ownerIsLive(owner) ? owner : [...journalCompletionOwners]
+    .find(candidate => candidate.graphEpoch === owner.graphEpoch && ownerIsLive(candidate));
+  const live = () => generation === feedGeneration && !!currentOwner() && journalAsOfDay === day && localDayKey() === day;
+  const names = feedNames();
+  try {
+    const result = await readOwned(graphOwner(live), backend().journalFeedPage(FEED_PAGE, null, true, oldestFeedDay()));
+    if (result.kind === "stale") return;
+    if (names !== feedNames()) { void completeJournalFeed(owner, generation, day); return; }
+    const response = result.value;
+    const publicationOwner = currentOwner();
+    if (!publicationOwner) return;
+    if (!responseMatches(day, response)) { pendingFeedRestart = true; return; }
+    reportUnreadableJournals(response);
+    const restores = paintedFeedGeneration === generation ? [...feedViewportAnchors].map(capture => capture()) : [];
+    const loaded = loadFeed(withToday(response.pages), { endEdit: false, preserveExisting: true, mergeByDay: true, isRequestLive: live });
+    for (const restore of restores) restore?.();
+    if (loaded === "stale") return;
+    if (loaded !== "published") { feedDayRefused(loaded, publicationOwner); return; }
+    publishedFeedNames = feedNames();
+    setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
+    nextBeforeDay = response.next_before_day;
+    feedDone = response.done;
+    feedReferencesPending = false;
+  } catch (error) {
+    if (live()) {
+      pendingFeedRestart = true;
+      reportUiFailure("journal-feed", error);
+    }
+  }
+}
+
+// OG's pre-block predicate lives in Rust alongside ordinary-block visibility.
+// Aliases retain their AliasGroupHeader; title/icon remain editable in Properties.
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {
@@ -300,10 +381,14 @@ export { withToday, toLoadablePage } from "../document";
 /** Refresh the shared Journals feed from the backend's first page, ensuring a
  * configured daily template first. Cost follows the journal inventory scan,
  * returned page blocks, and at most one template write. A dead owner or active
- * feed edit leaves the visible feed unchanged. A deferred/stale template attempt
- * postpones the feed read; a template or feed failure keeps the old feed,
- * schedules retry on edit release, focus/visibility or day rollover, and
- * shows an error toast. This call does not schedule an immediate retry. */
+ * feed edit leaves the visible feed unchanged, except that the initial
+ * referenced-day merge adds days while preserving all existing bodies.
+ * A deferred/stale template attempt
+ * postpones the feed read. A template failure shows an error toast and reads
+ * the feed without the template (GH #811), retried by the next refresh. A feed
+ * failure keeps the old feed, schedules retry on edit release, focus/visibility
+ * or day rollover, and shows an error toast. This call does not schedule an
+ * immediate retry. */
 export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
   await refreshJournalFeedForCurrentDay(owner);
 }
@@ -322,6 +407,21 @@ export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Pro
 export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
+  const retryKey = `page-route:${useWindowId()}:${pane.paneId}`;
+  let feedRoot: HTMLDivElement | undefined;
+  let releaseFeedAnchor: (() => void) | undefined;
+  const captureFeedViewport = () => {
+    releaseFeedAnchor?.();
+    if (currentRoute().kind !== "journals" || !feedRoot?.isConnected) return;
+    const anchor = captureReadingViewport(feedRoot);
+    releaseFeedAnchor = anchor?.release;
+    return anchor?.restore;
+  };
+  createEffect(() => {
+    graphEpoch();
+    feedViewportAnchors.add(captureFeedViewport);
+    onCleanup(() => { releaseFeedAnchor?.(); feedViewportAnchors.delete(captureFeedViewport); });
+  });
   // Route equality alone is not a component lifetime: a pane can disappear
   // while its router still says Journals.  Every owner issued by this surface
   // carries this revocation token, so an already-issued IPC can finish but can
@@ -336,26 +436,42 @@ export function PageView(): JSX.Element {
   // an older rejected request could replace a newer page with its error state.
   const [loadedRoute, setLoadedRoute] = createSignal<ReturnType<PaneRouter["route"]> | null>(null);
   const [loadError, setLoadError] = createSignal<string | null>(null);
+  const [loadRetry, setLoadRetry] = createSignal(0);
 
   // Depend on the active route BY VALUE: opening a background tab (or pinning /
   // reordering / closing another tab) mutates the `tabs` signal but not the active
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
+  createEffect(on(currentRoute, () => onCleanup(() => { if (untrack(focusedPaneId) === pane.paneId) clearSelection(); })));
+  // A refused path-pinned route recovers when its exact file returns (GH #863).
+  const pinnedPath = createPinnedPathRecovery(currentRoute, () => setLoadRetry(value => value + 1));
+  // Leaving a routed page marks it seen (ADR 0079).
+  markSeenOnLeave(() => { const r = currentRoute(); return r.kind === "page" ? r.name : null; });
   const journalOwner = (route = currentRoute(), epoch = graphEpoch(), tabId = router.activeId(), revision = router.routeIntentRevision()): JournalsFeedOwner => ({
     graphEpoch: epoch,
     isLive: () => surfaceAlive && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), route),
   });
   createEffect(() => {
+    if (currentRoute().kind !== "journals") return;
+    const owner = journalOwner();
+    journalCompletionOwners.add(owner);
+    onCleanup(() => journalCompletionOwners.delete(owner));
+  });
+  createEffect(() => {
+    loadRetry();
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
     const tabId = router.activeId();
     const revision = router.routeIntentRevision();
-    const owned = () => surfaceAlive && epoch === graphEpoch()
+    let pathRefusal: PinnedPathRefusal | undefined; let requestLive = true;
+    const owned = () => requestLive && surfaceAlive && epoch === graphEpoch()
       && router.activeId() === tabId && router.routeIntentRevision() === revision && sameRoute(currentRoute(), r);
     const routeOwner = graphOwner(owned);
+    let cancelRetry: (() => void) | undefined; onCleanup(() => { requestLive = false; cancelRetry?.(); });
     setReady(false);
     setLoadError(null);
+    const publication = pinnedPath.begin();
     // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
     // value — Solid context values don't react to route changes): the main
     // pane is "main" whatever it shows, every other pane is pane:{id}.
@@ -368,7 +484,7 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages") {
+        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid" || r.kind === "conflicts" || r.kind === "all-pages" || r.kind === "all-graphs") {
           // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
           // guard so the page loader never interprets a virtual route as a file.
           setLoadedRoute(r);
@@ -386,7 +502,7 @@ export function PageView(): JSX.Element {
           let feedError = await initialRead;
           if (!owned()) return;
           // A watcher or second Journals surface can supersede this read while
-          // both native calls wait on the initial store publication. The older
+          // the native reads are in flight. The older
           // request is correctly discarded, but its route must await the winner.
           while (!hasPublishedFeed(epoch) && latestFeedRestart && owned()) {
             feedError = await latestFeedRestart;
@@ -424,20 +540,23 @@ export function PageView(): JSX.Element {
           // This is a snapshot for the route request, not an effect dependency:
           // loadRoutedPage publishes loadedPage below and must not restart us.
           const loadedPath = r.path ? undefined : untrack(() => loadedPage(r.name)?.id);
-          const result = await readOwned(routeOwner, r.path || loadedPath
-            ? backend().getPageByPath(r.path ?? loadedPath!)
-            : backend().getPage(r.name, r.pageKind));
+          let readSource: PageReadSource | null = null;
+          const result = await readOwned(routeOwner, r.path
+            ? backend().getPageByPath(r.path, source => { readSource = source; })
+                .catch((error: unknown) => { pathRefusal = "unreadable"; throw error; })
+            : loadedPath ? backend().getPageByPath(loadedPath) : backend().getPage(r.name, r.pageKind));
           if (result.kind === "stale") return;
           const dto = result.value;
           // A saved path can use another case spelling on a case-insensitive
-          // volume. Adopt the file's disk spelling in tabs, Recent, and the
-          // route before loading it into the exact-path working set.
-          if (r.path && dto?.id && dto.id !== r.path && dto.kind === r.pageKind
-            && dto.id.toLowerCase() === r.path.toLowerCase()) {
-            const from = { name: r.name, pageKind: r.pageKind, path: r.path };
+          // volume, and a route can guess the wrong kind (GH #863: whether a file
+          // is a journal day is the store's answer for its path). Adopt the file's
+          // spelling and kind in tabs, Recent, and the route before loading it.
+          if (dto?.id && routeAdoptsRead(r, dto, r.path ?? loadedPath)) {
+            const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
-            router.rewritePageTarget(from, to);
+            // A pathless correction rewrites only pathless routes; other files' pins keep their owner.
+            if (!r.path) { renamePageInNavigation(from, to, { favorites: false, exactPath: true }); rewritePageTargetAcrossPanes(from, to); }
+            else { renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) }); router.rewritePageTarget(from, to); }
             return;
           }
           if (dto?.id && dto.kind === r.pageKind && dto.name !== r.name
@@ -452,7 +571,10 @@ export function PageView(): JSX.Element {
             rewritePageTargetAcrossPanes(from, to);
             return;
           }
-          if (r.path && (!dto || dto.id !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
+          const mismatch = r.path ? pageOpenMismatch(r, dto) : null;
+          if (mismatch) {
+            recordPageOpenRefusal("route", mismatch, readSource);
+            pathRefusal = dto ? "mismatch" : "missing";
             throw new Error("The selected physical page is no longer available at that path.");
           }
           // Core page identity is Unicode-case-insensitive while display names
@@ -470,7 +592,14 @@ export function PageView(): JSX.Element {
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
           const refusal = loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
-          if (refusal) throw new Error(pageLoadRefusalMessage(refusal));
+          if (refusal) {
+            // Ending the feed edit can leave its host close in flight. Retry
+            // through the same safety gate; never replace an unsettled owner.
+            cancelRetry = whenPageReplaceable(refusal.page, retryKey, () => {
+              if (owned()) setLoadRetry(value => value + 1);
+            });
+            throw new Error(pageLoadRefusalMessage(refusal));
+          }
           if (r.path && pageByName(r.name)?.id !== r.path)
             throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
         }
@@ -485,6 +614,7 @@ export function PageView(): JSX.Element {
         setLoadedRoute(r);
         setLoadError(String(e));
         setReady(true);
+        if (pathRefusal) cancelRetry = pinnedPath.refuse(publication, pathRefusal, r, owned);
       }
     })();
   });
@@ -506,10 +636,21 @@ export function PageView(): JSX.Element {
     const generation = feedGeneration;
     const requestOwner: Owner = graphOwner(() => generation === feedGeneration && ownerIsLive(owner));
     const asOfDay = journalAsOfDay;
-    const cursor = nextBeforeDay;
+    let cursor = nextBeforeDay;
+    const includeReferences = !feedReferencesPending;
     loadingGeneration = generation;
     try {
-      const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor));
+      let result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, includeReferences));
+      if (result.kind === "stale") return;
+      // Completion now owns a reference-inclusive window/cursor. A file-only
+      // read begun before it cannot advance that cursor or declare it done.
+      // Reissue from the authoritative cursor, retaining this pagination lock
+      // and route owner; completion may already have covered the whole range.
+      if (!includeReferences && !feedReferencesPending) {
+        if (feedDone || nextBeforeDay === null) return;
+        cursor = nextBeforeDay;
+        result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, true));
+      }
       if (result.kind === "stale") return;
       const response = result.value;
       reportUnreadableJournals(response);
@@ -536,44 +677,40 @@ export function PageView(): JSX.Element {
     }
   };
 
-  // Local calendar rollover is a one-shot revalidation.  Calendar construction
-  // (rather than 24h arithmetic) remains correct on DST transitions.
+  // Local calendar rollover follows the app's one date-change signal,
+  // currentDayKey() (journal.ts: the midnight timer, re-armed on every
+  // focus/visibility return and backend clock sample; card hB3Lv8, I-12).
+  // A return also retries a pending refresh or a feed answered for another
+  // day, unless the day change of that same return already started one.
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     const owner = journalOwner(route);
-    let timer: number | undefined;
-    let disposed = false;
-    const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
-    const arm = () => {
-      if (disposed || !ownerIsLive(owner)) return;
-      const now = appNow();
-      timer = window.setTimeout(() => {
-        // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
-        // trigger, including a deferred/error response, while this owner lives.
-        void refreshJournalFeedForCurrentDay(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
-      }, localDayRolloverDelay(now));
-    };
-    arm();
-    const onFocus = () => {
-      if (journalAsOfDay !== localDayKey() || pendingFeedRestart) restart();
-    };
-    const stopReturn = onAppReturn(onFocus);
-    onCleanup(() => {
-      disposed = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      stopReturn();
+    let dayRefresh: Promise<unknown> | null = null;
+    let day = untrack(currentDayKey);
+    createEffect(() => {
+      const today = currentDayKey();
+      if (today === day) return;
+      day = today;
+      const refresh = dayRefresh = refreshJournalFeedForCurrentDay(owner)
+        .finally(() => { if (dayRefresh === refresh) dayRefresh = null; });
     });
+    const onFocus = () => {
+      if (!dayRefresh && (journalAsOfDay !== untrack(currentDayKey) || pendingFeedRestart)) {
+        void refreshJournalFeedForCurrentDay(owner);
+      }
+    };
+    onCleanup(onAppReturn(onFocus));
   });
 
   // A deferred watcher/midnight refresh is retried only when the existing edit
   // lifecycle has advanced; it never replaces a dirty feed with a stale window.
-  let previousReferenceRev = dataRev();
+  let previousReferenceRev = changed("days");
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     editingId();
-    const revision = dataRev();
+    const revision = changed("days");
     if (revision !== previousReferenceRev) {
       previousReferenceRev = revision;
       pendingFeedRestart = true;
@@ -648,16 +785,16 @@ export function PageView(): JSX.Element {
     const r = loadedRoute();
     return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());
   };
+  const renderDay = (p: FeedPage) => <PageSection page={p} seen={currentRoute().kind === "page"}>
+    {/* OG page/today-queries and journal: queries precede agenda. */}
+    <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
+      <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
+    </Show>
+    <Show when={currentRoute().kind === "journals"}><JournalLinkedReferences name={p.name} /></Show>
+  </PageSection>;
 
   return (
-    <Show when={!loadError()} fallback={
-      <div class="page">
-        <div class="page-load-error">
-          <Rich message={msg("page-open-failed", { error: loadError() ?? "" })} />
-          <div class="page-load-error-hint">{t("page-ui-tine-did-not-modify-the-file-try-reopening-or")}</div>
-        </div>
-      </div>
-    }>
+    <Show when={!loadError()} fallback={<PageLoadError error={loadError() ?? ""} />}>
     <Show when={contentReady()} fallback={
       <div class="page-loading" role="status" aria-live="polite">
         <span class="page-loading-spinner" aria-hidden="true" />
@@ -665,20 +802,12 @@ export function PageView(): JSX.Element {
       </div>
     }>
       <Show when={zoomValid()} fallback={
-        <div class="page">
-          <For each={pagesToRender()}>
-            {(p) => (
-              <PageSection page={p}>
-                {/* OG page/today-queries and journal: queries precede agenda. */}
-                <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
-                  <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
-                </Show>
-                <Show when={currentRoute().kind === "journals"}>
-                  <JournalLinkedReferences name={p.name} />
-                </Show>
-              </PageSection>
-            )}
-          </For>
+        <div class="page" ref={feedRoot}>
+          <Show when={currentRoute().kind === "journals"} fallback={
+            <For each={pagesToRender()}>{renderDay}</For>
+          }>
+          <JournalFeedDays>{renderDay}</JournalFeedDays>
+          </Show>
           <Show when={currentRoute().kind === "journals" && feedRefusal()}>
             {(why) => <div class="page-load-error" role="status">{why()}</div>}
           </Show>
@@ -729,9 +858,9 @@ export function PageView(): JSX.Element {
 // when the opted-in section mounts; Journals reuses its existing feed read.
 function UpcomingSection(props: { feed: boolean }): JSX.Element {
   const [days, { refetch }] = createResource(
-    () => props.feed ? null : `${graphEpoch()}\0${dataRev()}`,
+    () => props.feed ? null : changed("days"),
     async () => {
-      const result = await readOwned(graphOwner(), backend().journalFeedPage(1, null));
+      const result = await readOwned(graphOwner(), backend().journalFeedPage(1, null, true));
       return result.kind === "current" ? result.value.upcoming ?? [] : [];
     },
   );
@@ -791,12 +920,14 @@ function ZoomedView(props: { id: string }): JSX.Element {
     return out;
   };
   const pageName = () => docNode(props.id)?.page ?? "";
+  // GH #845: zooming into a comment (a link, a search result) shows a hidden margin.
+  createEffect(() => revealCommentMarginFor(props.id));
   const pageKind = () => loadedPage(pageName())?.kind ?? "page";
   const pageTarget = () => {
     const owner = pageByName(pageName());
     return owner ? pageTargetFromFeedPage(owner) : { name: pageName(), pageKind: pageKind() };
   };
-  const crumb = (id: string) => visibleBody(docNode(id).raw)[0] || "…";
+  const crumb = (id: string) => visibleBody(docNode(id).raw, formatForBlock(id))[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = docNode(props.id);
@@ -870,9 +1001,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
   );
 }
 
-function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Element {
+function PageSection(props: { page: FeedPage; seen?: boolean; children?: JSX.Element }): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
+  // "Changed since you last looked": the routed single page only (ADR 0079).
+  const seen = createPageSeen(() => (props.seen && !props.page.guide ? props.page : null));
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   // An open title-rename draft pins its page: no reload may remount it (og 20b contract 2).
@@ -910,6 +1043,14 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
+  // Every page section (including each journal day) owns its margin;
+  // the available pane width chooses the tier, independent of route or split.
+  let outline: HTMLDivElement | undefined;
+  const margin = createMarginSurface({
+    page: () => props.page,
+    eligible: () => true,
+    outline: () => outline,
+  });
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
     if (id) startEditing(id, docNode(id).raw.length);
@@ -1036,9 +1177,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
               </svg>
             </Show>
             <Show
-              when={headerProperties()
-                .find(([k]) => k.toLowerCase() === "icon")?.[1]
-                ?.trim()}
+              when={pageIcon(props.page.name)}
             >
               {(icon) => (
                 <span
@@ -1049,7 +1188,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
                     editPageHeader();
                   }}
                 >
-                  <EmojiText text={icon()} />
+                  <PageIcon value={icon()} name={props.page.name} />
                 </span>
               )}
             </Show>
@@ -1064,6 +1203,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <Show when={!props.page.guide}>
           <CarryActions page={props.page} />
           <TagTableToggle page={props.page} />
+          <Show when={!isPublishedExport() && hasMarker(readPageProperties(props.page.name), EXPORTS_MARKER)}>
+            <QuickShareAll />
+          </Show>
         </Show>
         <Show when={props.page.guide}>
           <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>
@@ -1091,6 +1233,18 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           >
             <span aria-hidden="true">⋯</span>
           </button>
+          <Show when={!isPublishedExport()}>
+            <button
+              type="button"
+              class="page-share-btn"
+              data-page-share
+              title={t("share-page-title-button")}
+              aria-label={t("share-page-title-button")}
+              onClick={() => openShareDialog({ page: props.page.name })}
+            >
+              <ShareIcon class="share-icon" />
+            </button>
+          </Show>
           <button
             class="fav-star"
             classList={{ active: isFavorite(props.page.name, props.page.kind) }}
@@ -1110,21 +1264,19 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </Show>
         </div>
       </div>
-      <Show when={aliasNamesOf(headerProperties(), props.page.format).length}>
-        <div class="page-aliases" title={t("page-ui-also-known-as-other-names-that-link-here")} onClick={editPageHeader}>
-          <span class="page-aliases-label">{t("page-ui-aka")}</span>
-          <For each={aliasNamesOf(headerProperties(), props.page.format)}>
-            {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
-          </For>
-        </div>
-      </Show>
-      <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <AliasGroupHeader
+        name={props.page.name}
+        declared={aliasNamesOf(headerProperties(), props.page.format)}
+        inGraph={!props.page.guide}
+        onEdit={editPageHeader}
+      />
+      <Show when={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties)).length}>
         <div class="page-properties" onClick={editPageHeader}>
-          {/* `alias` is surfaced as chips — see PAGE_PROPS_HIDDEN. */}
-          <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          {/* `alias` is surfaced by AliasGroupHeader. */}
+          <For each={headerProperties().filter(([k]) => !isRenderHiddenPageProp(k, graphMeta()?.block_hidden_properties))}>
             {([key, value]) => (
               <div class="prop-row">
-                <span class="prop-key">{key}</span>
+                <span class="prop-key"><Show when={!props.page.guide} fallback={key}><PropertyKey name={key} /></Show></span>{props.page.guide ? " " : ": "}
                 <span class="prop-value">
                   <PagePropertyValue propertyKey={key} value={value} format={props.page.format} />
                 </span>
@@ -1133,7 +1285,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </For>
         </div>
       </Show>
-      <Show when={props.page.kind === "page" && headerProperties().some(([key, value]) => key.toLowerCase() === "tine/journal-sections" && value.trim().toLowerCase() === "true")}>
+      <Show when={props.page.kind === "page" && hasMarker(headerProperties(), JOURNAL_SECTIONS_MARKER)}>
         <JournalSectionsHeader />
       </Show>
       <Show when={props.page.guide}>
@@ -1146,11 +1298,13 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <div class="page-readonly-banner" title={t("page-ui-tine-can-t-reproduce-this-org-file-byte-for")}><Rich message={msg("page-ui-read-only-this-org-file-uses-a-structure-tine")} /></div>
       </Show>
       <ExternalChangeBar name={props.page.name} />
+      <SeenHeader seen={seen} pageName={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <FailureBoundary region="The conflict panel">
         <PageConflictPanel name={props.page.name} path={props.page.id} />
       </FailureBoundary>
-      <div class="page-blocks">
+      <MarginContext.Provider value={margin.placement}>
+      <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={preambleContent()}>
           {(content) => (
             <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
@@ -1162,14 +1316,16 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
                   </span>
                 </div>
                 <div class="block-content-wrapper" onClick={editPreamble}>
-                  <div class="block-content"><InlineText text={content()} format={props.page.format} /></div>
+                  <BlockRenderBoundary raw={content()}><div class="block-content"><InlineText text={content()} format={props.page.format} /></div></BlockRenderBoundary>
                 </div>
               </div>
             </div>
           )}
         </Show>
-        <BlockList ids={rootsToRender()} />
+        <SeenRows seen={seen}><SeenRemoved first={null} /><BlockList ids={rootsToRender()} /></SeenRows>
       </div>
+      </MarginContext.Provider>
+      <margin.Column />
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>
@@ -1226,45 +1382,16 @@ function tagTableEnabled(pageName: string): boolean {
   return readPageProperty(pageName, TAG_TABLE_PROP)?.toLowerCase() === "true";
 }
 
-function quoteQueryString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
-}
-
-function tagQuery(pageName: string): string {
-  return `(tag ${quoteQueryString(pageName)})`;
-}
-
 function taggedCount(groups: readonly RefGroup[] | undefined): number {
   return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
 }
 
-async function tagTableGroups(pageName: string, owners: object): Promise<{ groups: RefGroup[]; error?: string } | undefined> {
-  const owner = latestOwner(owners, "tag-table", graphOwner());
-  try {
-    const reading = await readOwned(owner, backend().parseQuery(tagQuery(pageName), "macro_query"));
-    if (reading.kind === "stale") return undefined;
-    const result = await readOwned(owner, backend().queryRun(reading.value.query, reading.value.view));
-    if (result.kind === "stale") return undefined;
-    const answer = result.value;
-    const diagnostic = (answer.diagnostics ?? []).find((item) => !item.disabled);
-    return diagnostic
-      ? { groups: [], error: diagnostic.message }
-      : { groups: answer.anchor === "block" ? answer.groups : [] };
-  } catch (error) {
-    return { groups: [], error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
-  const owners = {};
   // A published export has no query engine behind `queryRun` and cannot save the
   // page property this button toggles, so it offers no toggle and asks nothing
   // (master GH #549).
   const live = !isPublishedExport();
-  const [groups] = createResource(
-    () => (live && props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
-    () => tagTableGroups(props.page.name, owners)
-  );
+  const [groups] = createTagTableResource(() => props.page.name, () => live && props.page.kind === "page");
   const enabled = () => tagTableEnabled(props.page.name);
   const visible = () => live && props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
   return (
@@ -1280,12 +1407,8 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
 }
 
 export function TagPageTable(props: { pageName: string }): JSX.Element {
-  const owners = {};
-  const [groupsResource, { refetch }] = createResource(
-    () => `${props.pageName}\0${dataRev()}`,
-    () => tagTableGroups(props.pageName, owners)
-  );
-  // A rejected read (tagTableGroups reports its own failures as `error`, so this
+  const [groupsResource, { refetch }] = createTagTableResource(() => props.pageName);
+  // A rejected read (the query lifecycle reports its own failures as `error`, so this
   // is the unanticipated case) must not throw into render: readOr, and the
   // failure row because an empty table would claim "no tagged blocks".
   const answer = () => readOr(groupsResource, undefined, "tag table");

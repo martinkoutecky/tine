@@ -19,6 +19,10 @@ css-graph-file = logseq/custom.css
 css-edit-graph = 编辑 custom.css
 
 css-edit-global = 编辑全局 CSS
+css-open-default-app = 在默认应用中打开
+css-open-failed = 无法在默认应用中打开 CSS：{ $error }
+command-appearance-open-custom-css-default-app = 在默认应用中打开 custom.css
+command-appearance-open-global-css-default-app = 在默认应用中打开全局 CSS（global.css）
 
 css-graph-hint = 在 Tine 中编辑 logseq/custom.css，保存后立即生效。支持的样式变量和示例请参阅指南页面“Customize Tine's look”。
 
@@ -28,7 +32,11 @@ css-safe-hint = 本次会话的安全模式：禁用全局 CSS、图谱 custom.c
 
 css-save = 保存
 
-css-reload = 从磁盘重新加载
+css-reload = 重新加载
+
+css-reload-title = 从磁盘重新加载
+
+css-cancel = 取消
 
 css-save-close = 保存并关闭
 
@@ -39,6 +47,8 @@ css-save-failed = CSS 无法保存。文本仍保留在编辑器中，请在重�
 css-external-conflict = 此文件在编辑器外发生了更改。重新加载前请复制你的文本；保存操作会拒绝覆盖已更改的文件。
 
 css-reload-confirm = 丢弃 CSS 编辑并从磁盘重新加载文件吗？
+
+css-discard-confirm = 丢弃未保存的 CSS 编辑并关闭编辑器吗？
 
 command-appearance-edit-custom-css = 编辑 custom.css
 

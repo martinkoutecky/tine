@@ -1,8 +1,11 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { pageIconPrefix } from "../pageIconBatch";
+import { pageIcon } from "../pageIconBatch";
 import { msg, t } from "../i18n";
-import { JournalsIcon } from "./JournalsIcon";
-import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { HomeIcon, JournalsIcon } from "./JournalsIcon";
+import { goHome, isHomeRouteName, journalsReplacementHome } from "../homePage";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { openAllGraphs, openAllPages, openConflicts, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openJournalsFromClick } from "../journalsNavigation";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -13,17 +16,19 @@ import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type 
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { allPageNames, navigationName } from "../pageIndex";
+import { allPageNames, linkPageKind, navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
+import { SidebarTabs } from "./SidebarTabs";
 import { favoriteCount } from "../favorites";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { writeClipboardText } from "../clipboard";
-import { isMobilePlatform } from "../nativeChrome";
+import { canRevealInFileManager } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
+import { CloneGraphDialog } from "./CloneGraphDialog";
 import { ResourceFailure } from "./ResourceFailure";
 import { queryAllWindows } from "../windowRealm";
 
@@ -69,7 +74,7 @@ export interface GraphNavigationActions {
   createNew(): Promise<LoadGraphPathOutcome>;
 }
 
-const graphNavigationActions: GraphNavigationActions = {
+export const graphNavigationActions: GraphNavigationActions = {
   openKnown: openKnownGraph,
   openPicked: switchGraph,
   createNew: createNewGraph,
@@ -112,16 +117,39 @@ export function Sidebar(props: {
       </div>
 
       <div class="nav-contents">
-        <div
-          class="nav-item"
-          classList={{ active: route().kind === "journals" }}
-          onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
-          onMouseDown={internalLinkMouseDown}
-          onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
+        <Show
+          when={journalsReplacementHome()}
+          fallback={
+            <div
+              class="nav-item"
+              classList={{ active: route().kind === "journals" }}
+              onClick={(event) => {
+                openJournalsFromClick(event);
+                if (!event.shiftKey) props.onActiveNavigationComplete?.();
+              }}
+              onMouseDown={internalLinkMouseDown}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
+            >
+              <JournalsIcon />
+              <span>{t("sidebar-journals")}</span>
+            </div>
+          }
         >
-          <JournalsIcon />
-          <span>{t("sidebar-journals")}</span>
-        </div>
+          {(home) => (
+            <div
+              class="nav-item home-nav"
+              classList={{ active: (() => { const r = route(); return r.kind === "page" && isHomeRouteName(r.name, home()); })() }}
+              onClick={() => { goHome(); props.onActiveNavigationComplete?.(); }}
+              onMouseDown={internalLinkMouseDown}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(home(), linkPageKind(home())))}
+            >
+              <HomeIcon />
+              <span>{home()}</span>
+            </div>
+          )}
+        </Show>
+
+        <SidebarTabs onActiveNavigationComplete={props.onActiveNavigationComplete} />
 
         <Show when={favoriteCount() > 0}>
           <div class="nav-section">
@@ -133,7 +161,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-favorites-list"
               onClick={toggleFavoritesSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>{t("sidebar-favorites")}<span class="nav-section-count">{favoriteCount()}</span>
+              <ReferenceDisclosure class="nav-toggle-caret" collapsed={!favoritesSectionExpanded()} />{t("sidebar-favorites")}<span class="nav-section-count">{favoriteCount()}</span>
             </button>
             <Show when={favoritesSectionExpanded()}>
               <SidebarFavorites
@@ -157,7 +185,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-recent-list"
               onClick={toggleRecentSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>{t("sidebar-recent")}<span class="nav-section-count">{recentPages().length}</span>
+              <ReferenceDisclosure class="nav-toggle-caret" collapsed={!recentSectionExpanded()} />{t("sidebar-recent")}<span class="nav-section-count">{recentPages().length}</span>
             </button>
             <Show when={recentSectionExpanded()}>
               <div id="sidebar-recent-list">
@@ -182,7 +210,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <SidebarTitle text={pageIconPrefix(r.name) + (r.name.startsWith("hls__") ? r.name.slice(5) : r.name)} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle icon={pageIcon(r.name)} pageName={r.name} text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                       </div>
                     );
                   }}
@@ -208,7 +236,7 @@ export function Sidebar(props: {
             class="nav-section-header nav-section-toggle"
             onClick={() => setShowNs(!showNs())}
           >
-            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>{t("sidebar-namespaces")}</div>
+            <ReferenceDisclosure class="nav-toggle-caret" collapsed={!showNs()} />{t("sidebar-namespaces")}</div>
           <Show when={showNs()}>
             <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
@@ -266,6 +294,7 @@ export function GraphSwitcher(props: {
   actions: GraphNavigationActions;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [cloning, setCloning] = createSignal(false);
   let alive = true;
   onCleanup(() => { alive = false; });
   const [knownGraphsResource, { refetch }] = createResource(() => backend().listKnownGraphs());
@@ -301,7 +330,7 @@ export function GraphSwitcher(props: {
           <path d="M5 12v7c0 1.66 3.13 3 7 3s7-1.34 7-3v-7" fill="none" stroke="currentColor" stroke-width="1.6" />
         </svg>
         <span class="graph-switch-name">{graphDisplayName()}</span>
-        <span class="graph-switch-caret">▾</span>
+        <ReferenceDisclosure class="graph-switch-caret" collapsed={false} />
       </button>
       <Show when={open()}>
         <div
@@ -314,6 +343,7 @@ export function GraphSwitcher(props: {
         />
         <div class="ctx-menu graph-switch-menu">
           <ResourceFailure of={knownGraphsResource} what="your other graphs" onRetry={() => void refetch()} />
+          <button class="ctx-item" onClick={() => { close(); openAllGraphs(); props.onActiveNavigationComplete?.(); }}>{t("command-go-all-graphs")}</button>
           <For each={knownGraphs() ?? []}>
             {(graph) => (
               <div
@@ -331,7 +361,7 @@ export function GraphSwitcher(props: {
                       const result = await writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(path));
                       if (result.kind === "current") await refetch();
                     },
-                    desktop: !isMobilePlatform,
+                    desktop: canRevealInFileManager(),
                     isCurrent: graph.path === graphMeta()?.root,
                   }));
                 }}
@@ -393,8 +423,10 @@ export function GraphSwitcher(props: {
                 .catch((error) => pushToast(msg("sidebar-couldn-t-create-the-graph", { error: String(error) }), "error"));
             }}
           >{t("sidebar-new-graph")}</div>
+          <div class="ctx-item" onClick={() => { close(); setCloning(true); }}>{t("git-clone-label")}</div>
         </div>
       </Show>
+      <Show when={cloning()}><CloneGraphDialog onClose={() => setCloning(false)} onOpened={props.onActiveNavigationComplete} /></Show>
     </div>
   );
 }

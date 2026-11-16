@@ -1,7 +1,11 @@
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
-app-choose-no-to-review-retry-saving = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }Choose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?
-app-unsaved-changes = Unsaved changes
+app-quit-without-saving-body = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }Go back to review, retry saving, or copy your drafts. Or discard them and quit.
+app-quit-without-saving-title = { $count ->
+    [0] Quit without saving?
+    [one] Quit without saving { NUMBER($count, useGrouping: 0) } page?
+   *[other] Quit without saving { NUMBER($count, useGrouping: 0) } pages?
+    }
 app-couldn-t-save-pending-pdf-changes-the-graph = Couldn't save pending PDF changes. The graph remains open.
 app-still-saving-your-changes-closing-in = Still saving your changes — closing in a moment.
 app-couldn-t-confirm-closing-the-window-your-unsaved = Couldn't confirm closing the window. Your unsaved changes are still open.
@@ -17,6 +21,7 @@ app-capture-couldn-t-be-saved-its-text = Capture couldn't be saved — its text 
 app-tine-was-renamed-under-the-hood-so = Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!
 # $fallbackDirectory is the temporary application-data directory, not a graph path.
 app-tine-could-not-write-its-usual-application-data = Tine could not write its usual application-data folder, so this session is keeping settings and backups in { $fallbackDirectory } instead. Fixing the permissions on that folder restores the normal location.
+app-drafts-on-volatile-storage = Tine is keeping application data in temporary or memory-backed storage. Unsaved drafts there may not survive a reboot. Save your edits to the graph before restarting this device.
 app-quick-capture-could-not-connect-to-this = Quick Capture could not connect to this graph window.
 app-the-block-renderer-failed-to-load = The block renderer failed to load — text is shown unformatted. Please reload Tine; if this persists, report it.
 app-finishing-graph-operation = Finishing graph operation…
@@ -53,3 +58,9 @@ app-pane-split-navigation = { $kind ->
 # Helper-return and component-prop interface text (GH #107).
 app-prose-navigation-sidebar = Navigation sidebar
 app-prose-unexpected-failure = Unexpected failure.
+capture-snapshot-saved = Earlier capture saved — submitted text removed where unchanged; newer edits kept
+capture-title-needs-text = Add text to file this title — title kept
+capture-retry-unconfirmed = Saving is unconfirmed — text kept. Retry File capture to finish the same capture.
+capture-previous-graph = Capture may be in the previous graph; saving is unconfirmed — text kept. Check that graph before capturing again.
+capture-start-new = Start a new capture
+capture-new-request = Text kept for a new capture. Remove anything already saved in the previous graph before filing again.

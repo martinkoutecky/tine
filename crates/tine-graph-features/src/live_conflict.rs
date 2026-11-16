@@ -2,10 +2,9 @@
 //! guarded save was refused because the file changed on disk. The review
 //! compares the draft ("mine") with the file as it is NOW ("theirs"); the
 //! merge recomputes the same comparison and composes the chosen result,
-//! read-only. The window submits the merged page through its page host with
-//! the reviewed disk revision (STEP3 R6), so nothing here writes. Nothing here
-//! is persisted; the draft itself lives in the editor, or in the page host's
-//! drafts across a restart.
+//! read-only. The window submits it through the page host with the reviewed
+//! disk revision (STEP3 R6); that shared submit boundary stages the recovery
+//! copy (L9-04). The draft lives in the editor or in the host across a restart.
 //!
 //! Base: the Concord ledger's retained text whose revision equals the draft's
 //! `base_rev` (the bytes the editor loaded or last saved). With it the review is

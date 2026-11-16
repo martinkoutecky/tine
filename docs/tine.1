@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tine 1  "tine 0.8.4" 
+.TH tine 1  "tine 0.9.0"
 .SH NAME
 tine \- A fast, local\-first outliner for Logseq\-compatible graphs
 .SH SYNOPSIS
@@ -47,7 +47,7 @@ tine\-status(1)
 Show which process owns the graph and what it is doing
 .TP
 tine\-page(1)
-Read pages
+Read, create, rename or delete pages
 .TP
 tine\-block(1)
 Read blocks
@@ -58,6 +58,12 @@ Show a journal page: today, or the given date (YYYY\-MM\-DD)
 tine\-refs(1)
 Show the linked references of a page, or of a block with \-\-block
 .TP
+tine\-ref(1)
+Print ((uuid)), durably assigning the block an id when needed
+.TP
+tine\-embed(1)
+Print {{embed ((uuid))}}, ensuring a durable block id first
+.TP
 tine\-search(1)
 Search page names and block text, as the app\*(Aqs search does
 .TP
@@ -66,5 +72,23 @@ Run a query: an OG simple or advanced query, or TQL with \-\-tql
 .TP
 tine\-pages(1)
 List pages, or the pages at or under a namespace
+.TP
+tine\-edit(1)
+Replace a block\*(Aqs text. Its properties (id::, status::, tine.author::) and children are kept; a property named in the new text replaces the kept one
+.TP
+tine\-add(1)
+Insert a page fragment, attributing every new block to its author
+.TP
+tine\-delete(1)
+Delete a block with its children; refuses broken references without \-\-yes and prints the removed text (up to 65,536 UTF\-8 bytes, with omitted byte count)
+.TP
+tine\-move(1)
+Move a block, with its children, under, after or before another block on the same page
+.TP
+tine\-prop(1)
+Set or remove one property of a block
+.TP
+tine\-run(1)
+Group writes into a git run: each write made with `\-\-run ID` is committed (after a snapshot of your own pending edits), and the run can be squashed or reverted as one
 .SH VERSION
-v0.8.4
+v0.9.0

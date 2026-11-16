@@ -3,13 +3,16 @@ import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
 import { assertOpaquePng } from "./lib/opaque-png.mjs";
-import { IDENTITIES } from "./lib/app-identity.mjs";
-import { addNativeIntegrations, SHARE_EXTENSION_IDENTIFIER } from "./lib/ios-native-integrations.mjs";
+import { readSwitch, iosIdentity } from "./lib/app-identity.mjs";
+import { addNativeIntegrations } from "./lib/ios-native-integrations.mjs";
 
 const root = process.cwd();
+const sw = readSwitch(root);
+const identity = sw.identities[sw.ship];
+const ios = iosIdentity(identity);
 const source = path.join(root, "src-tauri", "Tine.ios.entitlements");
 const privacySource = path.join(root, "src-tauri", "PrivacyInfo.xcprivacy");
-const iconSource = path.join(root, "src-tauri", "icons", "ios");
+const iconSource = path.join(root, "src-tauri", ios.iconDirectory);
 const generatedRoot = path.join(root, "src-tauri", "gen", "apple");
 const generatedIconCatalog = path.join(
   generatedRoot,
@@ -29,7 +32,7 @@ const extensionProfileUuid = process.env.IOS_SHARE_EXTENSION_PROFILE_UUID;
 if (signingValues.length === 3 && !extensionProfileUuid) {
   throw new Error(
     "iOS signing configuration requires IOS_SHARE_EXTENSION_PROFILE_UUID for " +
-      `the ${SHARE_EXTENSION_IDENTIFIER} provisioning profile`,
+      `the ${ios.shareExtensionIdentifier} provisioning profile`,
   );
 }
 if (signingValues.length > 0 && signingValues.length !== 3) {
@@ -115,6 +118,19 @@ if (!project.includes("      - path: PrivacyInfo.xcprivacy")) {
   );
 }
 
+// libgit2 (ADR 0078 slice 3, vendored) links zlib and iconv. Cargo names them
+// for its own links, but Xcode links the static libapp.a and never sees that.
+const libappMarker = "      - framework: libapp.a\n        embed: false";
+if (!project.includes("      - sdk: libz.tbd")) {
+  if (project.split(libappMarker).length !== 2) {
+    throw new Error("generated iOS project does not contain the expected libapp.a dependency");
+  }
+  project = project.replace(
+    libappMarker,
+    `${libappMarker}\n      - sdk: libz.tbd\n      - sdk: libiconv.tbd`,
+  );
+}
+
 if (signingValues.length === 3) {
   if (!/^Apple Distribution: .+ \([A-Z0-9]{10}\)$/.test(signing.identity)) {
     throw new Error("IOS_SIGNING_IDENTITY is not an Apple Distribution identity");
@@ -158,9 +174,9 @@ if (signingValues.length === 3) {
   <string>Apple Distribution</string>
   <key>provisioningProfiles</key>
   <dict>
-    <key>${xml(IDENTITIES.release.identifier)}</key>
+    <key>${xml(ios.identifier)}</key>
     <string>${xml(signing.profileUuid)}</string>
-    <key>${xml(SHARE_EXTENSION_IDENTIFIER)}</key>
+    <key>${xml(ios.shareExtensionIdentifier)}</key>
     <string>${xml(extensionProfileUuid)}</string>
   </dict>
 </dict>
@@ -177,6 +193,7 @@ project = addNativeIntegrations(
   signingValues.length === 3
     ? { identity: signing.identity, teamId: signing.teamId, extensionProfileUuid }
     : null,
+  identity,
 );
 console.log("added Tine's app-target Swift sources and Share Extension target");
 

@@ -1,4 +1,7 @@
-import { For, Show, createEffect, createMemo, createSignal, onMount, onCleanup, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onMount, onCleanup, untrack, useContext, type JSX } from "solid-js";
+import { SurfaceContext } from "./Block";
+import { reservedGroupHeight } from "../reservedGroupHeight";
+import { preserveAboveViewport } from "../scrollContainer";
 import type { RefGroup, PageKind } from "../types";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
@@ -9,14 +12,14 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { requestFrame } from "../windowRealm";
 
-interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
+interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; /** The query block these results belong to (GH #792). */ hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
 
 /** Present the complete keyed List without one graph-sized DOM commit. Existing
  * groups survive membership refreshes; at most 32 new shells mount per frame.
  * Pending groups reserve the same approximate height as their eventual shells.
  * A covering picker pauses new mounts while retaining the existing keyed rows.
  * Without browser layout all groups mount immediately, like observeNear. */
-export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }): JSX.Element {
+export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean; hostBlockId?: string; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }): JSX.Element {
   const [keys, setKeys] = createSignal<string[]>([]);
   let frame: (() => void) | undefined;
   let generation = 0;
@@ -65,7 +68,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     return rows * 1.9;
   });
   return <>
-    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} bulkFold={props.bulkFold} />}</For>
+    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />}</For>
     <Show when={pendingHeight() > 0}>
       <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
     </Show>
@@ -77,15 +80,22 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
 export function QueryGroup(props: QueryGroupProps): JSX.Element {
   const [near, setNear] = createSignal(false);
   let element: HTMLDivElement | undefined;
+  const surface = useContext(SurfaceContext);
+  const reserved = reservedGroupHeight(() => {
+    const g = props.group();
+    return !g || !props.hostBlockId ? undefined : JSON.stringify([
+      "query-group", surface, props.hostBlockId, g.kind, g.path ?? g.page, g.blocks.length, !!props.flat,
+    ]);
+  }, () => element, near);
   onMount(() => {
     if (!element) return;
     const node = element;
-    observeNear(node, () => setNear(true));
+    observeNear(node, entry => preserveAboveViewport(node, () => setNear(true), undefined, false, entry, 1200));
     onCleanup(() => unobserveNear(node));
   });
   return (
     <div ref={element} class="query-group" classList={{ "query-group-flat": props.flat }}
-      style={!near() ? { "min-height": `${(1 + (props.group()?.blocks.length ?? 0)) * 1.9}em` } : undefined}>
+      style={!near() ? { "min-height": reserved() ? `${reserved()}px` : `${(1 + (props.group()?.blocks.length ?? 0)) * 1.9}em` } : undefined}>
       <Show when={near()}><MountedQueryGroup {...props} /></Show>
     </div>
   );
@@ -131,7 +141,7 @@ function MountedQueryGroup(props: QueryGroupProps): JSX.Element {
           >
             {page()}
           </div>
-          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb eager bulkFold={props.bulkFold} />
+          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb eager hostBlockId={props.hostBlockId} bulkFold={props.bulkFold} />
         </>
       )}
     </Show>

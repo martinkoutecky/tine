@@ -1,4 +1,5 @@
 import { msg, t, render, type Msg } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { graphOwner, readOwned, type Owner } from "../owned";
@@ -10,7 +11,6 @@ import { exportNodesFor, formatForPage } from "../document";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
-import { expandTemplate } from "../render/inline";
 import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { parseBlock, blockRegions, propertyValueInline } from "../render/parse";
 import { splitTrailingMap } from "../editor/edn";
@@ -30,6 +30,7 @@ import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { activeWindow, listen } from "../windowRealm";
+import { parseYoutubeTimestamp, formatYoutubeTimestamp } from "../youtubeTimestamp";
 
 const STORE_KEY = "tine.exportOptions";
 type ExportFormat = "text" | "opml" | "html";
@@ -120,20 +121,22 @@ type WarmedMacro =
   | { kind: "text"; text: string }
   | { kind: "nodes"; nodes: ExportNode[]; emptyText?: string; note?: string; truncation?: string };
 
-function resolveExportBlockRef(uuid: string) {
-  const g = resolvedBlockRefSync(uuid);
+type ResolvedRefs = Map<string, RefGroup | null | undefined>;
+
+function resolveExportBlockRef(uuid: string, owned?: ResolvedRefs) {
+  const g = owned?.has(uuid) ? owned.get(uuid) : resolvedBlockRefSync(uuid);
   const block = g?.blocks[0];
   if (!block) return null;
   // Match what BlockRefView shows on screen by default: renderedText keeps the
   // first line unless the export's "resolve refs fully" option is enabled.
-  return { raw: visibleBody(block.raw).join("\n"), format: formatForPage(g.page) };
+  return { raw: visibleBody(block.raw, formatForPage(g.page)).join("\n"), format: formatForPage(g.page) };
 }
 
 function resolveExportMacro(name: string, args: string[]) {
   if (isBuiltInMacro(name)) return null;
   const macros = graphMeta()?.macros;
   if (!macros || !Object.prototype.hasOwnProperty.call(macros, name)) return null;
-  return { raw: expandTemplate(macros[name], args), format: "md" as const };
+  return { raw: macros[name], templateArgs: args, format: "md" as const };
 }
 
 function macroKey(name: string, args: string[]): string {
@@ -189,7 +192,11 @@ export function queryGroupsToExportNodes(result: QueryExportResult): ExportNode[
 function literalBuiltInMacroText(name: string, args: string[]): string | null {
   const n = name.toLowerCase();
   const arg = macroArg(args);
-  if (/^(video|youtube|vimeo|bilibili|youtube-timestamp|tweet|twitter|img)$/.test(n)) {
+  if (n === "youtube-timestamp") {
+    const seconds = parseYoutubeTimestamp(arg);
+    return seconds === null ? "" : formatYoutubeTimestamp(seconds);
+  }
+  if (/^(video|youtube|vimeo|bilibili|tweet|twitter|img)$/.test(n)) {
     return arg.replace(/^\[\[|\]\]$/g, "");
   }
   if (n === "cloze") return arg.split(/\\\\/)[0]?.trim() ?? arg;
@@ -373,7 +380,7 @@ export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, W
   return warmExportResolutionsOwned(nodes, warmed, graphOwner());
 }
 
-async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner): Promise<void> {
+async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner, refsOwned: ResolvedRefs = new Map()): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
   const seenRefs = new Set<string>(), seenMacros = new Set<string>();
@@ -385,13 +392,16 @@ async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<strin
       const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
       if (!refs.length) break;
       refs.forEach(uuid => seenRefs.add(uuid));
-      await Promise.all(refs.map(uuid => readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
-        if (owner()) reportUiFailure("export-preview", error);
-        return null;
-      }))));
+      await Promise.all(refs.map(async uuid => {
+        const answer = await readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
+          if (owner()) reportUiFailure("export-preview", error);
+          return null;
+        }));
+        if (owner() && answer.kind === "current" && answer.value) refsOwned.set(uuid, answer.value);
+      }));
       if (!owner()) return;
       for (const uuid of refs) {
-        const resolved = resolveExportBlockRef(uuid);
+        const resolved = resolveExportBlockRef(uuid, refsOwned);
         if (resolved) collectRawTargets(resolved.raw, resolved.format, targets);
       }
     }
@@ -434,6 +444,9 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const [warmRev, setWarmRev] = createSignal(0);
   const [warming, setWarming] = createSignal(false);
   const warmedMacros = new Map<string, WarmedMacro>();
+  // This preview owns its answers through Copy/close, beyond inactive-cache caps.
+  const warmedRefs: ResolvedRefs = new Map();
+  const resolveBlockRef = (uuid: string) => resolveExportBlockRef(uuid, warmedRefs);
   const update = optionsUpdater(opts, setOpts, saveOptions);
 
   // Build the node forest once (the selection is fixed while the modal is open);
@@ -467,7 +480,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
           content: "rendered",
           indent: "spaces",
           typographicGlyphs: typographyMode() === "render",
-          resolveBlockRef: resolveExportBlockRef,
+          resolveBlockRef,
           resolveMacro,
         });
         const lines = [body || warmed.emptyText, warmed.note, warmed.truncation].filter((s): s is string => !!s);
@@ -480,7 +493,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     warmRev();
     expansions = 0;
     const markupOptions = {
-      ...opts(), resolveBlockRef: resolveExportBlockRef,
+      ...opts(), resolveBlockRef,
       resolveEmbed: (name: string, args: string[]) => {
         const result = warmedMacros.get(macroKey(name, args));
         return result?.kind === "nodes" ? [
@@ -494,7 +507,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     return exportOutline(nodes, {
       ...markupOptions,
       typographicGlyphs: typographyMode() === "render",
-      resolveBlockRef: resolveExportBlockRef,
+      resolveBlockRef,
       resolveMacro,
     });
   });
@@ -510,11 +523,12 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   let disposed = false;
   onCleanup(() => {
     disposed = true;
+    warmedRefs.clear();
   });
 
   onMount(() => {
     setWarming(true);
-    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed)).finally(() => {
+    void warmExportResolutionsOwned(nodes, warmedMacros, graphOwner(() => !disposed), warmedRefs).finally(() => {
       if (disposed) return;
       setWarmRev(warmRev() + 1);
       setWarming(false);
@@ -637,16 +651,17 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
           </div>
         </div>
 
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closeExportModal}>{t("export-modal-close")}</button>
-          <button
-            class="export-btn-primary"
-            disabled={warming()}
-            onClick={copy}
-          >
-            {warming() ? t("export-modal-resolving") : t("export-modal-copy")}
-          </button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={closeExportModal}>{t("export-modal-close")}</button>}
+          primary={
+            <button
+              class="export-btn-primary"
+              disabled={warming()}
+              onClick={copy}
+            >
+              {warming() ? t("export-modal-resolving") : t("export-modal-copy")}
+            </button>
+          } />
       </div>
     </div>
   );

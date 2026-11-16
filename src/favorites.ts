@@ -15,7 +15,9 @@ import { msg } from "./i18n";
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage, reloadHlsIfLoaded } from "./document";
-import { dataRev, graphMeta } from "./graphSession";
+import { graphMeta } from "./graphSession";
+import { hasMarker } from "./tineKeys";
+import { changed, pageChangeKey } from "./changeKeys";
 import { seedGraphSignal, writeGraphSignal } from "./graphPreferences";
 import { bindingOwner, readOwned, writeOwned } from "./owned";
 import { navigationName } from "./pageIndex";
@@ -68,6 +70,11 @@ export async function favoriteBlock(id: string): Promise<void> {
 
 /** The page named by `:tine/favorites-page`, once this graph has one. */
 let arrangementPage: string | null = null;
+const [arrangementRevision, setArrangementRevision] = createSignal(0);
+function setArrangementPage(name: string | null): void {
+  arrangementPage = name;
+  setArrangementRevision(n => n + 1);
+}
 /** The arrangement page's content as Tine last saw it on disk (Markdown of its
  *  tree), or null when unknown. A write proceeds only over this version. */
 let pageBase: string | null = null;
@@ -76,7 +83,7 @@ let generation = 0;
  *  mistaken for an outside edit. */
 let ownWrites = 0;
 /** The marker pre-block in the page's own format: a Markdown page property,
- *  or an Org `#+` file property (og reads `tine/favorites:: true` in an .org
+ *  or an Org `#+` file property (og reads `tine.favorites:: true` in an .org
  *  file as body text, not a property). */
 const markerFor = (format: Format) =>
   format === "org" ? `#+${FAVORITES_PAGE_PROPERTY}: true` : `${FAVORITES_PAGE_PROPERTY}:: true`;
@@ -120,9 +127,12 @@ export function setFavorites(items: FavItem[]): void {
 function commit(next: FavLayout): void {
   writeGraphSignal("favorites", layout, setLayout, next, persistArrangement, "favorites");
 }
+/** The tree without the rows `hit` selects; their children move up. */
+const dropRows = (nodes: FavNode[], hit: (node: FavNode) => boolean): FavNode[] => nodes.flatMap((node) =>
+  hit(node) ? dropRows(node.children, hit) : [{ ...node, children: dropRows(node.children, hit) }]);
 /** The tree without the favorite(s) matching `key`; their children move up. */
-const without = (nodes: FavNode[], key: string): FavNode[] => nodes.flatMap((node) =>
-  node.target !== null && nodeKey(node) === key ? without(node.children, key) : [{ ...node, children: without(node.children, key) }]);
+const without = (nodes: FavNode[], key: string): FavNode[] =>
+  dropRows(nodes, (node) => node.target !== null && nodeKey(node) === key);
 
 /** Every favorites mutator below (toggleFavorite, forgetDeletedFavorite,
  *  renameFavorite and the arrangement edits) applies to the tree at once and
@@ -144,6 +154,12 @@ export function toggleFavorite(name: string, kind: PageKind = "page"): void {
   const key = favoriteKey(name, kind);
   if (isFavoriteKey(key)) commit(without(layout(), key));
   else commit([...layout(), favoriteNode(name, kind)]);
+}
+
+/** Remove a block favorite (the block's durable id); a row's children move up,
+ *  as in `toggleFavorite`. A block that is not a favorite is a no-op. */
+export function unfavoriteBlock(id: string): void {
+  if (isFavoriteBlock(id)) commit(dropRows(layout(), (node) => node.blockId === id));
 }
 
 /** A page or journal was deleted: drop exactly that kind's favorite. */
@@ -169,7 +185,7 @@ export function renameFavorite(from: PageTarget, to: PageTarget): void {
   // would recreate the old name.
   const pageRenamed = arrangementPage !== null && from.pageKind === "page"
     && pageIdentityKey(from.name) === pageIdentityKey(arrangementPage);
-  if (pageRenamed) arrangementPage = to.name;
+  if (pageRenamed) setArrangementPage(to.name);
   const renamed = retarget(layout());
   if (!changed && !pageRenamed) return;
   const next = reconcileLayout(renamed, layoutMembers(renamed).map((f) => f.name), memberKey);
@@ -182,7 +198,7 @@ export function renameFavorite(from: PageTarget, to: PageTarget): void {
  *  they sit. Nothing is written. */
 export function seedFavorites(names: string[], page: string | null = null): void {
   generation += 1;
-  arrangementPage = page?.trim() || null;
+  setArrangementPage(page?.trim() || null);
   pageBase = null;
   pendingMode = null;
   setFavorites(names.map((name) => ({ name, kind: itemKind(name) })));
@@ -191,12 +207,18 @@ export function seedFavorites(names: string[], page: string | null = null): void
 }
 
 let watching = false;
-/** Re-read the arrangement page whenever graph data moves (own saves and
- *  outside edits both bump `dataRev`); a changed page is adopted. */
+/** Re-read only when the named arrangement page changes. */
 function watchArrangement(): void {
   if (watching) return;
   watching = true;
-  createRoot(() => createEffect(on(dataRev, () => { if (arrangementPage) void readArrangement(null); }, { defer: true })));
+  createRoot(() => createEffect(on(() => {
+    arrangementRevision();
+    return arrangementPage ? { page: arrangementPage, revision: changed(pageChangeKey(arrangementPage)) } : null;
+  }, (next, previous) => {
+    // Seeding/recovery already owns its initial read and membership policy.
+    // Retargeting establishes a subscription without starting a competing read.
+    if (next && next.page === previous?.page && next.revision !== previous.revision) void readArrangement(null);
+  })));
 }
 
 /** How a landing read folds the page in. `open`: into config's membership at
@@ -262,13 +284,12 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
       // initialization. Read the DTO preamble through the page-property owner.
       const { pageHeaderProperties } = await import("./document");
       if (!owner()) throw new Error("graph changed before the Favorites marker read");
-      if (!pageHeaderProperties(disk).some(([key, value]) =>
-        key.toLowerCase() === FAVORITES_PAGE_PROPERTY && value.trim().toLowerCase() === "true")) continue;
+      if (!hasMarker(pageHeaderProperties(disk), FAVORITES_PAGE_PROPERTY)) continue;
     }
     if (disk && !arrangementPage) {
       // An arrangement page config never recorded: the only copy of an
       // interrupted edit. Adopt it (this change rolls back) rather than write over it.
-      arrangementPage = name;
+      setArrangementPage(name);
       pageBase = null;
       // After this change's rollback (a microtask chain), so the fold uses
       // config's membership, not the change being refused. Only in this graph:
@@ -288,7 +309,7 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
     ownWrites += 1;
     await createPage(name, favoritesArrangementPage(name, disk?.pre_block ?? markerFor(format), toBlocks(next), format), { baseRev: disk?.rev ?? null });
     if (!owner()) throw new Error("graph changed during the Favorites page write");
-    arrangementPage = name;
+    setArrangementPage(name);
     pageBase = text;
     void reloadHlsIfLoaded(name);
     return name;

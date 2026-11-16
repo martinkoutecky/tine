@@ -11,11 +11,14 @@ import { FailureBoundary } from "./FailureBoundary";
  *  run (`sharedQueryResult`). */
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { dataRev, graphEpoch, graphMeta } from "../graphSession";
+import { graphEpoch, graphMeta } from "../graphSession";
+import { createQuerySubscription } from "../querySubscription";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { sharedQueryResult } from "../queryResultCache";
 import { readLatestOr } from "../resourceRead";
+import { createAnswerDay } from "../journal";
 import { visibleBody } from "../render/block";
+import { formatForPage } from "../document";
 import { bothFamilies } from "../queryTwin";
 import { SearchResultRow } from "./SearchResultRow";
 import type { ExecutionContext, PageRow, Query, ViewSettings } from "../editor/queryIr";
@@ -53,13 +56,15 @@ interface PreviewAnswer {
   total: number;
   diagnostics: string[];
   families: PreviewFamilies | null;
+  /** The backend's `as_of_day`: set only for a day-relative query (card hB3Lv8). */
+  asOfDay: number | null;
 }
 
 type PreviewBlock = PreviewAnswer["blocks"][number];
 const previewBlocks = (groups: RefGroup[]): PreviewBlock[] => groups.flatMap((group) => group.blocks.map((block) => ({
   page: group.page,
   breadcrumb: block.breadcrumb ?? [],
-  text: [block.marker, ...visibleBody(block.raw)].filter(Boolean).join(" "),
+  text: [block.marker, ...visibleBody(block.raw, formatForPage(group.page))].filter(Boolean).join(" "),
 })));
 
 function without(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
@@ -83,13 +88,19 @@ export function QueryLivePreview(props: {
 }
 
 function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]): JSX.Element {
+  const answerDay = createAnswerDay();
+  const subscription = createQuerySubscription(() => {
+    const query = props.query();
+    return !query ? undefined : props.both?.() ? { kind: "full" }
+      : { kind: "query", query, context: props.context?.() ?? {} };
+  }, answerDay.day);
   const request = createMemo<PreviewRequest | undefined>(() => {
     const query = props.query();
     if (!query || !resultsSettled()) return undefined;
     const view = props.view();
     const context = props.context?.();
     const both = props.both?.() === true;
-    return { query, view, context, both, key: JSON.stringify([query, view, context ?? null, both, resultsEpoch(), dataRev()]) };
+    return { query, view, context, both, key: JSON.stringify([query, view, context ?? null, both, resultsEpoch(), subscription.revision(), answerDay.day()]) };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
 
   const [settled, setSettled] = createSignal<PreviewRequest | undefined>(untrack(request));
@@ -104,7 +115,8 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
   const [answer] = createResource(settled, async (req): Promise<PreviewAnswer | undefined> => {
     const owner = latestOwner(owners, "preview", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
-    const revision = untrack(dataRev);
+    if (!await subscription.ready()) return undefined;
+    const revision = `${untrack(subscription.revision)}\0${subscription.publication()}`;
     const ticket = captureResultsTicket();
     if (!ticket.settled) return undefined;
     const landed = await readOwned(owner, sharedQueryResult(
@@ -115,6 +127,7 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
     if (landed.kind === "stale" || !resultsTicketCurrent(ticket)) return undefined;
     const result = landed.value;
     const diagnostics = (result.diagnostics ?? []).filter((d) => !d.disabled).map((d) => d.message);
+    const asOfDay = result.as_of_day ?? null;
     if (req.both) {
       const twin = await bothFamilies(owner, {
         scope, key: `preview\0${req.key}\0${revision}`, query: req.query, view: req.view,
@@ -130,19 +143,21 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
           pageMore: twin.both.pageMore, blockMore: twin.both.blockMore,
           pageNote: twin.both.pageNote, blockNote: twin.both.blockNote,
         },
+        asOfDay,
       };
     }
     if (result.anchor === "page") {
-      return { key: req.key, anchor: "page", blocks: [], pages: result.pages, total: result.matched_total ?? result.pages.length, diagnostics, families: null };
+      return { key: req.key, anchor: "page", blocks: [], pages: result.pages, total: result.matched_total ?? result.pages.length, diagnostics, families: null, asOfDay };
     }
     const blocks = previewBlocks(without(result.groups, props.hostBlockId));
-    return { key: req.key, anchor: "block", blocks, pages: [], total: blocks.length, diagnostics, families: null };
+    return { key: req.key, anchor: "block", blocks, pages: [], total: blocks.length, diagnostics, families: null, asOfDay };
   });
 
   // The count and rows shown are always for the query the user last SETTLED on; while a newer one is
   // running the older rows stay (dimmed), so the pane does not flash empty on every keystroke.
   const shown = (): PreviewAnswer | undefined => readLatestOr(answer, undefined, "query preview");
   const pending = () => request()?.key !== shown()?.key;
+  answerDay.follow(() => shown()?.asOfDay);
 
   return (
     <div class="qs-live" role="region" aria-label={t("query-query-live-preview-live-results")} aria-busy={pending() ? "true" : "false"}

@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -60,8 +61,8 @@ async function settle(rounds = 6) {
   for (let i = 0; i < rounds; i++) await Promise.resolve();
 }
 
-function editorOf(root: HTMLElement, id: string): HTMLTextAreaElement | null {
-  return root.querySelector(`.ls-block[data-block-id="${id}"] textarea.block-editor`);
+function editorOf(root: HTMLElement, id: string): EditorDriver | null {
+  return maybeEditorIn(root, id);
 }
 
 async function mountAndEdit(id: string, surface: "ref" | "embed" = "ref") {
@@ -99,12 +100,12 @@ describe("arrow navigation inside ref/query/embed groups (GH #341)", () => {
   it("ArrowDown moves to the next rendered sibling inside the group", async () => {
     mockFiveCharacterVisualRows();
     const { root, editor, dispose } = await mountAndEdit("a1");
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    editor.select(editor.value().length, editor.value().length);
+    editor.keydown({ key: "ArrowDown", bubbles: true, cancelable: true });
     await settle();
 
     expect(editingId()).toBe("a2");
-    expect(editorOf(root, "a2")?.value).toBe("Thing 2");
+    expect(editorOf(root, "a2")?.value()).toBe("Thing 2");
     expect(editingSurface()?.startsWith("ref:")).toBe(true);
     expect(root.contains(document.activeElement)).toBe(true);
     dispose();
@@ -113,14 +114,14 @@ describe("arrow navigation inside ref/query/embed groups (GH #341)", () => {
   it("ArrowDown crosses display roots into the next rendered root", async () => {
     mockFiveCharacterVisualRows();
     const { root, editor, dispose } = await mountAndEdit("a2");
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    editor.select(editor.value().length, editor.value().length);
+    editor.keydown({ key: "ArrowDown", bubbles: true, cancelable: true });
     await settle();
 
     // Page order ends after a2 (roots are [rootB, rootA]) — only the group's
     // RENDERED list (…a2, rootB…) can take this step.
     expect(editingId()).toBe("rootB");
-    expect(editorOf(root, "rootB")?.value).toBe("Root B");
+    expect(editorOf(root, "rootB")?.value()).toBe("Root B");
     expect(root.contains(document.activeElement)).toBe(true);
     dispose();
   });
@@ -128,26 +129,26 @@ describe("arrow navigation inside ref/query/embed groups (GH #341)", () => {
   it("ArrowUp moves to the previous rendered block, not the page-order sibling", async () => {
     mockFiveCharacterVisualRows();
     const { root, editor, dispose } = await mountAndEdit("rootB");
-    editor.setSelectionRange(1, 1);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    editor.select(1, 1);
+    editor.keydown({ key: "ArrowUp", bubbles: true, cancelable: true });
     await settle();
 
     // Rendered order: a2 precedes rootB. Page order would answer b1 — an
     // editor that is not adjacent in this view (the issue's caret thief).
     expect(editingId()).toBe("a2");
-    expect(editorOf(root, "a2")?.value).toBe("Thing 2");
+    expect(editorOf(root, "a2")?.value()).toBe("Thing 2");
     dispose();
   });
 
   it("embed groups get the same rendered-order navigation", async () => {
     mockFiveCharacterVisualRows();
     const { root, editor, dispose } = await mountAndEdit("a2", "embed");
-    editor.setSelectionRange(editor.value.length, editor.value.length);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    editor.select(editor.value().length, editor.value().length);
+    editor.keydown({ key: "ArrowDown", bubbles: true, cancelable: true });
     await settle();
 
     expect(editingId()).toBe("rootB");
-    expect(editorOf(root, "rootB")?.value).toBe("Root B");
+    expect(editorOf(root, "rootB")?.value()).toBe("Root B");
     expect(editingSurface()?.startsWith("embed:")).toBe(true);
     dispose();
   });
@@ -155,8 +156,8 @@ describe("arrow navigation inside ref/query/embed groups (GH #341)", () => {
   it("does not bind a structural destination to a result-only surface", async () => {
     mockFiveCharacterVisualRows();
     const { editor, dispose } = await mountAndEdit("rootB");
-    editor.setSelectionRange(2, 2);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    editor.select(2, 2);
+    editor.keydown({ key: "Enter", bubbles: true, cancelable: true });
     await settle();
 
     // Arrow destinations belong to this rendered list. A split destination is
@@ -170,8 +171,8 @@ describe("arrow navigation inside ref/query/embed groups (GH #341)", () => {
   it("Backspace at the start of a first display root does not merge into the rendered neighbor", async () => {
     mockFiveCharacterVisualRows();
     const { root, editor, dispose } = await mountAndEdit("rootB");
-    editor.setSelectionRange(0, 0);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+    editor.select(0, 0);
+    editor.keydown({ key: "Backspace", bubbles: true, cancelable: true });
     await settle();
 
     // Page order has nothing before rootB; nothing may merge — least of all

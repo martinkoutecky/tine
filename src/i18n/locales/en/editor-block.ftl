@@ -2,6 +2,7 @@
 editor-block-click-to-zoom-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new-tab-alt-click-other-pane-drag-to-move = Click to zoom; shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane; drag to move
 editor-block-open-block-references-shift-click-sidebar = Open block references (shift-click → sidebar)
 editor-block-couldn-t-load-templates = Couldn't load templates: { $detail }
+editor-block-edit-refused = Couldn't apply this edit safely. Correct the text in the editor to continue, or use Copy on this message to keep the typed text. { $detail }
 editor-block-create = Create "{ $name }"
 editor-block-template = Template: { $name }
 editor-block-create-tag = Create #{ $name }
@@ -46,3 +47,4 @@ editor-block-pasted-outline-is-too-deep = Pasted outline is too deep
 editor-block-pasted-outline-was-refused = Pasted outline was refused
 editor-block-copy-result = Copy result
 editor-block-more-formatting = More formatting
+editor-block-selection-formatting = Format selected text

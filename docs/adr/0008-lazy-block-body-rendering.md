@@ -67,3 +67,27 @@ frame.
   measurement.
 - A dev-only `window.__tineParseStats` counter (stripped from production) makes the
   parse-saved measurable; `scripts/shot-virtualize.mjs` is the regression harness.
+
+## 2026-10-22 amendment: cache ownership
+
+L10 measured historical facet seeds, large parse versions, and completed block
+answers outliving their consumers. Backend seeds now follow loaded-node ownership;
+historical parses and inactive block answers have explicit byte/admission limits,
+and resets clear graph text eagerly. Weak parse reuse and live reference consumers
+keep current content warm. See [frontend memory contract](../contracts/frontend-memory.md).
+The render-once-keep decision still applies within loaded documents.
+
+## 2026-10-22 amendment: measured feed-day retirement (L10-03)
+
+The L10 audit measured 1,000 appended days retaining 300,000 document nodes and
+463 MiB despite the 80-page working-set cap. This satisfies the measurement gate
+for feed-day windowing. On development, measured days away from every viewport
+retire beyond a 12-day loaded bound, subject to the document safety pins. Their
+measured boxes remain in flow and nearby days reload through guarded admission;
+there is no estimated-height or `content-visibility` transition. Individual blocks
+within a loaded day still render once and stay rendered.
+
+D-20261022-JN accepts Find/Replace over loaded days only. The Find bar names the
+retired-day count and offers the existing graph-wide search with the same query;
+it never scans unloaded bodies. This replaces the earlier unlimited feed lifetime,
+without adding a second text cache. See the frontend memory contract for pins.

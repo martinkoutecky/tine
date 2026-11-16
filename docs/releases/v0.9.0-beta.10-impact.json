@@ -1,0 +1,533 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.10",
+  "baseTag": "v0.9.0-beta.9",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Diagnostic reports identify the read source and identity mismatch flags when a physical page route or its recovery probe is refused, without recording page names or paths (GH #863).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH863-JOURNAL-PHYSICAL-OPEN",
+        "UI-GH863-PINNED-ROUTE-RECOVERY",
+        "UI-GH863-REFUSAL-DIAGNOSTICS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH863-JOURNAL-PHYSICAL-OPEN, UI-GH863-PINNED-ROUTE-RECOVERY, UI-GH863-REFUSAL-DIAGNOSTICS. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-beta-win-863-809.mjs",
+          "src/components/Page.virtualJournalTarget.test.tsx",
+          "src/components/Page.pathRecovery.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "iOS: Tine is on the App Store, and Betas come through the separate Tine Beta app, with its own [TestFlight link](https://testflight.apple.com/join/f2HQgJGn); the old TestFlight link is retired (GH #890).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH890-IOS-BETA-SEPARATE-APP",
+        "REG-OG-IOS-TESTFLIGHT-IDENTITY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH890-IOS-BETA-SEPARATE-APP, REG-OG-IOS-TESTFLIGHT-IDENTITY. Fail-before: At f391144ef, the new appIdentity.guard.test.ts assertion fails, proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/test-ios-distribution.mjs",
+          "src/appIdentity.guard.test.ts",
+          "crates/tine-core/src/guide.rs::ios_guide_says_where_graphs_live_and_that_plugins_stay_off"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Merging or deleting a block no longer replaces a long page with an error and loses the editor after earlier structural edits (GH #745).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH745-SEQUENTIAL-MERGE-EDITOR",
+        "UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE",
+        "UI-GH745-STRUCTURAL-EDIT-KEEPS-WINDOWS",
+        "UI-GH745-LATE-IMAGE-CARET-VISIBLE",
+        "UI-GH745-OUTDENT-INDENT-IMAGE-VIEWPORT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH745-SEQUENTIAL-MERGE-EDITOR, UI-GH745-STRUCTURAL-EDIT-CARET-STAYS-VISIBLE, UI-GH745-STRUCTURAL-EDIT-KEEPS-WINDOWS, UI-GH745-LATE-IMAGE-CARET-VISIBLE, UI-GH745-OUTDENT-INDENT-IMAGE-VIEWPORT. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.deleteRendered.test.tsx",
+          "src/components/Page.windowing.test.tsx",
+          "scripts/e2e-gh745-structural-edit-viewport.mjs",
+          "src/editor/caretReveal.test.ts",
+          "scripts/check-gh745-outline-viewport.mjs",
+          "src/components/BlockList.partition.test.ts",
+          "scripts/e2e-gh745-windows-probe.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "In a query's results, a page whose properties row is listed beside one of its ordinary blocks no longer swaps that whole group for static copies while you edit: the first click on the block opens its editor, and the editor keeps its caret and text through your own typing and save, and through Enter, Tab or another structural edit on any page. Reloading the page from disk still shows the static copy until the query reruns. Before, the click could open no editor, and once it did the first keystroke closed it and dropped the rest of what you typed (internal: UI-HCP6JS-QUERY-GROUP-LIVE-WHILE-EDITING).",
+      "userVisible": true,
+      "regressions": [
+        "UI-HCP6JS-QUERY-GROUP-LIVE-WHILE-EDITING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-HCP6JS-QUERY-GROUP-LIVE-WHILE-EDITING. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.pageProperties.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On a touch screen, holding a sidebar **Favorites** row still opens its menu again, the same one a right-click opens (so **Open in new tab** is back within reach); holding a nested **Open tabs** row opens its **Move out of group** menu. Holding and then dragging still picks the row up to reorder it (the menu closes as you drag), a finger that moves first still scrolls, and a tap still opens it (GH #921).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH921-TOUCH-HOLD-ROW-MENU"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH921-TOUCH-HOLD-ROW-MENU. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Sidebar.favorites.test.tsx",
+          "src/components/SidebarTabs.dom.test.tsx",
+          "src/guideBeta2.test.ts",
+          "scripts/e2e-touch-gestures.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Shift-clicking another block while editing selects the whole block range and leaves the editor, including on journal pages and in the sidebar (GH #924).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH924-SHIFT-CLICK-BLOCK-RANGE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH924-SHIFT-CLICK-BLOCK-RANGE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.shiftClickSelection.test.tsx",
+          "scripts/e2e-shift-click-selection.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On Android the diagnostics folder is now locked while Tine runs, so a second Tine process can no longer overwrite the previous run's crash evidence (internal: REG-AUDIT1109-FLIGHT-LOCK-ANDROID).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT1109-FLIGHT-LOCK-ANDROID"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT1109-FLIGHT-LOCK-ANDROID. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/file_lock.rs::every_file_lock_goes_through_this_module",
+          "src-tauri/src/flight_store.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "If the page host fails with an internal error while publishing a save, the graph's other writes continue, its open pages go back to file watching, and closing the graph no longer crashes Tine (internal: REG-AUDIT1109-DRIVER-PANIC-WRITER).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT1109-DRIVER-PANIC-WRITER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT1109-DRIVER-PANIC-WRITER. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-store/src/page_host/binding_tests.rs::a_driver_panic_mid_delivery_leaves_the_store_writable_and_closable",
+          "crates/tine-store/src/store/load_panic_tests.rs::close_after_a_writer_panicked_completes_and_drops",
+          "src-tauri/src/host_retirement.rs::a_retirement_after_a_writer_panicked_closes_and_releases_the_root"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "After such a page host failure, closing its window now finishes closing the graph: Tine can quit, the command line can use the graph again, and reopening it starts a working page host that recovers any crash-recovery copies (REG-AUDIT1109-RETIRE-ENDED-HOST).",
+      "userVisible": true,
+      "regressions": [
+        "REG-AUDIT1109-RETIRE-ENDED-HOST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-AUDIT1109-RETIRE-ENDED-HOST. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/host_retirement.rs::r1_a_window_closed_after_a_driver_panic_retires_its_host_for_good",
+          "src-tauri/src/host_retirement.rs::r1_a_reopen_never_adopts_a_host_whose_driver_ended",
+          "src-tauri/src/host_retirement.rs::r1_a_graph_switch_after_a_driver_panic_retires_the_old_host_for_good",
+          "crates/tine-store/src/page_host/binding_tests.rs::an_ended_host_retires_for_good_and_hands_its_pages_back"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Sheet formulas use your own calendar day and clock: `today()`, `now()` and `.relative()` were a day off in the hours between your local midnight and UTC midnight (yesterday just after midnight in Prague, tomorrow from late afternoon in Los Angeles), so a row due today was not due today and `now()` showed the UTC time. Live sheets, boards, filters and the published export agree (internal: REG-FORMULA-LOCAL-DATE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-FORMULA-LOCAL-DATE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-FORMULA-LOCAL-DATE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/sheet/formulaLocalDate.test.ts",
+          "src/sheet/formula/eval.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Context-menu rows use a consistent font size and family, including the page menu's **Copy as** submenu (GH #916).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH916-CONTEXT-MENU-FONT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH916-CONTEXT-MENU-FONT. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-context-menu-font.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Long inline and display equations remain readable in narrow panes: they wrap where KaTeX permits and otherwise scroll within the formula (GH #915).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH915-MATH-REACHABLE",
+        "UI-GH915-MATH-NARROW-PAPER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH915-MATH-REACHABLE, UI-GH915-MATH-NARROW-PAPER. Fail-before: proven, reconstructed. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-math-overflow.mjs",
+          "src/mathGuide.test.ts",
+          "scripts/e2e-math-print.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Query sections beneath today's journal keep the table or board, columns, sort and aggregates chosen on the Journal sections page (GH #914).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH914-JOURNAL-SECTION-VIEW"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH914-JOURNAL-SECTION-VIEW. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/QueryMacro.hostRaw.test.tsx",
+          "src/components/TodaySections.test.tsx",
+          "scripts/e2e-journal-sections.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Changing code wrapping keeps the visible reading row in place when code cards above it grow or shrink, in main, split and sidebar panes (GH #453).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH453-CODE-WRAP-COMMAND"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH453-CODE-WRAP-COMMAND. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Settings.codeDisplay.test.tsx",
+          "src/components/readingViewportAnchor.test.tsx",
+          "src/components/CodeWrap.viewport.test.tsx",
+          "src/components/Page.journalReferences.test.tsx",
+          "scripts/e2e-code-wrap-toggle.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Clicking or tapping a command palette or Search row keeps the focused split pane and runs the chosen row; slash and page-reference suggestions also keep their editor's pane focused (internal: UI-PALETTE-POINTER-ACTIVATION, UI-EDITOR-COMPLETION-POINTER-PANE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PALETTE-POINTER-ACTIVATION",
+        "UI-EDITOR-COMPLETION-POINTER-PANE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-PALETTE-POINTER-ACTIVATION, UI-EDITOR-COMPLETION-POINTER-PANE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/QuickSwitcher.test.tsx",
+          "scripts/e2e-palette-pointer.mjs",
+          "src/components/EditorAutocomplete.pointer.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Frozen Search selections detect externally moved results instead of silently copying their refreshed source positions (internal: UI-GH907-SEARCH-POSITION; GH #907).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH907-SEARCH-POSITION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH907-SEARCH-POSITION. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/QueryResultsSelection.test.tsx",
+          "src/components/QueryWorkspace.churn.test.tsx",
+          "scripts/e2e-calm-query.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

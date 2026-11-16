@@ -1,3 +1,4 @@
+import { editorIn } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -61,19 +62,19 @@ describe("cross-block vertical caret navigation", () => {
       <For each={pageByName("Caret")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      let editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      const bottom = editor.value.length;
-      editor.setSelectionRange(bottom, bottom);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
-      editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(editor.value).toBe("0123456789");
-      expect(editor.selectionStart).toBe(2);
+      let editor = editorIn(root);
+      const bottom = editor.value().length;
+      editor.select(bottom, bottom);
+      editor.keydown({ key: "ArrowDown", bubbles: true, cancelable: true });
+      editor = editorIn(root);
+      expect(editor.value()).toBe("0123456789");
+      expect(editor.selection()[0]).toBe(2);
 
-      editor.setSelectionRange(2, 2);
-      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
-      editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(editor.value).toBe("alias:: book\nklíč:: hodnota");
-      expect(editor.selectionStart).toBe(editor.value.length);
+      editor.select(2, 2);
+      editor.keydown({ key: "ArrowUp", bubbles: true, cancelable: true });
+      editor = editorIn(root);
+      expect(editor.value()).toBe("alias:: book\nklíč:: hodnota");
+      expect(editor.selection()[0]).toBe(editor.value().length);
     } finally {
       dispose();
     }
@@ -84,11 +85,11 @@ describe("cross-block vertical caret navigation", () => {
     loadSingle({ ...page([block("body", "Body")]), pre_block: "alias:: book" });
     startEditing("body", 2);
     let mounted = mount(() => <For each={pageByName("Caret")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
-    let editor = mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    editor.setSelectionRange(2, 2);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
-    editor = mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    expect(editor.value).toBe("alias:: book");
+    let editor = editorIn(mounted.root);
+    editor.select(2, 2);
+    editor.keydown({ key: "ArrowUp", bubbles: true, cancelable: true });
+    editor = editorIn(mounted.root);
+    expect(editor.value()).toBe("alias:: book");
     expect(doc.byId[pageByName("Caret")!.roots[0]].originatedFromPageHeader).toBe(true);
     mounted.dispose();
 
@@ -96,11 +97,11 @@ describe("cross-block vertical caret navigation", () => {
     loadSingle(page([block("plain", "Plain")]));
     startEditing("plain", 2);
     mounted = mount(() => <For each={pageByName("Caret")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
-    editor = mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-    editor.setSelectionRange(2, 2);
-    editor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    editor = editorIn(mounted.root);
+    editor.select(2, 2);
+    editor.keydown({ key: "ArrowUp", bubbles: true, cancelable: true });
     expect(pageByName("Caret")!.roots).toEqual(["plain"]);
-    expect((mounted.root.querySelector("textarea.block-editor") as HTMLTextAreaElement).value).toBe("Plain");
+    expect((editorIn(mounted.root)).value()).toBe("Plain");
     mounted.dispose();
   });
 
@@ -116,14 +117,14 @@ describe("cross-block vertical caret navigation", () => {
     ));
 
     try {
-      const current = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      current.setSelectionRange(2, 2);
-      current.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+      const current = editorIn(root);
+      current.select(2, 2);
+      current.keydown({ key: "ArrowUp", bubbles: true, cancelable: true });
 
-      const previous = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(previous.value).toBe("abcdefgh");
-      expect(previous.selectionStart).toBe(7); // fg|h on the bottom row, not ab|c on top
-      expect(previous.selectionEnd).toBe(7);
+      const previous = editorIn(root);
+      expect(previous.value()).toBe("abcdefgh");
+      expect(previous.selection()[0]).toBe(7); // fg|h on the bottom row, not ab|c on top
+      expect(previous.selection()[1]).toBe(7);
     } finally {
       dispose();
     }
@@ -141,14 +142,14 @@ describe("cross-block vertical caret navigation", () => {
     ));
 
     try {
-      const current = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      current.setSelectionRange(7, 7); // fg|h: column 2 on the bottom visual row
-      current.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      const current = editorIn(root);
+      current.select(7, 7); // fg|h: column 2 on the bottom visual row
+      current.keydown({ key: "ArrowDown", bubbles: true, cancelable: true });
 
-      const next = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(next.value).toBe("0123456789");
-      expect(next.selectionStart).toBe(2);
-      expect(next.selectionEnd).toBe(2);
+      const next = editorIn(root);
+      expect(next.value()).toBe("0123456789");
+      expect(next.selection()[0]).toBe(2);
+      expect(next.selection()[1]).toBe(2);
     } finally {
       dispose();
     }

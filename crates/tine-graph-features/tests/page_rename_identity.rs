@@ -34,6 +34,75 @@ fn put(root: &Path, rel: &str, body: &str) {
 }
 
 #[test]
+fn ambiguous_rename_names_conflicting_files_and_keeps_them_unchanged() {
+    let _integration_guard = crate::integration_lock();
+    for (label, other, body, old) in [
+        (
+            "case",
+            "pages/marketing box.md",
+            "- second\n",
+            "Marketing Box",
+        ),
+        (
+            "subfolder",
+            "pages/copy/Marketing Box.md",
+            "- second\n",
+            "Marketing Box",
+        ),
+        (
+            "title",
+            "pages/Physical.md",
+            "title:: Marketing Box\n\n- second\n",
+            "Marketing Box",
+        ),
+        (
+            "namespace",
+            "pages/copy/Child.md",
+            "title:: Marketing Box/Child\n\n- second\n",
+            "Marketing Box",
+        ),
+    ] {
+        let (root, _) = fixture(&format!("duplicate-rename-{label}"));
+        if label == "namespace" {
+            put(&root, "pages/Marketing Box.md", "- parent\n");
+        }
+        let first = if label == "namespace" {
+            "pages/Marketing Box%2FChild.md"
+        } else {
+            "pages/Marketing Box.md"
+        };
+        put(&root, first, "- first\n");
+        put(&root, other, body);
+        if label == "case" && fs::read_dir(root.join("pages")).unwrap().count() < 2 {
+            // A case-insensitive filesystem (Windows, default macOS) holds
+            // one file for both spellings, so there is no duplicate.
+            continue;
+        }
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let error = hosted(&store, |host| {
+            pages::rename_page_expected(&store, host, old, "Internal Tools", None)
+        })
+        .err()
+        .unwrap_or_else(|| panic!("{label}: duplicate identity must still refuse the rename"));
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        let message = error.to_string();
+        assert!(message.contains(first), "{label}: {message}");
+        assert!(message.contains(other), "{label}: {message}");
+        assert!(
+            message.contains("merge") && message.contains("remove"),
+            "{message}"
+        );
+        assert!(
+            !message.contains(root.to_str().unwrap()),
+            "only graph-relative paths: {message}"
+        );
+        assert_eq!(fs::read_to_string(root.join(first)).unwrap(), "- first\n");
+        assert_eq!(fs::read_to_string(root.join(other)).unwrap(), body);
+        assert!(!root.join("pages/Internal Tools.md").exists());
+    }
+}
+
+#[test]
 fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
     let _integration_guard = crate::integration_lock();
     for (label, physical, source) in [

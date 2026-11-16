@@ -1,6 +1,7 @@
 import { createMemo, createResource, onCleanup, untrack, type Accessor, type Resource } from "solid-js";
 import { editingId } from "./editorController";
-import { dataRev, graphEpoch } from "./graphSession";
+import { graphEpoch } from "./graphSession";
+import { changed } from "./changeKeys";
 import { node as docNode, isConflicted, isDirty, isSaving, pendingDataRevision } from "./document";
 import { graphOwner, readOwned } from "./owned";
 import { readOr, readLatestOr } from "./resourceRead";
@@ -13,8 +14,17 @@ export function blocksContainEdit(blocks: BlockDto[], id: string): boolean {
   return blocks.some((block) => block.id === id || blocksContainEdit(block.children, id));
 }
 
+/** Whether editing `id` is editing these results. A run's rows are shallow DTOs, and the rows an expanded
+ * result shows beneath a hit are its live source blocks, so a block below a listed row counts too (GH #851):
+ * walking up from it, the first listed ancestor makes it part of the answer being held. */
 export function groupsContainEdit(groups: RefGroup[], id: string): boolean {
-  return groups.some((group) => blocksContainEdit(group.blocks, id));
+  if (groups.some((group) => blocksContainEdit(group.blocks, id))) return true;
+  const seen = new Set<string>([id]);
+  for (let parent = docNode(id)?.parent; parent && !seen.has(parent); parent = docNode(parent)?.parent) {
+    seen.add(parent);
+    if (groups.some((group) => blocksContainEdit(group.blocks, parent))) return true;
+  }
+  return false;
 }
 
 /** One read lifecycle for derived result surfaces. Ordinary autosave is untouched.
@@ -22,7 +32,9 @@ export function groupsContainEdit(groups: RefGroup[], id: string): boolean {
  * Tine keeps the rendered answer/position until editing ends and the final save
  * revision settles, then coalesces suppressed invalidations into one request.
  * Identity changes always retire retention; an in-flight read cannot replace an
- * answer underneath its editor or land in a different graph/route (I-20). */
+ * answer underneath its editor or land in a different graph/route (I-20).
+ * A deferred load (`undefined`) or rejected adoption keeps the same scope's
+ * previous answer; an accepted empty collection replaces it. No extra read. */
 export function createMembershipResource<S, T>(
   source: Accessor<S | undefined | null | false>,
   identity: Accessor<string>,
@@ -30,6 +42,12 @@ export function createMembershipResource<S, T>(
   contains: (value: T, id: string) => boolean,
   invalidate: Accessor<boolean> = () => true,
   guardResults = false,
+  // An unclassified caller must conservatively refresh on every publication.
+  revisionSource: Accessor<unknown> = () => changed("publication"),
+  // A precisely classified reader's publication key owns invalidation. Global
+  // hydration epochs still gate adoption/actions, but unrelated page reloads
+  // need not execute its question again. `current` excludes coalesced changes.
+  scopedRevision?: { current: Accessor<boolean> },
 ) {
   let snapshot: T | undefined;
   let scope = "";
@@ -38,14 +56,14 @@ export function createMembershipResource<S, T>(
   let release = 0;
   let alive = true;
   let resolvedScope = "";
-  let answered: { input: S | undefined | null | false; scope: string; revision: number; epoch: number; release: number; guarded: boolean } | undefined;
+  let answered: { input: S | undefined | null | false; scope: string; revision: unknown; epoch: number; release: number; guarded: boolean } | undefined;
   onCleanup(() => { alive = false; });
   const inputs = createMemo(source);
   const currentScope = () => `${bindingIdentity()}\0${graphEpoch()}\0${identity()}`;
   const request = createMemo(() => {
     const nextScope = currentScope();
     const input = inputs();
-    const revision = invalidate() ? dataRev() : 0;
+    const revision = invalidate() ? revisionSource() : 0;
     // A suppressed (collapsed) read is display-only: never stamped, so never acted on.
     const guarded = guardResults && invalidate();
     const epoch = guarded ? resultsEpoch() : 0;
@@ -78,7 +96,7 @@ export function createMembershipResource<S, T>(
     if (next.held && previous?.scope === next.scope) return previous;
     return next;
   }, undefined, { equals: (a, b) => a?.scope === b?.scope && a?.input === b?.input
-    && a?.revision === b?.revision && a?.release === b?.release && a?.epoch === b?.epoch && a?.settled === b?.settled && a?.guarded === b?.guarded });
+    && a?.revision === b?.revision && a?.release === b?.release && (scopedRevision || a?.epoch === b?.epoch) && a?.settled === b?.settled && a?.guarded === b?.guarded });
   const [resource, actions] = createResource(
     () => runnable()?.input && runnable()?.settled ? runnable() : undefined,
     async (started) => {
@@ -86,8 +104,18 @@ export function createMembershipResource<S, T>(
       // its answer. Reuse this resource's current snapshot, without an IPC read.
       if (answered && snapshot !== undefined && answered.scope === started.scope
         && answered.input === started.input && answered.revision === started.revision
-        && answered.epoch === started.epoch && answered.release === started.release
-        && answered.guarded === started.guarded) return snapshot;
+        && (scopedRevision || answered.epoch === started.epoch) && answered.release === started.release
+        && answered.guarded === started.guarded) {
+        // Only renew provenance when the native dependency key proves that
+        // this answer is unchanged. A delayed relevant refresh keeps its old
+        // ticket and the existing live-source check continues to refuse edits.
+        if (started.guarded && scopedRevision?.current()) {
+          const ticket = captureResultsTicket();
+          adoptResults(snapshot, ticket);
+          snapshotEpoch = ticket.epoch;
+        }
+        return snapshot;
+      }
       const owner = graphOwner(() => alive && request().scope === started.scope
         && !request().held && runnable() === started);
       if (request().held) return snapshot;
@@ -96,7 +124,8 @@ export function createMembershipResource<S, T>(
       if (result.kind === "stale") return request().scope === started.scope && request().held ? snapshot : undefined;
       if (request().held) return snapshot;
       if (runnable() !== started) return undefined;
-      if (started.guarded && adoptResults(result.value, ticket) === undefined) return undefined;
+      if (result.value === undefined) return snapshot;
+      if (started.guarded && adoptResults(result.value, ticket) === undefined) return snapshot;
       snapshot = result.value;
       answered = started;
       snapshotEpoch = ticket.epoch;

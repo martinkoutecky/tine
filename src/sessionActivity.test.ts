@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { installSessionActivity } from "./sessionActivity";
 
-function harness(opts: { isMobile: boolean }) {
+function harness(opts: { isMobile: boolean; hidden?: boolean }) {
   const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   const calls: boolean[] = [];
-  let hidden = false;
+  let hidden = opts.hidden ?? false;
   const uninstall = installSessionActivity({
     isMobile: opts.isMobile,
     setActive: (active) => calls.push(active),
@@ -73,6 +73,19 @@ describe("recorded session lifetime (GH #426)", () => {
     h.fire("pagehide");
     expect(h.calls).toEqual([]);
     expect(h.listenerCount()).toBe(0);
+  });
+
+  it("reports an app already hidden when it mounts, then its return", () => {
+    const h = harness({ isMobile: true, hidden: true });
+    expect(h.calls).toEqual([false]);
+    h.show();
+    h.fire("visibilitychange");
+    expect(h.calls).toEqual([false, true]);
+  });
+
+  it("reports nothing at mount when the app is visible", () => {
+    const h = harness({ isMobile: true });
+    expect(h.calls).toEqual([]);
   });
 
   it("stops listening once uninstalled", () => {

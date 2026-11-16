@@ -396,6 +396,9 @@ try {
   // Assert the first value reaches the graph file while the second editor is open.
   const amountCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:severity"]');
   const adjacentCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-sheet-column-id="prop:occurrence"]');
+  // The persistent temp-storage toast (red toasts stay until dismissed) sits bottom-right and, once the
+  // page above got shorter (UI-LP-FIX folded the Grouped-by summary), covered the neighbouring cell.
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach((b) => b.click()));
   await amountCell.scrollIntoView({ block: "center", inline: "nearest" });
   await amountCell.doubleClick();
   const amountInput = await amountCell.$("input.sheet-prop-input");
@@ -838,6 +841,16 @@ try {
   // proof: the backend must materialize both coarse rows, the formula editor
   // must persist tine.filter, and the same filtered identity must survive the
   // actual Table -> Board view switch without rewriting the coarse query.
+  // A block far below the viewport may render as a lightweight stub (raw text,
+  // no .heading-text) until it is scrolled near the viewport: scroll to it first.
+  await browser.waitUntil(async () => browser.execute(() => {
+    const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+      (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof") ||
+      (el.textContent ?? "").trimStart().startsWith("## Query filter proof")
+    );
+    block?.scrollIntoView({ block: "center", inline: "nearest" });
+    return !!block?.querySelector(".heading-text") && !!block.querySelector(".query-block");
+  }), { timeout: 10_000, timeoutMsg: "query-filter block did not render after scrolling to it" });
   const queryFilterBlockId = await browser.execute(() => [...document.querySelectorAll(".ls-block")]
     .find((el) => (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof"))
     ?.getAttribute("data-block-id"));

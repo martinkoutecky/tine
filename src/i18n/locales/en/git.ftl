@@ -1,0 +1,98 @@
+git-settings-label = Commit changes to git
+git-settings-policy-off = Off
+git-settings-policy-commit = Commit automatically
+git-settings-policy-sync-on-demand = Commit and sync on demand
+git-settings-policy-sync-automatically = Commit and sync automatically
+git-settings-interval = At most every
+git-settings-interval-aria = Minutes between autocommits
+git-settings-minutes = minutes
+git-settings-hint = When the graph is in a git repository, Tine commits the graph's changes after a minute without edits, at most once per interval, and before and after a rename, merge, delete or backup restore. Files git ignores are left out. The sync options also pull and push the branch's upstream: on demand when you press Sync now, automatically after each commit and once per interval as well. Tine never merges, rebases or force-pushes.
+git-settings-not-available = Git is not available on this device yet.
+git-settings-not-a-repository = This graph isn't in a git repository. You can create one here to keep its history.
+
+git-clone-label = Clone a graph from a git URL
+git-init-label = Make this graph a git repository
+git-init-remote = Empty remote HTTPS URL (optional)
+git-init-pending = Your graph and first commit are safe here. Finish setup to publish that commit to the empty remote; sign in below if needed.
+git-init-finish = Finish repository setup
+git-setup-url = HTTPS repository URL
+git-setup-https = Enter an HTTPS repository URL without a username or token in it.
+git-setup-off = Automatic commits and sync stay off. You can turn them on in Settings → Graph → Git.
+git-setup-working = Working…
+git-clone-change-location = Choose another location
+git-clone-open = Open the cloned graph
+git-clone-sign-in = Sign in and retry clone
+git-clone-open-failed = The clone is at { $path }. Retry opening it, or open it later from the graph menu.
+git-init-failed = Couldn't finish making this graph a git repository: { $error }
+git-settings-branch = Branch: { $branch }
+git-settings-unusable = Tine can't commit here: { $message }
+git-settings-last-commit = Last commit { $commit } at { $time }.
+git-settings-last-refused = Last attempt failed: { $message }
+git-settings-repack-deferred = Git cleanup is waiting; commits continue. Tine will retry automatically.
+git-settings-stale-lock = { $path } has been held for over 30 minutes; a git program may have crashed. Remove it once no git command is running.
+git-settings-load-failed = Couldn't load git settings: { $error }
+git-settings-save-failed = Couldn't change git settings: { $error }
+git-settings-ignore-added =
+    { $which ->
+        [tine] Tine added logseq/.tine-* to { $path } to keep its own files for this device, such as its trash, out of git, so devices syncing one repository don't stop at a deleted page. Copies already in git are removed from it, not from disk, in a separate Tine commit. You can remove the line; Tine won't add it again on this device and still leaves those files out of its commits.
+        [both] Tine added .syncthing.* and logseq/.tine-* to { $path } to keep Syncthing's temporary files and Tine's own files for this device, such as its trash, out of git. Copies already in git are removed from it, not from disk, in a separate Tine commit. You can remove the lines; Tine won't add them again on this device. Conflict copies are still committed unless your own rules ignore them.
+       *[syncthing] Tine added .syncthing.* to { $path } to keep Syncthing's temporary files out of git. You can remove the line; Tine won't add it again on this device. Conflict copies are still committed unless your own rules ignore them.
+    }
+git-settings-ignore-failed =
+    { $which ->
+        [tine] Tine couldn't confirm adding logseq/.tine-* to the graph's .gitignore. Tine's own files are still excluded from its commits. Check the file and add the line yourself if you want other git tools to ignore them too.
+        [both] Tine couldn't confirm adding .syncthing.* and logseq/.tine-* to the graph's .gitignore. Temporary files and Tine's own files are still excluded from Tine's commits. Check the file and add the lines yourself if you want other git tools to ignore them too.
+       *[syncthing] Tine couldn't confirm adding .syncthing.* to the graph's .gitignore. Temporary files are still excluded from Tine's commits. Check the file and add the line yourself if you want other git tools to ignore them too.
+    }
+git-settings-remote = Remote: { $name } ({ $url })
+git-settings-sync-unusable = Tine can't sync here: { $message }
+git-settings-sync-now = Sync now
+git-settings-sync-now-failed = Couldn't start a sync: { $error }
+git-settings-signed-in = Signed in to { $origin } as { $username }.
+git-settings-not-signed-in = Not signed in to { $origin }.
+git-settings-sign-in = Sign in
+git-settings-sign-out = Sign out
+git-settings-sign-in-hint = Use a personal access token that can read and write the repository: on GitHub under Settings → Developer settings → Personal access tokens, on GitLab under Preferences → Access tokens, on Codeberg under Settings → Applications. Tine keeps it in a private file on this device, never in the graph.
+git-settings-username = Username
+git-settings-token = Token
+git-settings-sign-in-save = Save sign-in
+git-settings-sign-in-cancel = Cancel
+git-settings-sign-in-failed = Couldn't sign in: { $error }
+git-settings-sign-out-failed = Couldn't sign out: { $error }
+git-sync-running = Syncing…
+git-sync-last-up-to-date = Last sync at { $time }: already up to date.
+git-sync-last-pulled = Last sync at { $time }: pulled new changes.
+git-sync-last-pushed = Last sync at { $time }: pushed this device's commits.
+git-sync-last-failed = Last sync at { $time } didn't finish.
+git-sync-last-failed-since = Last sync at { $time } didn't finish; the last one that did was at { $ok }.
+git-sync-diverged = This device and the remote both have new commits, so Tine stopped syncing and changed nothing. Merge them in git: run the command below in a terminal, resolve any conflicts and commit, then press Sync now. (Merging inside Tine comes later.)
+git-sync-auth-required = The remote wants a sign-in, or turned down the token Tine has. Sign in again with a new token.
+git-sync-network = Tine couldn't reach the remote ({ $message }). It will try again later.
+git-sync-held-unsaved = Tine is waiting to update { $path } until your edit there is saved. It tries again at the next sync.
+git-sync-held-changed = { $path } changed outside Tine during the sync, so Tine updated nothing. At the next sync Tine commits that change; as the remote has new commits too, you then merge them in git.
+git-sync-held-changed-unnamed = A file changed outside Tine during the sync, so Tine updated nothing. It tries again at the next sync.
+git-sync-busy = Another git command is using the repository. Tine tries again at the next sync.
+git-sync-incomplete = Tine couldn't finish updating the graph ({ $message }). Nothing is lost: it finishes at the next sync.
+git-sync-pull-refused = Tine can't update { $path }: { $message }. Nothing was changed. Fix it in git, then press Sync now.
+git-sync-no-upstream = The branch has no upstream branch to sync with. Set one in git, then press Sync now.
+git-sync-refused = Tine can't sync this repository: { $message }
+git-sync-pull-stopped = Tine stopped updating the graph at { $path }: { $message }. Some files were already updated. Fix it in git, then press Sync now.
+git-sync-other = Syncing stopped: { $message }. Fix it in git, then press Sync now.
+git-sync-other-path = Syncing stopped at { $path }: { $message }. Some files may already be updated. Fix it in git, then press Sync now.
+git-sync-fix-copy-command = Copy the git command
+git-sync-fix-open-folder = Open the folder
+git-sync-fix-sign-in = Sign in again
+git-sync-copy-failed = Couldn't copy the command.
+git-sync-open-folder-failed = Couldn't open the folder: { $error }
+git-sync-notice-title = Git sync needs attention
+git-sync-notice-settings = Git settings
+git-sync-fix-line-endings = Turn off line-ending conversion for this repository
+git-sync-fix-line-endings-guide = Line endings: Guide steps
+git-sync-line-endings-safe = Git's automatic line-ending conversion prevents sync. Every tracked file already matches its committed bytes, so Tine can turn conversion off here without changing any graph file.
+git-sync-line-endings-differ = { $count } tracked files have different bytes or cannot be read, for example { $path }. Windows line endings or uncommitted edits can cause this. Commit your edits first, then follow the Guide steps to check out the files without conversion.
+git-sync-line-endings-blocked = Turning off automatic line-ending conversion would still leave sync blocked: { $reason }. Follow the Guide steps, then try again.
+git-sync-line-endings-failed = Couldn't turn off line-ending conversion: { $error }
+git-stale-lock-notice-title = Git commits are waiting
+git-sync-stale-lock = The lock file { $path } has not changed since { $time }, and Tine itself is not using git. It was most likely left behind when Tine or another git program was stopped in the middle of a commit. Until it is gone, Tine can't commit. If no git program is working in this repository right now, remove it.
+git-sync-fix-remove-stale-lock = Remove the stale lock
+git-sync-stale-lock-failed = Couldn't remove the lock: { $error }

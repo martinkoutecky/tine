@@ -9,13 +9,41 @@ import type { PageTarget } from "../routeTypes";
 import { bindTestHost, mailPage } from "../document/host/wiring.test.support";
 import { baseRevFor } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded, openInHost, reportConflict } from "./hostConflict.test.support";
+import { conflictReviewRequest } from "../liveConflicts";
+import { ConflictOverview } from "./ConflictOverview";
+import { ConflictQueueBadge } from "./Sidebar";
+import type { PaneRouter } from "../router";
 
 let host: HTMLDivElement;
 let dispose: (() => void) | undefined;
 beforeEach(() => { resetStore(); host = document.createElement("div"); document.body.append(host); });
 afterEach(() => { dispose?.(); host.remove(); vi.restoreAllMocks(); });
 
-it("22a: a live-draft conflict routes to the in-page review and never offers Keep mine (overwrite)", async () => {
+it.each(["md", "org", "journal"] as const)("GH #875: host retirement removes every conflict surface for %s", async (format) => {
+  const kind = format === "journal" ? "journal" : "page";
+  const id = `${kind === "journal" ? "journals" : "pages"}/Live.${format === "org" ? "org" : "md"}`;
+  loadFeed([{ id, name: "Live", title: "Live", kind, format: format === "org" ? "org" : "md", pre_block: null, rev: "r1",
+    blocks: [{ id: "live-1", raw: "mine", collapsed: false, children: [] }] }]);
+  vi.spyOn(backend(), "conflictInventory").mockResolvedValue({ sync_conflicts: [], vcs_markers: [], queue: [] });
+  const test = await bindTestHost();
+  openAsLoaded(test);
+  await conflictedInHost(test, "Live");
+  const router = { openPageTarget: vi.fn() } as unknown as PaneRouter;
+  dispose = render(() => <><ConflictBar /><ConflictOverview router={router} /><ConflictQueueBadge /></>, host);
+  await vi.waitFor(() => expect(host.querySelectorAll(".conflict-overview-row")).toHaveLength(1));
+  expect(host.querySelector(".conflict-banner")).not.toBeNull();
+  expect(host.querySelector(".conflict-queue-badge")).not.toBeNull();
+  test.deliver({ key: id, answer: null, page: {
+    version: 2, conflict: false, risk: true, disk: { kind: "file", rev: "identical" }, text: { kind: "unchanged" },
+  } });
+  await vi.waitFor(() => expect(conflicts()).toEqual([]));
+  expect(host.querySelector(".conflict-banner")).toBeNull();
+  expect(host.querySelector(".conflict-overview-row")).toBeNull();
+  expect(host.querySelector(".conflict-queue-badge")).toBeNull();
+  expect(node("live-1")?.raw).toBe("mine");
+});
+
+it("22a: a live-draft conflict routes to the in-page review and never offers Keep mine", async () => {
   loadFeed([{ id: "pages/Live.md", name: "Live", title: "Live", kind: "page", pre_block: null, rev: "r1",
     blocks: [{ id: "live-1", raw: "mine", collapsed: false, children: [] }] }]);
   const test = await bindTestHost();
@@ -28,6 +56,9 @@ it("22a: a live-draft conflict routes to the in-page review and never offers Kee
   expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Review"]);
   buttons[0].click();
   expect(opened).toEqual([{ name: "Live", pageKind: "page", path: "pages/Live.md" }]);
+  // GH #858: opening the page already open is a no-op, so Review also asks
+  // that page's resolver to come into view.
+  expect(conflictReviewRequest()?.path).toBe("pages/Live.md");
 });
 
 it("22a: a pathless draft's conflict keeps both choices on the bar", async () => {
@@ -38,7 +69,7 @@ it("22a: a pathless draft's conflict keeps both choices on the bar", async () =>
   await conflictedInHost(test, "Nowhere", "pages/Nowhere.md");
   dispose = render(() => <ConflictBar />, host);
   expect([...host.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual([
-    "Use disk version", "Keep mine (overwrite)",
+    "Keep mine", "Use disk version",
   ]);
 });
 
@@ -59,9 +90,9 @@ it("GH #541: a conflict whose file was deleted on disk offers the whole-page cho
   const buttons = [...host.querySelectorAll("button")];
   // A review against "the file on disk now" has no file to open (the page
   // route fails on the missing path): both whole-page choices stay here.
-  expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Use disk version", "Keep mine (overwrite)"]);
+  expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Keep mine", "Use disk version"]);
   expect(host.textContent).toContain("was deleted on disk");
-  buttons[0].click();
+  buttons[1].click();
   await vi.waitFor(() => expect(conflicts()).toEqual([]));
   expect(discard).toHaveBeenCalledOnce();
   // The page is what a missing file shows: no file, none of the dropped text,

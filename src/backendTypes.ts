@@ -19,7 +19,23 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed" | "page_open_refused"
+  | "editor_focus_missed";
+
+/** Which `startEditing` guard refused the request, if any (GH #939). */
+export type EditorFocusGuard = "exit-guard" | "entry-guard" | "none";
+
+/** GH #939: content-free facts when no editor of a requested block holds focus
+ * one frame after the request. No ids, text, titles or paths. */
+export interface EditorFocusMissed {
+  entry: "enter-split" | "other";
+  documentHasFocus: boolean;
+  guard: EditorFocusGuard;
+  targetMounted: boolean;
+  /** `activeElement`'s tag from a closed list; anything else is "other". */
+  activeTag: "textarea" | "input" | "button" | "select" | "iframe" | "a" | "div" | "span" | "body" | "none" | "other";
+  activeIsBlockEditor: boolean;
+}
 
 /** Closed tokens only: journal names, paths and backend error text never enter
  * the always-on report (I-5). These describe the read/publication boundary. */
@@ -35,6 +51,14 @@ export type JournalFeedCause = "empty-rejection" | "other-rejection";
 export type DiscardReason = "failed" | "still-saving";
 
 export interface DiagnosticFrontendFields {
+  editorFocus?: EditorFocusMissed;
+  pageOpen?: {
+    stage: "route" | "probe";
+    readSource: import("./types").PageReadSource | null;
+    pathMismatch: boolean;
+    nameMismatch: boolean;
+    kindMismatch: boolean;
+  };
   journalFeedReason?: JournalFeedReason;
   journalFeedCause?: JournalFeedCause;
   line?: number;
@@ -63,12 +87,135 @@ export interface GpuEnv {
    *  updater's installer would add a second, installed copy, so it updates by
    *  download. Absent from an older backend. */
   portable: boolean;
+  /** The package manager that built this copy (compile-time `TINE_PACKAGED_BY`,
+   *  tine#187): it owns updates, so the updater never checks, notifies or
+   *  installs and About names it. Null/absent = not a package-manager build. */
+  packaged_by?: string | null;
+}
+
+/** Settings → Graph → Git (ADR 0078): the bound graph's autocommit and sync state. On a
+ *  platform without git only `available: false` is sent. */
+export type GitPolicy = "off" | "commit" | "sync-on-demand" | "sync-automatically";
+/** The last sync cycle (ADR 0078 §4): `code` is its refusal-table row. */
+export interface GitSyncStatus {
+  /** A cycle is running now. */
+  running: boolean;
+  /** Unix seconds when the last cycle finished. */
+  at: number | null;
+  code: string | null;
+  message: string | null;
+  /** The file a held or refused pull names. */
+  path: string | null;
+  /** Unix seconds of the last cycle that succeeded. */
+  ok_at: number | null;
+  failures: number;
+  /** Shown outside Settings too. */
+  persistent: boolean;
+  line_endings?: GitLineEndingsProbe | null;
+  /** Only on the notice's `stale-lock` row: the lock Tine offers to remove. */
+  stale_lock?: GitStaleLock | null;
+}
+/** An `index.lock` that looks left behind (empty, unchanged for 10 minutes, no Tine git operation running):
+ *  Tine offers to remove it, and the click passes `token` back so the backend can recheck it is the same file. */
+export interface GitStaleLock {
+  path: string;
+  /** Unix seconds of its last change. */
+  modified: number;
+  token: string;
+}
+export interface GitLineEndingsProbe {
+  safe: boolean;
+  differing: number;
+  sample: string | null;
+  reason: string | null;
+}
+export interface GitRemote {
+  name: string;
+  url: string;
+  /** `https://host[:port]` when the remote takes a sign-in. */
+  https_origin: string | null;
+}
+/** Paths index roots, then each child list, in the exact currentText snapshot.
+ * They are structural addresses, not runtime document ids or persisted id::. */
+export type SeenBlockPath = number[];
+export interface SeenPageChanges {
+  available: boolean;
+  /** Why the page is unavailable; on an available result, a note on how the
+   * baseline was found (rewritten history, first-open fallback, walk bound). */
+  reason: string | null;
+  head_commit: string | null;
+  /** null means the empty-tree baseline when tracked; unavailable/absent also
+   * has null and no marks. The UI only needs the marks and availability. */
+  baseline_commit: string | null;
+  /** SHA-256 of the supplied UTF-8 currentText. Discard stale responses. */
+  current_text_sha256: string;
+  identity_known: boolean;
+  /** More than 200 touching commits, or a baseline past the 500-commit walk:
+   * the net diff counts every author. */
+  unattributed: boolean;
+  /** Only other-author committed changes still unchanged in currentText. */
+  blocks: { block_path: SeenBlockPath; persisted_id: string | null }[];
+  removed: {
+    /** One removed block body, properties included; descendants have own rows. */
+    text: string;
+    baseline_block_path: SeenBlockPath;
+    /** null = page roots. */
+    parent_path: SeenBlockPath | null;
+    /** null = before the first child/root of parent_path. */
+    previous_sibling_path: SeenBlockPath | null;
+  }[];
+}
+export type GitCloneResult = { kind: "cloned"; root: string } | { kind: "auth-required" };
+
+export interface GitAutocommitStatus {
+  available: boolean;
+  /** The graph is inside a git work tree. */
+  repository?: boolean;
+  branch?: string | null;
+  /** Why Tine cannot commit here: [code, message]. */
+  unusable?: [string, string] | null;
+  policy?: GitPolicy;
+  interval_minutes?: number;
+  last?: {
+    /** One `.gitignore` setup event, retained until the graph worker ends:
+     *  the file, and the lines added (or attempted, when it failed). */
+    gitignore_added?: string | null;
+    gitignore_lines?: string[];
+    gitignore_failed?: boolean;
+    repack_deferred?: boolean;
+    /** Unix seconds of this process's last autocommit. */
+    committed_at: number | null;
+    commit: string | null;
+    refused: [string, string] | null;
+    /** An `index.lock` held through several cycles over 30 minutes. */
+    stale_lock: string | null;
+    /** The held `index.lock` looks stale: Tine offers to remove it (GS-LOCK). */
+    stale_lock_offer?: GitStaleLock | null;
+    sync?: GitSyncStatus;
+  };
+  /** The tracked remote, when sync can run here. */
+  remote?: GitRemote | null;
+  /** Why the sync options are refused: [code, message]. */
+  sync_unusable?: [string, string] | null;
+  line_endings?: GitLineEndingsProbe | null;
+  /** The username signed in for the remote's host on this device. */
+  signed_in?: string | null;
+  /** Explicit setup still needs to publish its first commit to the empty remote. */
+  setup_pending?: boolean;
 }
 
 export interface BackupInfo {
-  /** `YYYY-MM-DD_HH-MM-SS` (UTC). */
+  /** Present for an on-demand old-location snapshot; restore requires confirmation. */
+  old_root?: string;
+  /** What `restoreBackup` takes: `zip:<name>` or `dir:<name>` (a zip and a
+   *  legacy snapshot directory with the same name are distinct backups). */
+  id: string;
+  /** The snapshot name: `YYYY-MM-DD_HH-MM-SS` (UTC), optionally followed by a
+   *  suffix such as `-pre-restore` and a same-second counter. */
   stamp: string;
   files: number;
+  /** `damaged` and `unsupported` (made by a newer Tine) cannot be restored. */
+  status: "ok" | "damaged" | "unsupported";
 }
 
 export interface GraphChange {
@@ -170,6 +317,7 @@ export type LoadGraphResult =
 
 export interface CaptureGraphBindingResult {
   binding_generation: number;
+  meta: GraphMeta;
 }
 
 export interface GraphAccessInspection {
@@ -190,6 +338,33 @@ export interface GraphAnswersChange {
   rev: string;
   inventoryChanged: boolean;
   blockRefCounts: Record<string, number>;
+  /** Absent with older hosts and synthetic legacy notifications. */
+  summary?: ChangeSummary;
+}
+
+/** Publication invalidation evidence for the shared keyed refresh layer.
+ * `blocks` includes runtime and persisted ids, plus affected ancestors.
+ * `props` maps source-page/alias keys to changed property keys; `linksTo`
+ * includes old and new explicit targets even if membership did not change. */
+export interface ChangeSummary {
+  rev: string;
+  pages: string[];
+  blocks: string[];
+  linksTo: string[];
+  /** S2 fields are optional for older hosts. */
+  textTo?: string[];
+  tagsTo?: string[];
+  tagTableTo?: string[];
+  refsTo?: string[];
+  /** Mounted query subscription identities affected by this publication. */
+  queryTo?: string[];
+  /** S5 hints; absent on older hosts means conservative family invalidation. */
+  days?: boolean;
+  journals?: boolean;
+  templates?: boolean;
+  props: Record<string, string[]>;
+  inventoryChanged: boolean;
+  full: boolean;
 }
 
 /** `graph-custom-css-changed`: an outside actor created, replaced or deleted

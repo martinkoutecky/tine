@@ -29,6 +29,37 @@ afterEach(() => {
 });
 
 describe("YouTube timestamp macros", () => {
+  it.each([
+    ["9:03", "9:03", 543],
+    ["1:02:03", "1:02:03", 3723],
+    ["75", "1:15", 75],
+    ["0", "0:00", 0],
+    ["5:3", "5:03", 303],
+    ["123:22:23", "123:22:23", 444143],
+  ])("labels %s correctly and seeks to its full time", async (arg, label, seconds) => {
+    const player: MockPlayer = { seekTo: vi.fn(), getCurrentTime: vi.fn(() => 0), destroy: vi.fn() };
+    const Player = installYoutube(player);
+    const { root, dispose } = mount(() => <>
+      <VideoMacro body="youtube dQw4w9WgXcQ" />
+      <YoutubeTimestamp body={`youtube-timestamp ${arg}`} />
+    </>);
+    try {
+      await expect.poll(() => Player.mock.calls.length).toBe(1);
+      const timestamp = root.querySelector<HTMLElement>(".youtube-ts")!;
+      expect.soft(timestamp.textContent?.trim()).toBe(`⏱ ${label}`);
+      timestamp.click();
+      expect(player.seekTo).toHaveBeenCalledWith(seconds, true);
+    } finally { dispose(); }
+  });
+
+  it.each(["", "no-time", "9:60", "60:03", "1:60:03", "75seconds", "-1", "1.5", "1:2:3:4", "1e3", "9007199254740992"])("hides invalid timestamp %s", (arg) => {
+    const { root, dispose } = mount(() => <YoutubeTimestamp body={`youtube-timestamp ${arg}`} />);
+    try {
+      expect(root.querySelector(".youtube-ts")).toBeNull();
+      expect(root.textContent).toBe("");
+    } finally { dispose(); }
+  });
+
   // Intentional OG divergence: same-video and playback history cross pane boundaries.
   it("prefers the played same-id sidebar copy over a nearer different video", async () => {
     const players = new Map<string, MockPlayer>();

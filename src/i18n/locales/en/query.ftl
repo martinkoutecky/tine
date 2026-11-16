@@ -199,7 +199,7 @@ crossing-notice-changed-block = The block now reads: <code>{ $text }</code>
 query-export-dialog-summary = { $results } results on { $pages } complete pages
 query-export-dialog-existing = An export named <code>{ $folder }</code> already exists.
 query-export-dialog-separate = Create a separate export as <code>{ $folder }</code>
-query-export-dialog-path = Destination: <code>{ $path }</code>. This exports these pages as a static site and read-only app; pages marked public:: false are left out. It is not uploaded. Unsaved edits are not included.
+query-export-dialog-path = Destination: <code>{ $path }</code>. This exports these pages as a static site and read-only app. It is not uploaded. Unsaved edits are not included.
 query-page-results-alias = matched alias { $alias }
 query-result-sections-more-matches =
     { $kind ->
@@ -554,7 +554,6 @@ query-query-result-parts-page-results-grouped = Page results grouped
 query-query-result-parts-no-value = No value
 
 
-query-query-result-parts-clear-grouping = Clear grouping
 
 
 
@@ -886,3 +885,11 @@ query-prose-aggregate-unavailable = Unavailable ({ $reason ->
        *[non_numeric] non numeric
     })
 query-prose-formula-statistics-notice = Exact statistics by formula are not supported yet. Overall statistics are shown.
+query-export-dialog-left-out = { $count ->
+    [one] 1 selected page is not included:
+   *[other] { $count } selected pages are not included:
+}
+query-export-dialog-left-out-private = marked public:: false
+query-export-dialog-left-out-exports-page = the exports page is never exported
+query-export-dialog-selects-host-page = This includes the page the query is written on.
+query-export-dialog-include-query-text = Include the query text (readers see the query, not only the pages)

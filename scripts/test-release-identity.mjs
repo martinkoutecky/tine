@@ -64,7 +64,7 @@ try {
       }
       if (lane.startsWith("linux")) {
         assert.equal(inputs.UPDATE_INFORMATION,
-          `zsync|https://tine.page/updates/beta/${lane === "linux-x64" ? "amd64" : "aarch64"}.AppImage.zsync`);
+          `gh-releases-zsync|owner|repo|latest-pre|${identity.productName.replace(/\s+/g, "-")}_*_${lane === "linux-x64" ? "amd64" : "aarch64"}.AppImage.zsync`);
         assert.equal(inputs.LDAI_UPDATE_INFORMATION, inputs.UPDATE_INFORMATION);
         assert.ok(!/\s/.test(inputs.UPDATE_INFORMATION));
         assert.equal(inputs.RELEASE_APPIMAGE, spec.sourceAssets[spec.assets[0]]);
@@ -85,7 +85,7 @@ try {
     }
     // Stable layout preserves every previous asset name, including RPM separators.
     if (ship === "release") {
-      assert.ok(layout.platformAssets.every((name) => name.startsWith(`Tine_${version}_`) || name.startsWith(`Tine-${version}-1.`)));
+      assert.ok(layout.platformAssets.every((name) => name === "quick-share-viewer-g1.zip" || name.startsWith(`Tine_${version}_`) || name.startsWith(`Tine-${version}-1.`)));
     }
     const gradle = `android {\n namespace = "fixture.kotlin.package"\n applicationId = "${identity.androidApplicationId}"\n}\n`;
     fs.writeFileSync(path.join(root, "src-tauri/gen/android/app/build.gradle.kts"), gradle);

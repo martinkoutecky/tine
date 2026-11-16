@@ -1,0 +1,362 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.8",
+  "baseTag": "v0.9.0-beta.7",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Quick Capture uses the graph's preferred TODO/DOING or LATER/NOW task workflow, including Settings changes without restarting (GH #884).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH884-CAPTURE-WORKFLOW"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH884-CAPTURE-WORKFLOW. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/capture.workflow.test.tsx",
+          "scripts/e2e-capture.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked References no longer redraws every group, or re-checks every property link's page icon, each time a source page loads (GH #886).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH886-PROPERTY-ROW-IDENTITY",
+        "UI-GH886-ROUTED-REF-SCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH886-PROPERTY-ROW-IDENTITY, UI-GH886-ROUTED-REF-SCROLL. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.pageProperties.test.tsx",
+          "scripts/e2e-measure-886.mjs",
+          "src/components/LinkedReferences.pageLoads.test.tsx",
+          "src/render/PageRef.workingSet.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked References no longer rebuilds every page-properties row when a source page is loaded again, which more than doubled memory on pages with many references (GH #886).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH886-PROPERTY-ROW-IDENTITY",
+        "UI-GH886-ROUTED-REF-SCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH886-PROPERTY-ROW-IDENTITY, UI-GH886-ROUTED-REF-SCROLL. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LiveRefGroup.pageProperties.test.tsx",
+          "scripts/e2e-measure-886.mjs",
+          "src/components/LinkedReferences.pageLoads.test.tsx",
+          "src/render/PageRef.workingSet.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Opening Quick Capture before the main window no longer shows a block reference count error (internal: UI-COLD-CAPTURE-REFCOUNTS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-COLD-CAPTURE-REFCOUNTS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-COLD-CAPTURE-REFCOUNTS. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/capture.graphReaders.test.tsx",
+          "scripts/e2e-capture.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Author tags stay aligned when a block has a references button beside its tag (GH #883).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH883-AUTHOR-REF-ALIGNMENT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH883-AUTHOR-REF-ALIGNMENT. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/shot-author-ref-alignment.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Loading source pages after a jump in Linked References keeps unchanged groups and breadcrumbs still (follow-up of GH #849).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH849-PAGE-LOAD-GROUP-BURST",
+        "UI-GH849-IDLE-REFERENCES-KEEP-RELOADING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH849-PAGE-LOAD-GROUP-BURST, UI-GH849-IDLE-REFERENCES-KEEP-RELOADING. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/LinkedReferences.pageLoads.test.tsx",
+          "src/components/LiveRefGroup.workingSet.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Standalone code blocks expose their Markdown fences when entered from a neighboring block. The language and text before or after the code can be edited; Escape or moving out of code editing also reveals the source (GH #879).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH879-CODE-SOURCE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH879-CODE-SOURCE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.codeSource.test.tsx",
+          "src/components/Block.tabOwnership.test.tsx",
+          "scripts/e2e-editor-context.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "`tine delete` refuses before removing a block with incoming references unless confirmed with `--yes` (or `--force`). Every successful reply includes the removed block and its children for recovery, with an explicit notice if the text exceeds 65,536 bytes (GH #844).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH844-CLI-DELETE-CONFIRMATION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH844-CLI-DELETE-CONFIRMATION. Fail-before: Proven on f407f7b948b206202581521436ecd1d8311a16eb. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/cli.rs::tests::cli_delete_confirmation_flags_parse",
+          "src-tauri/src/owner/owner_tests.rs::cli_delete_requires_confirmation_and_returns_removed_text",
+          "src-tauri/src/owner/owner_tests.rs::cli_delete_checks_incoming_references_to_children",
+          "src-tauri/src/owner/owner_tests.rs::cli_delete_internal_references_need_no_confirmation",
+          "src-tauri/src/owner/owner_tests.rs::cli_delete_bounds_removed_text_at_a_utf8_boundary",
+          "src-tauri/src/owner/owner_tests/proof.rs::write_transcript_corpus"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The `((` block picker no longer offers the block you are editing or a block that contains it; picking one made the block reference itself, as Logseq does not allow (internal: UI-PICKER-OFFERS-SELF).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PICKER-OFFERS-SELF"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-PICKER-OFFERS-SELF. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.referenceAuthoring.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On macOS, Cmd+Shift+V pastes plain text without depending on a native paste event (#857).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH857-MAC-PLAIN-PASTE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH857-MAC-PLAIN-PASTE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.plainPaste.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "References to PDF rectangle highlights show the selected image region, including in embeds and highlight notes, instead of blank content (GH #869).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH869-PDF-AREA-REF"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH869-PDF-AREA-REF. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/render/annotationArea.test.tsx",
+          "src/components/PdfAreaImage.test.tsx",
+          "scripts/e2e-pdf-area-ref.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { msg, t } from "../i18n";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
@@ -87,7 +88,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   const remove = async (workspace: Workspace) => {
     const owner = bindingOwner();
     const name = workspaceDisplayName(workspace);
-    const confirmed = await readOwned(owner, backend().confirm(t("workspace-switcher-delete-workspace", { name: String(name) }), "Delete workspace"));
+    const confirmed = await readOwned(owner, backend().confirm(t("workspace-switcher-delete-workspace", { name: String(name) }), { title: t("confirm-delete-workspace"), okLabel: t("confirm-delete-workspace"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
       await writeOwned(owner, deleteWorkspace(workspace.id));
@@ -125,7 +126,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
             <EmojiText text={active() ? workspaceDisplayName(active()!) : "Workspace"} />
           </span>
         </Show>
-        <span class="workspace-switcher-caret" aria-hidden="true">▾</span>
+        <ReferenceDisclosure class="workspace-switcher-caret" collapsed={false} />
       </button>
 
       <Show when={hoverOpen() && !menuOpen()}>

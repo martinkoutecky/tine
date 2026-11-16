@@ -2,13 +2,14 @@ import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMou
 import { backend } from "../backend";
 import { t } from "../i18n";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { dataRev } from "../graphSession";
+import { changed } from "../changeKeys";
 import type { PaneRouter } from "../router";
 import { allPages, pageListLabels } from "../pages";
 import { installPageIndex } from "../pageIndex";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { openRouteInOtherPane } from "../panes";
 import { pageIcon } from "../pageIconBatch";
+import { PageIcon } from "./PageIcon";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { newResizeObserver } from "../windowRealm";
 import {
@@ -88,7 +89,8 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
     });
   };
   onCleanup(() => { if (countTimer !== undefined) clearTimeout(countTimer); });
-  createEffect(on(dataRev, () => {
+  // This requested whole-graph table exposes modified times for every page.
+  createEffect(on(() => changed("publication"), () => {
     countPending = true;
     refreshCounts();
     // One read per open or graph revision, never per row or presentation edit.
@@ -214,7 +216,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                         internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path }))}
                     >
                       {/* OG all-pages table: `icon::` before the name (page.cljs :td.name). */}
-                      <Show when={pageIcon(row.entry.name)}>{(icon) => <span class="all-pages-icon">{icon()} </span>}</Show>
+                      <Show when={pageIcon(row.entry.name)}>{(icon) => <span class="all-pages-icon"><PageIcon value={icon()} name={row.entry.name} /> </span>}</Show>
                       {row.label}
                     </button>
                     <span class="all-pages-updated" role="cell">{formatUpdated(row.modified)}</span>

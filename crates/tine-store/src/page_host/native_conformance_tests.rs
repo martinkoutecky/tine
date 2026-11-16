@@ -10,6 +10,81 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+/// Replay the model's phase-boundary root schedules on real directories. The
+/// model's interior mkdir schedules are separately pinned by bounded-creation
+/// tests: the production filesystem has no general syscall scheduler.
+#[test]
+fn l9_native_and_model_refuse_the_same_detached_root_phases() {
+    for replaced in [false, true] {
+        if replaced && cfg!(target_os = "android") {
+            continue; // The Android fallback does not claim replacement identity.
+        }
+        for phase in [
+            Phase::Read,
+            Phase::PageTemp,
+            Phase::PageRename,
+            Phase::PageSync,
+            Phase::TrashMove,
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let graph = temp.path().join("graph");
+            fs::create_dir(&graph).unwrap();
+            fs::write(graph.join("a.md"), b"original").unwrap();
+            let mut native = ProductionIo::attach(
+                &graph,
+                &temp.path().join("app"),
+                "native",
+                &graph.join("logseq/.tine-trash/pages"),
+            );
+            let mut model = ModelFs::default();
+            model.external("a.md", Some(Arc::from(&b"original"[..])), true);
+            if phase == Phase::PageRename {
+                native
+                    .page_temp("a.md", &Some(Arc::from(&b"typed"[..])))
+                    .unwrap();
+                model
+                    .page_temp("a.md", &Some(Arc::from(&b"typed"[..])))
+                    .unwrap();
+            }
+            fs::rename(&graph, temp.path().join("moved")).unwrap();
+            if replaced {
+                fs::create_dir(&graph).unwrap();
+            }
+            model.inject(
+                phase,
+                [if replaced {
+                    Fault::RootReplaced(0)
+                } else {
+                    Fault::RootGone(0)
+                }],
+            );
+            let exercise = |fs: &mut dyn HostIo| -> IoResult<()> {
+                match phase {
+                    Phase::Read => fs.read_page("a.md").map(|_| ()),
+                    Phase::PageTemp => fs.page_temp("a.md", &Some(Arc::from(&b"typed"[..]))),
+                    Phase::PageRename => fs.page_rename("a.md"),
+                    Phase::PageSync => fs.page_sync("a.md").map(|_| ()),
+                    Phase::TrashMove => fs.trash_move("a.md", "payload").result,
+                    _ => unreachable!(),
+                }
+            };
+            assert_eq!(
+                exercise(&mut native).unwrap_err().operation,
+                Some("GraphRootMoved")
+            );
+            assert_eq!(
+                exercise(&mut model).unwrap_err().operation,
+                Some("GraphRootMoved")
+            );
+            assert_eq!(
+                fs::read(temp.path().join("moved/a.md")).unwrap(),
+                b"original"
+            );
+            assert!(!graph.join("a.md").exists());
+        }
+    }
+}
+
 struct NativeFs {
     root: tempfile::TempDir,
     graph: PathBuf,
@@ -393,29 +468,136 @@ impl HostIo for NativeFs {
     }
 }
 
-fn excluded(program: &Value) -> bool {
-    if let Some(values) = program.as_array() {
-        if values.first().and_then(Value::as_str) == Some("fail") {
-            let probe = &values[1];
-            return !(probe.as_array().is_some_and(|ops| ops.len() == 1)
-                && probe[0][0] == "action"
-                && matches!(
-                    probe[0][1].as_str(),
-                    Some("opApply" | "planCreate" | "opDelete" | "opRename")
-                ));
-        }
-        if values.first().and_then(Value::as_str) == Some("action")
-            && values
-                .get(1)
-                .and_then(Value::as_str)
-                .is_some_and(|name| name.starts_with("power"))
-        {
-            return true;
-        }
-        values.iter().any(excluded)
-    } else {
-        false
+/// Why a scenario stays ModelFs-only: native has no power cut (`power`
+/// panics) and cannot fork a speculative probe other than a single refusal.
+fn excluded(program: &Value) -> Option<&'static str> {
+    let values = program.as_array()?;
+    if values.first().and_then(Value::as_str) == Some("fail") {
+        let probe = &values[1];
+        return (!(probe.as_array().is_some_and(|ops| ops.len() == 1)
+            && probe[0][0] == "action"
+            && matches!(
+                probe[0][1].as_str(),
+                Some("opApply" | "planCreate" | "opDelete" | "opRename")
+            )))
+        .then_some("fork-probe");
     }
+    if values.first().and_then(Value::as_str) == Some("action")
+        && values
+            .get(1)
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.starts_with("power"))
+    {
+        return Some("power");
+    }
+    values.iter().find_map(excluded)
+}
+
+// F9 ledger: a scenario leaving native coverage, or ending at a declared
+// refinement instead of its full outcome, must be added here deliberately.
+/// ModelFs-only scenarios, with the `excluded` reason.
+const NATIVE_MODELFS_ONLY: &[&str] = &[
+    "mMDE:power",
+    "mMLS:power",
+    "mMQ:power",
+    "mMRE:power",
+    "mMTS:power",
+    "ownApplyRename:fork-probe",
+    "ownDeleteRevertedByPower:power",
+    "ownDeleteTrashPower:power",
+    "ownLoadRenameTargetPower0:power",
+    "ownLoadRenameTargetPower1:power",
+    "ownLoadRenameTargetPower2:power",
+    "ownLoadRenameTargetPower3:power",
+    "ownLoadRenameTargetPower4:power",
+    "ownLoadRenameTargetPower5:power",
+    "ownLoadRenameTargetPower6:power",
+    "ownLoadRenameTargetPower7:power",
+    "ownMergeSrcWaits:fork-probe",
+    "ownMergeSrcWaitsUncertain:fork-probe",
+    "ownOrderFailingDstKeepsSrc:fork-probe",
+    "ownOrderRefWaitsForDst:fork-probe",
+    "ownOrderSrcWaitsForDst:fork-probe",
+    "ownOrderSrcWaitsForRef:fork-probe",
+    "ownOrderUncertainDstHolds:fork-probe",
+    "ownRenamePower:power",
+    "ownSlotPowerKeepsClaim:power",
+    "qBareRenameDraftDiscarded:power",
+    "qCrashForgetsUncertain:power",
+    "qCrashForgetsUncertainCold:power",
+    "qDiscardAfterExemptCrash:power",
+    "qDiscardDuringUncertainKeepsPromise:power",
+    "qDiscardOverVolatileResaves:power",
+    "qDiscardOverVolatileRestored:power",
+    "qMovePowerAfterSrc:power",
+    "qR1DeleteUncertainDiscard:power",
+    "qSavedWatermark:power",
+    "qUncertainDiscardPower:power",
+];
+
+/// Profile runs that end at a named refinement branch.
+const NATIVE_REFINEMENTS: &[&str] = &[
+    "base/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "R1/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "weak/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "all/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "R1/ownRenameTargetR1:native-create-refinement",
+    "all/ownRenameTargetR1:native-create-refinement",
+    "base/ownRenameWaitsForSave:effective-rename-refinement",
+    "R1/ownRenameWaitsForSave:effective-rename-refinement",
+    "weak/ownRenameWaitsForSave:effective-rename-refinement",
+    "all/ownRenameWaitsForSave:effective-rename-refinement",
+    "base/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+    "R1/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+    "weak/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+    "all/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+];
+
+/// F8: native API/file ordering at each existing temp/rename/sync fault seam.
+/// This proves retry and readable whole bytes against ModelFs's independent
+/// physical ledger. It makes no claim about losing the machine's page cache.
+#[test]
+fn native_temp_rename_sync_faults_preserve_whole_bytes_and_retry() {
+    for phase in [Phase::PageTemp, Phase::PageRename, Phase::PageSync] {
+        let mut fs = NativeFs::fresh("base", 3);
+        let page = key(0);
+        let old = fs.read_page(&page).unwrap();
+        let new = text(3);
+        fs.ledger.inject(phase, [Fault::Before]);
+        let result = match phase {
+            Phase::PageTemp => fs.page_temp(&page, &new),
+            Phase::PageRename => {
+                fs.page_temp(&page, &new).unwrap();
+                fs.page_rename(&page)
+            }
+            Phase::PageSync => {
+                fs.page_temp(&page, &new).unwrap();
+                fs.page_rename(&page).unwrap();
+                fs.page_sync(&page).map(|_| ())
+            }
+            _ => unreachable!(),
+        };
+        assert!(
+            result.is_err(),
+            "native phase {phase:?} must report its injected failure"
+        );
+        assert_eq!(
+            fs.read_page(&page).unwrap(),
+            if phase == Phase::PageSync {
+                new.clone()
+            } else {
+                old
+            }
+        );
+        // Repeating from preparation is safe after any of the three errors.
+        fs.page_temp(&page, &new).unwrap();
+        fs.page_rename(&page).unwrap();
+        fs.page_sync(&page).unwrap();
+        fs.page_finish(&page);
+        fs.crash(); // adapter reattach, explicitly not an OS process kill
+        assert_eq!(fs.read_page(&page).unwrap(), new);
+    }
+    eprintln!("F8 native faults: temp=1 rename=1 sync=1, retry=3");
 }
 
 #[test]
@@ -445,8 +627,8 @@ fn native_committed_scenarios_in_four_profiles() {
     let mut queued = 0;
     let mut effective = 0;
     for (name, program) in fixture["scenarios"].as_object().unwrap() {
-        if excluded(program) {
-            skipped.push(name.as_str());
+        if let Some(reason) = excluded(program) {
+            skipped.push(format!("{name}:{reason}"));
             continue;
         }
         for oracle in fixture["oracles"]
@@ -459,20 +641,20 @@ fn native_committed_scenarios_in_four_profiles() {
             let mut driver = Driver::<NativeFs>::new_with_io(profile, 3);
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                 driver.program(program.as_array().unwrap()))).unwrap_or_else(|failure| {
-                    eprintln!("failure capsule: tested HEAD 1b040e6c7a20 plus lane diff; native {profile}/{name}; expected s3.5 scenario outcome; observed host/model state mismatch; classification=product-or-model divergence");
+                    eprintln!("failure capsule: tested revision = this checkout's HEAD; native {profile}/{name}; expected s3.5 scenario outcome; observed host/model state mismatch; classification=product-or-model divergence");
                     std::panic::resume_unwind(failure)
                 });
             twins += driver.twin_failures;
             occupied += driver.occupied_refusals;
             queued += driver.queued_refusals;
             effective += driver.effective_renames;
-            if matches!(
-                outcome,
-                Err("native-create-refinement"
-                    | "twin-saveFail-refinement"
-                    | "effective-rename-refinement")
-            ) {
-                refinements.push(format!("{profile}/{name}"));
+            if let Err(
+                reason @ ("native-create-refinement"
+                | "twin-saveFail-refinement"
+                | "effective-rename-refinement"),
+            ) = outcome
+            {
+                refinements.push(format!("{profile}/{name}:{reason}"));
                 continue;
             }
             assert_eq!(
@@ -484,7 +666,10 @@ fn native_committed_scenarios_in_four_profiles() {
         }
         ran.push(name.as_str());
     }
-    assert!(!ran.is_empty());
+    assert_eq!(skipped, NATIVE_MODELFS_ONLY, "native exclusion ledger");
+    assert_eq!(refinements, NATIVE_REFINEMENTS, "native refinement ledger");
+    assert_eq!((ran.len(), comparisons), (158, 618));
+    assert_eq!((twins, occupied, queued, effective), (4, 0, 0, 8));
     eprintln!(
         "native scenarios: {} selected, {comparisons} profile outcomes; {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames; ran={ran:?}; ModelFs-only={skipped:?}; refinement={refinements:?}", ran.len()
     );

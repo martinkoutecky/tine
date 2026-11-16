@@ -47,6 +47,9 @@ export interface QueryOperation {
   statistics?: QueryStatistics;
   search: QueryExecution | null;
   matchedTotal: number | null;
+  /** The day a day-relative answer was resolved for (`as_of_day`); null for a
+   *  date-independent one (card hB3Lv8). */
+  asOfDay: number | null;
   /** GH #619 item 9: "Pages and blocks" — both families of ONE query. The page
    *  family is the page-anchored reading and the block family the block-anchored
    *  one, whichever the macro's own text is. `null` for an ordinary query. */

@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition, installPageContent } from "./document/workingSet";
@@ -23,7 +23,8 @@ import { STALE_VERSION } from "./document/host/protocol";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
 import { installDiskHost } from "./diskHost.test.support";
 import { favorites, recentPages, setFavorites, setRecentPages, rightSidebar, setRightSidebar, seedFavorites, renamePageInNavigation, setWorkflow } from "./ui";
-import { dataRev, pageInventoryRev, setGraphMeta } from "./graphSession";
+import { pageInventoryRev, setGraphMeta } from "./graphSession";
+import { dataRev } from "./dataRevision";
 import { toasts, setToasts } from "./toasts";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto, PageRead } from "./types";
@@ -633,22 +634,18 @@ describe("cycle tasks across a block selection (GH #136)", () => {
     cycleSelectionTasks();
     expect(shape()).toEqual([
       ["TODO write docs"],
-      ["DOING test it"],
+      [expect.stringContaining("DOING test it\n:LOGBOOK:\nCLOCK: [")],
       ["DONE ship it"],
       ["   "],
     ]);
     expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+    const cycled = shape();
 
     undo();
     expect(shape()).toEqual([["write docs"], ["TODO test it"], ["DOING ship it"], ["   "]]);
     expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
     redo();
-    expect(shape()).toEqual([
-      ["TODO write docs"],
-      ["DOING test it"],
-      ["DONE ship it"],
-      ["   "],
-    ]);
+    expect(shape()).toEqual(cycled);
   });
 
   it("is atomic when any selected non-empty block is read-only", () => {
@@ -685,6 +682,7 @@ describe("cross-day move (journal feed as one list)", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
     loadFeed([today, older]); // today on top, older below
+    await bindTestHost();
     const o1 = older.blocks[0].id;
     const res = await moveBlockFeed(o1, -1); // up → end of the day above
     expect(res).toBe("crossed");
@@ -697,6 +695,7 @@ describe("cross-day move (journal feed as one list)", () => {
     const today = journal("Today", [blk("t1"), blk("t2")]);
     const older = journal("Older", [blk("o1")]);
     loadFeed([today, older]);
+    await bindTestHost();
     const t2 = today.blocks[1].id;
     const res = await moveBlockFeed(t2, 1); // down → start of the day below
     expect(res).toBe("crossed");
@@ -708,6 +707,7 @@ describe("cross-day move (journal feed as one list)", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1", [blk("o1a")])]);
     loadFeed([today, older]);
+    await bindTestHost();
     const o1 = older.blocks[0].id;
     const o1a = older.blocks[0].children[0].id;
     await moveBlockFeed(o1, -1);
@@ -881,6 +881,12 @@ describe("property splitting is fence-aware", () => {
 });
 
 describe("trailing space: kept in the editor buffer, trimmed only on save", () => {
+  it("editing a comment body leaves the final hidden metadata line byte-exact on save", () => {
+    const hidden = "tine.quote:: selected words\ntine.author:: Ada Test  \t";
+    const dto = load([blk(`My view\n${hidden}`)]);
+    setRaw(dto.blocks[0].id, `My revised view\n${hidden}`);
+    expect(pageToDto("Test")!.blocks[0].raw).toBe(`My revised view\n${hidden}`);
+  });
   // Regression for the "backspace eats the preceding space" bug: the live buffer
   // (doc.byId[].raw — what the reactive textarea mirrors) must KEEP a trailing
   // space the user left, so deleting a word back to "this is a " doesn't pull the
@@ -1146,10 +1152,12 @@ describe("page-scoped structural undo", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1"), blk("o2")]);
     loadFeed([today, older]);
+    await bindMemoryDisk(); // a bound host that answers the transfer
     const o1 = older.blocks[0].id;
     await moveBlockFeed(o1, -1); // o1 crosses up into Today
     expect(raws("Today")).toEqual(["t1", "o1"]);
     expect(raws("Older")).toEqual(["o2"]);
+    await flushAll(); // the host's transfer ends before undo may run
 
     undo();
     expect(raws("Today")).toEqual(["t1"]);
@@ -1248,7 +1256,7 @@ describe("carry unfinished tasks → today", () => {
   });
   const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
 
-  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", () => {
+  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", async () => {
     const today = journal(TODAY, [blk("")]); // synthetic empty today
     const older = journal("Older", [
       blk("TODO A", [blk("DONE A1")]), // open task with done child → moves whole
@@ -1257,6 +1265,7 @@ describe("carry unfinished tasks → today", () => {
       blk("note D", [blk("TODO D1")]), // note containing an open task → moves whole (context)
     ]);
     loadFeed([today, older]);
+    await bindTestHost();
     const moved = carryUnfinished(["Older"], true, null).moved;
     expect(moved).toBe(2);
     expect(raws(TODAY)).toEqual(["TODO A", "note D"]); // empty placeholder dropped
@@ -1266,10 +1275,11 @@ describe("carry unfinished tasks → today", () => {
     expect(doc.byId[a].children.map((id) => doc.byId[id].raw)).toEqual(["DONE A1"]);
   });
 
-  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", () => {
+  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", async () => {
     const today = journal(TODAY, [blk("existing")]);
     const older = journal("Older", [blk("note D", [blk("TODO D1", [blk("DONE D1a")])])]);
     loadFeed([today, older]);
+    await bindTestHost();
     const moved = carryUnfinished(["Older"], false, null).moved;
     expect(moved).toBe(1);
     expect(raws(TODAY)).toEqual(["existing", "TODO D1"]); // pulled out; note D stays
@@ -1278,11 +1288,12 @@ describe("carry unfinished tasks → today", () => {
     expect(doc.byId[t].children.map((id) => doc.byId[id].raw)).toEqual(["DONE D1a"]);
   });
 
-  it("processes days in order (newest first ends up on top) and can add a header", () => {
+  it("processes days in order (newest first ends up on top) and can add a header", async () => {
     const today = journal(TODAY, [blk("")]);
     const d1 = journal("D1", [blk("TODO from-d1")]);
     const d2 = journal("D2", [blk("TODO from-d2")]);
     loadFeed([today, d1, d2]);
+    await bindTestHost();
     carryUnfinished(["D1", "D2"], true, "Carried over");
     expect(raws(TODAY)).toEqual(["Carried over", "TODO from-d1", "TODO from-d2"]);
   });
@@ -1295,7 +1306,7 @@ describe("carry unfinished tasks → today", () => {
     expect(raws("Older")).toEqual(["DONE x", "just a note"]);
   });
 
-  it("removes the carried tasks and leaves finished tasks AND blank spacer bullets untouched", () => {
+  it("removes the carried tasks and leaves finished tasks AND blank spacer bullets untouched", async () => {
     const today = journal(TODAY, [blk("")]);
     // The reported case: open tasks interleaved with a finished task and a blank
     // spacer bullet. Carrying must remove ONLY the open tasks; the spacer stays.
@@ -1308,14 +1319,16 @@ describe("carry unfinished tasks → today", () => {
       blk("DONE another thing"),
     ]);
     loadFeed([today, older]);
+    await bindTestHost();
     expect(carryUnfinished(["Older"], false, null).moved).toBe(3);
     expect(raws("Older")).toEqual(["DONE something else", "", "DONE another thing"]);
   });
 
-  it("leaves a blank parent that only held a carried task (no-task blocks are never touched)", () => {
+  it("leaves a blank parent that only held a carried task (no-task blocks are never touched)", async () => {
     const today = journal(TODAY, [blk("")]);
     const older = journal("Older", [blk("", [blk("TODO a")])]);
     loadFeed([today, older]);
+    await bindTestHost();
     carryUnfinished(["Older"], false, null);
     expect(raws("Older")).toEqual([""]); // the empty parent stays — it had no task marker
   });
@@ -1340,17 +1353,16 @@ describe("merge (Backspace at 0)", () => {
     expect(shape()).toEqual([["ab", [["b1"]]]]);
   });
 
-  it("merges visible content, keeps prev's id::, drops the absorbed block's", () => {
+  it("keeps both blocks when both have IDs and the reference count is unknown (F2)", () => {
     const dto = load([
       blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
       blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
     ]);
     const bar = dto.blocks[1].id;
-    mergeWithPrev(bar);
+    expect(mergeWithPrev(bar)).toBe(false);
     const foo = doc.pages[0].roots[0];
-    // Visible content joined; only the previous block's id:: survives.
-    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
-    expect(takeCaretFor(foo)).toBe(3); // join at end of "foo" (visible space)
+    expect(doc.byId[foo].raw).toBe("foo\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(doc.byId[bar].raw).toBe("bar\nid:: 22222222-2222-4222-8222-222222222222");
   });
 
   it("first block can't merge backwards", () => {
@@ -1456,14 +1468,15 @@ describe("merge forward (Delete at end)", () => {
     expect(shape()).toEqual([["ab", [["b1"]]]]);
   });
 
-  it("keeps the survivor's id:: and drops the absorbed next block's", () => {
+  it("keeps both IDs when the forward merge's reference count is unknown (F2)", () => {
     const dto = load([
       blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
       blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
     ]);
     const foo = dto.blocks[0].id;
-    mergeWithNext(foo);
-    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(mergeWithNext(foo)).toBe(false);
+    expect(doc.byId[foo].raw).toBe("foo\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(doc.byId[dto.blocks[1].id].raw).toBe("bar\nid:: 22222222-2222-4222-8222-222222222222");
   });
 
   it("adopts the absorbed next block's id:: when the survivor has none", () => {
@@ -1790,6 +1803,7 @@ describe("root-to-root drop across pages targets the drop page (#38)", () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1")]);
     loadFeed([today, older]);
+    await bindTestHost();
     const t1 = today.blocks[0].id;
     // Drop t1 (a root) after o1 (a root on Older): newParent=null, targetPage=Older.
     await moveBlock(t1, null, 1, "Older");
@@ -1868,6 +1882,61 @@ describe("save engine (persistence)", () => {
     expect(disk.writes).toHaveLength(2);
     expect(isConflicted("Test")).toBe(false);
     expect(baseRevFor("Test")).toBe(disk.files.get(disk.writes[1][0])!.rev);
+  });
+
+  describe("appendQueryBlock (the share dialog's definition on the exports page)", () => {
+    const exportsPage = (format: "md" | "org"): PageRead => ({
+      name: "Exports", kind: "page", title: "Exports", id: `pages/Exports.${format}`, rev: "r0", format,
+      pre_block: format === "org" ? "#+tine/exports: true\n#+public: false" : "tine/exports:: true\npublic:: false",
+      blocks: [blk("{{tine-query (or (property tine.export) (property tine.share))}}")],
+    } as PageRead);
+
+    /** The page read that admits the named file answers from the in-memory disk. */
+    const readsFrom = (disk: Awaited<ReturnType<typeof bindMemoryDisk>>) =>
+      vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) =>
+        [...disk.files.values()].find((dto) => dto.name === name) ?? null);
+
+    it("appends the definition as a root block with its property, once, and writes it to disk", async () => {
+      const disk = await bindMemoryDisk([exportsPage("md")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      const roots = () => disk.files.get("pages/Exports.md")!.blocks.map((b) => b.raw);
+      expect(roots()).toEqual([
+        "{{tine-query (or (property tine.export) (property tine.share))}}",
+        "{{tine-query @page and name = 'A'}}\ntine.export:: a-site",
+      ]);
+      // The identical definition is not appended twice.
+      const writes = disk.writes.length;
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(roots()).toHaveLength(2);
+      expect(disk.writes).toHaveLength(writes);
+      // A different folder is a different definition.
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site-2"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(roots()).toHaveLength(3);
+    });
+
+    it("spells the property for an Org page", async () => {
+      const disk = await bindMemoryDisk([exportsPage("org")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["tine.export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      const raw = disk.files.get("pages/Exports.org")!.blocks[1].raw;
+      expect(raw).toContain("{{tine-query @page and name = 'A'}}");
+      expect(raw).toContain(":tine.export: a-site");
+      expect(raw).not.toContain("tine.export:: a-site");
+    });
+
+    it("refuses an empty query or page name without touching anything", async () => {
+      const disk = await bindMemoryDisk([exportsPage("md")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "  ", [["tine.export", "x"]])).toBe(false);
+      expect(await appendQueryBlock(" ", "{{tine-query @page}}", [])).toBe(false);
+      expect(await flushAll()).toBe(true);
+      expect(disk.writes).toEqual([]);
+    });
   });
 
   it("a late save does not advance the baseline of a same-name replacement", async () => {

@@ -1,0 +1,61 @@
+/* Table viewports (TableWrap.tsx owns the geometry; app.css owns the base look).
+   F1/F1b/F2 (GH #749 follow-up, D-20261028-UILP). */
+
+/* A Markdown/Org cell with long text wraps at a sensible width; short cells and
+   numbers stay on one line (an unbroken token never breaks: no overflow-wrap).
+   TableWrap marks them (`md-cell-long`, LONG_CELL_CHARS). */
+.md-table th.md-cell-long,
+.md-table td.md-cell-long {
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  min-width: 18ch;
+  max-width: 40ch;
+  width: 34ch;
+  vertical-align: top;
+}
+
+/* A table in a query box (or a right-sidebar item) never leaves the box: the box
+   is its viewport, the wrap scrolls inside it, and text cells wrap at spaces.
+   OG table.css: `div.table-wrapper { overflow: auto }`, `table { width: 100% }`. */
+.query-block .md-table-wrap,
+.query-results-region .md-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  margin: 4px 0 8px;
+}
+.query-block .md-table-wrap > .md-table,
+.query-results-region .md-table-wrap > .md-table {
+  width: 100%;
+  min-width: 0;
+}
+.query-block .md-table th,
+.query-block .md-table td,
+.query-results-region .md-table th,
+.query-results-region .md-table td {
+  white-space: normal;
+  overflow-wrap: normal;
+  /* `.block-content` sets `word-break: break-word`, which also lowers a column's
+     minimum width to one letter and cram-wrapped every cell ("Wi/dg/et"). */
+  word-break: normal;
+  vertical-align: top;
+}
+
+/* A visible horizontal scrollbar strip when a table overflows (the WebKitGTK
+   overlay bar is invisible until hovered, so a cut-off table looked simply
+   clipped). Same recipe and reasons as codeBlock.css (GH #787); touch keeps
+   the platform's bar. */
+@media (pointer: fine) {
+  .md-table-wrap::-webkit-scrollbar { height: 12px; }
+  .md-table-wrap::-webkit-scrollbar-track,
+  .md-table-wrap::-webkit-scrollbar-corner { background: transparent; }
+  .md-table-wrap::-webkit-scrollbar-thumb {
+    min-width: 32px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-color: var(--scrollbar-thumb, rgba(128, 128, 128, 0.5));
+    background-clip: padding-box;
+  }
+  .md-table-wrap::-webkit-scrollbar-thumb:hover,
+  .md-table-wrap::-webkit-scrollbar-thumb:active { background-color: var(--scrollbar-thumb-hover, rgba(128, 128, 128, 0.75)); }
+}

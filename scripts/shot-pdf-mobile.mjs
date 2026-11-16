@@ -2,7 +2,7 @@
 // the current preview to retain visual before/after evidence:
 //
 //   TINE_PDF_MOBILE_BASELINE_URL=http://localhost:5226 \
-//   TINE_PDF_MOBILE_AFTER_URL=http://localhost:5227 \
+//   TINE_PDF_MOBILE_AFTER_URL=http://localhost:5240 \
 //   node scripts/shot-pdf-mobile.mjs
 //
 // With no AFTER URL, the script starts `vite preview` on 5227. The baseline is
@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const PORT = 5227;
+const PORT = 5240;
 const OUT = "screenshots";
 const PHONE = { width: 390, height: 844 };
 const ANDROID_UA =
@@ -40,6 +40,7 @@ async function openPdfAtPhoneWidth(browser, url, outputPath) {
     viewport: PHONE,
     deviceScaleFactor: 2,
     isMobile: true,
+    hasTouch: true, // a touch phone, stated rather than implied
     userAgent: ANDROID_UA,
   });
   const page = await context.newPage();
@@ -52,7 +53,9 @@ async function openPdfAtPhoneWidth(browser, url, outputPath) {
       await page.keyboard.press("Escape");
       await page.locator(".mobile-drawer-scrim").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
     }
-    await page.locator("a.page-ref", { hasText: "Tine" }).first().click();
+    // Sticky-parent label copies are zero-size duplicates of the same link: pick
+    // the reference the user can see.
+    await page.locator("a.page-ref", { hasText: "Tine" }).filter({ visible: true }).first().click();
     await page.waitForSelector(".pdf-link", { timeout: 8000 });
     await page.locator(".pdf-link").first().click();
     await page.waitForSelector('button[title="Close PDF"]', { timeout: 8000 });

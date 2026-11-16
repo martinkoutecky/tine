@@ -74,6 +74,20 @@ pub struct QueryExportRequest {
     /// Device-local cumulative asset budget; None uses 1 GiB.
     #[serde(default)]
     pub asset_budget_bytes: Option<u64>,
+    /// "Include the query text" (PK3, off by default): only then does the
+    /// published home carry the query macro, its parsed form and its answer;
+    /// otherwise the home lists the exported pages and nothing of the query.
+    #[serde(default)]
+    pub include_query_text: bool,
+}
+
+/// A page the query selected that the export leaves out, and why.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeftOutPage {
+    pub name: String,
+    pub path: String,
+    pub reason: render::LeftOut,
 }
 
 /// One complete owner page in a reviewed query selection.
@@ -93,11 +107,18 @@ pub struct QueryExportPlan {
     pub anchor: String,
     pub row_count: usize,
     pub pages: Vec<ExportPage>,
+    /// Selected by the query but not exported (`public:: false`, the exports page).
+    pub left_out: Vec<LeftOutPage>,
+    /// The query's own page (`current_page`) is among the exported pages, so the
+    /// export carries the page the query is written on (PK3 (c) quiet notice).
+    pub selects_host_page: bool,
     pub folder: String,
     pub path: String,
     pub exists: bool,
     pub suggested_folder: Option<String>,
     pub fingerprint: String,
+    /// Read-only membership evidence from the previous leaf; no new stored record.
+    pub previous_pages: Option<Vec<String>>,
 }
 
 /// Published destination and number of selected source pages.
@@ -155,7 +176,8 @@ fn ir_registry(
     graph: &WholeGraph,
 ) -> io::Result<std::sync::Arc<tine_core::query::registry::Registry>> {
     match graph
-        .query_ir(IrRequest::Registry)
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
         .map_err(|e| io::Error::other(e.to_string()))?
     {
         IrAnswer::Registry(registry) => Ok(registry),
@@ -181,11 +203,15 @@ fn parse_and_run(
     let anchor = parsed.query.anchor;
     let view = anchored_view(&parsed, anchor);
     let result = match graph
-        .query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &view,
-            context,
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &parsed.query,
+                view: &view,
+                context,
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .map_err(|e| io::Error::other(e.to_string()))?
     {
         IrAnswer::Result(result) => *result,
@@ -202,17 +228,26 @@ fn parse_and_run(
     Ok((parsed, result))
 }
 
-struct Planned {
-    plan: QueryExportPlan,
-    parsed: ParsedQuery,
-    result: QueryResult,
-    selected: tine_core::Corpus,
+pub(crate) struct Planned {
+    pub(crate) plan: QueryExportPlan,
+    pub(crate) parsed: ParsedQuery,
+    pub(crate) result: QueryResult,
+    pub(crate) selected: tine_core::Corpus,
 }
 
-fn resolve_plan(
+pub(crate) fn resolve_plan(
     store: &Store,
     graph: &WholeGraph,
     request: &QueryExportRequest,
+) -> io::Result<Planned> {
+    resolve_plan_review(store, graph, request, None)
+}
+
+fn resolve_plan_review(
+    store: &Store,
+    graph: &WholeGraph,
+    request: &QueryExportRequest,
+    snapshot_byte_limit: Option<u64>,
 ) -> io::Result<Planned> {
     if request.name.trim().is_empty() {
         return Err(refusal("give the export a name"));
@@ -279,31 +314,44 @@ fn resolve_plan(
     if paths.len() > MAX_PAGES {
         return Err(refusal("query selects too many pages"));
     }
-    let mut selected = tine_core::Corpus {
-        pages: corpus
-            .pages
-            .into_iter()
-            .filter(|page| paths.contains(page.id.as_str()))
-            .collect(),
-    };
-    if selected.pages.len() != paths.len() {
+    let mut chosen: Vec<_> = corpus
+        .pages
+        .into_iter()
+        .filter(|page| paths.contains(page.id.as_str()))
+        .collect();
+    if chosen.len() != paths.len() {
         return Err(refusal("query result owner is missing"));
     }
-    selected
-        .pages
-        .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
-    // A page marked public:: false stays out of every export, a query export
-    // included, and so does its part of the published answer and row count.
-    let before = selected.pages.len();
-    selected
-        .pages
-        .retain(|page| render::page_public_flag(page) != Some(false));
-    if selected.pages.len() != before {
-        if selected.pages.is_empty() {
-            return Err(refusal(
-                "every page this query selects is marked public:: false",
-            ));
+    chosen.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    // WYSIWYG selection minus the two rules every export applies
+    // (SHARE-DIALOG §1–2): private pages and the exports page stay out, and the
+    // plan names them so the review shows what was left out.
+    let mut left_out = Vec::new();
+    chosen.retain(|page| match render::export_left_out(page) {
+        Some(reason) => {
+            left_out.push(LeftOutPage {
+                name: page.name.clone(),
+                path: page.id.as_str().into(),
+                reason,
+            });
+            false
         }
+        None => true,
+    });
+    if chosen.is_empty() && !left_out.is_empty() {
+        return Err(refusal(
+            "every page this query selects is private or the exports page",
+        ));
+    }
+    let selects_host_page = request.current_page.as_deref().is_some_and(|host| {
+        chosen
+            .iter()
+            .any(|page| page.name.to_lowercase() == host.to_lowercase())
+    });
+    let selected = tine_core::Corpus { pages: chosen };
+    // The answer is closed to the exported pages too, so neither a ticked
+    // "Include the query text" home nor the row count carries a left-out row.
+    if !left_out.is_empty() {
         let paths: HashSet<&str> = selected.pages.iter().map(|p| p.id.as_str()).collect();
         let names: HashSet<_> = selected
             .pages
@@ -328,6 +376,7 @@ fn resolve_plan(
     reviewed.folder = None;
     reviewed.replace = false;
     reviewed.asset_budget_bytes = None;
+    reviewed.include_query_text = false;
     hasher.update(serde_json::to_vec(&reviewed).map_err(io::Error::other)?);
     hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
     for page in &selected.pages {
@@ -339,18 +388,21 @@ fn resolve_plan(
         .folder
         .clone()
         .unwrap_or_else(|| slug(&request.name));
-    let (path, exists, suggested_folder) =
-        tine_store::publish::query_publication_destination(store, &folder)?;
+    let (path, exists, suggested_folder, previous_snapshot) =
+        tine_store::publish::query_publication_destination(store, &folder, snapshot_byte_limit)?;
     Ok(Planned {
         plan: QueryExportPlan {
             anchor: anchor.into(),
             row_count: result.total,
             pages,
+            left_out,
+            selects_host_page,
             folder,
             path,
             exists,
             suggested_folder,
             fingerprint,
+            previous_pages: previous_membership(previous_snapshot),
         },
         parsed,
         result,
@@ -364,7 +416,31 @@ pub fn plan_query(store: &Store, request: &QueryExportRequest) -> io::Result<Que
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
-    Ok(resolve_plan(store, &graph, request)?.plan)
+    // Match the existing export byte ceiling. Only the read-only review asks
+    // for membership evidence; confirmation and quick-share preparation do not.
+    Ok(resolve_plan_review(store, &graph, request, Some(MAX_EXPORT_BYTES as u64))?.plan)
+}
+
+fn previous_membership(bytes: Option<Vec<u8>>) -> Option<Vec<String>> {
+    #[derive(Deserialize)]
+    struct MembershipPage {
+        name: String,
+        path: String,
+    }
+    #[derive(Deserialize)]
+    struct MembershipSnapshot {
+        pages: Vec<MembershipPage>,
+    }
+    let snapshot: MembershipSnapshot = serde_json::from_slice(&bytes?).ok()?;
+    // A query export's generated home has an empty path; it is not an owner page.
+    Some(
+        snapshot
+            .pages
+            .into_iter()
+            .filter(|page| !page.path.is_empty())
+            .map(|page| page.name)
+            .collect(),
+    )
 }
 
 fn collect_static(
@@ -439,6 +515,21 @@ fn close_query_result(
     result
 }
 
+/// Match QueryMacro's parser request. Legacy columns and sort stay in the
+/// block text for the renderer; only query-table affects the parsed reading.
+/// Publication owns baking this exact key, rather than making the reader
+/// guess which differently configured query's answer it can reuse.
+fn query_parse_property(key: &str) -> bool {
+    key.starts_with("tine.") || key == "query-table"
+}
+
+fn legacy_table_property(key: &str) -> bool {
+    matches!(
+        key,
+        "query-properties" | "query-sort-by" | "query-sort-desc"
+    )
+}
+
 fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<Vec<Value>> {
     let paths: HashSet<_> = corpus.pages.iter().map(|page| page.id.as_str()).collect();
     let names: HashSet<_> = corpus
@@ -469,7 +560,7 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
                 let properties: Vec<_> = block
                     .properties()
                     .into_iter()
-                    .filter(|(key, _)| key.starts_with("tine."))
+                    .filter(|(key, _)| query_parse_property(key))
                     .collect();
                 let context = ExecutionContext {
                     current_page: Some(page.name.clone()),
@@ -501,6 +592,19 @@ fn snapshot(
     name: &str,
     home: &str,
     home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
+) -> io::Result<Vec<u8>> {
+    snapshot_at(graph, corpus, name, home, home_query, &export_time()?)
+}
+
+/// [`snapshot`] stamped with a given `exported_at` (quick share stamps its
+/// share document's `created_at`).
+pub(crate) fn snapshot_at(
+    graph: &WholeGraph,
+    corpus: &tine_core::Corpus,
+    name: &str,
+    home: &str,
+    home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
+    exported_at: &str,
 ) -> io::Result<Vec<u8>> {
     let mut pages: Vec<Value> = Vec::new();
     let mut entries: Vec<Value> = Vec::new();
@@ -543,7 +647,10 @@ fn snapshot(
         };
         let mut raw = format!("{{{{{macro_name} {}}}}}", request.argument.trim());
         for (key, value) in &request.properties {
-            if key.starts_with("tine.") && !key.contains('\n') && !value.contains('\n') {
+            if (query_parse_property(key) || legacy_table_property(key))
+                && !key.contains('\n')
+                && !value.contains('\n')
+            {
                 raw.push_str(&format!("\n  {key}:: {}", value.trim()));
             }
         }
@@ -553,7 +660,14 @@ fn snapshot(
         if !request.properties.is_empty() {
             query_block["properties"] = json!(request.properties);
         }
-        let mut home_blocks = vec![query_block];
+        // Without "Include the query text" the home is only the page list: no
+        // macro, no parsed query, no answer record (PK3, SHARE-DIALOG §1).
+        let with_query = request.include_query_text;
+        let mut home_blocks = if with_query {
+            vec![query_block]
+        } else {
+            Vec::new()
+        };
         for (index, page) in corpus.pages.iter().enumerate() {
             home_blocks.push(json!({ "id": format!("published-page:{index}"),
                 "raw": format!("[[{}]]", page.name), "collapsed": false,
@@ -575,12 +689,19 @@ fn snapshot(
         let executed_context = ExecutionContext {
             current_page: request.current_page.clone(),
         };
-        let view = anchored_view(parsed, parsed.query.anchor);
-        queries.push(
-            json!({ "host": home, "argument": request.argument, "dialect": request.dialect,
-            "properties": request.properties, "parsed": parsed, "context": context,
-            "executed_context": executed_context, "view": view, "result": result }),
-        );
+        if with_query {
+            let view = anchored_view(parsed, parsed.query.anchor);
+            let properties: Vec<_> = request
+                .properties
+                .iter()
+                .filter(|(key, _)| query_parse_property(key))
+                .collect();
+            queries.push(
+                json!({ "host": home, "argument": request.argument, "dialect": request.dialect,
+                "properties": properties, "parsed": parsed, "context": context,
+                "executed_context": executed_context, "view": view, "result": result }),
+            );
+        }
     }
     // Only selected sources may cross into a published answer. The whole-graph
     // backlink answerer supplies rows; this projection closes them by owner.
@@ -615,7 +736,7 @@ fn snapshot(
         })
         .collect();
     let block_ref_counts = corpus.block_ref_counts();
-    let snapshot = json!({ "schema": 1, "name": name, "exported_at": export_time()?,
+    let snapshot = json!({ "schema": 1, "name": name, "exported_at": exported_at,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
     let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
@@ -729,7 +850,7 @@ fn publication_assets(
             Err(tine_store::StoreError::InvalidTarget(_)) => {
                 warnings.push(format!("Asset {name} was omitted: not a regular file."));
             }
-            Err(tine_store::StoreError::NotFound) => {
+            Err(tine_store::StoreError::NotFound(_)) => {
                 warnings.push(format!("Asset {name} was omitted: file not found."));
             }
             Err(tine_store::StoreError::Io(error))
@@ -1075,6 +1196,7 @@ mod snapshot_consistency_tests {
             folder: None,
             replace: false,
             asset_budget_bytes: None,
+            include_query_text: false,
         };
         let graph = store.whole_graph().unwrap();
         let reviewed = resolve_plan(&store, &graph, &request).unwrap();

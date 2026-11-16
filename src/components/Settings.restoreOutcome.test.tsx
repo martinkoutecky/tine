@@ -22,7 +22,7 @@ afterEach(() => { closeSettings(); setToasts([]); vi.restoreAllMocks(); document
 
 it("reports an aborted graph reload after restore without claiming success", async () => {
   vi.spyOn(backend(), "getBackupKeep").mockResolvedValue(12);
-  vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
+  vi.spyOn(backend(), "listBackups").mockResolvedValue([{ id: "zip:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" }]);
   vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   vi.spyOn(backend(), "restoreBackup").mockResolvedValue(RESTORED);
   controls.flush.mockResolvedValue(true);
@@ -44,7 +44,7 @@ it("reports an aborted graph reload after restore without claiming success", asy
 
 it("does not restore a backup after its confirmation outlives the graph", async () => {
   vi.spyOn(backend(), "getBackupKeep").mockResolvedValue(12);
-  vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
+  vi.spyOn(backend(), "listBackups").mockResolvedValue([{ id: "zip:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" }]);
   let finish!: (confirmed: boolean) => void;
   vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
   const restoreBackup = vi.spyOn(backend(), "restoreBackup").mockResolvedValue(RESTORED);
@@ -67,7 +67,7 @@ it("does not restore a backup after its confirmation outlives the graph", async 
 
 it("does not clear a newer graph transition when an old restore finishes", async () => {
   vi.spyOn(backend(), "getBackupKeep").mockResolvedValue(12);
-  vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
+  vi.spyOn(backend(), "listBackups").mockResolvedValue([{ id: "zip:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" }]);
   vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   let finish!: () => void;
   vi.spyOn(backend(), "restoreBackup").mockImplementationOnce(() => new Promise((resolve) => { finish = () => resolve(RESTORED); }));
@@ -81,7 +81,7 @@ it("does not clear a newer graph transition when an old restore finishes", async
       .find((button) => button.textContent?.trim() === "Restore");
     await vi.waitFor(() => expect(restore()?.disabled).toBe(false));
     restore()!.click();
-    await vi.waitFor(() => expect(backend().restoreBackup).toHaveBeenCalled());
+    await vi.waitFor(() => expect(backend().restoreBackup).toHaveBeenCalledWith("zip:2026-07-22_12-00-00", "replace-page", expect.any(Number)));
     resetStore();
     setGraphTransitioning(true);
     finish();

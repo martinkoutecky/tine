@@ -9,6 +9,48 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages;
 use tine_store::Store;
 
+#[test]
+fn rn_c_rename_keeps_org_inline_literals_and_updates_file_links() {
+    let _integration_guard = crate::integration_lock();
+    for (ext, held, namespace) in [
+        ("org", false, false),
+        ("ORG", false, false),
+        ("Org", false, false),
+        ("ORG", true, false),
+        ("Org", true, false),
+        ("ORG", false, true),
+    ] {
+        let rel = format!("pages/Notes.{ext}");
+        let (root, store) = fixture(&[
+            ("pages/Target.md", "- target\n"),
+            (&rel, "* [[Target]] and =[[Target]]= and ~[[Target]]~\n* [[file:./Target.org][target file]]\n"),
+        ]);
+        if namespace {
+            fs::write(root.join("pages/Target___child.md"), "- descendant\n").unwrap();
+            store.refresh(tine_store::Depth::Bytes).unwrap();
+        }
+        hosted(&store, |host| {
+            if held {
+                let window = serde_json::to_value(host.window_reloaded()).unwrap();
+                host.open(
+                    window["session"].as_u64().unwrap(),
+                    window["nextId"].as_u64().unwrap(),
+                    &tine_store::PageId::from(rel.as_str()),
+                    "Notes",
+                )
+                .unwrap();
+            }
+            pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
+        })
+        .unwrap();
+        if namespace {
+            assert!(root.join("pages/Renamed___child.md").exists());
+        }
+        assert_eq!(fs::read_to_string(root.join(&rel)).unwrap(),
+            "* [[Renamed]] and =[[Target]]= and ~[[Target]]~\n* [[file:./Renamed.org][target file]]\n", "{ext}");
+    }
+}
+
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
 fn hosted<T>(

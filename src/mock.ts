@@ -1,13 +1,18 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
+import { bigPageBlocks, embedScrollBlocks, manyRefsPages } from "./mockScrollFixtures";
 import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import type { ConfirmOptions } from "./backendInterface";
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
+import { mockQuickShareCommands } from "./mockQuickShare";
+import { mockGitCommands } from "./mockGit";
 import { mockPageHost } from "./mockPageHost";
+import { createMockCaptureReceipts } from "./mockCaptureReceipts";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
@@ -15,9 +20,12 @@ import { hlsPageName } from "./pdf";
 import { lazyHeaderFacets, leadingMarker } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
+import { marginRegressionPages } from "./mockMarginPages";
+import { mockAliases } from "./mockAliases";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. Keep the same explicit
@@ -385,41 +393,24 @@ const NAMED: PageDto[] = [
   },
 ];
 
-// A large synthetic page (~2000 root blocks) cycling through construct types, for
-// the lazy-body virtualization harness: most blocks start as deferred raw-text
-// placeholders and only parse/render on scroll. Gated behind `?big` so it never
-// pollutes the normal mock screenshots (it would otherwise show up in All-Pages /
-// quick-switch). Reach it with `…/?big` then quick-switch (Ctrl+K) to "Big".
-function bigPageBlocks(n: number): BlockDto[] {
-  const out: BlockDto[] = [];
-  for (let i = 0; i < n; i++) {
-    switch (i % 6) {
-      case 0:
-        out.push(b(`Paragraph **${i}** with *emphasis*, a [[ref ${i % 50}]] and a #tag${i % 20}.`));
-        break;
-      case 1:
-        out.push(b(`## Heading ${i}`));
-        break;
-      case 2:
-        out.push(b("```js\nfunction f" + i + "(x) {\n  return x * " + i + ";\n}\n```"));
-        break;
-      case 3:
-        out.push(b(`| Col A | Col B |\n| --- | --- |\n| row ${i} | val ${i} |\n| row ${i + 1} | val ${i + 1} |`));
-        break;
-      case 4:
-        out.push(b(`Display math: $$\\sum_{k=0}^{${i}} k = \\frac{${i}(${i}+1)}{2}$$`));
-        break;
-      default:
-        out.push(
-          b(`Block ${i}: a longer line of prose that wraps so the placeholder height is a realistic proxy for the rendered paragraph, with a [[link ${i % 30}]].`)
-        );
-        break;
-    }
-  }
-  return out.map((block) => ({ ...block, has_id: false }));
-}
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
-  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
+  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(b, Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
+}
+if (typeof location !== "undefined" && /[?&]embedscroll\b/.test(location.search)) {
+  const { source, page } = embedScrollBlocks(b);
+  NAMED.push({ name: "Embed scroll source", kind: "page", title: "Embed scroll source", pre_block: null, blocks: source },
+    { name: "Embed scroll", kind: "page", title: "Embed scroll", pre_block: null, blocks: page });
+}
+if (typeof location !== "undefined" && /[?&]manyrefs\b/.test(location.search)) {
+  for (const page of manyRefsPages(b)) NAMED.push({ ...page, kind: "page", title: page.name, pre_block: null });
+}
+// D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
+// pages and three names with no file of their own.
+if (typeof location !== "undefined" && /[?&]aliasgroups\b/.test(location.search)) {
+  NAMED.push(
+    { name: "Germany", kind: "page", title: "Germany", pre_block: "alias:: DE, Deutschland, Bundesrepublik", blocks: [b("Country notes")] },
+    { name: "Bundesrepublik", kind: "page", title: "Bundesrepublik", pre_block: "alias:: BRD", blocks: [b("Federal politics notes")] },
+  );
 }
 if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
   NAMED.push(
@@ -479,6 +470,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
         b("Source root two"),
       ],
     },
+    ...marginRegressionPages(b).map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
   );
 }
 
@@ -662,15 +654,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
   const fold = (text: string) => searchFold(text, removeAccents);
   const find = (name: string) =>
     all.find((p) => identity(p.name) === identity(name)) ?? null;
+  const { aliasOwners, pageAliasGroup } = mockAliases(all, identity, mockPagePath);
   const mockResolve = (name: string, kind: "journal" | "page"): ResolvedPage => {
     const page = all.find((p) => p.kind === kind && identity(p.name) === identity(name));
     if (page) return { kind: "existing", id: mockPagePath(page), others: [] };
-    if (kind === "page") {
-      const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
-        /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => identity(alias.trim()) === identity(name))
-      )).map(mockPagePath).sort();
-      if (owners.length) return { kind: "alias", owners };
-    }
+    const owners = kind === "page" ? aliasOwners(name) : [];
+    if (owners.length) return { kind: "alias", owners };
     return { kind: "absent", id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
   };
 
@@ -754,7 +743,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async captureTarget() {
       return "main";
     },
-    async bindCaptureGraph() {},
+    captureReceipt: createMockCaptureReceipts(),
+    async bindCaptureGraph() {
+      const result = await this.loadGraph("");
+      if (result.kind === "focused_existing") throw new Error("mock graph unavailable");
+      return result.meta;
+    },
     async forgetKnownGraph() {},
     async revealKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
@@ -883,6 +877,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async resolvePage(name: string, kind: "journal" | "page") {
       return mockResolve(name, kind);
     },
+    pageAliasGroup,
     graphBindingGeneration: () => 1,
     ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
     async guidePages(): Promise<GuidePage[]> {
@@ -922,6 +917,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return `${dir.replace(/[\\/]$/, "")}/${name.trim()}`; // no real scaffolding in the browser mock
     },
     async getBacklinks(name: string): Promise<RefGroup[]> {
+      // `?refslatency=ms`: a slow answer, as on a big graph (GH #848).
+      const latency = typeof location === "undefined" ? 0 : Number(new URLSearchParams(location.search).get("refslatency")) || 0;
+      if (latency) await new Promise((resolve) => setTimeout(resolve, latency));
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
     },
@@ -1015,6 +1013,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return { groups: [], ran: [], ignored: [], supported: false };
     },
     ...mockQueryCommands,
+    ...mockQuickShareCommands,
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {
@@ -1123,7 +1122,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
-        const m = all.find((p) => p.name === name)?.pre_block?.match(/^icon::\s*(.+)$/m);
+        const pre = all.find((p) => p.name === name)?.pre_block;
+        const m = pre?.match(/^tine\.icon::\s*(.+)$/m) ?? pre?.match(/^icon::\s*(.+)$/m);
         if (m) out[name] = m[1].trim();
       }
       return out;
@@ -1142,8 +1142,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
-    async setJournalTitleFormat(): Promise<void> {
-      // no-op in the browser mock
+    async setJournalTitleFormat(): Promise<string[]> {
+      return [];
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock
@@ -1179,13 +1179,14 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async search(query: string, limit: number): Promise<RefGroup[]> {
       const q = fold(query.trim());
       if (!q) return [];
-      let n = limit;
-      const groups = collect((b) => fold(b.raw).includes(q));
-      for (const g of groups) {
-        if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
-        n -= g.blocks.length;
-      }
-      return groups.filter((g) => g.blocks.length > 0);
+      // OG's `((` search: whole words in any order (FTS5) listed before literal
+      // pieces in order (`LIKE '%a%b%'`), cut at the limit (blockPickerMatch.ts).
+      const legOf = (b: BlockDto) => blockPickerLeg(fold(b.raw), q);
+      return mergeBlockPickerLegs(
+        collect((b) => legOf(b) === "words"),
+        collect((b) => legOf(b) === "fragments"),
+        limit,
+      );
     },
     async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names", _views?: { page: import("./editor/queryIr").ViewSettings; block: import("./editor/queryIr").ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
@@ -1279,8 +1280,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         cancelled: false,
       };
     },
-    async listTemplates() {
-      return [
+    async listTemplates(name?: string) {
+      const templates = [
         {
           name: "meeting",
           page: "Templates",
@@ -1292,6 +1293,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
           ],
         },
       ];
+      return name === undefined ? templates : templates.filter((t) => t.name === name).slice(0, 1);
     },
     async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
       const q = fold(query.trim());
@@ -1369,6 +1371,13 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
     },
+    async captureImportAsset(path: string, name?: string): Promise<string> {
+      return name ?? path.split("/").pop() ?? path;
+    },
+    async captureSaveAsset(name: string, bytes: Uint8Array): Promise<string> {
+      mockAssets[name] = bytes;
+      return name;
+    },
     async importNativeCapture(path: string, name: string): Promise<string> {
       return name || path.split("/").pop() || path;
     },
@@ -1437,7 +1446,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onConflictsChanged(): Promise<() => void> {
       return () => {};
     },
-    async confirm(message: string): Promise<boolean> {
+    async confirm(message: string, _options: ConfirmOptions): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK
       // app), so defer to it. Read it off globalThis so test stubs (vi.stubGlobal)
       // are honoured.
@@ -1495,9 +1504,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onAssetChanged(): Promise<() => void> { return () => {}; },
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async onCustomCssChanged(): Promise<() => void> { return () => {}; },
+    async editGlobalCss(): Promise<void> {},
     async editCustomCss(): Promise<void> {
       // no OS editor in the browser mock
     },
+    ...mockGitCommands,
     async getBackupKeep(): Promise<number> {
       return 12;
     },
@@ -1554,7 +1565,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false, flatpak: false, packaged: false, portable: false };
     },
-    async takeDataHomeFallbackNotice(): Promise<string | null> {
+    async takeDataHomeFallbackNotice() {
       return null;
     },
     async getSmoothScroll(): Promise<boolean> {

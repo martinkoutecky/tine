@@ -7,18 +7,25 @@ import { reportUiFailure } from "../uiFailure";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
+import { QuickShareSettings } from "./QuickShareSettings";
 import { AboutTab } from "./AboutTab";
 import { platformKind } from "../platform";
+import { primeQuickShareGate, quickShareOffered } from "../quickShareGate";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { ConflictFileRow } from "./JournalConflictFileRow";
+import { toggleCommentMargin } from "../commentMargin";
+import { commentMarginHidden } from "../commentMarginPref";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
-import { setJournalTemplate, graphMeta, graphEpoch, dataRev } from "../graphSession";
+import { setJournalTemplate, graphMeta } from "../graphSession";
+import { changedAny } from "../changeKeys";
+import { JOURNAL_SECTIONS_MARKER, markerChangeKeys } from "../tineKeys";
 import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
-import { isMac, isMobilePlatform, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import {
   copyIncludeSubtree,
   setCopyIncludeSubtree,
@@ -27,7 +34,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { mobileNavigationAtBottom, navReuseTabs, setMobileNavigationAtBottom, setNavReuseTabs } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, searchResultsOpenInThisTab, setMobileNavigationAtBottom, setNavReuseTabs, setSearchResultsOpenInThisTab } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
@@ -58,9 +65,12 @@ import { TraySettings } from "./TraySettings";
 import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
+import { GitAutocommitSetting } from "./GitAutocommitSetting";
+import { SeenSettings } from "./SeenSettings";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
+import { CommentNameSetting } from "./CommentNameSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
 import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, matchedDescription, type SettingSearchEntry } from "./settingsSearch";
@@ -96,6 +106,7 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
   { id: "files", label: msg("settings-ui-files") },
   { id: "backups", label: msg("settings-ui-backups-recovery") },
   { id: "graph", label: msg("settings-ui-graph") },
+  { id: "sharing", label: msg("settings-ui-sharing") },
   { id: "plugins", label: msg("settings-ui-plugins") },
   { id: "diagnostics", label: msg("settings-ui-help-diagnostics") },
   { id: "shortcuts", label: msg("settings-ui-keyboard-shortcuts") },
@@ -119,10 +130,16 @@ export function Settings(): JSX.Element {
     const platform = readOr(settingsPlatform, undefined, "settings-platform");
     return platform === "desktop" || platform === "android";
   };
-  const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
+  // Sharing appears where quick share is on (DESIGN §5: off in shipped builds until its viewer is deployed).
+  // A session-wide signal primed at graph load, not a resource: a resource read here would suspend the
+  // whole dialog (GH #409), and a read per open inserted the tab after the list painted.
+  const sharingAvailable = quickShareOffered;
+  onMount(() => { void primeQuickShareGate(); });
+  const availableTabs = createMemo(() => TABS.filter((entry) =>
+    (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (isMobilePlatform || !entry.mobileOnly)), query) : [];
+    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (touchPrimary() || !entry.touchOnly)), query) : [];
   });
   // A setting whose field mounts after an async load (Developer tools waits for
   // the platform probe) is not in the DOM when the tab opens, so the lookup is
@@ -315,6 +332,11 @@ export function Settings(): JSX.Element {
                 <GraphFolderSetting />
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
+                <GitAutocommitSetting />
+                <SeenSettings />
+              </Show>
+              <Show when={tab() === "sharing" && sharingAvailable()}>
+                <QuickShareSettings />
               </Show>
               <Show when={tab() === "plugins" && pluginsAvailable()}>
                 <PluginsTab />
@@ -496,9 +518,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         </div>
       </Field>
 
-      {/* GH #716: the phone/tablet app keeps Sidebar, Search, Back and Forward in
+      {/* GH #716: a touch-first device (phone/tablet) keeps Sidebar, Search, Back and Forward in
           the top bar; this opt-in restores the GH #598 bottom row. */}
-      <Show when={isMobilePlatform}>
+      <Show when={touchPrimary()}>
         <Field label={render(msg("settings-mobile-navigation-label"))} hint={render(msg("settings-mobile-navigation-hint"))}>
           <Toggle on={mobileNavigationAtBottom()} onClick={() => setMobileNavigationAtBottom(!mobileNavigationAtBottom())} />
         </Field>
@@ -518,6 +540,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           on={docModeEnterForNewBlock()}
           onClick={() => changeDocModeEnterForNewBlock(!docModeEnterForNewBlock())}
         />
+      </Field>
+      <Field label={t("settings-ui-comment-margin")} hint={t("settings-ui-shows-the-comment-threads-beside-the-page-off-hides")}>
+        <Toggle on={!commentMarginHidden()} onClick={toggleCommentMargin} />
       </Field>
       <Field
         label={t("settings-ui-show-brackets")}
@@ -707,6 +732,7 @@ function EditorTab(props: { search: string }): JSX.Element {
   });
   return (
     <>
+      <CommentNameSetting />
       <Field
         label={t("settings-ui-file-format")}
         hint={
@@ -796,6 +822,17 @@ function EditorTab(props: { search: string }): JSX.Element {
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
         </Field>
 
+        <Field label={render(msg("settings-result-destination-label"))} hint={render(msg("settings-result-destination-hint"))}>
+          <select
+            aria-label={render(msg("settings-result-destination-label"))}
+            value={searchResultsOpenInThisTab() ? "here" : "tab"}
+            onChange={(event) => setSearchResultsOpenInThisTab(event.currentTarget.value === "here")}
+          >
+            <option value="tab">{render(msg("settings-result-destination-new-tab"))}</option>
+            <option value="here">{render(msg("settings-result-destination-this-tab"))}</option>
+          </select>
+        </Field>
+
         <Field label={render(msg("settings-pinyin-label"))} hint={render(msg("settings-pinyin-description"))}>
           <Toggle on={pinyinMatchingEnabled()} onClick={() => setPinyinMatchingEnabled(!pinyinMatchingEnabled())} />
           <button type="button" class="og-revert" onClick={resetPinyinMatchingSetting}>
@@ -877,6 +914,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
         }
       >
         <DateFormatSelect />
+        <For each={graphMeta()?.journal_config_diagnostics ?? []}>
+          {(message) => <div class="config-diagnostic" role="status">{t("journal-config-diagnostic", { message })}</div>}
+        </For>
       </Field>
 
       <Field
@@ -971,7 +1011,10 @@ function JournalsTab(props: { search: string }): JSX.Element {
       <Field
         label={t("settings-ui-agenda-window")}
         hint={
-          <>{t("settings-ui-today-s-scheduled-deadline-list-shows-items-whose-scheduled")}</>
+          <>
+            {t("settings-ui-today-s-scheduled-deadline-list-shows-items-whose-scheduled")}
+            <SectionsPageNote />
+          </>
         }
       >
         <input
@@ -993,22 +1036,23 @@ function JournalsTab(props: { search: string }): JSX.Element {
           onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
         />
         <span class="settings-hint">{t("settings-agenda-days-ahead", { source: graphMeta()?.scheduled_future_days != null ? "graph" : "device" })}</span>
-        <SectionsPageNote />
       </Field>
     </>
   );
 }
 
 /** GH #605: with a sections page, today's sections (agenda included) are the
- *  queries written on it, so this window no longer applies. Say where they live. */
+ *  queries written on it, so this window no longer applies. Say where they live.
+ *  It goes in the setting's full-width hint, never its control column: that column
+ *  does not shrink, so a sentence there ran off the pane and clipped "Open page" (GH #808). */
 function SectionsPageNote(): JSX.Element {
   // Keep the optional note empty while loading: an undefined first value must
   // neither crash its index lookup nor suspend the entire Settings dialog.
-  const [pages] = createResource(() => `${graphEpoch()}\0${dataRev()}`, () => locateSectionsPages(), { initialValue: [] as string[] });
+  const [pages] = createResource(() => changedAny(markerChangeKeys(JOURNAL_SECTIONS_MARKER)), () => locateSectionsPages(), { initialValue: [] as string[] });
   const page = () => readOr(pages, [] as string[], "sections page note")[0];
   return (
     <Show when={page()}>
-      {(name) => <div class="settings-hint">
+      {(name) => <div class="settings-sections-note">
         {render(msg("settings-sections-page", { page: name() }))}{" "}
         <button type="button" class="settings-link" onClick={() => { closeSettings(); openPage(name()); }}>{render(msg("settings-sections-open"))}</button>
       </div>}
@@ -1069,8 +1113,24 @@ function BackupsTab(): JSX.Element {
   };
 
   const restore = (b: BackupInfo) => {
-    if (!ready() || busy()) return;
+    if (!ready() || busy() || b.status !== "ok") return;
     void restoreBackupFromSettings(b, fmtStamp(b.stamp), setBusy, () => { void refresh(); });
+  };
+
+  const deleteOld = async (b: BackupInfo) => {
+    const remove = backend().deleteOldBackups;
+    if (!remove || !b.old_root || !ready() || busy()) return;
+    const owner = bindingOwner(() => alive);
+    setBusy(true);
+    try {
+      const confirmed = await readOwned(owner,backend().confirm(t("backup-delete-old-confirm", { path: b.old_root }),
+        { okLabel:t("backup-delete-old"),cancelLabel:t("confirm-cancel") }));
+      if (confirmed.kind === "stale" || !confirmed.value) return;
+      const result = await writeOwned(owner,remove.call(backend(),b.id));
+      if (result.kind !== "stale") void refresh();
+    } catch (error) {
+      pushToast(msg("backup-delete-old-failed", { error:String(error) }),"error");
+    } finally { if (owner()) setBusy(false); }
   };
 
   return (
@@ -1122,9 +1182,18 @@ function BackupsTab(): JSX.Element {
           <For each={list()}>
             {(b) => (
               <div class="settings-backup-row">
-                <span class="settings-backup-when">{fmtStamp(b.stamp)}</span>
-                <span class="settings-backup-files mono">{t("settings-ui-files-2", { files: b.files })}</span>
-                <button class="settings-btn" disabled={!ready() || busy()} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
+                <span class="settings-backup-when">{fmtStamp(b.stamp)}
+                  <Show when={b.old_root}>{(path) => <span class="settings-backup-origin">{t("backup-old-location",{ path:path() })}</span>}</Show>
+                </span>
+                <span class="settings-backup-files mono">
+                  {b.status === "ok"
+                    ? t("settings-ui-files-2", { files: b.files })
+                    : t("settings-ui-files-backup-status", { files: b.files, status: t(BACKUP_STATUS_KEY[b.status]) })}
+                </span>
+                <div class="settings-backup-actions">
+                  <button class="settings-btn" disabled={!ready() || busy() || b.status !== "ok"} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
+                  <Show when={b.old_root && backend().deleteOldBackups}><button class="settings-btn" disabled={!ready() || busy()} onClick={() => void deleteOld(b)}>{t("backup-delete-old")}</button></Show>
+                </div>
               </div>
             )}
           </For>
@@ -1159,7 +1228,8 @@ function JournalConflictsPanel(): JSX.Element {
   const trashFile = async (name: string) => {
     const owner = bindingOwner();
     const confirmed = await readOwned(owner, backend().confirm(
-        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name })
+        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name }),
+        { okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     await writeOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), msg("settings-ui-moved-to-trash", { name })));
@@ -1447,7 +1517,8 @@ function AssetsTab(): JSX.Element {
     const info = trashInfo();
     if (!info.count) return;
     const confirmed = await readOwned(owner, backend().confirm(
-        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) })
+        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) }),
+        { okLabel: t("confirm-empty-trash"), cancelLabel: t("confirm-cancel") },
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
@@ -1515,6 +1586,12 @@ function buildStamp(): string {
     return __BUILD_TIME__;
   }
 }
+
+/** Why a listed backup cannot be restored (the native restore refuses it too). */
+const BACKUP_STATUS_KEY = {
+  damaged: "settings-ui-backup-damaged",
+  unsupported: "settings-ui-backup-unsupported",
+} as const satisfies Record<Exclude<BackupInfo["status"], "ok">, string>;
 
 // "2026-06-17_14-30-05" (UTC) → a readable local timestamp.
 function fmtStamp(s: string): string {

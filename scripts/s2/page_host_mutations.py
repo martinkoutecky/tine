@@ -72,7 +72,7 @@ def main():
     if args.prepare:
         return
     binary = ROOT / "scratch/page-host/tools/bin/cargo-mutants"
-    command = ["rtk", "proxy", str(binary), "mutants", "--no-config", "--dir", str(work),
+    command = [str(binary), "mutants", "--no-config", "--dir", str(work),
                "--file", "src/page_host/*.rs", "--exclude", "**/conformance.rs",
                "--exclude", "**/conformance_step.rs",
                "--exclude", "**/scheduler.rs", "--exclude", "**/*tests.rs",

@@ -2,9 +2,10 @@
 # Graph/page names and file paths in variables remain verbatim.
 conflict-bar-review = Review
 
-conflict-bar-use-disk-version = Use disk version
+# The one disk-vs-mine choice (conflict bar, external-change bar, PDF highlight conflict): same labels, same order.
+conflict-choice-keep-mine = Keep mine
 
-conflict-bar-keep-mine-overwrite = Keep mine (overwrite)
+conflict-choice-use-disk-version = Use disk version
 
 conflict-overview-unsaved-drafts = Unsaved drafts
 
@@ -44,7 +45,7 @@ conflict-resolution-conflict-unavailable = Couldn’t read this conflict.
 
 conflict-resolution-the-two-versions-are-identical-nothing-to-decide = The two versions are identical — nothing to decide.
 
-conflict-resolution-the-copy-is-safe-to-discard-from-the = { " " }The copy is safe to discard from the Conflicts overview.
+conflict-resolution-the-copy-holds-nothing-the-page-lacks = { " " }The copy holds nothing the page lacks.
 
 conflict-resolution-the-other-file-is-safe-to-trash-above = { " " }The other file is safe to trash above.
 

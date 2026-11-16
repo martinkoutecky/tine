@@ -22,7 +22,7 @@ fn emit_navigation(window: &tauri::WebviewWindow, direction: &'static str) {
 
 /// Route native mouse history buttons into the frontend router for one graph
 /// webview. Linux and Windows need different native interception boundaries;
-/// other platforms retain the DOM `auxclick` fallback.
+/// other platforms use the DOM release handler (Wry synthesizes mouseup on macOS).
 pub(crate) fn install(window: &tauri::WebviewWindow) {
     platform::install(window);
 }
@@ -30,6 +30,7 @@ pub(crate) fn install(window: &tauri::WebviewWindow) {
 #[cfg(target_os = "linux")]
 mod platform {
     use super::emit_navigation;
+    use std::cell::Cell;
 
     // Wry's WebKitGTK backend verifies the native GDK mapping and translates
     // these to DOM buttons 3/4 in synthetic_mouse_events.rs.
@@ -40,11 +41,26 @@ mod platform {
         let event_window = window.clone();
         let _ = window.with_webview(move |platform_webview| {
             use gtk::{
-                gdk::{EventButton, EventType, FromEvent},
-                prelude::WidgetExt,
+                gdk::{EventButton, EventMask, EventMotion, EventType, FromEvent, ModifierType},
+                prelude::{WidgetExt, WidgetExtManual},
             };
 
+            let press = Cell::new(None::<(u32, f64, f64)>);
+            platform_webview
+                .inner()
+                .add_events(EventMask::POINTER_MOTION_MASK);
             platform_webview.inner().connect_event(move |_, event| {
+                if event.event_type() == EventType::MotionNotify {
+                    if let (Some((_, x, y)), Ok(motion)) =
+                        (press.get(), <EventMotion as FromEvent>::from(event.clone()))
+                    {
+                        let (next_x, next_y) = motion.position();
+                        if (next_x - x).hypot(next_y - y) > 5.0 {
+                            press.set(None);
+                        }
+                    }
+                    return gtk::glib::Propagation::Proceed;
+                }
                 if !matches!(
                     event.event_type(),
                     EventType::ButtonPress | EventType::ButtonRelease
@@ -57,15 +73,30 @@ mod platform {
                 let direction = match button_event.button() {
                     GDK_BUTTON_BACK => "back",
                     GDK_BUTTON_FORWARD => "forward",
-                    _ => return gtk::glib::Propagation::Proceed,
+                    _ => {
+                        // Another button owns a text selection/native drag.
+                        press.set(None);
+                        return gtk::glib::Propagation::Proceed;
+                    }
                 };
 
                 // GtkWidget::event runs before the more-specific
                 // button-{press,release}-event signal. Stop both halves here so
                 // Wry cannot also synthesize DOM input/default history; navigate
                 // once, on release, to preserve normal click semantics.
-                if event.event_type() == EventType::ButtonRelease {
-                    emit_navigation(&event_window, direction);
+                if event.event_type() == EventType::ButtonPress {
+                    let occupied = button_event.state().intersects(
+                        ModifierType::BUTTON1_MASK
+                            | ModifierType::BUTTON2_MASK
+                            | ModifierType::BUTTON3_MASK,
+                    );
+                    let (x, y) = button_event.position();
+                    press.set((!occupied).then_some((button_event.button(), x, y)));
+                } else if let Some((button, x, y)) = press.take() {
+                    let (next_x, next_y) = button_event.position();
+                    if button == button_event.button() && (next_x - x).hypot(next_y - y) <= 5.0 {
+                        emit_navigation(&event_window, direction);
+                    }
                 }
                 gtk::glib::Propagation::Stop
             });

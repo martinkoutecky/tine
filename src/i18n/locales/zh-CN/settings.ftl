@@ -40,6 +40,14 @@ settings-mobile-navigation-label = 导航按钮置于底部
 
 settings-mobile-navigation-hint = 手机和平板：把侧边栏、搜索、后退和前进放在屏幕底部的一行（单手易触及），不放在顶栏。键盘弹出时，这一行让位给编辑工具栏。默认关闭，保存在本设备上。
 
+settings-result-destination-label = 搜索结果打开位置
+
+settings-result-destination-hint = 在搜索标签页中单击或按 Enter 打开结果时的位置。“新标签页”会保留搜索标签页及其结果，页面在旁边的新标签页中打开。“当前标签页”则直接在搜索标签页中显示该页面，点击后退即可回到结果。无论哪种，Shift+点击都会在侧边栏打开，Ctrl/Cmd+点击或中键点击会在后台标签页打开，Alt+点击会在另一窗格打开。默认为新标签页，保存在本设备上。
+
+settings-result-destination-new-tab = 新标签页
+
+settings-result-destination-this-tab = 当前标签页
+
 settings-embed-breadcrumbs = 块嵌入面包屑
 
 settings-embed-breadcrumbs-hint = 在嵌入块上方显示来源页面和父块路径。默认关闭。
@@ -313,6 +321,7 @@ settings-ui-files = 文件
 settings-ui-backups-recovery = 备份与恢复
 
 settings-ui-graph = 图谱
+settings-ui-sharing = 分享
 
 settings-ui-plugins = 插件
 
@@ -390,6 +399,10 @@ settings-ui-drops-the-reading-width-cap = 取消阅读宽度上限。
 settings-ui-document-mode = 文档模式
 
 settings-ui-hides-bullets-and-indent-guides-for-a-cleaner-prose = 隐藏项目符号和缩进辅助线，使正文更简洁。
+
+settings-ui-comment-margin = 显示/隐藏评论
+
+settings-ui-shows-the-comment-threads-beside-the-page-off-hides = 在页面旁显示评论串。关闭后，所有窗格中的评论串都会隐藏；评论仍保留在你的文件中。保存在此设备上。
 
 settings-ui-document-mode-enter-creates-a-new-block = 文档模式下 Enter 新建块
 
@@ -501,7 +514,7 @@ settings-ui-reset-ranking = 重置排序
 
 settings-ui-copy-a-parent-block-s-sub-blocks = 复制父块的子块
 
-settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块。Tine 默认关闭，避免仅选中父块却复制整个子树。
+settings-ui-when-you-copy-cut-a-selected-block-that-has = 复制或剪切有子块的所选块时：开启则复制整个子树；关闭则仅复制明确选择的块，以及已折叠块或表格视图所隐藏的子块。Tine 默认关闭，避免仅选中父块却复制整个子树。
 
 settings-ui-strip-collapsed-when-copying = 复制时去除 collapsed::
 
@@ -591,6 +604,12 @@ settings-ui-retry = 重试
 settings-ui-no-snapshots-yet = 尚无快照。
 
 settings-ui-files-2 = { $files } 个文件
+
+settings-ui-files-backup-status = { $files } 个文件 · { $status }
+
+settings-ui-backup-damaged = 已损坏
+
+settings-ui-backup-unsupported = 由较新版本的 Tine 创建
 
 settings-ui-restore = 恢复
 
@@ -730,7 +749,7 @@ settings-ui-trash = 移入回收站
 
 # Helper-return and component-prop interface text (GH #107).
 settings-prose-always-ask-before-applying-an-external-change = 应用外部更改前始终询问
-settings-prose-when-a-page-you-are-not-editing-changes-on-disk = 当你未在编辑的页面在磁盘上发生更改时，保留当前阅读的内容，并提供“从磁盘重新加载”和“保留我的版本”选项。发生冲突或编辑过程中到来的更改始终会得到安全处理。
+settings-prose-when-a-page-you-are-not-editing-changes-on-disk = 当你未在编辑的页面在磁盘上发生更改时，保留当前阅读的内容，并提供“保留我的版本”和“使用磁盘版本”选项。发生冲突或编辑过程中到来的更改始终会得到安全处理。
 settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds = 重新读取当前图谱中的每个文件，并重建 Tine 中的视图。
 settings-prose-show-tine-in-the-system-tray = 在系统托盘中显示 Tine
 settings-prose-adds-a-tray-notification-area-macos-menu-bar-icon-click = 添加系统托盘或通知区域图标（macOS 上为菜单栏图标）。点击图标可显示或隐藏主窗口，菜单包含“打开 Tine”“快速记录”和“退出”。关闭窗口仍会退出 Tine。默认关闭。
@@ -741,3 +760,4 @@ settings-prose-launch-with-the-main-window-hidden-open-it-from-the = 启动时�
 
 settings-prose-last-rescan = 上次重新扫描完成于 { $time }。
 settings-prose-file-size = { $value } { $unit }
+diagnostics-refresh-everything = 每次保存时刷新所有内容（调试）

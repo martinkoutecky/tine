@@ -1,4 +1,5 @@
 // CONFLICT-INVALIDINPUT: use the routed page's real conflict review and save path.
+import "./lib/e2e-auto-account-home.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";

@@ -25,6 +25,7 @@ const GRAPH = `${TMP}/graph`;
 const PAGE = `${GRAPH}/pages/Paste.md`;
 const CUT_SOURCE = `${GRAPH}/pages/Cut Source.md`;
 const CUT_TARGET = `${GRAPH}/pages/Cut Target.md`;
+const FOLDED_SOURCE = `${GRAPH}/pages/Folded Source.md`;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
@@ -34,6 +35,8 @@ fs.writeFileSync(PAGE, "- paste here\n");
 const CUT_SOURCE_BYTES = "- keep me\n- cut parent\n  - cut child\n- copy me\n";
 fs.writeFileSync(CUT_SOURCE, CUT_SOURCE_BYTES);
 fs.writeFileSync(CUT_TARGET, "- target first\n");
+const FOLDED_SOURCE_BYTES = "- folded parent\n  collapsed:: true\n  - folded child\n- folded sibling\n";
+fs.writeFileSync(FOLDED_SOURCE, FOLDED_SOURCE_BYTES);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- open [[Paste]]\n");
@@ -150,6 +153,20 @@ try {
   if (read(CUT_SOURCE) !== CUT_SOURCE_BYTES) throw new Error(`Copy changed its source:\n${read(CUT_SOURCE)}`);
   await browser.keys(["Escape"]);
 
+  // GH #943: Copy of a selected COLLAPSED block carries the children it hides in the
+  // public text, under the default "Copy a parent block's sub-blocks" off.
+  await openPageByName(browser, "Folded Source");
+  await nativeClipboard("write_text", "structured-paste sentinel");
+  await selectBlock("folded parent");
+  await browser.keys(["Control", "c"]);
+  await browser.keys(["Control"]);
+  const foldedText = await waitClipboard((text) => typeof text === "string" && /folded parent/.test(text),
+    "keyboard Copy of a collapsed block did not reach the native clipboard");
+  if (!/folded parent[\s\S]*folded child/.test(foldedText)) throw new Error(`collapsed Copy lost its hidden child: ${JSON.stringify(foldedText)}`);
+  if (read(FOLDED_SOURCE) !== FOLDED_SOURCE_BYTES) throw new Error(`Copy changed its source:\n${read(FOLDED_SOURCE)}`);
+  await browser.keys(["Escape"]);
+  await openPageByName(browser, "Cut Source");
+
   // Cut: the clipboard receives the parent AND its child, then (only then) the
   // subtree leaves the source while its siblings stay byte-identical.
   await selectBlock("cut parent");
@@ -183,7 +200,7 @@ try {
     timeout: 10_000, timeoutMsg: `keyboard paste did not reproduce the cut outline; clipboard ${JSON.stringify(cutText)}, target ${JSON.stringify(read(CUT_TARGET))}`,
   });
   if (read(CUT_SOURCE) !== "- keep me\n- copy me\n") throw new Error(`paste disturbed the cut source:\n${read(CUT_SOURCE)}`);
-  console.log("PASS: keyboard Copy kept its source; keyboard Cut moved the nested subtree through the native clipboard");
+  console.log("PASS: keyboard Copy kept its source and carried a collapsed block's hidden child; keyboard Cut moved the nested subtree through the native clipboard");
 } catch (error) {
   for (const id of nativeDialogWindows()) {
     let name = "";
@@ -191,7 +208,7 @@ try {
     console.error(`native dialog open: ${id} ${JSON.stringify(name)}`);
   }
   try { await browser?.saveScreenshot(path.join(ARTIFACTS, "structured-paste-failure.png")); } catch {}
-  for (const file of [PAGE, CUT_SOURCE, CUT_TARGET]) {
+  for (const file of [PAGE, CUT_SOURCE, CUT_TARGET, FOLDED_SOURCE]) {
     try { console.error(`${path.basename(file)}:`, JSON.stringify(fs.readFileSync(file, "utf8"))); } catch {}
   }
   try { console.error("toasts:", JSON.stringify(await browser.execute(() => [...document.querySelectorAll(".toast")].map((node) => node.textContent)))); } catch {}

@@ -1,8 +1,8 @@
 //! Census writers with a page host (STEP3 §7, R6). With no unsaved input, a
-//! writer under the host's reservations leaves the graph byte-for-byte as
-//! the plain write does and returns the same result; a rename, which always
-//! has a host, writes the renamed graph; and a page another reservation
-//! holds blocks the writer until it is released.
+//! writer under the host's reservations writes exactly its changes (pinned
+//! to what the deleted no-host write wrote, host-only-writer S1); a rename
+//! writes the renamed graph; and a page another reservation holds blocks
+//! the writer until it is released.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -13,9 +13,35 @@ use std::time::Duration;
 
 use tine_core::pdf::{self, Highlight};
 use tine_graph_features::{conflicts, guide, journals, pages, pdf as features_pdf};
-use tine_store::{Input, PageHost, PageId, Store};
+use tine_store::{PageHost, PageId, Store};
 
 const CONFIG: &str = "{:file/name-format :triple-lowbar\n :default-home {:page \"Start\"}}\n";
+
+#[test]
+fn an_unusable_journal_trash_names_the_recovery_location() {
+    let _guard = crate::integration_lock();
+    let root = graph(
+        "journal-trash-location",
+        &[("journals/2026_06_20.md", "- keep\n")],
+    );
+    fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    let error = journals::trash_journal_file(&store, &host, "2026_06_20.md").unwrap_err();
+    assert!(
+        error.to_string().contains("logseq/.tine-trash/pages"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(root.join("journals/2026_06_20.md")).unwrap(),
+        b"- keep\n"
+    );
+    drop(host);
+    store.close();
+    fs::remove_dir_all(root).unwrap();
+}
 
 fn scratch(label: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -59,40 +85,43 @@ fn tree(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     out
 }
 
-/// Run `op` on two copies of one graph, without and with a running host,
-/// and require the same result and the same bytes on disk.
-fn same_with_a_host(
+/// Run `op` through a running host on a fresh copy of `files`; its result
+/// and the graph's changes: each path whose bytes it changed, with the new
+/// text (`None`: removed).
+fn changes_with_a_host(
     label: &str,
     files: &[(&str, &str)],
-    op: impl Fn(&Store, Option<&PageHost>) -> String,
-) -> String {
-    let plain = graph(&format!("{label}-plain"), files);
-    let hosted = graph(&format!("{label}-hosted"), files);
-    let app_data = scratch(&format!("{label}-app"));
-    fs::create_dir_all(&app_data).unwrap();
-    let store = Store::open(&plain, Default::default()).unwrap().0;
-    store.whole_graph().unwrap();
-    let expected = op(&store, None);
-    store.close();
-    let store = Arc::new(Store::open(&hosted, Default::default()).unwrap().0);
-    store.whole_graph().unwrap();
-    let host = PageHost::start_for_tests(&store, &app_data).unwrap();
-    let got = op(&store, Some(&host));
-    drop(host);
-    store.close();
-    assert_eq!(
-        got, expected,
-        "{label}: a writer's result changed under a host"
-    );
-    assert_eq!(
-        tree(&hosted),
-        tree(&plain),
-        "{label}: a writer's bytes changed under a host"
-    );
-    for dir in [plain, hosted, app_data] {
-        let _ = fs::remove_dir_all(dir);
+    op: impl Fn(&Store, &PageHost) -> String,
+) -> (String, BTreeMap<String, Option<String>>) {
+    let original = with_a_host(&format!("{label}-unchanged"), files, |_, _| String::new()).1;
+    let (result, after) = with_a_host(label, files, op);
+    let mut changes = BTreeMap::new();
+    for (rel, bytes) in &after {
+        if original.get(rel) != Some(bytes) {
+            changes.insert(
+                rel.clone(),
+                Some(String::from_utf8_lossy(bytes).into_owned()),
+            );
+        }
     }
-    expected
+    for rel in original.keys().filter(|rel| !after.contains_key(*rel)) {
+        changes.insert(rel.clone(), None);
+    }
+    (result, changes)
+}
+
+/// `got` is `result` with exactly `changes` (`None`: removed).
+fn assert_changes(
+    label: &str,
+    got: (String, BTreeMap<String, Option<String>>),
+    result: &str,
+    changes: &[(&str, Option<&str>)],
+) {
+    let expected: BTreeMap<String, Option<String>> = changes
+        .iter()
+        .map(|(rel, text)| ((*rel).to_owned(), text.map(str::to_owned)))
+        .collect();
+    assert_eq!(got, (result.to_owned(), expected), "{label}");
 }
 
 fn ok(result: String) {
@@ -252,7 +281,7 @@ fn page_renames_with_a_host_write_the_renamed_graph() {
 }
 
 #[test]
-fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
+fn other_census_writers_with_a_host_write_their_changes() {
     let _integration_guard = crate::integration_lock();
     let files = [
         ("pages/A.md", "- a body\n"),
@@ -270,29 +299,50 @@ fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
         ("journals/Jun 19th, 2026.md", "- day\n"),
         ("journals/Jun 20th, 2026.md", "- other day\n"),
     ];
-    ok(same_with_a_host("merge-pages", &files, |store, host| {
-        format!(
-            "{:?}",
-            pages::merge_pages(store, host, "pages/A.md", "pages/B.md")
-        )
-    }));
-    ok(same_with_a_host("rescue", &files, |store, host| {
-        format!(
-            "{:?}",
-            pages::rename_file_to_page(store, host, "pages/stray name.md", "Rescued")
-        )
-    }));
-    ok(same_with_a_host("trash-copy", &files, |store, host| {
-        format!(
-            "{:?}",
-            conflicts::trash_sync_conflict(
-                store,
-                host,
-                "pages/A.sync-conflict-20240101-000000-ABCDEFG.md"
+    assert_changes(
+        "merge",
+        changes_with_a_host("merge-pages", &files, |store, host| {
+            format!(
+                "{:?}",
+                pages::merge_pages(store, host, "pages/A.md", "pages/B.md")
             )
-        )
-    }));
-    ok(same_with_a_host("markers", &files, |store, host| {
+        }),
+        "Ok(())",
+        &[
+            ("pages/A.md", None),
+            ("pages/B.md", Some("- b body\n- a body\n")),
+        ],
+    );
+    assert_changes(
+        "rescue",
+        changes_with_a_host("rescue", &files, |store, host| {
+            format!(
+                "{:?}",
+                pages::rename_file_to_page(store, host, "pages/stray name.md", "Rescued")
+            )
+        }),
+        "Ok(())",
+        &[
+            ("pages/Rescued.md", Some("- stray\n")),
+            ("pages/stray name.md", None),
+        ],
+    );
+    assert_changes(
+        "trash-copy",
+        changes_with_a_host("trash-copy", &files, |store, host| {
+            format!(
+                "{:?}",
+                conflicts::trash_sync_conflict(
+                    store,
+                    Some(host),
+                    "pages/A.sync-conflict-20240101-000000-ABCDEFG.md"
+                )
+            )
+        }),
+        "Ok(())",
+        &[("pages/A.sync-conflict-20240101-000000-ABCDEFG.md", None)],
+    );
+    let markers = changes_with_a_host("markers", &files, |store, host| {
         let diff = conflicts::vcs_marker_conflict_diff(store, "pages/Marked.md")
             .unwrap()
             .expect("markers");
@@ -312,23 +362,43 @@ fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
             &diff.diff.base_rev,
             "union",
         );
-        assert!(resolved.is_ok(), "{resolved:?}");
         format!("{resolved:?}")
-    }));
-    ok(same_with_a_host("trash-journal", &files, |store, host| {
-        format!(
-            "{:?}",
-            journals::trash_journal_file(store, host, "Jun 20th, 2026.md")
-        )
-    }));
-    ok(same_with_a_host("migrate", &files, |store, host| {
-        let listed = journals::journal_filename_migrations(store).unwrap();
-        format!(
-            "{:?}",
-            journals::migrate_journal_filenames(store, host, &listed)
-        )
-    }));
-    ok(same_with_a_host("highlights", &files, |store, host| {
+    });
+    assert_changes(
+        "markers",
+        markers,
+        "Ok(())",
+        &[("pages/Marked.md", Some("- before\n- mine\n"))],
+    );
+    assert_changes(
+        "trash-journal",
+        changes_with_a_host("trash-journal", &files, |store, host| {
+            format!(
+                "{:?}",
+                journals::trash_journal_file(store, host, "Jun 20th, 2026.md")
+            )
+        }),
+        "Ok(())",
+        &[("journals/Jun 20th, 2026.md", None)],
+    );
+    assert_changes(
+        "migrate",
+        changes_with_a_host("migrate", &files, |store, host| {
+            let listed = journals::journal_filename_migrations(store).unwrap();
+            format!(
+                "{:?}",
+                journals::migrate_journal_filenames(store, host, &listed)
+            )
+        }),
+        "Ok(MigrationResult { migrated: 2, skipped: [] })",
+        &[
+            ("journals/2026_06_19.md", Some("- day\n")),
+            ("journals/2026_06_20.md", Some("- other day\n")),
+            ("journals/Jun 19th, 2026.md", None),
+            ("journals/Jun 20th, 2026.md", None),
+        ],
+    );
+    let (result, changes) = changes_with_a_host("highlights", &files, |store, host| {
         format!(
             "{:?}",
             features_pdf::write_highlights(
@@ -339,14 +409,50 @@ fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
                 &[highlight("h1")],
                 &[]
             )
+            .map(|saved| saved.len())
         )
-    }));
-    ok(same_with_a_host("guide", &files, |store, host| {
-        format!(
-            "{:?}",
-            guide::copy_guide_into_graph(store, host, "Tine Guide")
-        )
-    }));
+    });
+    assert_changes(
+        "highlights",
+        (result, changes),
+        "Ok(1)",
+        &[
+            (
+                "assets/paper.edn",
+                Some(
+                    "{:highlights [{:id \"h1\" :page 1 :position {:page 1 :bounding {:top 1 :left 1 :width 2 :height 2} :rects ({:top 1 :left 1 :width 2 :height 2})} :content {:text \"quoted\"} :properties {:color \"yellow\"}}] :extra {}}\n",
+                ),
+            ),
+            (
+                "pages/hls__paper.md",
+                Some(
+                    "file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n- quoted\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: h1\n",
+                ),
+            ),
+        ],
+    );
+    // The Guide copy creates its namespace pages and the one asset they
+    // embed, and changes nothing else.
+    let (result, changes) = changes_with_a_host("guide", &files, |store, host| {
+        let copied = guide::copy_guide_into_graph(store, host, "Tine Guide").unwrap();
+        assert!(
+            copied.created && copied.skipped_pages.is_empty(),
+            "{copied:?}"
+        );
+        format!("{}", copied.created_pages.len())
+    });
+    assert_eq!(
+        changes.len(),
+        result.parse::<usize>().unwrap() + 1,
+        "{changes:#?}"
+    );
+    for (rel, text) in &changes {
+        assert!(
+            text.is_some()
+                && (rel.starts_with("pages/tine-guide___") || rel == "assets/quick-capture.png"),
+            "the Guide copy changed {rel}"
+        );
+    }
 }
 
 /// A writer reserves the pages it touches: while another reservation holds
@@ -365,19 +471,21 @@ fn waits_for_a_reservation(
     let store = Arc::new(Store::open(&dir, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let host = PageHost::start_for_tests(&store, &app_data).unwrap();
-    let held = host
-        .reserve(|| vec![PageId::from(page)], Input::Refuse)
-        .expect("nothing unsaved");
+    let held = host.pause_for_tests(&[PageId::from(page)]);
     let before = tree(&dir);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         let (store, host, write) = (&store, &host, &write);
-        scope.spawn(move || {
-            done.send(write(store, host).map_err(|error| error.to_string()))
-                .unwrap();
+        let writer = scope.spawn(move || {
+            let result = write(store, host);
+            let _ = done.send(());
+            result
         });
         assert!(
-            finished.recv_timeout(Duration::from_millis(500)).is_err(),
+            matches!(
+                finished.recv_timeout(Duration::from_millis(500)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
             "R6: {label} wrote while another reservation holds {page}"
         );
         assert_eq!(
@@ -386,10 +494,11 @@ fn waits_for_a_reservation(
             "{label}: wrote under a held reservation"
         );
         drop(held);
-        finished
-            .recv_timeout(Duration::from_secs(20))
-            .expect("the writer runs once the page is released")
-            .unwrap();
+        // Join the actual completion event. Copying the Guide runs a host
+        // operation for every page plus an asset transaction; its total I/O
+        // time is not the reservation contract. Each host operation retains
+        // its own bounded admission/publication wait and returns any failure.
+        writer.join().expect("the writer panicked").unwrap();
     });
     assert!(written(&dir), "{label}: the writer's write is missing");
     drop(host);
@@ -405,7 +514,7 @@ fn a_census_writer_waits_for_a_reservation_of_its_page() {
         "fence",
         &[("pages/A.md", "- a\n"), ("pages/B.md", "- b\n")],
         "pages/B.md",
-        |store, host| pages::merge_pages(store, Some(host), "pages/A.md", "pages/B.md").map(drop),
+        |store, host| pages::merge_pages(store, host, "pages/A.md", "pages/B.md").map(drop),
         |dir| {
             fs::read_to_string(dir.join("pages/B.md"))
                 .unwrap()
@@ -430,7 +539,7 @@ fn the_guide_copy_waits_for_a_reservation_of_its_page() {
         "guide-fence",
         &[],
         &page,
-        |store, host| guide::copy_guide_into_graph(store, Some(host), "Tine Guide").map(drop),
+        |store, host| guide::copy_guide_into_graph(store, host, "Tine Guide").map(drop),
         |dir| dir.join(&page).is_file(),
     );
 }
@@ -443,9 +552,7 @@ fn finishes_while_held<T: Send>(
     held: &str,
     write: impl FnOnce() -> T + Send,
 ) -> T {
-    let reservation = host
-        .reserve(|| vec![PageId::from(held)], Input::Refuse)
-        .expect("nothing unsaved");
+    let reservation = host.pause_for_tests(&[PageId::from(held)]);
     std::thread::scope(|scope| {
         let (done, finished) = mpsc::channel();
         scope.spawn(move || {
@@ -488,7 +595,7 @@ fn a_stale_journal_proposal_never_blocks_another() {
     fs::write(dir.join("journals/2026_06_21.md"), "- taken\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let result = finishes_while_held(&host, "journals/Jun 21st, 2026.md", || {
-        journals::migrate_journal_filenames(&store, Some(&host), &listed).unwrap()
+        journals::migrate_journal_filenames(&store, &host, &listed).unwrap()
     });
     assert_eq!(result.migrated, 1);
     let skipped: Vec<&str> = result.skipped.iter().map(|s| s.file.as_str()).collect();
@@ -514,7 +621,7 @@ fn a_journal_migration_waits_for_a_reservation_of_its_page() {
         "journals/Jun 19th, 2026.md",
         |store, host| {
             let listed = journals::journal_filename_migrations(store)?;
-            let result = journals::migrate_journal_filenames(store, Some(host), &listed)?;
+            let result = journals::migrate_journal_filenames(store, host, &listed)?;
             assert_eq!(result.migrated, 1, "{:?}", result.skipped);
             Ok(())
         },

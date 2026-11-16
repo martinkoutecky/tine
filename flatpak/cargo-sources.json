@@ -2,8 +2,8 @@
     {
         "type": "git",
         "url": "https://github.com/martinkoutecky/lsdoc",
-        "commit": "a973fef9cd56e75f1a8ba1873c04f36157d75e08",
-        "dest": "flatpak-cargo/git/lsdoc-a973fef"
+        "commit": "3a19b85ae6c088729124ac6245bc67ff6e6fad0a",
+        "dest": "flatpak-cargo/git/lsdoc-3a19b85"
     },
     {
         "type": "archive",
@@ -2270,6 +2270,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/git2/git2-0.21.0.crate",
+        "sha256": "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e",
+        "dest": "cargo/vendor/git2-0.21.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e\", \"files\": {}}",
+        "dest": "cargo/vendor/git2-0.21.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/glib/glib-0.18.5.crate",
         "sha256": "233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5",
         "dest": "cargo/vendor/glib-0.18.5"
@@ -3219,6 +3232,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/libgit2-sys/libgit2-sys-0.18.8+1.9.7.crate",
+        "sha256": "7f7c568b25d7489bc3fb2988ed69ab111d2944d2f5fec3d5c987fe545ea97b50",
+        "dest": "cargo/vendor/libgit2-sys-0.18.8+1.9.7"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"7f7c568b25d7489bc3fb2988ed69ab111d2944d2f5fec3d5c987fe545ea97b50\", \"files\": {}}",
+        "dest": "cargo/vendor/libgit2-sys-0.18.8+1.9.7",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/libloading/libloading-0.7.4.crate",
         "sha256": "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f",
         "dest": "cargo/vendor/libloading-0.7.4"
@@ -3240,6 +3266,19 @@
         "type": "inline",
         "contents": "{\"package\": \"f02ab6bace2054fb888a3c16f990117b579d14a3088e472d63c6011fa185c9d3\", \"files\": {}}",
         "dest": "cargo/vendor/libredox-0.1.17",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/libz-sys/libz-sys-1.1.30.crate",
+        "sha256": "f710a23e6dbf193214fd46ca56a9d6864e550abe86202184532ae7275e46de19",
+        "dest": "cargo/vendor/libz-sys-1.1.30"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"f710a23e6dbf193214fd46ca56a9d6864e550abe86202184532ae7275e46de19\", \"files\": {}}",
+        "dest": "cargo/vendor/libz-sys-1.1.30",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -3297,12 +3336,12 @@
     {
         "type": "shell",
         "commands": [
-            "mkdir -p \"cargo/git-vendor\" && cp -r --reflink=auto \"flatpak-cargo/git/lsdoc-a973fef/.\" \"cargo/git-vendor/lsdoc\""
+            "mkdir -p \"cargo/git-vendor\" && cp -r --reflink=auto \"flatpak-cargo/git/lsdoc-3a19b85/.\" \"cargo/git-vendor/lsdoc\""
         ]
     },
     {
         "type": "inline",
-        "contents": "[package]\nname = \"lsdoc\"\nversion = \"0.5.10\"\nedition = \"2021\"\nlicense = \"AGPL-3.0-only\"\ndescription = \"A from-scratch native-Rust parser for Logseq-flavored Markdown and Org, behavior-equivalent to Logseq's mldoc.\"\nrepository = \"https://github.com/martinkoutecky/lsdoc\"\n\n[dependencies]\nmemchr = \"2\"\nserde_json = \"1\"\n\n[dependencies.phf]\nversion = \"0.11\"\nfeatures = [\"macros\"]\n\n[dependencies.serde]\nversion = \"1\"\nfeatures = [\"derive\"]\n",
+        "contents": "[package]\nname = \"lsdoc\"\nversion = \"0.5.11\"\nedition = \"2021\"\nlicense = \"AGPL-3.0-only\"\ndescription = \"A native-Rust parser for Logseq-flavored Markdown and Org: a transcription of Logseq's mldoc (AGPL-3.0), behavior-equivalent to it.\"\nrepository = \"https://github.com/martinkoutecky/lsdoc\"\n\n[dependencies]\nmemchr = \"2\"\nserde_json = \"1\"\n\n[dependencies.phf]\nversion = \"0.11\"\nfeatures = [\"macros\"]\n\n[dependencies.serde]\nversion = \"1\"\nfeatures = [\"derive\"]\n",
         "dest": "cargo/git-vendor/lsdoc",
         "dest-filename": "Cargo.toml"
     },
@@ -4914,14 +4953,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/rustls-webpki/rustls-webpki-0.103.15.crate",
-        "sha256": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
-        "dest": "cargo/vendor/rustls-webpki-0.103.15"
+        "url": "https://static.crates.io/crates/rustls-webpki/rustls-webpki-0.103.16.crate",
+        "sha256": "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281",
+        "dest": "cargo/vendor/rustls-webpki-0.103.16"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2\", \"files\": {}}",
-        "dest": "cargo/vendor/rustls-webpki-0.103.15",
+        "contents": "{\"package\": \"4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281\", \"files\": {}}",
+        "dest": "cargo/vendor/rustls-webpki-0.103.16",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -6461,6 +6500,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/unicode-casefold/unicode-casefold-0.2.0.crate",
+        "sha256": "b7f66b1c8f8caa2ab31dc6d3f35386f16efdab89668f93411e565ac368908e8f",
+        "dest": "cargo/vendor/unicode-casefold-0.2.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"b7f66b1c8f8caa2ab31dc6d3f35386f16efdab89668f93411e565ac368908e8f\", \"files\": {}}",
+        "dest": "cargo/vendor/unicode-casefold-0.2.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/unicode-ident/unicode-ident-1.0.24.crate",
         "sha256": "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75",
         "dest": "cargo/vendor/unicode-ident-1.0.24"
@@ -6994,14 +7046,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/webpki-root-certs/webpki-root-certs-1.0.8.crate",
-        "sha256": "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267",
-        "dest": "cargo/vendor/webpki-root-certs-1.0.8"
+        "url": "https://static.crates.io/crates/webpki-root-certs/webpki-root-certs-1.0.11.crate",
+        "sha256": "e49d0e65abc00c142e8f9428da991da9f1a250c39be97459901eb12b9b49f62a",
+        "dest": "cargo/vendor/webpki-root-certs-1.0.11"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267\", \"files\": {}}",
-        "dest": "cargo/vendor/webpki-root-certs-1.0.8",
+        "contents": "{\"package\": \"e49d0e65abc00c142e8f9428da991da9f1a250c39be97459901eb12b9b49f62a\", \"files\": {}}",
+        "dest": "cargo/vendor/webpki-root-certs-1.0.11",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -8553,7 +8605,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-registry]\ndirectory = \"cargo/vendor\"\n\n[source.vendored-git]\ndirectory = \"cargo/git-vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-registry\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-git\"\ntag = \"v0.5.10\"\n",
+        "contents": "[source.vendored-registry]\ndirectory = \"cargo/vendor\"\n\n[source.vendored-git]\ndirectory = \"cargo/git-vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-registry\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-git\"\ntag = \"v0.5.11\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }

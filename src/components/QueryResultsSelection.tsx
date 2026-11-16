@@ -1,4 +1,6 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { unwrap } from "solid-js/store";
+import { adoptResults, resultTicket } from "../queryResultsEpoch";
 import { t } from "../i18n";
 import type { QueryHit, RefGroup } from "../types";
 import { openQueryResultsCopy } from "./queryResultsCopy";
@@ -27,7 +29,15 @@ export function QueryResultsSelection(props: { hits: QueryHit[] }): JSX.Element 
   return <div class="query-results-selection">
     <button type="button" aria-pressed={snapshot() !== null} disabled={!snapshot() && !props.hits.length} onClick={() => {
       if (snapshot()) { setSnapshot(null); return; }
-      const hits = [...props.hits]; setSnapshot(hits); setSelected(new Set(hits));
+      const hits = props.hits.map(hit => {
+        // Display rows reconcile in place. Keep the selected source and its
+        // provenance independent of later position/content updates (GH #907).
+        const frozen = structuredClone(unwrap(hit));
+        const ticket = resultTicket(hit);
+        if (ticket) adoptResults(frozen, ticket);
+        return frozen;
+      });
+      setSnapshot(hits); setSelected(new Set(hits));
     }}>{t("query-calm-select")}</button>
     <Show when={snapshot()}>{(hits) => <div role="group" aria-label={t("query-calm-select")}>
       <div class="query-selection-actions">

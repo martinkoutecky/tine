@@ -24,7 +24,7 @@ fs.writeFileSync(path.join(graph, "logseq/config.edn"), `{:journal/page-title-fo
 fs.writeFileSync(path.join(graph, "journals", `${iso(day(0)).replaceAll("-", "_")}.md`), "- journal-entry\n");
 fs.writeFileSync(path.join(graph, "pages/Tasks.md"),
   `- TODO agenda-task\n  SCHEDULED: <${iso(soon)} ${weekday}>\n\t- live-child-marker\n`);
-const base = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const env = { ...process.env, TINE_GRAPH: graph,
   XDG_DATA_HOME: path.join(run, "data"), XDG_CONFIG_HOME: path.join(run, "config"), XDG_CACHE_HOME: path.join(run, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };

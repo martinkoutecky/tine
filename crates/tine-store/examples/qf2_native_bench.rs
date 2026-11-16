@@ -84,11 +84,15 @@ fn query(store: &Store, tql: bool) -> Value {
         match store
             .whole_graph()
             .unwrap()
-            .query_ir(IrRequest::Run {
-                query: &query,
-                view: &view,
-                context: &context,
-            })
+            .query_ir(
+                IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &context,
+                },
+                &tine_store::Cancel::default(),
+            )
+            .map(|answer| answer.expect("never cancelled"))
             .unwrap()
         {
             IrAnswer::Result(answer) => answer,

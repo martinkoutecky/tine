@@ -69,7 +69,7 @@ describe("formula eval context", () => {
       const results = createFormulaResultsMemo({
         rows: () => [{ id: "r1", page: "Sheet" }],
         formulas: () => new Map([["total", "1 + 1"]]),
-        now: () => new Date(Date.UTC(2026, 0, 1)),
+        now: () => new Date(2026, 0, 1),
         onEvaluate: () => {
           evaluations += 1;
         },

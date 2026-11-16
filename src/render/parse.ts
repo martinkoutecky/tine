@@ -14,9 +14,10 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, block_may_have_logbook, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
+import { ParseRetention } from "./parseRetention";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -73,12 +74,10 @@ export function parserFailed(): boolean {
   return failed();
 }
 
-// Pure parse cache: text+format fully determine the AST (independent of graph
-// state), so a plain bounded LRU suffices — no epoch invalidation needed. Bounded
-// by insertion-order eviction (NOT a wholesale clear), so a working set larger
-// than the cap degrades to partial hits instead of dropping to a 0% hit rate.
-const cache = new Map<string, Block[]>();
-const CACHE_MAX = 8000;
+// Byte-bounded history; weak reuse keeps current ASTs warm without owning text.
+const cache = new ParseRetention();
+export const parseCacheStats = () => cache.stats();
+export const clearParseCache = () => cache.clear();
 const quarantined = new WeakSet<Block[]>();
 export type ByteRange = [number, number];
 export interface RegionProperty {
@@ -105,6 +104,8 @@ export interface BlockRegions {
   quarantined: boolean;
   literal_blocks: RegionLiteralBlock[];
   open_fence: RegionOpenFence | null;
+  /** lsdoc's headline end when it is not the first line's end (Rust `BlockRegions::headline_end`). */
+  headline_end: number | null;
 }
 /** An accepted identity value carried with the exact editor buffer that owns
  * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
@@ -113,19 +114,14 @@ const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
 const regionCache = new WeakMap<Block[], BlockRegions>();
 
 
-function remember(key: string, blocks: Block[]): Block[] {
-  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-  cache.set(key, blocks);
-  return blocks;
-}
-
 function quarantine(key: string, text: string): Block[] {
   const blocks: Block[] = [{ kind: "paragraph", inline: [{ k: "plain", text }] }];
   quarantined.add(blocks);
   regionCache.set(blocks, { header: { marker: null, priority: null, heading: null, marker_range: null, priority_range: null },
     literals: [[0, new TextEncoder().encode(text).length]], property_regions: [], properties: [],
-    planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null });
-  return remember(key, blocks);
+    planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null,
+    headline_end: null });
+  return cache.remember(key, blocks, text.length * 2 + 512);
 }
 
 export function isQuarantined(blocks: Block[]): boolean {
@@ -163,9 +159,6 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   const hit = cache.get(key);
   if (hit !== undefined) {
     if (statsEnabled()) bumpParseStats(true);
-    // Refresh recency: re-insert so hot entries survive eviction.
-    cache.delete(key);
-    cache.set(key, hit);
     return hit;
   }
   if (statsEnabled()) bumpParseStats(false);
@@ -184,7 +177,7 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
   soleMacroCache.set(bundle.blocks, bundle.sole_macro);
   regionCache.set(bundle.blocks, bundle.regions);
-  return remember(key, bundle.blocks);
+  return cache.remember(key, bundle.blocks, json.length);
 }
 
 /** Raw UTF-8 regions from the render cache: O(block bytes) on a cold miss,
@@ -192,6 +185,13 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
 export function blockRegions(raw: string, format: "md" | "org" = "md"): BlockRegions {
   if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
   return regionCache.get(parseBlock(raw, format === "org"))!;
+}
+/** What removing these blocks does to block references (`tine_outline::removal_refs`,
+ * shared with `tine delete`): the persisted `id::`s removed, and how many of their
+ * referrers go with them (once per target). `withContent` false: the text survives
+ * (a merge), so none does. O(removed bytes). */
+export function removalRefs(blocks: readonly (readonly [raw: string, format: "md" | "org"])[], withContent: boolean): { targets: string[]; removed_with: number } {
+  return JSON.parse(removal_refs_json(JSON.stringify(blocks.map(([raw, format]) => [raw, format === "org"])), withContent));
 }
 /** Parser-owned splice for one block. Warm regions avoid parsing; parse traps
  * refuse visibly by throwing. Callers must retain raw on refusal. */
@@ -222,18 +222,21 @@ export function rawByteOfEditor(raw: string, format: "md" | "org", policy: strin
   return raw_byte_of_editor(raw, format === "org", blockRegions(raw, format), policy, Math.max(0, editorUtf16));
 }
 /** Editor text plus its hidden lines back to raw (`editor_text::join_with`). */
-export function editorTextJoin(visible: string, hidden: string, format: "md" | "org"): string {
+export function mayHaveLogbook(raw: string): boolean {
+  return parserReady() && block_may_have_logbook(raw);
+}
+export function editorTextJoin(visible: string, hidden: string, format: "md" | "org", source?: string, policy?: string): string {
   // Nothing hidden is the only case before the parser is ready (splitProps
   // hides nothing then), and joining it is the identity.
   if (!hidden) return visible;
-  if (format !== "org") return editor_text_join(visible, hidden, false, null);
+  if (format !== "org" && !mayHaveLogbook(hidden)) return editor_text_join(visible, hidden, false, null, source, policy);
   const regions = blockRegions(visible, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
-  return editor_text_join(visible, hidden, true, regions);
+  return editor_text_join(visible, hidden, format === "org", regions, source, policy);
 }
 /** Whether kernel hide `policy` (JSON) hides property `key`. */
-export function hidePolicyHides(policy: string, key: string): boolean {
-  return hide_policy_hides(policy, key);
+export function hidePolicyHides(policy: string, key: string, properties: readonly (readonly [string, string])[]): boolean {
+  return hide_policy_hides(policy, key, JSON.stringify(properties));
 }
 /** One outline-kernel verb (`outline::apply`); see `document/kernel.ts`. */
 export function outlineApply(request: string): string {

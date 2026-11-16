@@ -2,3 +2,8 @@
 .tine-published .page-readonly-banner > code { display: none; }
 .tine-published .page-readonly-banner::before { content: "Published read-only page"; font-size: 13px; }
 .tine-published .new-page-btn { display: none; }
+/* The hosted reader keeps its origin/abuse label visible while navigating. */
+.quick-share-banner { position: fixed; bottom: 0; inset-inline: 0; z-index: 10000; padding: .5rem 1rem; background: var(--bg, #fff); color: var(--fg, #222); border-top: 1px solid currentColor; font-size: .8rem; text-align: center; }
+.quick-share-failure { max-width: 42rem; margin: 12vh auto; padding: 2rem; }
+.quick-share-media { display: inline-block; padding: .2em .5em; border: 1px solid currentColor; border-radius: .25em; font-size: .9em; }
+.tine-quick-share #root { padding-bottom: 3rem; }

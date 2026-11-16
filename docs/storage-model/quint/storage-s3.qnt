@@ -13,6 +13,10 @@
 // (the client saves first; until then the operation is refused); no intent record (every page the operation
 // changes is drafted, in one file, so launch completes an interrupted operation); delete moves the file to
 // the graph trash.
+// JJ6 / L9 F5: the production binding may durably copy a conflicted local draft
+// before supplying a clean disk-based delete plan. That recovery-copy custody
+// transition is outside this model; see SPEC-s3.md D4's implementation-obligation
+// note and binding_delete_tests.rs. No D4 tag or checked property is relaxed.
 //
 // --- s2 header follows.
 // og storage, simple model s2 (2026-10-07). Candidate to replace storage.qnt (round 2, storage-r2.qnt).

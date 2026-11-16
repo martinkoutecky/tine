@@ -1,5 +1,5 @@
 import { msg, renderEnglish, t } from "../i18n";
-import { ErrorBoundary, Show, createMemo, type JSX } from "solid-js";
+import { ErrorBoundary, Show, createEffect, createMemo, on, type JSX } from "solid-js";
 import { writeClipboardText } from "../clipboard";
 import { slowBackendState } from "../slowBackend";
 import { dbg, recordDiagnostic } from "../debug";
@@ -22,13 +22,18 @@ import { pushToastUnique } from "../toasts";
 export function FailureBoundary(props: {
   /** Stable, human-readable name of what failed. Shown and logged. */
   region: string;
+  /** Changing route identity releases a failed page without remounting healthy pages. */
+  resetKey?: unknown;
+  /** Created only on failure; e.g. the affected block's editable raw text. */
+  recovery?: () => JSX.Element;
   children: JSX.Element;
 }): JSX.Element {
   return (
     <ErrorBoundary
-      fallback={(error, reset) => (
-        <FailureRegion region={props.region} error={error} onRetry={reset} />
-      )}
+      fallback={(error, reset) => {
+        createEffect(on(() => props.resetKey, reset, { defer: true }));
+        return <><FailureRegion region={props.region} error={error} onRetry={reset} />{props.recovery?.()}</>;
+      }}
     >
       {props.children}
     </ErrorBoundary>
@@ -68,7 +73,9 @@ function FailureRegion(props: {
   });
 
   return (
-    <div class="region-failure" role="alert" data-failed-region={props.region}>
+    <div class="region-failure" role="alert" data-failed-region={props.region}
+      onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}
+      onClick={event => event.stopPropagation()}>
       <div class="region-failure-title">{t("failure-boundary-could-not-be-displayed", { region: props.region })}</div>
       <div class="region-failure-message">{message()}</div>
       <Show when={busy()}>

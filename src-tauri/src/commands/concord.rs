@@ -4,6 +4,7 @@
 //! transaction; nothing here touches a file.
 
 use crate::state::{slot_for_context, GraphContext, GraphSlot};
+use tauri::Manager;
 
 /// Concord refusals explain how to recover. Do not erase a property choice,
 /// malformed file, or partial-success explanation into `io:InvalidInput`.
@@ -60,15 +61,18 @@ pub(crate) async fn list_sync_conflicts(
 /// relative paths) — the data behind the two-column merge UI; 3-way with
 /// suggestions when the Concord base ledger holds an ancestor. Read-only.
 #[tauri::command]
-pub(crate) fn sync_conflict_diff(
+pub(crate) async fn sync_conflict_diff(
     winner: String,
     conflict: String,
     state: GraphContext<'_>,
 ) -> Result<Option<tine_core::sync_diff::SyncConflictDiff>, String> {
     let slot = slot_for_context(&state)?;
-    let bases = ledger_bases(&slot, &winner, &conflict);
-    tine_graph_features::conflicts::sync_conflict_diff(&slot.store, &winner, &conflict, &bases)
-        .map_err(|e| e.to_string())
+    crate::state::off_ui(move || {
+        let bases = ledger_bases(&slot, &winner, &conflict);
+        tine_graph_features::conflicts::sync_conflict_diff(&slot.store, &winner, &conflict, &bases)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Resolve a sync-conflict copy: merge it into its winner per the user's per-row
@@ -99,7 +103,7 @@ pub(crate) async fn resolve_sync_conflict(
         };
         let outcome = tine_graph_features::conflicts::resolve_sync_conflict(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &winner,
             &conflict,
             &decisions,
@@ -127,7 +131,7 @@ pub(crate) async fn trash_sync_conflict(
     crate::state::off_ui(move || {
         let outcome = tine_graph_features::conflicts::trash_sync_conflict(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running().ok(),
             &conflict,
         )
         .map_err(sync_conflict_error);
@@ -173,7 +177,7 @@ pub(crate) async fn resolve_duplicate_journal_day(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_duplicate_journal_day(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &canonical,
             &stray,
             &decisions,
@@ -198,13 +202,47 @@ pub(crate) async fn conflict_inventory(
     state: GraphContext<'_>,
 ) -> Result<tine_core::concord_queue::ConflictInventory, String> {
     let slot = slot_for_context(&state)?;
+    let (app, label) = (
+        state.window.app_handle().clone(),
+        state.window.label().to_owned(),
+    );
     tauri::async_runtime::spawn_blocking(move || {
+        // Copies that were already identical when the graph opened, first,
+        // so the inventory below no longer lists them.
+        trash_identical_copies(&app, &label, &slot);
         slot.conflict_queue
             .inventory(&slot.store)
             .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// GH #875: a sync copy whose bytes equal its page's (delivered that way, or
+/// made so by a save or a resolve) holds nothing to decide, so it is trashed
+/// recoverably and the window re-reads the queue on `conflicts-changed`.
+/// Synchronous, on a thread that already owns blocking work (I-21: no new
+/// worker): the inventory command's awaited blocking task, or the watcher's
+/// subscription bridge. Nothing to do costs one in-memory queue scan.
+pub(crate) fn trash_identical_copies(
+    app: &tauri::AppHandle,
+    label: &str,
+    slot: &std::sync::Arc<GraphSlot>,
+) {
+    use tauri::Emitter;
+    if slot.conflict_queue.undecided_copies().is_empty() {
+        return;
+    }
+    match tine_graph_features::conflicts::trash_identical_sync_copies(
+        &slot.store,
+        &slot.conflict_queue,
+    ) {
+        Ok(trashed) if !trashed.is_empty() => {
+            let _ = app.emit_to(label, "conflicts-changed", ());
+        }
+        Ok(_) => {}
+        Err(error) => crate::debug::diag_private("conflict-refresh-failed", error.to_string()),
+    }
 }
 
 /// Block diff of a marker-bearing page's own sides (3-way when the markers
@@ -238,7 +276,7 @@ pub(crate) async fn resolve_vcs_marker_conflict(
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = tine_graph_features::conflicts::resolve_vcs_marker_conflict(
             &slot.store,
-            slot.host_slot()?.running(),
+            slot.host_slot()?.running()?,
             &path,
             &decisions,
             &base_rev,

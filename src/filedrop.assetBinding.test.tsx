@@ -1,3 +1,4 @@
+import { maybeEditorIn } from "./tests/editorDriver";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block, SurfaceContext } from "./components/Block";
@@ -62,12 +63,12 @@ it.each(["main", "pane:split", "sidebar:item"])("%s drops land beside the target
   const uninstall = await installFileDrop();
   try {
     const dropped = drag.listener!({ payload: { type: "drop", paths: ["/tmp/photo.jpg"], position: { x: 1, y: 1 } } });
-    const ta = root.querySelector("textarea")!; ta.value = "host edited";
-    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    const ta = maybeEditorIn(root)!; ta.replaceText("host edited");
+    ta.reportInput({ bubbles: true }, "plain");
     expect(pageByName("Drop")!.roots).toHaveLength(1); // data precedes reference
     finish("saved.jpg"); await dropped;
     expect(doc.byId["drop-host"].raw).toBe("host edited");
     expect(pageByName("Drop")!.roots.map(id => doc.byId[id].raw)).toEqual(["host edited", "![](../assets/saved.jpg)"]);
-    expect(ta.value).toBe("host edited");
+    expect(ta.value()).toBe("host edited");
   } finally { uninstall(); dispose(); }
 });

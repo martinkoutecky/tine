@@ -67,16 +67,13 @@ pdf-open-highlights-notes-page = 打开高亮与笔记页面
 pdf-notes = 笔记
 
 pdf-outline = 大纲
+pdf-open-another-view = 打开另一个视图
 
 pdf-more-settings = 更多设置
 
 pdf-close-pdf = 关闭 PDF
 
 pdf-highlight-conflict-resolve-it-before-editing-more-highlights = 高亮冲突。请先解决，再编辑更多高亮。
-
-pdf-keep-mine = 保留我的版本
-
-pdf-use-disk-version = 使用磁盘版本
 
 pdf-discard-my-changes = 丢弃我的更改
 

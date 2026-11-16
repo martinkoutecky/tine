@@ -22,7 +22,7 @@ fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
 fs.mkdirSync(ARTIFACTS, { recursive: true });
-fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{}\n");
+fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{:tine/guide-announced? true}\n");
 fs.writeFileSync(path.join(GRAPH, "pages", "Start.md"), "- Empty-workspace fixture result\n");
 
 const env = {

@@ -452,7 +452,6 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             .is_some_and(|s| !s.failed.contains(key))
             && !page.clean()
             && !page.conflict
-            && !self.host.retained.contains(key)
             // R3: a page a running rename gates is carried by its draft.
             && !self.host.order.gated(key)
     }
@@ -767,7 +766,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 .iter()
                 .find(|key| {
                     work(Work::Candidates, 1 + host.queue.len());
-                    host.draft_of(key).is_none() && !host.busy(key)
+                    host.draft_of(key).is_none() && !host.busy(key) && !host.release_blocked(key)
                 && !host.subscriptions.contains(*key)
                 && !requests().any(|r| r.page == **key
                     || matches!(&r.kind, RequestKind::Move { receiver, .. } if receiver == *key))

@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 
 use super::WatchHandle;
 use crate::launch_diag::DiffTrigger;
-use crate::store::{LoadError, LoadStatus};
+use crate::store::{LoadError, LoadStatus, Origin};
 
 /// Optimistic rebuild attempts that build beside concurrent saves before the
 /// build runs under the writer lock; the total bounds a graph that never settles.
@@ -70,8 +70,21 @@ impl WatchHandle {
         self.core
             .graph
             .replace_unreadable_walk_errors(&HashMap::new(), &walk_errors);
-        self.core.changes.publish_rebuilt(Vec::new());
+        // Rebuilt indexes from the whole cache: contained as the first
+        // publication is (an index-stage panic fails the graph, never
+        // poisons the writer).
+        let published =
+            crate::store::contain_index_publication(&self.core.graph, &self.core.load, || {
+                self.core
+                    .changes
+                    .publish_rebuilt(Origin::External, Vec::new(), false);
+            });
         drop(writer);
+        if !published {
+            return Err(LoadError::Failed {
+                reason: "graph publication stopped: an index build panicked".into(),
+            });
+        }
         self.core.observe_assets(&HashSet::new(), true);
         let _ = self.wake.send(());
         Ok(())
@@ -290,14 +303,14 @@ mod tests {
 
         let mut doc = open_editor.doc.clone();
         doc.blocks[0].raw = "editor text".into();
-        let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+        let mut tx = store.page_plan(Some(crate::EditKind::ReplacePage));
         tx.save_page(
             &[crate::EditKind::ReplacePage],
             &id,
             SaveBase::Existing(open_editor.rev),
             &doc,
         );
-        match tx.commit() {
+        match tx.commit_internal() {
             TxOutcome::NotCommitted {
                 why: Why::Conflict { .. },
                 ..

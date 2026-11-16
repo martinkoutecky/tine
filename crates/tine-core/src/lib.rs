@@ -12,6 +12,9 @@ pub mod date;
 pub mod diag_line;
 pub mod doc;
 pub mod edn;
+pub mod export_definition;
+pub use tine_outline::editor_text;
+pub use tine_outline::outline as outline_kernel;
 pub mod graph_paths;
 pub mod guide;
 pub mod html_sanitize;
@@ -26,6 +29,7 @@ pub mod pdf;
 pub mod projection;
 pub use tine_outline::property_line;
 pub use tine_outline::property_refs;
+pub use tine_outline::tine_keys;
 pub mod query;
 pub mod query_edn;
 pub mod query_plan;
@@ -35,6 +39,7 @@ pub mod render;
 pub mod render_facets;
 pub mod search_query;
 pub mod sync_diff;
+pub mod template;
 pub mod text_merge;
 
 /// Re-export the lsdoc parser so the Tauri shell can name its AST types

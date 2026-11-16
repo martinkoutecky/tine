@@ -10,7 +10,7 @@ const phase = process.argv[2] ?? "after";
 const out = `artifacts/sw-r2-polish2/${phase}`;
 mkdirSync(out, { recursive: true });
 const port = 20000 + Math.floor(Math.random() * 20000);
-const server = spawn("rtk", ["proxy", "npx", "vite", "--port", String(port), "--strictPort"], { stdio: "ignore", detached: true });
+const server = spawn("npx", ["vite", "--port", String(port), "--strictPort"], { stdio: "ignore", detached: true });
 let browser;
 const observations = [];
 try {

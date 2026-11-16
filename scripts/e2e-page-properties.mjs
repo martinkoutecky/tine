@@ -53,6 +53,10 @@ const simple = "A:: XX\r\nB:: XX\r\nC:: XX\r\n";
 const deletion = "alias:: Delete Me\ncustom/key:: transient\n\n- Body survives\n";
 fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
+const filterPage = "filters:: {}\nowner:: Reader\n\n- Body\n";
+fs.writeFileSync(`${GRAPH}/pages/Property filters.md`, filterPage);
+// The graph uses the legacy file-name format ({} config), so the namespace comes from title::.
+fs.writeFileSync(`${GRAPH}/pages/Property filters child.md`, "title:: Property filters/Child\n\n- Child body\n");
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
 // GH #210: a table block whose view is set before its title is typed, first on a
 // page with no page properties.
@@ -61,9 +65,12 @@ fs.writeFileSync(`${GRAPH}/pages/Property table.md`, `- ${tableConfig}\n- Other 
 // GH #210 F1: Enter at the start of a page's properties.
 const headEnter = "tags:: reading\nicon:: 📚\n\n- Body block\n";
 fs.writeFileSync(`${GRAPH}/pages/Property head enter.md`, headEnter);
+// GH #210 F1 follow-up (D-20261019-H210F2): a keyboard move above the page properties.
+const moveAbove = "tags:: reading\nicon:: 📚\n\n- First block\n- Second block\n";
+fs.writeFileSync(`${GRAPH}/pages/Property move above.md`, moveAbove);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n- [[Property move above]]\n");
 
 const env = {
   ...process.env,
@@ -97,33 +104,6 @@ const driver = spawn(TD, driverArgs, {
 await sleep(2500);
 let browser;
 
-async function openPage(name) {
-  await browser.$(".nav-all-pages-open").click();
-  await browser.$(".all-pages-filter").waitForExist({ timeout: 10_000 });
-  await browser.$(".all-pages-filter").setValue(name);
-  await browser.waitUntil(async () => (await browser.$$(".all-pages-open")).length > 0, {
-    timeout: 5_000, timeoutMsg: "All pages did not reveal fixture pages",
-  });
-  const opened = await browser.execute((target) => {
-    const rows = [...document.querySelectorAll(".all-pages-open")];
-    const row = rows.find((element) => element.textContent?.trim() === target);
-    if (!row) return { ok: false, rows: rows.map((element) => element.textContent?.trim()) };
-    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-    return { ok: true, rows: [] };
-  }, name);
-  if (!opened.ok) {
-    const context = await browser.execute(() => ({
-      title: document.querySelector("h1.page-title")?.textContent?.trim(),
-      body: document.body.textContent?.trim().slice(0, 1_000),
-    }));
-    throw new Error(`missing ALL PAGES result ${name}: ${JSON.stringify({ rows: opened.rows, context })}`);
-  }
-  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
-    timeout: 10_000,
-    timeoutMsg: `could not open ${name}`,
-  });
-}
-
 async function openPageProperties() {
   await browser.$("[data-page-actions-trigger]").click();
   const item = await browser.$('[data-page-action-id="page-properties"]');
@@ -143,16 +123,6 @@ async function setPagePropertyField(label, value) {
   await input.setValue(value);
   await browser.keys("Enter");
   await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
-}
-
-async function waitForFile(file, predicate, label) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const text = fs.readFileSync(file, "utf8");
-    if (predicate(text)) return text;
-    await sleep(100);
-  }
-  throw new Error(`${label} was not persisted: ${fs.readFileSync(file, "utf8")}`);
 }
 
 async function nativeTab({ shift = false } = {}) {
@@ -357,10 +327,10 @@ async function exerciseNativeFormTabTraversal(aliasValue) {
   if (await activePagePropertyControl() !== "Tags") {
     throw new Error(`native Tab did not leave Aliases for Tags; active=${JSON.stringify(await activePagePropertyControl())}`);
   }
-  await waitForFile(
+  await waitForFileText(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes(`alias:: ${aliasValue}`),
-    "Aliases blur commit after native Tab",
+    { timeoutMs: 10_000 },
   );
 
   await nativeTab({ shift: true });
@@ -412,15 +382,30 @@ try {
   await ensureMainWindow(browser);
   // This fixture starts on today's journal so it has a durable navigation
   // source for the seeded pages. Journals render blocks (and a journal title),
-  // not a named-page `.page-title`; waiting for the latter prevented openPage()
+  // not a named-page `.page-title`; waiting for the latter prevented navigation
   // from ever exercising the routed page-properties journey on WebView2.
   await browser.$(".ls-block, .journal-title, .page-title").waitForExist({ timeout: 20_000 });
-  // The graph page index warms asynchronously after first paint. Wait for the
-  // complete list before using Ctrl+K, otherwise a cold run offers only the
-  // misleading "Create page" row for an already-existing file.
-  await sleep(3500);
-
-  await openPage("Property detailed");
+  // GH #730/#738: the page header hides filters, raw editing retains it,
+  // and the Hierarchy title supports native keyboard disclosure.
+  await openPageByName(browser, "Property filters", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  const filterKeys = await browser.$$(".page-properties .prop-key").map(async el => el.getText());
+  if (JSON.stringify(filterKeys) !== JSON.stringify(["owner"])) throw new Error(`unexpected filter page keys: ${JSON.stringify(filterKeys)}`);
+  await browser.$(".page-properties .prop-row").click();
+  const filterEditor = await browser.$(".page-blocks textarea.block-editor");
+  await filterEditor.waitForExist({ timeout: 5_000 });
+  if (!(await filterEditor.getValue()).includes("filters:: {}")) throw new Error("raw header editor lost filters");
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const hierarchyTitle = await browser.$(".page-hierarchy button[aria-expanded]");
+  await hierarchyTitle.waitForExist({ timeout: 5_000 });
+  if (await hierarchyTitle.getAttribute("aria-expanded") !== "true") throw new Error("Hierarchy did not start expanded");
+  await hierarchyTitle.click();
+  if ((await browser.$$(".page-hierarchy .ns-hier-row")).length) throw new Error("Hierarchy did not fold");
+  await browser.keys("Enter");
+  await browser.$(".page-hierarchy .ns-hier-row").waitForExist({ timeout: 5_000 });
+  await browser.keys(" ");
+  if ((await browser.$$(".page-hierarchy .ns-hier-row")).length) throw new Error("Space did not fold Hierarchy");
+  if (fs.readFileSync(`${GRAPH}/pages/Property filters.md`, "utf8") !== filterPage) throw new Error("display/edit entry changed filter page bytes");
+  await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   await exerciseNativeFormTabTraversal("Test Record, Alternate");
   const customRow = await browser.execute(() => {
     const rows = [...document.querySelectorAll(".page-properties .prop-row")];
@@ -483,10 +468,10 @@ try {
     if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
     textarea.blur();
   });
-  const detailedAfter = await waitForFile(
+  const detailedAfter = await waitForFileText(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes("alias:: Test Record, Alternate") && text.includes("ai-prompt:: [[Prompt-Edited]]"),
-    "detailed page property edit",
+    { timeoutMs: 10_000 },
   );
   const detailedExpected = detailed
     .replace("alias:: Test Record", "alias:: Test Record, Alternate")
@@ -495,12 +480,12 @@ try {
     throw new Error(`detailed page changed outside the edited line\nEXPECTED:\n${detailedExpected}\nACTUAL:\n${detailedAfter}`);
   }
 
-  await openPage("Property simple");
+  await openPageByName(browser, "Property simple", { entry: process.platform === "win32" ? "button" : "shortcut" });
   await setPagePropertyField("Icon", "★");
-  const simpleAfter = await waitForFile(
+  const simpleAfter = await waitForFileText(
     `${GRAPH}/pages/Property simple.md`,
     (text) => text.includes("icon:: ★"),
-    "simple page property edit",
+    { timeoutMs: 10_000 },
   );
   const simpleExpected = "icon:: ★\r\nA:: XX\r\nB:: XX\r\nC:: XX\r\n";
   if (simpleAfter !== simpleExpected) {
@@ -513,14 +498,14 @@ try {
   if (!lines.includes("A:: XX") || !lines.includes("B:: XX") || !lines.includes("C:: XX") || !lines.includes("icon:: ★")) {
     throw new Error(`simple page properties were lost or merged: ${JSON.stringify(lines)}`);
   }
-  await openPage("Property detailed");
+  await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const reopenedCustom = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row")]
     .find((row) => row.querySelector(".prop-key")?.textContent?.trim() === "ai-prompt")
     ?.querySelector(".prop-value")?.textContent?.trim() ?? null);
   if (!reopenedCustom?.includes("Prompt-Edited")) {
     throw new Error(`reopened page did not parse the edited custom header: ${JSON.stringify(reopenedCustom)}`);
   }
-  await openPage("Property deletion");
+  await openPageByName(browser, "Property deletion", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const deleteTarget = await browser.execute(() => {
     const rows = [...document.querySelectorAll(".page-properties .prop-row")];
     const row = rows.find((element) => element.querySelector(".prop-key")?.textContent?.trim() === "custom/key");
@@ -540,15 +525,15 @@ try {
     if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
     textarea.blur();
   });
-  const replacementAfter = await waitForFile(
+  const replacementAfter = await waitForFileText(
     `${GRAPH}/pages/Property deletion.md`,
     (text) => text.startsWith("alias:: Delete Me Later\n\n"),
-    "Ctrl+A page-header replacement",
+    { timeoutMs: 10_000 },
   );
   if (replacementAfter !== "alias:: Delete Me Later\n\n- Body survives\n") {
     throw new Error(`Ctrl+A page-header replacement changed body bytes: ${JSON.stringify(replacementAfter)}`);
   }
-  await openPage("Property deletion");
+  await openPageByName(browser, "Property deletion", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const replacedTarget = await browser.execute(() => {
     const row = [...document.querySelectorAll(".page-aliases, .page-properties .prop-row")]
       .find((element) => element.textContent?.includes("Delete Me Later"));
@@ -560,21 +545,21 @@ try {
   headerEditor = await browser.$(".page-blocks textarea.block-editor");
   await headerEditor.waitForExist({ timeout: 5_000 });
   await deleteHeaderLikeUser(headerEditor);
-  const deletionAfter = await waitForFile(
+  const deletionAfter = await waitForFileText(
     `${GRAPH}/pages/Property deletion.md`,
     (text) => !text.includes("alias::") && !text.includes("custom/key::"),
-    "deliberate page-header deletion",
+    { timeoutMs: 10_000 },
   );
   if (deletionAfter !== "- Body survives\n") {
     throw new Error(`deleting the page header changed body bytes: ${JSON.stringify(deletionAfter)}`);
   }
-  await openPage("Property deletion");
+  await openPageByName(browser, "Property deletion", { entry: process.platform === "win32" ? "button" : "shortcut" });
   if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
     throw new Error("deleted page-header properties reappeared after real-app reopen");
   }
   // GH #210: the table block stays a block through a save, and its title (typed
   // next) neither raises the page-header toast nor stops the page saving.
-  await openPage("Property table");
+  await openPageByName(browser, "Property table", { entry: process.platform === "win32" ? "button" : "shortcut" });
   // The title-less table block is an ordinary block (no page-properties row).
   const openTableBlock = () => browser.execute(() => {
     const content = document.querySelector(".page-blocks .ls-block .block-content");
@@ -592,10 +577,10 @@ try {
   const widthAt = tableHeader.indexOf("171");
   await replaceHeaderLikeUser(headerEditor, "200", { start: widthAt, end: widthAt + 3 });
   await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
-  const tableSaved = await waitForFile(
+  const tableSaved = await waitForFileText(
     `${GRAPH}/pages/Property table.md`,
     (text) => text.includes("prop%3Atest=200"),
-    "table block width edit",
+    { timeoutMs: 10_000 },
   );
   if (!tableSaved.startsWith("- tine.view:: table") || !tableSaved.includes("- Other block")) {
     throw new Error(`the table block was rewritten as page properties: ${JSON.stringify(tableSaved)}`);
@@ -612,10 +597,10 @@ try {
   await browser.keys("test table");
   await browser.keys(["Shift", "Enter"]);
   await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
-  const titled = await waitForFile(
+  const titled = await waitForFileText(
     `${GRAPH}/pages/Property table.md`,
     (text) => text.startsWith("- test table\n  tine.view:: table"),
-    "table block title",
+    { timeoutMs: 10_000 },
   );
   if (!titled.includes("- Other block")) throw new Error(`the table page lost its other block: ${JSON.stringify(titled)}`);
   const tableToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
@@ -676,10 +661,124 @@ try {
   }
   const headToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
   if (headToasts.length) throw new Error(`Enter at the start of the page properties raised an error toast: ${JSON.stringify(headToasts)}`);
-  if ((await browser.$$(".page-properties .prop-row")).length !== 2) {
-    throw new Error("the page properties no longer render as the page header after Enter at their start");
+  // `icon::` decorates the title and is not a header row (OG
+  // hidden-editable-page-properties, VT3), so the header is the tags row.
+  const headerKeys = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row .prop-key")]
+    .map((key) => key.textContent));
+  if (JSON.stringify(headerKeys) !== JSON.stringify(["tags"])) {
+    throw new Error(`the page properties no longer render as the page header after Enter at their start: ${JSON.stringify(headerKeys)}`);
   }
-  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
+  // GH #210 F1 follow-up (D-20261019-H210F2): Alt+Shift+Up on the first block
+  // under the page properties is refused (it would put a block above them, which
+  // the store refuses to save). The refusal says so with a plain info toast,
+  // leaves the file alone, and the page still saves a later edit.
+  await openPageByName(browser, "Property move above", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  // The properties become the page's first block once they have been opened for
+  // editing (before that they are not part of the outline and there is nothing
+  // above the first block to move past).
+  const openedProps = await browser.execute(() => {
+    const row = [...document.querySelectorAll(".page-properties .prop-row")]
+      .find((element) => element.querySelector(".prop-key")?.textContent?.trim() === "tags");
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!openedProps) throw new Error("missing rendered page-properties row on the move-above page");
+  await (await browser.$(".page-blocks textarea.block-editor")).waitForExist({ timeout: 5_000 });
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const openFirst = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".page-blocks .ls-block")]
+      .find((element) => element.textContent?.includes("First block"));
+    const content = block?.querySelector(".block-content");
+    if (!content) return false;
+    content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!openFirst) throw new Error("missing first block on the move-above page");
+  const firstEditor = await browser.$(".page-blocks textarea.block-editor");
+  await firstEditor.waitForExist({ timeout: 5_000 });
+  await browser.releaseActions();
+  await browser.performActions([{
+    type: "key",
+    id: "page-properties-move-up",
+    actions: [
+      { type: "keyDown", value: "" },
+      { type: "keyDown", value: "" },
+      { type: "keyDown", value: "" },
+      { type: "keyUp", value: "" },
+      { type: "keyUp", value: "" },
+      { type: "keyUp", value: "" },
+    ],
+  }]);
+  await browser.releaseActions();
+  await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll(".toast-info .toast-msg")]
+    .some((node) => node.textContent === "Page properties stay at the top of the page")), {
+    timeout: 5_000,
+    timeoutMsg: "no toast after moving a block above the page properties",
+  });
+  const moveToasts = await browser.execute(() => [...document.querySelectorAll(".toast .toast-msg")].map((node) => ({
+    text: node.textContent ?? "",
+    kind: node.closest(".toast")?.className ?? "",
+  })));
+  const whyToasts = moveToasts.filter((toast) => toast.text === "Page properties stay at the top of the page");
+  if (whyToasts.length !== 1 || !whyToasts[0].kind.includes("toast-info") || moveToasts.some((toast) => toast.kind.includes("toast-error"))) {
+    throw new Error(`moving a block above the page properties did not raise the plain info toast: ${JSON.stringify(moveToasts)}`);
+  }
+  // The tags row only: `icon::` decorates the title (VT3, as above).
+  const moveProps = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row .prop-key")]
+    .map((key) => key.textContent));
+  if (JSON.stringify(moveProps) !== JSON.stringify(["tags"])) {
+    throw new Error(`the page properties are no longer the page header after the refused move: ${JSON.stringify(moveProps)}`);
+  }
+  await nativeTab();
+  await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll(".toast-info .toast-msg")]
+    .some(node => node.textContent === "A block can't be indented under the page properties")), {
+    timeout: 5_000, timeoutMsg: "Tab under page properties did not explain the indent refusal",
+  });
+  await browser.keys(["Control", "End"]);
+  await browser.keys(" edited");
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const moveSaved = await waitForFileText(
+    `${GRAPH}/pages/Property move above.md`,
+    (text) => text.includes("- First block edited"),
+    { timeoutMs: 10_000 },
+  );
+  if (moveSaved !== "tags:: reading\nicon:: 📚\n\n- First block edited\n- Second block\n") {
+    throw new Error(`the refused move above the page properties changed the page: ${JSON.stringify(moveSaved)}`);
+  }
+  // GH #317: notes are available even when a sections page replaces config queries.
+  fs.writeFileSync(`${GRAPH}/pages/Journal sections.md`, "tine.journal-sections:: true\n\n- My sections\n");
+  fs.writeFileSync(`${GRAPH}/logseq/config.edn`, '{:journal/page-title-format "yyyy-ww" :journal/file-name-format "yyyy_MM_dd"}\n');
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-modal").waitForExist({ timeout: 5_000 });
+  await browser.execute(() => [...document.querySelectorAll(".settings-nav-item")].find(n => n.textContent?.trim() === "Journals")?.click());
+  const notes = () => browser.execute(() => [...document.querySelectorAll(".settings-modal .config-diagnostic")].map(n => n.textContent));
+  await browser.waitUntil(async () => (await notes()).some(n => n.includes(":journal/page-title-format") && n.includes("ww")), {
+    timeout: 15_000, timeoutMsg: "Settings did not show the backend journal pattern note",
+  });
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".settings-hint")]
+    .some(n => n.textContent?.includes("Today's sections are defined"))), { timeout: 15_000 });
+  await browser.execute(() => {
+    const select = [...document.querySelectorAll(".settings-modal select")].find(s => s.value === "yyyy-ww");
+    if (!select) throw new Error("missing journal title format picker");
+    select.value = "yyyy-MM-dd";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await waitForFileText(`${GRAPH}/logseq/config.edn`, text => text.includes('"yyyy-MM-dd"'), { timeoutMs: 10_000 });
+  await browser.waitUntil(async () => (await notes()).length === 0, { timeout: 10_000, timeoutMsg: "Settings kept the old note after choosing a supported format" });
+  fs.writeFileSync(`${GRAPH}/logseq/config.edn`, '{:journal/page-title-format "yyyy-MM-dd" :journal/file-name-format "yyyy_ww"}\n');
+  await browser.waitUntil(async () => (await notes()).some(n => n.includes(":journal/file-name-format") && n.includes("ww")), {
+    timeout: 15_000, timeoutMsg: "Settings did not update the file format note after an external config edit",
+  });
+  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, real-app reopen, distinct Tab refusal, and live Settings journal pattern notes`);
+} catch (error) {
+  const artifacts = process.env.E2E_ARTIFACT_DIR || TMP;
+  try { await browser?.saveScreenshot(path.join(artifacts, "page-properties-failure.png")); } catch {}
+  try {
+    const body = await browser?.execute(() => document.body.innerText);
+    fs.writeFileSync(path.join(artifacts, "page-properties-failure.txt"), `${error}\n\n${body ?? "No webview body available"}\n`);
+  } catch {}
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {

@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -29,22 +30,22 @@ function page(raw: string): PageDto {
   return { name: "Code", kind: "page", title: "Code", pre_block: null, blocks: [block] };
 }
 
-function openCompletion(textarea: HTMLTextAreaElement) {
+function openCompletion(textarea: EditorDriver) {
   textarea.focus();
-  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  textarea.dispatchEvent(new InputEvent("input", {
+  textarea.select(textarea.value().length, textarea.value().length);
+  textarea.reportInput({
     bubbles: true,
     inputType: "insertText",
-    data: textarea.value.at(-1) ?? null,
-  }));
+    data: textarea.value().at(-1) ?? null,
+  });
 }
 
-function enter(textarea: HTMLTextAreaElement) {
-  textarea.dispatchEvent(new KeyboardEvent("keydown", {
+function enter(textarea: EditorDriver) {
+  textarea.keydown({
     key: "Enter",
     bubbles: true,
     cancelable: true,
-  }));
+  });
 }
 
 describe("fenced-code language completion (GH #94)", () => {
@@ -56,7 +57,7 @@ describe("fenced-code language completion (GH #94)", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       openCompletion(textarea);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-item")).not.toBeNull());
       expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("JavaScript");
@@ -76,7 +77,7 @@ describe("fenced-code language completion (GH #94)", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       openCompletion(textarea);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-item")).not.toBeNull());
       expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Code block");
@@ -90,8 +91,8 @@ describe("fenced-code language completion (GH #94)", () => {
       // The language picked from the scaffold's opener line completes the
       // wrapper, swapping to the body-only code view: the caret lands at the
       // start of the (empty) payload — the code-line position in body space.
-      expect(textarea.selectionStart).toBe(0);
-      expect(textarea.value).not.toContain("```");
+      expect(textarea.selection()[0]).toBe(0);
+      expect(textarea.value()).not.toContain("```");
     } finally {
       dispose();
     }
@@ -105,7 +106,7 @@ describe("fenced-code language completion (GH #94)", () => {
     ));
 
     try {
-      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      const textarea = editorIn(root);
       openCompletion(textarea);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-item")).not.toBeNull());
       enter(textarea);
@@ -113,13 +114,8 @@ describe("fenced-code language completion (GH #94)", () => {
 
       // Typing the query refines the picker on the still-raw scaffold (the
       // body-only swap waits for the picker so it can keep its opener line).
-      textarea.setSelectionRange(3, 3);
-      for (const ch of "javas") {
-        const before = textarea.selectionStart;
-        textarea.value = textarea.value.slice(0, before) + ch + textarea.value.slice(before);
-        textarea.setSelectionRange(before + 1, before + 1);
-        textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
-      }
+      textarea.select(3, 3);
+      for (const ch of "javas") textarea.type(ch);
       expect(doc.byId.code.raw).toBe("```javas\n\n```");
       await vi.waitFor(() => {
         const refined = [...document.body.querySelectorAll(".autocomplete .ac-item")];
@@ -135,8 +131,8 @@ describe("fenced-code language completion (GH #94)", () => {
         .find((item) => item.querySelector(".ac-label")?.textContent === "JavaScript")!;
       pick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(doc.byId.code.raw).toBe("```javascript\n\n```"));
-      expect(textarea.selectionStart).toBe(0);
-      expect(textarea.value).not.toContain("```");
+      expect(textarea.selection()[0]).toBe(0);
+      expect(textarea.value()).not.toContain("```");
     } finally {
       dispose();
     }

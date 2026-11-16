@@ -120,3 +120,17 @@ pub fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
     walk(&doc.roots, &mut counts);
     counts
 }
+
+/// References a deletion leaves broken: the graph's referrers (`counts`, from
+/// [`document_block_ref_counts`]) of the removed `id::`s, less those removed
+/// with them. The one rule behind the app's reference notice and
+/// `tine delete`.
+pub fn refs_broken_by_removing(counts: &HashMap<String, usize>, removed: &[(&str, bool)]) -> usize {
+    let refs = tine_outline::removal_refs::removal_refs(removed, true);
+    let referrers: usize = refs
+        .targets
+        .iter()
+        .map(|t| counts.get(t).copied().unwrap_or(0))
+        .sum();
+    referrers.saturating_sub(refs.removed_with)
+}

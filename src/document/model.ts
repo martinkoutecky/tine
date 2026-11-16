@@ -1,11 +1,14 @@
 import { type PageKind, type Format } from "../types";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile, unwrap } from "solid-js/store";
 import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
 import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
+import { resolvedTarget } from "../pageIndex";
+import { page_file_format } from "../render/wasm/lsdoc_wasm.js";
 import { sheetConfigFromRaw } from "../sheet/config";
 import { beginResultsChange } from "../queryResultsEpoch";
 import { clearOnBindingInvalidated } from "../binding";
+import { flushFacetOwners } from "../render/seededFacets";
 
 export interface Node {
   id: string;
@@ -48,7 +51,7 @@ export interface DocState {
   // adapted to lazy loading — the Rust cache is the full graph DB).
   pages: FeedPage[];
   // Page names the MAIN content area shows, in order (a single page, or the
-  // journals feed). A subset of `pages`.
+  // journals feed). Retired feed days retain only their name and UI geometry.
   feed: string[];
   loaded: boolean;
 }
@@ -67,16 +70,39 @@ export function hydrateWorkingSet<T>(write: () => T): T {
   hydrating++;
   try { return write(); } finally { hydrating--; }
 }
+// BIGLOAD-090b: the one per-block raw-change notification. A block's raw
+// changes only through setDoc's field form or `writeRaw` inside a producer
+// (rawFunnel.guard.test.ts), so an outline window keeps one listener, not one
+// tracked computation per row. Replacing or removing a node is structure, which
+// readers observe through `node(id)`.
+const rawListeners = new Set<(id: string) => void>();
+let producedRaw: string[] = [];
+/** Calls `fn(id)` after each committed raw write; returns the unsubscribe. */
+export function onBlockRawChanged(fn: (id: string) => void): () => void {
+  rawListeners.add(fn);
+  return () => { rawListeners.delete(fn); };
+}
+/** The only in-place raw assignment, for `setDoc(produce(...))` drafts. */
+export function writeRaw(state: DocState, id: string, raw: string): void {
+  state.byId[id].raw = raw;
+  producedRaw.push(id);
+}
 export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
   const fieldOnly = args.length === 4 && ((args[0] === "byId" && ["raw", "loadedRaw", "collapsed"].includes(String(args[2])))
     || (args[0] === "pages" && ["preBlock", "title"].includes(String(args[2]))));
   batch(() => {
     const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
     try {
+      producedRaw = [];
       (writeDoc as (...args: unknown[]) => void)(...args);
+      flushFacetOwners();
+      const rawField = args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string";
+      const changedRaw = rawField ? [args[1] as string] : producedRaw;
+      producedRaw = [];
       untrack(() => {
-        if (args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string") {
-          updateAuthoredIdentity(args[1]);
+        for (const id of changedRaw) for (const listener of rawListeners) listener(id);
+        if (rawField) {
+          updateAuthoredIdentity(args[1] as string);
         } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {
           // Producers can replace/reparent/remove arbitrary nodes. Rebuild on
           // the next lookup, never on ordinary raw-only typing or folding.
@@ -94,10 +120,9 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
 }) as typeof writeDoc;
 
 // Monotonic per-block count of SOURCE collapse writes (writeCollapsed and the
-// descendants batch). An embed occurrence keeps an ephemeral local fold for
-// nested rows (GH #360); the fold records the epoch at fold time, and once the
-// source writes again the epoch has moved, the fold is stale and the source
-// reclaims authority. Never persisted; cleared with the working set.
+// descendants batch). Query bulk-fold requests capture these generations so a
+// delayed result cannot apply an old fold over a newer source change (GH #792).
+// Never persisted; cleared with the working set. Embeds follow source folds.
 const [collapseEpochState, setCollapseEpochState] = createStore<{ byId: Record<string, number> }>({ byId: {} });
 export const collapseEpochOf = (id: string): number => collapseEpochState.byId[id] ?? 0;
 export function bumpCollapseEpochs(ids: readonly string[]): void {
@@ -132,6 +157,27 @@ interface AuthoredIdentityPage {
 const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
 clearOnBindingInvalidated(() => authoredIdentityPages.clear());
 const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0);
+/** Moves on every write that can change any page's structure (each setDoc write
+ * except the raw/loadedRaw/collapsed/preBlock/title fields, feed and loaded).
+ * A whole-document question can read nodes untracked and depend on this alone. */
+export const structureRevision = (): number => identityStructureRevision();
+/** Whether `test` holds for some block in the trees under `roots`; stops at the
+ * first. Reads plain nodes untracked and depends on structureRevision alone, so
+ * a whole-page question at open subscribes to nothing per block (BIGLOAD-090b). */
+export function someBlockInTrees(roots: readonly string[], test: (n: ReadonlyNode) => boolean): boolean {
+  structureRevision();
+  return untrack(() => {
+    const byId = unwrap(doc.byId);
+    const visit = (ids: readonly string[]): boolean => {
+      for (const id of ids) {
+        const n = byId[id];
+        if (n && (test(n) || visit(n.children))) return true;
+      }
+      return false;
+    };
+    return visit(roots);
+  });
+}
 
 function updateAuthoredIdentity(id: string): void {
   const node = doc.byId[id];
@@ -240,23 +286,27 @@ export function docHasBlockIdentity(id: string): boolean {
 // per-block render hot path and ~7×/page render — into an O(1) lookup. We map to
 // the index (not the proxy) and read `doc.pages[idx]` live, so a property change
 // (roots/preBlock/format) stays fine-grained-reactive and the index never goes
-// stale: the memo re-derives whenever any page's `name` or the array length moves.
-const pageIndexByName = createRoot(() =>
-  createMemo(() => {
-    const m = new Map<string, number>();
-    doc.pages.forEach((p, i) => m.set(p.name, i));
-    return m;
-  })
-);
+// stale: the index re-derives whenever any page's `name` or the array length moves.
+// Publish positions by name: a source load must not invalidate every retained
+// property link just because its target is absent from the working set (GH #886).
+// Prefix keys so Solid's reserved property keys remain ordinary page names.
+const [pageIndexByName, setPageIndexByName] = createStore<Record<string, number | undefined>>({});
+const updatePageIndex = createRoot(() => createMemo(() => {
+  const next: Record<string, number> = {};
+  doc.pages.forEach((page, i) => { next[`page:${page.name}`] = i; });
+  untrack(() => setPageIndexByName(reconcile(next)));
+  return next;
+}));
 
 /** The pages shown in the main content area, in feed order. Memoized: the O(feed)
  *  resolve runs once per structural change, not on each of its ~7 calls per render. */
 export const mainPages = createRoot(() =>
   createMemo((): readonly ReadonlyFeedPage[] => {
-    const idx = pageIndexByName();
+    untrack(updatePageIndex);
+    const idx = pageIndexByName;
     return doc.feed
       .map((n) => {
-        const i = idx.get(n);
+        const i = idx[`page:${n}`];
         return i === undefined ? undefined : doc.pages[i];
       })
       .filter(Boolean) as FeedPage[];
@@ -265,26 +315,36 @@ export const mainPages = createRoot(() =>
 
 /** A loaded page record by name (anywhere in the working set), or undefined. */
 export function pageByName(name: string): ReadonlyFeedPage | undefined {
-  const i = pageIndexByName().get(name);
+  // Refresh a stale index even inside an enclosing batch, without subscribing
+  // the caller to its other names. The keyed position below owns that dependency.
+  untrack(updatePageIndex);
+  const i = pageIndexByName[`page:${name}`];
   return i === undefined ? undefined : doc.pages[i];
 }
 
 /** Record the identity chosen for a new page after its first successful save. */
 export function setPageId(name: string, id: string): void {
-  const i = pageIndexByName().get(name);
+  untrack(updatePageIndex);
+  const i = pageIndexByName[`page:${name}`];
   if (i !== undefined) setDoc("pages", i, "id", id);
 }
 
-/** The format ("md"/"org") to parse a page's inline content with. Exact for a
- *  loaded page; for one that isn't loaded (e.g. the source of a backlink) fall back
- *  to the graph's preferred format — correct for single-format graphs, a safe guess
- *  otherwise (and far better than always assuming Markdown). Used by the inline
- *  renderers (InlineText callers) so org markup in property values / breadcrumbs /
- *  reference previews / block-refs renders as org, not literally. */
+/** Set loaded page `name`'s kind when it holds file `id` and differs. O(1). */
+export function setPageKind(name: string, id: string, kind: PageKind): void {
+  untrack(updatePageIndex);
+  const i = pageIndexByName[`page:${name}`];
+  if (i !== undefined && doc.pages[i].id === id && doc.pages[i].kind !== kind) setDoc("pages", i, "kind", kind);
+}
+
+/** Source format for a loaded page or its physical owner in the shared inventory.
+ *  Only an unknown/new page falls back to the graph's preferred format. */
 export function formatForPage(name: string | undefined): Format {
   if (name) {
     const p = pageByName(name);
     if (p?.format) return p.format;
+    const target = resolvedTarget(name) ?? resolvedTarget(name, "journal");
+    const path = target?.kind === "existing" ? target.id : target?.kind === "alias" ? target.owners[0] : undefined;
+    if (path) return page_file_format(path) as Format;
   }
   return graphMeta()?.preferred_format ?? "md";
 }

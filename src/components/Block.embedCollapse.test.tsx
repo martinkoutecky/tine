@@ -9,6 +9,7 @@ import { doc } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block, SurfaceContext } from "./Block";
 import { endEdit } from "../editorController";
+import { editorIn, maybeEditorIn } from "../tests/editorDriver";
 import { installKeybindings, runGlobalCommand } from "../keybindings";
 import { For } from "solid-js";
 import { bumpDataRev } from "../graphSession";
@@ -138,7 +139,7 @@ describe("embed collapse contract (GH #360)", () => {
       const content = embed.querySelector<HTMLElement>('[data-block-id="target"] .block-content')!;
       content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
-      expect(embed.querySelector("textarea")).not.toBeNull();
+      expect(maybeEditorIn(embed)).not.toBeNull();
       run("editor/expand-children"); await tick();
       expect(occurrenceChildrenVisible(embed)).toContain("Child");
       expect(blockProperty("host-1", "collapsed")).toBe("false");
@@ -148,7 +149,7 @@ describe("embed collapse contract (GH #360)", () => {
       run("editor/collapse-children"); await tick();
       expect(embed.textContent).not.toContain("Grand");
       // Selection mode must retain the occurrence after Escape as well.
-      embed.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      editorIn(embed).keydown({ key: "Escape" });
       expect(hasSelection()).toBe(true);
       run("editor/expand-children"); await tick();
       expect(embed.textContent).toContain("Grand");
@@ -156,7 +157,9 @@ describe("embed collapse contract (GH #360)", () => {
       expect(occurrenceChildrenVisible(embed)).not.toContain("Child");
       expect(blockProperty("host-1", "collapsed")).toBe("true");
       expect(doc.byId.target.collapsed).toBe(false);
-      expect(doc.byId.child.collapsed).toBe(false);
+      // D-20261030-EMB: a fold below the embed root is the source's own
+      // (beta.1 kept it local to the occurrence).
+      expect(doc.byId.child.collapsed).toBe(true);
     } finally { endEdit("page-navigation"); dispose(); }
   });
 
@@ -184,7 +187,9 @@ describe("embed collapse contract (GH #360)", () => {
       document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })); await tick();
       runGlobalCommand("editor/expand-children"); await tick();
       expect(root.textContent).toContain("Page body");
-      expect(doc.byId["page-host"].collapsed).toBe(embedded);
+      // D-20261030-EMB: inside a block embed the nested page-embed host's fold
+      // is the source's own, as on its own page (beta.1 kept it local).
+      expect(doc.byId["page-host"].collapsed).toBe(false);
       runGlobalCommand("editor/collapse-children"); await tick();
       expect(root.textContent).not.toContain("Page body");
       expect(doc.byId["page-host"].collapsed).toBe(true);
@@ -309,7 +314,9 @@ describe("embed collapse contract (GH #360)", () => {
   // Nested rows keep an ephemeral per-occurrence fold that records the source's
   // collapse write epoch: it governs until the source writes again, then the
   // source reclaims authority (including after fold/unfold round trips).
-  it("a nested row's local fold yields to the next source collapse write", async () => {
+  // D-20261030-EMB replaces beta.1's "a nested row's local fold yields to the
+  // next source collapse write": below the root, a block embed folds the source.
+  it("a nested row's fold inside a block embed writes the source and shows everywhere", async () => {
     const target: BlockDto = {
       id: "target", raw: "Embed target body", collapsed: false,
       children: [{
@@ -328,12 +335,15 @@ describe("embed collapse contract (GH #360)", () => {
       expect(embed.textContent).toContain("grandchild one");
       embed.querySelector<HTMLButtonElement>(`.ls-block[data-block-id="target-c1"] .collapse-toggle`)!.click();
       await tick();
-      expect(embed.textContent).not.toContain("grandchild one"); // local fold governs
-      expect(doc.byId["target-c1"].collapsed).toBe(false); // source untouched
-      expect(doc.byId["target-c1"].raw).not.toContain("collapsed::");
-      setCollapsed("target-c1", true);
-      setCollapsed("target-c1", false); // the source wrote again: it is authoritative
-      await tick();
+      expect(embed.textContent).not.toContain("grandchild one");
+      expect(doc.byId["target-c1"].collapsed).toBe(true); // the source's own fold
+      expect(doc.byId["target-c1"].raw).toContain("collapsed:: true");
+      expect(blockProperty("host-1", "collapsed")).toBeNull(); // the host is untouched
+      // The source block on its own page shows the same fold.
+      const source = [...root.querySelectorAll<HTMLElement>('.ls-block[data-block-id="target"]')].find(row => !row.closest(".embed-block"))!;
+      expect(source.textContent).not.toContain("grandchild one");
+      undo(); await tick();
+      expect(doc.byId["target-c1"].collapsed).toBe(false);
       expect(embed.textContent).toContain("grandchild one");
     } finally {
       dispose();

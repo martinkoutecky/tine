@@ -26,11 +26,15 @@ fn raws(graph: &WholeGraph, text: &str, input: QueryInput) -> Vec<String> {
         Registry::none(),
     );
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("result")
@@ -61,7 +65,11 @@ fn d2_whole_values_and_configured_atoms_reach_the_query_door() {
     ] {
         assert_eq!(count(&graph, query), 1, "{query}");
     }
-    let IrAnswer::Registry(registry) = graph.query_ir(IrRequest::Registry).unwrap() else {
+    let IrAnswer::Registry(registry) = graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+        .unwrap()
+    else {
         panic!("registry")
     };
     for key in ["list", "n"] {

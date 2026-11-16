@@ -35,6 +35,9 @@ command-go-keyboard-shortcuts = 前往键盘快捷键
 command-go-backward = 后退
 
 command-go-forward = 前进
+command-editor-toggle-open-blocks = 切换展开或折叠全部块
+command-editor-collapse-all = 折叠当前页面的全部块
+command-editor-expand-all = 展开当前页面的全部块
 
 command-tab-close = 关闭当前标签页
 
@@ -115,8 +118,11 @@ command-ui-open-settings = 打开设置
 command-page-export-pdf = 将当前页面导出为 PDF…
 
 command-ui-toggle-wide-mode = 切换宽屏模式
+command-ui-toggle-code-block-wrap = 切换代码块自动换行
 
 command-ui-toggle-document-mode = 切换文档模式
+
+command-ui-toggle-comment-margin = 显示/隐藏评论
 
 command-ui-toggle-focus-mode = 切换专注模式
 
@@ -165,6 +171,7 @@ command-editor-strike-through = 删除线
 command-editor-highlight = 高亮
 
 command-editor-insert-link = 插入链接
+command-editor-comment = 评论所选文字
 
 command-editor-copy-embed = 未选中文字时复制块嵌入
 
@@ -187,6 +194,7 @@ command-pane-focus-n = 聚焦窗格 { $index }
 command-plugin = 插件：{ $title }
 
 command-go-search-selection = 搜索选中的文本
+command-comment-on-selection = 评论所选内容
 
 command-select-copy-block-ref = 复制所选块的块引用
 
@@ -275,3 +283,11 @@ commands-plugin-command-failed = 插件命令失败：{ $error }
 commands-couldn-t-copy-selection-clipboard-write-failed = 无法复制所选内容：写入剪贴板失败。
 
 commands-couldn-t-cut-selection-clipboard-write-failed = 无法剪切所选内容：写入剪贴板失败。
+command-go-all-graphs = 所有图谱
+command-editor-insert-youtube-timestamp = 插入 YouTube 时间戳
+all-graphs-keyboard-help = 使用上下方向键选择图谱，按 Enter 打开。按 Tab 访问图谱操作。
+all-graphs-new-window-help = 按 Shift+Enter 在新窗口中打开所选图谱。
+command-seen-mark-page = 标记页面为已看
+command-seen-mark-graph = 标记整个图谱为已看
+command-seen-next-change = 下一处自上次查看以来的更改
+command-seen-previous-change = 上一处自上次查看以来的更改

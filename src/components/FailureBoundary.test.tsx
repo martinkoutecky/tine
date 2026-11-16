@@ -28,6 +28,30 @@ function Boom(props: { when: () => boolean }) {
 }
 
 describe("FailureBoundary (GH #490/#332: a throw must not blank the app silently)", () => {
+  it("keeps recovery controls out of enclosing block edit and card-open gestures", () => {
+    const outer = vi.fn();
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <div onPointerDown={outer} onMouseDown={outer} onClick={outer}>
+      <FailureBoundary region="This block"><Boom when={() => true} /></FailureBoundary>
+    </div>, host);
+    try {
+      const retry = host.querySelector<HTMLButtonElement>(".region-failure-retry")!;
+      for (const type of ["pointerdown", "mousedown", "click"]) retry.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0 }));
+      expect(outer).not.toHaveBeenCalled();
+      expect(host.querySelector(".region-failure")).not.toBeNull();
+    } finally { dispose(); }
+  });
+  it("GH741 resets a failed page when its route changes", () => {
+    const [route, setRoute] = createSignal("broken");
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <FailureBoundary region="This page" resetKey={route()}><Boom when={() => route() === "broken"} /></FailureBoundary>, host);
+    try {
+      expect(host.querySelector(".region-failure")).not.toBeNull();
+      setRoute("healthy");
+      expect(host.querySelector(".region-failure")).toBeNull();
+      expect(host.querySelector(".survivor")?.textContent).toBe("content");
+    } finally { dispose(); }
+  });
   it("localizes an empty error on screen but copies English fallback details", async () => {
     const error = new Error("");
     error.stack = "";

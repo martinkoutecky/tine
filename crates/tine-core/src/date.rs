@@ -254,6 +254,11 @@ pub struct Format {
     toks: Vec<Tok>,
 }
 
+/// The most width renderings one journal pattern may contribute to
+/// [`JournalFormat::accepted_stems`] (GH #863 D3): an upper bound on the product
+/// of each numeric field's possible widths, so a pattern that repeats fields
+/// cannot make an absent-day lookup allocate or stat exponentially many names.
+pub const WIDTH_RENDERINGS_MAX: usize = 16;
 impl Format {
     pub fn compile(pat: &str) -> Format {
         let b: Vec<char> = pat.chars().collect();
@@ -344,6 +349,61 @@ impl Format {
         out
     }
 
+    /// [`Self::format`] of `d` with each numeric field at every width
+    /// [`Self::parse`] reads (a field of up to `max` digits, zero-padded
+    /// from none to `max`): `2026-11-1` beside `2026-11-01`. Names, ordinal
+    /// suffixes and literals as `format` writes them. The product of each
+    /// numeric field's widths: 2 for a month or day below 10, 1 for a year
+    /// past 999, so at most 4 for a pattern with one year, month and day
+    /// field. Not checked to parse back.
+    fn renderings_by_width(&self, d: JournalDate) -> Vec<String> {
+        // A numeric field's value and the most digits the parser reads for it.
+        let field = |t: &Tok| match t {
+            Tok::Year(2) => Some((d.year.rem_euclid(100), 2)),
+            Tok::Year(_) => Some((d.year, 4)),
+            Tok::MonthNum(_) => Some((d.month as i32, 2)),
+            Tok::DayNum(_) | Tok::DayOrd => Some((d.day as i32, 2)),
+            _ => None,
+        };
+        // A format may repeat numeric fields (config accepts "yyyy-MM-dd M M M …"),
+        // and each occurrence multiplies the product: past the bound the pattern
+        // contributes nothing here, and only its ordinary spelling is tried.
+        let within = self.toks.iter().try_fold(1usize, |n, t| {
+            let widths = field(t).map_or(1, |(value, max)| {
+                let digits = value.to_string().len();
+                max.max(digits) - digits + 1
+            });
+            Some(n * widths).filter(|&n| n <= WIDTH_RENDERINGS_MAX)
+        });
+        if within.is_none() {
+            return Vec::new();
+        }
+        let mut out = vec![String::new()];
+        for t in &self.toks {
+            let (value, max) = field(t).unwrap_or((-1, 0));
+            let single = Format {
+                toks: vec![t.clone()],
+            };
+            let pieces: Vec<String> = if value < 0 {
+                vec![single.format(d)]
+            } else {
+                let suffix = if matches!(t, Tok::DayOrd) {
+                    &ordinal(d.day)[value.to_string().len()..]
+                } else {
+                    ""
+                };
+                let digits = value.to_string().len();
+                (digits..=max.max(digits))
+                    .map(|width| format!("{value:0width$}{suffix}"))
+                    .collect()
+            };
+            out = (out.iter())
+                .flat_map(|head| pieces.iter().map(move |piece| format!("{head}{piece}")))
+                .collect();
+        }
+        out
+    }
+
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
         let mut cs = Vec::with_capacity(s.len());
         cs.extend(s.chars());
@@ -401,6 +461,98 @@ impl Format {
             day: d,
         })
     }
+}
+
+/// What [`Format::compile`] does with a pattern part it does not support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsupportedHandling {
+    /// Letters Tine writes, and expects when reading, verbatim.
+    Literal,
+    /// A run of `y`, `M`, `d` or `E` Tine reads as several shorter fields.
+    ShorterFields,
+    /// Quoted text: Tine keeps the quote marks and reads letters inside as fields.
+    Quoted,
+}
+
+/// A pattern part, as Logseq's cljs-time tokenises it, that Tine does not
+/// render or read the way Logseq does.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedToken {
+    /// The part exactly as written, quote marks included.
+    pub text: String,
+    /// What Tine does with it instead.
+    pub handling: UnsupportedHandling,
+}
+
+/// The parts of `pattern` that [`Format::compile`] does not interpret as
+/// Logseq does, in pattern order. Detection only: `compile` is unchanged.
+/// Tokenises like cljs-time `internal/parse.cljs` `read-pattern` (logseq fork
+/// 5704fbf, pinned by OG `deps.edn`): `'` starts quoted text up to the next `'`
+/// (`''` is one quote), an ASCII letter starts a run of that same letter, and
+/// anything else starts a literal run up to the next ASCII letter or `'`.
+/// Supported runs are the ones `compile` reads as one field (`y yy yyyy M MM
+/// MMM MMMM d dd E EE EEE EEEE`, and `o` straight after a single `d`); literal
+/// runs are supported. O(pattern).
+pub fn unsupported_tokens(pattern: &str) -> Vec<UnsupportedToken> {
+    let cs: Vec<char> = pattern.chars().collect();
+    let mut out = Vec::new();
+    let mut previous = String::new();
+    let mut i = 0;
+    while i < cs.len() {
+        let start = i;
+        let first = cs[i];
+        i += 1;
+        let handling = if first == '\'' {
+            if cs.get(i) == Some(&'\'') {
+                i += 1;
+            } else {
+                while i < cs.len() && cs[i] != '\'' {
+                    i += 1;
+                }
+                i = (i + 1).min(cs.len());
+            }
+            Some(UnsupportedHandling::Quoted)
+        } else if first.is_ascii_alphabetic() {
+            while i < cs.len() && cs[i] == first {
+                i += 1;
+            }
+            let run: String = cs[start..i].iter().collect();
+            let supported = matches!(
+                run.as_str(),
+                "y" | "yy"
+                    | "yyyy"
+                    | "M"
+                    | "MM"
+                    | "MMM"
+                    | "MMMM"
+                    | "d"
+                    | "dd"
+                    | "E"
+                    | "EE"
+                    | "EEE"
+                    | "EEEE"
+            ) || (run == "o" && previous == "d");
+            (!supported).then_some(if matches!(first, 'y' | 'M' | 'd' | 'E') {
+                UnsupportedHandling::ShorterFields
+            } else {
+                UnsupportedHandling::Literal
+            })
+        } else {
+            while i < cs.len() && !cs[i].is_ascii_alphabetic() && cs[i] != '\'' {
+                i += 1;
+            }
+            None
+        };
+        previous = cs[start..i].iter().collect();
+        if let Some(handling) = handling {
+            out.push(UnsupportedToken {
+                text: previous.clone(),
+                handling,
+            });
+        }
+    }
+    out
 }
 
 /// Take up to `max` ASCII digits from `cs` starting at `*i`, advancing `*i`.
@@ -471,7 +623,8 @@ pub struct JournalFormat {
 
 impl JournalFormat {
     /// Build from config strings (`None`/empty → Logseq defaults). Supported
-    /// field tokens are compiled; unrecognized characters become literals.
+    /// field tokens are compiled; unrecognized characters become literals
+    /// ([`unsupported_tokens`] reports them).
     /// This does not validate that a format can parse the dates it renders.
     pub fn new(file_fmt: Option<&str>, title_fmt: Option<&str>) -> JournalFormat {
         let file_pat = file_fmt
@@ -517,6 +670,47 @@ impl JournalFormat {
         self.parse_list.iter().find_map(|f| f.parse(s))
     }
 
+    /// Every rendering of `d` in the parse list, deduplicated: the spellings
+    /// of the day this format writes. Real names reached by a looser spelling
+    /// (`2026-10-2`, `October 22nd, 2026`) are found by parsing them, not here.
+    pub fn spellings(&self, d: JournalDate) -> Vec<String> {
+        let mut out: Vec<String> = Vec::with_capacity(self.parse_list.len());
+        for f in &self.parse_list {
+            let s = f.format(d);
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+        out
+    }
+
+    /// The names [`Self::parse`] reads as `d` that differ from
+    /// [`Self::spellings`] only in numeric field width (`2026-11-1`,
+    /// `2026_11_01`), spellings first, deduplicated, each checked to parse
+    /// back (a two-digit year outside 2000-2099 does not): where a file of the
+    /// day may be found by name without listing a directory (GH #863 D3).
+    /// Bounded by `renderings_by_width`: at most 4 per parse-list pattern
+    /// with one year, month and day field, for a year past 999, and never more
+    /// than [`WIDTH_RENDERINGS_MAX`] per pattern (a pattern whose width product
+    /// would exceed it contributes only its ordinary spelling).
+    /// Other accepted forms (a month name's other length, any ordinal
+    /// suffix, another weekday, case, surrounding space) are not listed.
+    pub fn accepted_stems(&self, d: JournalDate) -> Vec<String> {
+        let widths = self
+            .parse_list
+            .iter()
+            .flat_map(|f| f.renderings_by_width(d));
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<String> = Vec::new();
+        for s in self.spellings(d).into_iter().chain(widths) {
+            if !seen.contains(&s) && self.parse(&s) == Some(d) {
+                seen.insert(s.clone());
+                out.push(s);
+            }
+        }
+        out
+    }
+
     /// Display title for a date, in the user's `:journal/page-title-format`.
     pub fn title(&self, d: JournalDate) -> String {
         self.title.format(d)
@@ -553,6 +747,67 @@ impl JournalFormat {
 #[cfg(test)]
 mod fmt_tests {
     use super::*;
+
+    /// GH #863 D3: the stems a day's file may carry include every numeric
+    /// width the parser accepts (default settings read `2026-11-1` as
+    /// November 1), each parses back to that day, and the list is bounded.
+    #[test]
+    fn accepted_stems_cover_the_parsers_numeric_widths() {
+        let fmt = JournalFormat::default();
+        let day = d(2026, 11, 1);
+        let stems = fmt.accepted_stems(day);
+        for expected in [
+            "2026_11_01",
+            "2026_11_1",
+            "2026-11-01",
+            "2026-11-1",
+            "Nov 1st, 2026",
+            "Nov 01st, 2026",
+        ] {
+            assert!(
+                stems.iter().any(|s| s == expected),
+                "{expected} in {stems:?}"
+            );
+        }
+        assert_eq!(stems[..3], fmt.spellings(day)[..], "spellings first");
+        let mut unique = stems.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), stems.len(), "deduplicated: {stems:?}");
+        for stem in &stems {
+            assert_eq!(fmt.parse(stem), Some(day), "{stem}");
+        }
+        assert_eq!(stems.len(), 6, "{stems:?}");
+        // Bounded: one-digit month and day double each numeric pattern.
+        assert_eq!(fmt.accepted_stems(d(2026, 1, 1)).len(), 10);
+        assert_eq!(fmt.accepted_stems(d(2026, 11, 22)).len(), 3);
+        // A two-digit year reads 2000 + digits: no other century is listed.
+        let short = JournalFormat::new(Some("d.M.yy"), Some("d.M.yy"));
+        let stems = short.accepted_stems(d(2005, 1, 5));
+        assert!(stems.iter().any(|s| s == "5.1.5"), "{stems:?}");
+        assert!(stems.iter().any(|s| s == "05.01.05"), "{stems:?}");
+        assert!(short
+            .accepted_stems(d(1999, 1, 5))
+            .iter()
+            .all(|s| !s.contains(".99")));
+    }
+
+    #[test]
+    fn accepted_stems_stay_bounded_when_a_format_repeats_numeric_fields() {
+        // Merge review r2 (GH #863): "yyyy-MM-dd" + " M" x 14 made 65,546 stems
+        // for January 1 and ~196k stats under the writer, growing exponentially.
+        let repeated = format!("yyyy-MM-dd{}", " M".repeat(14));
+        let fmt = JournalFormat::new(Some(&repeated), Some("MMM do, yyyy"));
+        let day = d(2026, 1, 1);
+        let stems = fmt.accepted_stems(day);
+        let bound = fmt.spellings(day).len() + 2 * 16; // two patterns, WIDTH_RENDERINGS_MAX each
+        assert!(stems.len() <= bound, "{} stems", stems.len());
+        // The pattern's ordinary spelling is still tried.
+        assert!(
+            stems.iter().any(|s| s.starts_with("2026-01-01 1 1")),
+            "{stems:?}"
+        );
+    }
 
     #[test]
     fn configured_file_stem_is_its_days_canonical_file() {
@@ -718,6 +973,115 @@ mod fmt_tests {
             let want = vector.date.map(GoldenDate::into_journal_date);
             let got = Format::compile(&vector.fmt).parse(&vector.input);
             assert_eq!(got, want, "parse {:?}", vector);
+        }
+    }
+
+    /// Card g4czVA: a pattern part Tine does not support is reported in
+    /// pattern order, tokenised as cljs-time `read-pattern` does.
+    #[test]
+    fn unsupported_pattern_parts_are_reported_in_order() {
+        use UnsupportedHandling::{Literal, Quoted, ShorterFields};
+        for (pattern, want) in [
+            // Seen in Logseq issues #9542 and #9886.
+            ("yyyy-MM-dd 'w'ww-E", vec![("'w'", Quoted), ("ww", Literal)]),
+            ("yyyy-MM-dd-ww", vec![("ww", Literal)]),
+            // FFF is illegal in cljs-time (#8570); dddd splits (#11429).
+            ("EEE,FFF do MMM yyyy", vec![("FFF", Literal)]),
+            ("yyyy/MM/dddd", vec![("dddd", ShorterFields)]),
+            // cljs-time reads YYYY as the year and Do as the day ordinal.
+            ("YYYY-MM-DD", vec![("YYYY", Literal), ("DD", Literal)]),
+            ("MMMM Do, yyyy", vec![("D", Literal), ("o", Literal)]),
+            // `o` is an ordinal only straight after a single `d` in Tine.
+            ("ddo MMM", vec![("o", Literal)]),
+            (
+                "yyy MMMMM EEEEE",
+                vec![
+                    ("yyy", ShorterFields),
+                    ("MMMMM", ShorterFields),
+                    ("EEEEE", ShorterFields),
+                ],
+            ),
+            (
+                "h:mm a",
+                vec![("h", Literal), ("mm", Literal), ("a", Literal)],
+            ),
+            ("''yyyy", vec![("''", Quoted)]),
+            ("yyyy 'unterminated", vec![("'unterminated", Quoted)]),
+        ] {
+            let got: Vec<(String, UnsupportedHandling)> = unsupported_tokens(pattern)
+                .into_iter()
+                .map(|token| (token.text, token.handling))
+                .collect();
+            let want: Vec<(String, UnsupportedHandling)> = want
+                .into_iter()
+                .map(|(text, handling)| (text.to_string(), handling))
+                .collect();
+            assert_eq!(got, want, "{pattern}");
+        }
+    }
+
+    /// Every default and OG preset pattern, and every pattern Tine's own tests
+    /// round-trip, reports nothing.
+    #[test]
+    fn supported_patterns_report_nothing() {
+        let og: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/og-journal-formats.json"
+        ))
+        .unwrap();
+        let presets = og["formats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["pattern"].as_str().unwrap());
+        for pattern in presets.chain([
+            DEFAULT_FILE_FORMAT,
+            DEFAULT_TITLE_FORMAT,
+            "yyyy-MM-dd",
+            "dd-MM-yyyy",
+            "yyyy.MM.dd",
+            "EE E yyyy-MM-dd",
+            "M/d/y",
+            "yy-M-d",
+            "EEEE, MMMM do, yyyy",
+            "EEE do, MMM yyyy",
+            "yyyy年MM月dd日",
+            "",
+        ]) {
+            assert_eq!(unsupported_tokens(pattern), vec![], "{pattern:?}");
+        }
+    }
+
+    /// Journal page identity (title, file stem, `is_canonical_stem`, parse) for
+    /// the default and every OG preset is byte-identical to the capture made at
+    /// bb0c6cccb, before detection existed.
+    #[test]
+    fn journal_identity_matches_pre_detection_capture() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/journal-identity-golden.json"
+        ))
+        .unwrap();
+        let rows = golden["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 689);
+        for row in rows {
+            let pattern = row["pattern"].as_str();
+            let fmt = match row["role"].as_str().unwrap() {
+                "title" => JournalFormat::new(None, pattern),
+                _ => JournalFormat::new(pattern, None),
+            };
+            let date = JournalDate::from_ordinal(row["date"].as_i64().unwrap());
+            let title = fmt.title(date);
+            let stem = fmt.file_stem(date);
+            let got = serde_json::json!({
+                "pattern": pattern,
+                "role": row["role"],
+                "date": date.ordinal_key(),
+                "title": title,
+                "stem": stem,
+                "canonical": fmt.is_canonical_stem(&stem),
+                "parse_title": fmt.parse(&title).map(|d| d.ordinal_key()),
+                "parse_stem": fmt.parse(&stem).map(|d| d.ordinal_key()),
+            });
+            assert_eq!(&got, row);
         }
     }
 

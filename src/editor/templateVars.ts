@@ -1,3 +1,4 @@
+import type { BlockDto } from "../types";
 // Logseq dynamic template variables. A template block's `<% … %>` placeholders
 // are expanded when the template is inserted (NOT on normal render). Single
 // source of truth for both insertion paths: the slash-command template insert
@@ -71,4 +72,15 @@ export function applyTemplateVars(raw: string, currentPage?: string): string {
     const resolved = kw && parseEnglishDate ? parseEnglishDate(kw, d) : null;
     return resolved ? `[[${journalTitle(resolved)}]]` : whole;
   });
+}
+
+/** A template block tree as an insertable outline, with template variables applied. */
+export function templateToOutline(
+  b: BlockDto,
+  currentPage?: string
+): { raw: string; children: any[] } {
+  return {
+    raw: applyTemplateVars(b.raw, currentPage),
+    children: b.children.map((c) => templateToOutline(c, currentPage)),
+  };
 }

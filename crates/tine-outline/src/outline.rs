@@ -17,8 +17,13 @@ use crate::editor_text::{self, js_blank, HidePolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+mod apply;
 mod header;
+pub use apply::apply_with_policy;
+mod insert;
+mod outdent;
 use header::header_root_kept;
+use insert::insert_outline;
 
 /// The deepest outline the kernel builds (the window's `OUTLINE_MAX_DEPTH`,
 /// the store's `PARSE_INPUT_MAX_DEPTH`): a root is depth 0, so the deepest
@@ -96,6 +101,9 @@ pub enum Reason {
     Frozen,
     /// Merge refuses blocks on two pages.
     CrossPageMerge,
+    /// A page-local merge cannot preserve both durable identities by rewriting
+    /// graph-wide referrers as OG does. Leave both blocks untouched.
+    ReferencedIdentity,
     /// The page-header root is never an outline parent.
     HeaderRoot,
     /// No outline step exists (first sibling for indent, a root for outdent).
@@ -200,10 +208,29 @@ pub enum Place {
     },
 }
 
+/// Imported text, before runtime keys are allocated. Paste and page fragments
+/// have different grammars; both hand this forest to the same insertion rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutlineNode {
+    pub raw: String,
+    #[serde(default)]
+    pub children: Vec<OutlineNode>,
+}
+
 /// The verbs. Offsets are raw UTF-8 bytes in the block's current text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum Verb {
+    InsertOutline {
+        place: Place,
+        blocks: Vec<OutlineNode>,
+        /// Identities outside the supplied arena, supplied by the graph index.
+        #[serde(default)]
+        live_ids: Vec<String>,
+        /// Empty-leaf paste keeps its host key and hidden properties.
+        #[serde(default)]
+        reuse: Option<Key>,
+    },
     /// Enter at `raw_offset`. `children_visible`: the block's children are
     /// shown in this view; `keep_start_in_scope`: a split at the head of a
     /// zoom root keeps the new block inside the zoom.
@@ -218,7 +245,7 @@ pub enum Verb {
         keep_start_in_scope: bool,
     },
     /// Append `absorbed` to `survivor` (Backspace at start, Delete at end).
-    /// `absorbed_referenced` is reserved for the OG parity call (DESIGN §4.3).
+    /// `absorbed_referenced` comes from the host's existing reference index.
     Merge {
         survivor: Key,
         absorbed: Key,
@@ -234,6 +261,9 @@ pub enum Verb {
         keys: Vec<Key>,
         #[serde(default)]
         logical: bool,
+        /// Annotation siblings stay with their owner in the editor (GH #891).
+        #[serde(default)]
+        retain: Vec<Key>,
     },
     /// Remove blocks with their subtrees, on any of the pages given.
     Delete { keys: Vec<Key> },
@@ -279,6 +309,19 @@ impl Verb {
         // Blocks that change depth or page, or are deleted, are read whole.
         let whole = |keys: &[Key]| keys.iter().map(|k| read(k, true)).collect::<Vec<_>>();
         match self {
+            Verb::InsertOutline { place, reuse, .. } => {
+                let mut reads = match place {
+                    Place::Before { key } | Place::After { key } | Place::LastChild { key } => {
+                        vec![read(key, false)]
+                    }
+                    Place::Slot {
+                        parent: Some(key), ..
+                    } => vec![read(key, false)],
+                    Place::Slot { parent: None, .. } => vec![],
+                };
+                reads.extend(reuse.iter().map(|key| read(key, false)));
+                reads
+            }
             Verb::Split { key, .. } => vec![read(key, false)],
             Verb::Merge {
                 survivor, absorbed, ..
@@ -312,50 +355,7 @@ impl Verb {
 
 /// Run one verb over the pages that hold every block it names.
 pub fn apply(pages: &[OutlinePage], verb: &Verb, keys: &KeySource) -> Result<Change, Reason> {
-    let mut cx = Cx {
-        pages,
-        txs: Vec::new(),
-        keys: keys.clone(),
-        used: 0,
-        focus: None,
-        notices: Vec::new(),
-        transfers: Vec::new(),
-    };
-    match verb {
-        Verb::Split {
-            key,
-            raw_offset,
-            force_child,
-            children_visible,
-            keep_start_in_scope,
-        } => split(
-            &mut cx,
-            key,
-            *raw_offset,
-            *force_child,
-            *children_visible,
-            *keep_start_in_scope,
-        )?,
-        Verb::Merge {
-            survivor, absorbed, ..
-        } => merge(&mut cx, survivor, absorbed)?,
-        Verb::Indent { keys } => indent(&mut cx, keys)?,
-        Verb::Outdent { keys, logical } => outdent(&mut cx, keys, *logical)?,
-        Verb::Delete { keys } => delete(&mut cx, keys)?,
-        Verb::MoveTo {
-            keys,
-            to,
-            inherit_from,
-        } => move_to(&mut cx, keys, to, inherit_from.as_deref())?,
-        Verb::MoveUpDown {
-            keys,
-            up,
-            within_siblings,
-        } => move_up_down(&mut cx, keys, *up, *within_siblings)?,
-        Verb::InsertEmptyChild { parent, at } => insert_empty_child(&mut cx, parent, *at)?,
-    }
-    header_root_kept(&cx, verb)?;
-    Ok(cx.finish())
+    apply_with_policy(pages, verb, keys, &HidePolicy::Builtin)
 }
 
 // ---------------------------------------------------------------------------
@@ -574,6 +574,7 @@ impl<'a> PageTx<'a> {
 
 struct Cx<'a> {
     pages: &'a [OutlinePage],
+    hide: &'a HidePolicy,
     txs: Vec<PageTx<'a>>,
     keys: KeySource,
     used: u64,
@@ -780,15 +781,9 @@ fn remove_property_lines(block: &str, key: &str) -> Result<String, Reason> {
 }
 
 /// The editor-visible join offset as a raw offset in `raw`.
-fn raw_offset_of_visible(raw: &str, format: Format, visible: usize) -> usize {
+fn raw_offset_of_visible(raw: &str, format: Format, visible: usize, hide: &HidePolicy) -> usize {
     let regions = block_regions::parse(raw, format.is_org());
-    editor_text::visible_to_raw_with(
-        raw,
-        format.is_org(),
-        &regions,
-        &HidePolicy::Builtin,
-        visible,
-    )
+    editor_text::visible_to_raw_with(raw, format.is_org(), &regions, hide, visible)
 }
 
 // ---------------------------------------------------------------------------
@@ -814,14 +809,10 @@ fn split(
     let format = cx.txs[t].base.format;
     let node = cx.txs[t].block(key).ok_or(Reason::Incomplete)?.clone();
     let regions = block_regions::parse(&node.raw, format.is_org());
-    let et = editor_text::split_with(&node.raw, format.is_org(), &regions, &HidePolicy::Builtin);
-    let offset = editor_text::raw_to_visible_with(
-        &node.raw,
-        format.is_org(),
-        &regions,
-        &HidePolicy::Builtin,
-        raw_offset,
-    );
+    let hide = cx.hide;
+    let et = editor_text::split_with(&node.raw, format.is_org(), &regions, hide);
+    let offset =
+        editor_text::raw_to_visible_with(&node.raw, format.is_org(), &regions, cx.hide, raw_offset);
     let visible = et.visible.as_bytes();
     let boundary_before = offset < visible.len() && visible[offset] == b'\n';
     let boundary_after = offset > 0 && visible[offset - 1] == b'\n';
@@ -866,7 +857,9 @@ fn split(
         // and its separator become the new block, so the original keeps only
         // the text after the boundary.
         if offset > 0 {
-            tx.block_mut(key)?.raw = join(after, &et.hidden, format)?;
+            tx.block_mut(key)?.raw =
+                editor_text::join_preserving(after, &et.hidden, format.is_org(), &node.raw, hide)
+                    .map_err(|_| Reason::Unparseable)?;
         }
         tx.insert(
             new_key.clone(),
@@ -892,7 +885,9 @@ fn split(
             &[EditKind::InsertBlocks]
         });
     } else {
-        tx.block_mut(key)?.raw = join(before, &et.hidden, format)?;
+        tx.block_mut(key)?.raw =
+            editor_text::join_preserving(before, &et.hidden, format.is_org(), &node.raw, hide)
+                .map_err(|_| Reason::Unparseable)?;
         tx.insert(
             new_key.clone(),
             Block {
@@ -925,8 +920,16 @@ fn split(
 /// (`handler/editor.cljs:825`, `:790`). The absorbed block's editor text is
 /// appended to the survivor's, its children follow the survivor's, and it is
 /// removed. The survivor keeps its key and hidden properties; the absorbed
-/// `id::` moves only when the survivor has none (OG parity candidate, §4.3).
-fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
+/// hidden rows and clocks are dropped. A referenced `id::` transfers only if
+/// the survivor has none. Unlike OG at 6e7afa8eb (`update-block-refs`), this
+/// page-local verb cannot rewrite graph-wide references when both have IDs;
+/// it refuses that case so both identities stay resolvable (F2).
+fn merge(
+    cx: &mut Cx,
+    survivor: &str,
+    absorbed: &str,
+    absorbed_referenced: bool,
+) -> Result<(), Reason> {
     let t = cx.tx_of(absorbed)?;
     let s = cx.tx_of(survivor)?;
     if s != t {
@@ -944,16 +947,22 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
     if !all_fit(&gone.children, |c| tx.subtree_fits(c, Some(survivor)))? {
         return Err(Reason::DepthCap);
     }
-    let keep = editor_text::split(&keep_raw, format.is_org(), &HidePolicy::Builtin);
-    let lost = editor_text::split(&gone.raw, format.is_org(), &HidePolicy::Builtin);
+    let keep = editor_text::split(&keep_raw, format.is_org(), cx.hide);
+    let lost = editor_text::split(&gone.raw, format.is_org(), cx.hide);
     let survivor_has_id = block_regions::parse(&keep_raw, format.is_org())
         .id
         .is_some_and(|p| !p.value.trim().is_empty());
     let absorbed_id = block_regions::parse(&gone.raw, format.is_org())
         .id
+        .filter(|p| !p.value.trim().is_empty())
         .map(|p| js_trim(p.line.slice(&gone.raw)).to_string());
+    if absorbed_referenced && absorbed_id.is_some() && survivor_has_id {
+        return Err(Reason::ReferencedIdentity);
+    }
     let mut hidden = keep.hidden.clone();
-    if let (false, Some(id)) = (survivor_has_id, &absorbed_id) {
+    // OG move-to-prev-block strips properties and the absorbed logbook. Keep
+    // the same rule for Delete, whose OG unreferenced path differs (F2).
+    if let (true, Some(id)) = (absorbed_referenced, &absorbed_id) {
         hidden = if hidden.is_empty() {
             id.clone()
         } else {
@@ -969,7 +978,7 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
         &hidden,
         format,
     )?;
-    let focus = raw_offset_of_visible(&raw, format, keep.visible.len());
+    let focus = raw_offset_of_visible(&raw, format, keep.visible.len(), cx.hide);
     let parent = tx.parent_of(absorbed);
     let b = tx.block_mut(survivor)?;
     b.raw = raw;
@@ -1030,50 +1039,6 @@ fn indent(cx: &mut Cx, keys: &[Key]) -> Result<(), Reason> {
     np.raw = expanded;
     tx.collapsed.insert(new_parent, false);
     tx.kind(&[EditKind::MoveBlocks, EditKind::SaveBlock]);
-    cx.focus = keep_editing(keys);
-    Ok(())
-}
-
-/// Shift+Tab: the window's `outdentBlock` (`edits/blocks.ts:363`) and
-/// `outdentSelection` (`edits/selection.ts:372`); OG `indent-outdent-blocks`
-/// (`outliner/core.cljs:835-852`). `keys` (all on one page) land after the
-/// first key's parent, in order. Traditional outdenting of one block takes its
-/// following siblings along as its last children; logical outdenting and a
-/// selection move the blocks alone.
-fn outdent(cx: &mut Cx, keys: &[Key], logical: bool) -> Result<(), Reason> {
-    let t = one_page(cx, keys)?;
-    cx.writable(t)?;
-    let tx = &mut cx.txs[t];
-    let first = &keys[0];
-    let parent = tx.parent_of(first).ok_or(Reason::NoOutlineStep)?;
-    let grand = tx.parent_of(parent);
-    if keys.iter().any(|k| tx.in_subtree(k, parent)) {
-        return Err(Reason::Cycle);
-    }
-    if !all_fit(keys, |k| tx.subtree_fits(k, grand))? {
-        return Err(Reason::DepthCap);
-    }
-    if let ([key], false) = (keys, logical) {
-        let children = &mut tx.block_mut(parent)?.children;
-        let idx = children
-            .iter()
-            .position(|k| k == key)
-            .ok_or(Reason::Incomplete)?;
-        let following = children.split_off(idx + 1);
-        children.pop();
-        tx.block_mut(key)?.children.extend(following);
-    } else {
-        for k in keys {
-            tx.detach(k)?;
-        }
-    }
-    let g = tx.siblings_mut(grand)?;
-    let at = g
-        .iter()
-        .position(|k| k == parent)
-        .ok_or(Reason::Incomplete)?;
-    g.splice(at + 1..at + 1, keys.iter().cloned());
-    tx.kind(&[EditKind::MoveBlocks]);
     cx.focus = keep_editing(keys);
     Ok(())
 }
@@ -1963,6 +1928,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn gh741_logbook_enter_keeps_history_on_original_block() {
+        let raw = "DOING x\n:LOGBOOK:\nCLOCK: [2026-10-21 Wed 08:54:45]\n:END:";
+        for format in [Format::Md, Format::Org] {
+            let mut p = page("P", &[("a", raw, &[])], &["a"]);
+            p.format = format;
+            let change = run(&[p], split_at("a", "DOING x".len(), false)).unwrap();
+            let edits = &change.pages[0].upserts;
+            assert_eq!(edits.iter().find(|b| b.key == "a").unwrap().raw, raw);
+            assert_eq!(edits.iter().find(|b| b.key != "a").unwrap().raw, "");
+        }
+    }
+
+    #[test]
+    fn gh741_logbook_merge_keeps_only_survivor_history_per_f2() {
+        for format in [Format::Md, Format::Org] {
+            let first = ":LOGBOOK:\nCLOCK: [2026-10-20 Tue 08:00:00]\n:END:";
+            let second = ":LOGBOOK:\nCLOCK: [2026-10-21 Wed 09:00:00]  \n:END:";
+            for keep_drawer in [false, true] {
+                let keep = if keep_drawer {
+                    format!("one\n{first}")
+                } else {
+                    "one".into()
+                };
+                let gone = format!("two\n{second}");
+                let mut p = page("P", &[("a", &keep, &[]), ("b", &gone, &[])], &["a", "b"]);
+                p.format = format;
+                let change = run(
+                    &[p],
+                    Verb::Merge {
+                        survivor: "a".into(),
+                        absorbed: "b".into(),
+                        absorbed_referenced: false,
+                    },
+                )
+                .unwrap();
+                let raw = &change.pages[0]
+                    .upserts
+                    .iter()
+                    .find(|b| b.key == "a")
+                    .unwrap()
+                    .raw;
+                let expected = if keep_drawer {
+                    format!("onetwo\n{first}")
+                } else {
+                    "onetwo".to_string()
+                };
+                assert_eq!(raw, &expected);
+            }
+        }
+    }
+
     /// GH #210 F1: Enter inside the page header never moves it below a new
     /// block or carries a property out of it: it is OG's in-field newline
     /// (`dwim-in-properties`). Before the fix offset 0 put an empty block above
@@ -2057,6 +2074,15 @@ mod tests {
                 },
                 inherit_from: None,
             },
+            Verb::InsertOutline {
+                place: Place::Before { key: "h".into() },
+                blocks: vec![OutlineNode {
+                    raw: "x".into(),
+                    children: vec![],
+                }],
+                live_ids: vec![],
+                reuse: None,
+            },
         ];
         for verb in verbs {
             assert_eq!(
@@ -2070,6 +2096,7 @@ mod tests {
             Verb::Outdent {
                 keys: vec!["c".into()],
                 logical: false,
+                retain: Vec::new(),
             },
             Verb::MoveTo {
                 keys: vec!["c".into()],

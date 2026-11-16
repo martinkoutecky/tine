@@ -43,7 +43,5 @@ date-date-picker-from-completion = from completion
 
 date-date-picker-done = Done
 
-date-date-picker-today = Today
-
 date-date-picker-clear = Clear
 

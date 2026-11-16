@@ -27,6 +27,21 @@ import slashFixturePart1 from "./fixtures/slash-ranking-prefix-base-15bbddc/part
 import slashFixturePart2 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-2.json";
 import slashFixturePart3 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-3.json";
 import slashFixturePart4 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-4.json";
+import { setActiveLocale } from "../i18n";
+
+it("keeps Unicode command input active and matches localized < labels (GH #107)", async () => {
+  for (const [raw, kind, query] of [["/表", "command", "表"], ["text /待办", "command", "待办"], ["<引用", "advanced-command", "引用"], ["/e\u0301", "command", "e\u0301"]] as const) {
+    expect(detectTrigger(raw, raw.length)).toMatchObject({ kind, query });
+  }
+  for (const raw of ["/表 ", "/表\n", "word/表", "<引用 ", "text <引用"]) expect(detectTrigger(raw, raw.length)).toBeNull();
+  const english = filterAdvancedBlockCommands("qu").map(command => command.matchLabel);
+  await setActiveLocale("zh-CN");
+  try {
+    expect(filterCommands("表").some(command => command.matchLabel === "Table")).toBe(true);
+    expect(filterAdvancedBlockCommands("引用").map(command => command.matchLabel)).toContain("Quote");
+    expect(filterAdvancedBlockCommands("qu").map(command => command.matchLabel)).toEqual(english);
+  } finally { await setActiveLocale("en"); }
+});
 
 describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
   // `value`/`caret` are the POST-input textarea state; `typed` is the char.

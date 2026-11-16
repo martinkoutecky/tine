@@ -13,6 +13,16 @@ prerelease and never becomes GitHub's `latest` release.
 
 The internal switch key remains `experiment`. Its Beta identity is new: the
 former experiment identity never shipped, so there is no migration from it.
+
+Beta uses amber `#e8890c` masters (`docs/app-icon-beta.svg` and
+`docs/app-icon-beta-macos.svg`), with only the background fill changed from the
+stable masters. Regenerate with `node scripts/render-beta-icons.mjs` (Playwright
+Chromium and Python Pillow required); it uses the shared renderer, Tauri icon
+tooling and macOS ICNS renderer, including opaque iOS assets in
+`src-tauri/icons-beta/ios`. The stable iOS set remains untouched.
+Use `node scripts/render-beta-icons.mjs --ios-only` to regenerate just that set.
+`docs/app-icon-nightly.svg` is reserved for a possible nightly identity and is unused.
+
 Desktop seeding still reads only stable Tine's compatible settings and leaves
 stable data intact. The local deploy destination remains `~/research/tine-og`.
 Beta release versions use `X.Y.0-beta.N` (N = 1–999), with the Android code
@@ -26,8 +36,26 @@ remain accepted for the current campaign build and stable tooling.
 ```json
 { "ship": "release",
   "identities": {
-    "release":    { "identifier": "page.tine.Tine",   "productName": "Tine",    "androidApplicationId": "page.tine.app", "deployName": "tine" },
-    "experiment": { "identifier": "page.tine.TineBeta", "productName": "Tine Beta", "androidApplicationId": "page.tine.beta",  "deployName": "tine-og" } } }
+    "release": {
+      "identifier": "page.tine.Tine", "productName": "Tine",
+      "androidApplicationId": "page.tine.app", "deployName": "tine", "iconDirectory": "icons",
+      "ios": {
+        "displayName": "TineOutline", "appStoreAppleId": "6804403687",
+        "provisioningProfileSecret": "IOS_MOBILE_PROVISION",
+        "shareExtensionProvisioningProfileSecret": "IOS_SHARE_EXTENSION_MOBILE_PROVISION"
+      }
+    },
+    "experiment": {
+      "identifier": "page.tine.TineBeta", "productName": "Tine Beta",
+      "androidApplicationId": "page.tine.beta", "deployName": "tine-og", "iconDirectory": "icons-beta",
+      "ios": {
+        "displayName": "Tine Beta", "appStoreAppleId": "6832052325",
+        "provisioningProfileSecret": "IOS_BETA_MOBILE_PROVISION",
+        "shareExtensionProvisioningProfileSecret": "IOS_BETA_SHARE_EXTENSION_MOBILE_PROVISION"
+      }
+    }
+  }
+}
 ```
 
 To flip it, run `node scripts/set-app-identity.mjs release` (or
@@ -36,6 +64,12 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Derived place | How |
 |---|---|
 | `src-tauri/tauri.conf.json` `identifier`, `productName`, main window `title` | rewritten by the script; `src-tauri/build.rs` refuses to compile when they disagree with the switch |
+| Desktop bundle/window/tray icons and Linux runtime desktop icons | `iconDirectory` selects the bundle icon list and `build.rs` emits `TINE_ICON_DIRECTORY` for embedded Linux PNGs |
+| Android launcher/adaptive icons | the derived Gradle `tineIconDirectory` adds Beta resources to both build types, overriding the stable main resources only for Beta |
+| iOS plists, app and Share Extension entitlements, native Swift group/container/notification/Spotlight identifiers | `IOS_IDENTITY_FILES` in the front door derives them, including display and iCloud folder names; `iosIdentity()` derives the extension bundle ID, App Group and iCloud container from `identifier` |
+| Generated iOS project and export options | `prepare-ios-project.mjs` selects the identity's opaque iOS icon catalog, app and extension bundle IDs and their separate profiles; `ios-native-integrations.mjs` adds the matching extension target |
+| iOS TestFlight workflow | `ios-distribution-inputs.mjs` checks tag/version/identity agreement before signing and selects the profile secret names and App Store Connect app ID from the switch |
+| iOS Welcome and folder-refusal messages | `APP_IOS_DISPLAY_NAME` in `src/appIdentity.ts` supplies the selected display name to the localized catalogs |
 | Rust code (`app_identity.rs`, `linux_window_identity.rs`, the seed) | `build.rs` emits `TINE_APP_IDENTIFIER`, `TINE_PRODUCT_NAME` and `TINE_RELEASE_IDENTIFIER` |
 | Release filenames (`scripts/release-layout.mjs`) | derive from `productName`; whitespace becomes `-` for GitHub assets, while `sourceAssets` names Tauri outputs verbatim |
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
@@ -60,19 +94,24 @@ all consume the same layout. Beta updates remain restricted to the `beta` releas
 
 The Beta Flatpak bundle is published with the other Beta assets as
 `Tine-Beta_<version>_x86_64.flatpak` (`flatpak-x64` lane in
-`scripts/release-layout.mjs`; `release.yml` calls `flatpak.yml` with
-`identity: experiment`). It is a manual download: updates mean installing the
+`scripts/release-layout.mjs`; `release.yml` calls `flatpak.yml` with the
+shipped identity: `experiment` for a Beta, `release` once the stable flip is
+made on `release/X.Y`). It is a manual download: updates mean installing the
 next bundle, and `latest.json` never references it.
 
 A few identity-bearing places need no file of their own:
 
 - The iOS bundle id is Tauri's `identifier`. No `gen/apple` project is
   checked in.
-- iOS has no Beta app yet, so `ios-testflight.yml` with `beta_as_release`
-  builds a Beta tag under the stable identity `page.tine.Tine`, with marketing
-  version `X.Y.Z` (the `-beta.N` suffix stripped) and "What to Test" naming the
-  Beta (D-20261018-I1 option A). From 0.9 a separate TestFlight-only Tine Beta
-  app replaces this (option B).
+- iOS Betas use the separate TestFlight-only **Tine Beta** app
+  (`page.tine.TineBeta`, App Store Connect **TineOutline Beta**, 6832052325).
+  Stable uses **TineOutline** (`page.tine.Tine`, 6804403687). Both install
+  together. Beta uses `group.page.tine.TineBeta` and
+  `iCloud.page.tine.TineBeta`; stable keeps `group.page.tine.Tine` and
+  `iCloud.page.tine.Tine`. The workflow has no `beta_as_release` fallback:
+  retaining it would allow a Beta to replace the App Store app again.
+  Marketing versions remain `X.Y.Z`, stripping `-beta.N`; Tauri prefixes the
+  Actions run number with that version for `CFBundleVersion`.
 - The Linux window class, Wayland `app_id` and runtime `.desktop` file come
   from `TINE_APP_IDENTIFIER`. Tauri's deb/rpm launcher filename uses the
   product name. When that packaged launcher is present, the runtime app-ID
@@ -93,6 +132,21 @@ release identity is the one master ships. It also checks that no source file
 outside the derived set and this front door spells either identifier or
 "Tine Beta".
 
+## iOS Beta first launch
+
+Tine Beta starts on Welcome with fresh settings and no remembered graph. Its
+local Documents folder, iCloud Drive folder and share inbox are separate from
+stable's. It cannot see stable's settings or `iCloud Drive → TineOutline`;
+the desktop config seed never runs on mobile. Open or create a graph under
+`On My iPhone/iPad → Tine Beta` or `iCloud Drive → Tine Beta`. To try existing
+notes, copy the graph into one of those Beta folders using Files. The copy is
+independent of the original. Existing TestFlight data under the stable identity
+stays with TineOutline and is not automatically imported.
+
+The old TineOutline TestFlight invitation belongs to the stable app record;
+the new app needs its own testers and invitation. See
+`docs/APPLE-DISTRIBUTION.md` for signing and delivery.
+
 ## What the released identity finds in a master user's dir
 
 These are the entries master writes in its app-data dir, and how og treats
@@ -110,8 +164,10 @@ rewritten into another format, and none is deleted or made into an error.
 | `.window-state.json` (config dir) | read as-is | tauri-plugin-window-state. |
 | `diagnostics/process.lock`, `session-active` | read as-is | Same semantics. The single-instance lock stops master and og from running at once. |
 | `diagnostics/*.jsonl` | disjoint | og writes `history.jsonl`; master's `current`/`previous` files are left alone. |
-| `backups/<graph>/<stamp>/` schema 3 | read as-is, never pruned | Since og-B (ADR 0062) og writes the same schema-3 layout and lists and restores master's snapshots. og marks its own with `"writer": "og"` (master ignores the field) and its keep-count prunes only its own and schema-2 ones: `backup::is_foreign_snapshot`. Master's keep-count counts every snapshot, og's included, as it already did for og's schema-2 ones. |
-| `backups/…/.partial-*` | cleaned | A crashed, never-published snapshot. It is cleaned by whichever Tine runs, and the single-instance lock means it is never a live one. |
+| `backups/<graph>/<stamp>/` schema 3 | read as-is, never pruned | og-B (ADR 0062) wrote the same schema-3 layout, marking its own with `"writer": "og"` (master ignores the field). Since ADR 0074 og writes no new folders. It still lists and restores master's snapshots and its own older ones, and its keep-count prunes only its own and schema-2 ones: `backup::is_foreign_snapshot`. Master's keep-count counts every folder there, og's older ones included. |
+| `backups/<graph>.zips/<name>.zip` schema 5 | og-only | ADR 0074: og's launch and safety snapshots, one zip each. Master never opens this folder (it reads only `backups/<graph>/`), so master neither lists, restores nor prunes them, and a rollback to master keeps them untouched. og's keep-count counts its own zips and its own older folders together (`backup::maintain_locked`). |
+| `backups/<graph>/.partial-*` | cleaned | A crashed, never-published schema-3 snapshot. Whichever Tine runs cleans it; the single-instance lock means it is never a live one. |
+| `backups/<graph>.zips/.partial-*.zip` | cleaned by og | A crashed, never-published zip. og removes it only while holding that folder's lock file `lock`, so it is never another writer's live one. |
 | `direct-files-projections/`, `direct-move-recovery/`, `conflict-capsules/`, `mediakeys/`, `hsts-storage.sqlite`, `WebKitCache/` | master-only | og has no reader and never opens them. They are byte-identical after an og run. |
 | `concord-ledger/<root>/` | **conflict (open)** | Same path and schema number, but a different layout. Each build's prune deletes the other's pin files. See Open items. |
 
@@ -160,10 +216,11 @@ staging dir, fsyncs it, and renames it into place.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
-**Delete it when the switch ships `release`** (done in 0.7.0 and again in
-0.8.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
+**Delete it when the switch ships `release`** (done in 0.7.0, 0.8.0 and
+0.9.0). Remove the file, its `_tests.rs`, the `mod` line and the one call in
 `lib::run()`, and its rows in the portable host-path allowlist
-(`src-tauri/src/portable.rs`) and the regression row's test list; point the
+(`src-tauri/src/portable.rs`), the write-site ledger
+(`crates/tine-store/tests/write_sites.toml`) and the regression row's test list; point the
 updater endpoint at the stable address. `src/appIdentity.guard.test.ts` fails
 until you do.
 

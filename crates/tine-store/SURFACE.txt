@@ -24,7 +24,19 @@
 # by Martin 2026-10-10; A-R1 then cut PageHost::release (13 -> 12).
 # GH #181: read_link_identity_at takes a LinkProbe so a cold link can rule out a closed graph without opening
 # it (rule 3: parameter on the existing link question, not a sibling)
-## Lifecycle (ceiling: 24)
+# L9-02: canonical_root can resolve a path, but cannot compare it with a retiring
+# Store's held physical witness. check_graph_root supplies that lifecycle check
+# before adoption; it exposes no path, inode, cache or new persisted identity.
+# SB1 Git guards already use BoundDirectory across the app/store boundary.
+# Store::check_graph_root checks only that Store's graph; a parameter cannot
+# capture and retain separate Git-selected worktree/gitdir/commondir witnesses
+# before libgit2 mutations. Record that existing API and its OS path hand-offs.
+## Lifecycle (ceiling: 30)
+struct root_binding::BoundDirectory
+fn root_binding::BoundDirectory::new
+fn root_binding::BoundDirectory::root
+fn root_binding::BoundDirectory::check
+fn root_binding::BoundDirectory::check_path
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -37,6 +49,7 @@ fn store::Store::create_graph
 fn store::Store::suggest_graph_name
 fn store::Store::inspect
 fn store::Store::canonical_root
+fn root_binding::Store::check_graph_root
 fn store::GraphAccessInspection::approves_external_assets
 fn store::Store::open
 fn store::Store::set_watch_mode
@@ -51,7 +64,30 @@ struct link_identity::LinkInspection
 field link_identity::LinkInspection.identity
 field link_identity::LinkInspection.target_possible
 
-## Freshness (ceiling: 26)
+## Freshness (ceiling: 33)
+# GX4 S2 explicitly requires mounted unlinked targets in the publication host.
+# Store::subscribe owns the one dispatch stream, not the changing set of views;
+# adding a subscribe parameter cannot register/release targets after dispatch
+# starts without replacing that stream. One native lifetime-bound registration
+# operation controls those transient dependencies; it does not add a faster
+# sibling of an existing reader. Revocation uses the existing binding flag.
+# GX4 S4: extend that existing operation's parameter to query/registry readers;
+# the old string names only an unlinked target and cannot carry a query plan.
+# register_reader_while_live replaces register_unlinked_reference_while_live,
+# so the operation count stays 49. The two parameter/result carriers and their
+# result fields carry dependencies, refresh policy and a publication revision,
+# not caller-visible cache/readiness state. No faster sibling reader is added.
+fn store::Store::register_reader_while_live
+enum store::QuerySubscription
+struct store::QueryRegistration
+field store::QueryRegistration.mode
+field store::QueryRegistration.rev
+# test-oracle: query fixtures register without a native binding's revocation
+# flag; production uses the same lifetime-bound reader operation above.
+fn store::Store::register_query_subscription
+# test-oracle: Store-only fixtures register readers without a native window's
+# cancellation flag; production uses the lifetime-bound operation above.
+fn store::Store::register_unlinked_reference
 enum store::Depth
 enum store::ChangeKind
 enum store::Origin
@@ -82,7 +118,25 @@ field store::WatchBatch.reconcile_started
 # private transaction module).
 fn transaction::Store::read_is_current
 
-## Identity (ceiling: 9)
+## Identity (ceiling: 13)
+# REG-CM-MERGE-LOSES-ALIASES: a merge must keep both pages' aliases, which the
+# alias answer reads from the page header (pre-block, else a properties-only
+# first root) under the keys alias/aliases. No existing item answers either
+# question for a page the caller holds as text (`resolve` answers names in the
+# published graph, not a merge's two parsed pages); exposing the answer's own
+# two rules keeps the merge from restating them (I-12).
+fn query::page_header_text
+fn query::is_alias_key
+# GS-FIX2: is_graph_text/is_asset_sidecar classify file types, not spelling
+# candidates. Expose the existing Unicode case-only predicate so the pull
+# planner and host/transaction publication share one candidate policy;
+# this read-only path comparison proves no alias and adds no writer.
+fn file_kind::case_only
+# D-20261031-GCL: case_only compares two file IDs in the same parent; it
+# cannot provide the canonical name keys needed to inspect a whole remote
+# tree before any entry exists on disk. Expose the existing GS1 fold so clone
+# checks each directory once without duplicating its Unicode identity rule.
+fn file_kind::fold_entry_name
 fn file_kind::is_graph_text
 fn file_kind::is_asset_sidecar
 # og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
@@ -94,7 +148,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 17)
+## Reads (ceiling: 19)
 # Audit L8-03: the orphan-asset inventory moved from WholeGraph::referenced_assets
 # (parsed pages only, cannot read set-aside duplicate-day files or fail on an
 # unreadable one) to the store, which can; the WholeGraph question left the surface.
@@ -105,6 +159,12 @@ field store::PageRead.doc
 field store::PageRead.id
 field store::PageRead.read_only
 field store::PageRead.rev
+# GH #863: a read's answer names the seam arm that produced it, also for an
+# absence (StoreError::NotFound carries it). No Reads item can say which arm
+# answered a past read, and a parameter cannot return it; asking held state
+# again would describe a newer answer at extra cost.
+enum store::PageReadSource
+field store::PageRead.source
 fn store::Store::may_carry_vcs_markers
 fn store::Store::open_read
 fn store::Store::page
@@ -133,13 +193,31 @@ struct store::ConfigState
 # deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
 # Outline kernel M0: EditKind moved to tine-outline (a leaf crate shared with the
 # window's wasm); tine-store re-exports it below (Save 5 -> 4, Re-exports 9 -> 10).
-## Save (ceiling: 4)
+# og-backup-zip (REVIEW-backup-zip R1): a launch backup deletes old snapshots
+# only after a strong directory sync. sync_directory_entry cannot answer that:
+# it folds the tolerated "no directory sync on this filesystem" into Ok, the
+# page host's contract for graph saves. The witness form the host already used
+# (DirectoryWitness, sync_directory_witness) becomes public instead of a copy
+# of the tolerated error set in src-tauri (4 -> 6).
+# WIN-DIR-FLUSH fix1: namespace adoption lives in the app crate and needs the
+# existing private flush on Windows. sync_directory_witness serves graph
+# callers and intentionally never flushes there; reusing it would change graph
+# saves. A mode parameter would break the existing graph/backup call signature;
+# expose the existing helper, preserving Unix witness handling in the app.
+## Save (ceiling: 7)
 fn directory_durability::sync_directory_entry
+enum directory_durability::DirectoryWitness
+fn directory_durability::sync_directory_witness
+fn directory_durability::sync_private_directory
 enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
 
-## Transaction steps (ceiling: 30)
+## Transaction steps (ceiling: 38)
+# GS-FIX: commit cannot validate a mixed host/non-page pull without writing.
+# validate runs its read-only preflight before the first host publication;
+# commit still repeats the checks under its own locks at publication time.
+fn transaction::Transaction::validate
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -157,7 +235,7 @@ fn transaction::Store::transaction
 fn transaction::Transaction::commit
 # DESIGN §3.1c C1/C5: no existing step plans without publishing; commit publishes.
 # Replaces Store::page_bytes with commit's full preflight and staged effects.
-fn transaction::Transaction::plan
+fn transaction::PagePlan::plan
 fn transaction::Transaction::create
 fn transaction::Transaction::create_unique
 # Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
@@ -171,8 +249,8 @@ fn transaction::Transaction::replace
 # GH #623: the rename planner asks the transaction whether a reference rewrite
 # changes a file; the transaction keeps the result for preflight. One door for a
 # moved page's title rebind too (og-surface row 6).
-fn transaction::Transaction::rewrite_refs
-fn transaction::Transaction::save_page
+fn transaction::PagePlan::rewrite_refs
+fn transaction::PagePlan::save_page
 # host-only-writer P3 W8 (28 -> 29): a VCS-marker resolution run as a host operation
 # must stage the marker bytes' conflict-trash copy before the operation, with no
 # transaction to commit. `Transaction::trash` moves an existing file (removing it);
@@ -184,6 +262,19 @@ struct transaction::IoError
 struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
+# S4 / Q-B(ii): the page builder has no public commit; the non-page
+# builder cannot name page saves or rewrites and checks dynamic file targets.
+struct transaction::PagePlan
+fn transaction::Store::page_plan
+fn transaction::PagePlan::create
+fn transaction::PagePlan::move_file
+fn transaction::PagePlan::trash
+fn transaction::PagePlan::expect_view
+# ADR 0078 §4 (git pull, s3.7): a pulled page lands as the upstream blob's exact
+# bytes over the H bytes it was planned from. `create` is no-replace by contract,
+# `save_page` serializes a PageDto (not the blob's bytes), and `Transaction::replace`
+# refuses pages; a mode on `create` would give one step two guards.
+fn transaction::PagePlan::replace_page_bytes
 fn transaction::IoError::kind
 
 ## Trash admin (ceiling: 3)
@@ -191,7 +282,15 @@ enum store::TrashKind
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 
-## Diagnostics (ceiling: 3)
+## Diagnostics (ceiling: 5)
+# SB2-DIAG: Store::diagnostics is a read-only pull snapshot and cannot record
+# a namespace move owned by the app layer when no report is being requested.
+# Passing an adoption to the snapshot would make export mutate the evidence
+# and miss moves between exports. One O(1), memory-only recorder accepts a
+# closed reason; it exposes no file I/O, paths or content. This is storage
+# field evidence, not a faster sibling of an existing reader.
+enum storage_diag::DraftAdoptionReason
+fn store::Store::record_draft_namespace_adoption
 # Storage A/B bench events (STEP3 §13 gate 2, branch og-bench-events): the
 # app asks once whether `TINE_BENCH_EVENTS` is set (its window then reports
 # `unfreeze`) and forwards that event. `Store::diagnostics` cannot answer
@@ -233,15 +332,16 @@ field publish::PublishReceipt.site
 field publish::PublishReceipt.files
 field publish::PublishReceipt.previous_kept
 
-## Restore (ceiling: 15)
+# og-backup-zip (R9): a restore source is verified bytes in memory, not a
+# path plus length re-checked at copy time (source, len -> bytes; 15 -> 14).
+## Restore (ceiling: 14)
 fn restore::Store::restore
 struct restore::RestoreFile
 struct restore::RestoreReport
 struct restore::RestoreFailed
 field restore::RestoreFile.area
 field restore::RestoreFile.rel
-field restore::RestoreFile.source
-field restore::RestoreFile.len
+field restore::RestoreFile.bytes
 # test-oracle: tests check how many files a restore copied; the app reports recovery locations only.
 field restore::RestoreReport.restored
 field restore::RestoreReport.recovery
@@ -284,8 +384,11 @@ fn store::WholeGraph::backlinks
 fn store::WholeGraph::explicit_referrers
 fn store::WholeGraph::unlinked_references
 
-## WholeGraph: Block refs (ceiling: 4)
+## WholeGraph: Block refs (ceiling: 5)
 fn store::WholeGraph::block_ref_counts
+# CLI slice 2 (review 5 B1): a write by `id::` must know the id names one page's
+# block; the block-id index is a hint and keeps no duplicates.
+fn store::WholeGraph::block_pages
 fn store::WholeGraph::block_referrers
 fn store::WholeGraph::blocks
 fn store::WholeGraph::preview_block
@@ -326,7 +429,14 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 54)
+## Page host (ceiling: 53)
+# audit-storage-1109 R1 (52 -> 53, Beta port of develop 73e1c818a): `ended`, whether
+# a host's driver ended (a host bug). src-tauri's retirement must not adopt such a
+# host on reopen (host_retirement.rs adopt, state.rs PageHostSlot::ended). No
+# existing item answers it without effect: orphan_stop ends the window's session
+# first, window_reloaded/draft_status ask the dead driver, and stop_finish consumes
+# the host. A parameter on those cannot ask without acting. The terminal stop
+# itself is stop_finish's existing verb (no new item).
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -337,15 +447,9 @@ fn store::WholeGraph::templates
 # file I/O. Step 3b P2b (36 -> 37): `start`, the production constructor src-tauri's graph
 # binding calls (graph.rs load_graph_for_label); no existing item starts a host outside
 # tests (`start_for_tests` is test-faults gated and picks a fixed graph id).
-# M6 (37 -> 38): `ReserveRefusal`, `reserve`'s refusal: unsaved pages, or `Busy` once a
-# rename still finishing held them for OPERATION_WAIT. The previous error type (the set
-# of unsaved pages) cannot say Busy, and `RenameRefusal` is a rename's outcome, not a
-# writer's reservation (STEP3-DESIGN manager decisions on REVIEW-progress-plan, R4).
 struct page_host::PageHost
 fn page_host::PageHost::start
-fn page_host::PageHost::reserve
 fn page_host::PageHost::rename
-fn page_host::PageHost::respell
 fn page_host::PageHost::stop_saved
 fn page_host::PageHost::window_reloaded
 fn page_host::PageHost::open
@@ -363,6 +467,7 @@ fn page_host::PageHost::orphan_stop
 fn page_host::PageHost::retarget
 fn page_host::PageHost::stop_abort
 fn page_host::PageHost::stop_finish
+fn page_host::PageHost::ended
 struct page_host::Reloaded
 struct page_host::Opened
 struct page_host::PageMail
@@ -373,20 +478,22 @@ enum page_host::PageOperation
 enum page_host::StopState
 # test-oracle: tine-graph-features tests bind a host; production starts one through `start`.
 fn page_host::PageHost::start_for_tests
-struct page_host::Reservation
+# test-oracle: retirement and admission fixtures pause host work without a retained writer.
+fn page_host::PageHost::pause_for_tests
 enum page_host::Input
 enum page_host::RenameRefusal
-enum page_host::ReserveRefusal
 enum page_host::StopMode
 struct page_host::Stopped
 fn page_host::Stopped::relaunch
 # host-only-writer P2 (DESIGN §3.1/3.1a, 38 -> 47): one host operation (`apply` of a `HostOp`
 # with its fields, `Expected` bytes, `Effect`, `ApplyRefusal`) replaces a writer's reservation
-# window. `reserve`/`rename` cannot carry an op's expected bytes and effects: `reserve` fences
-# pages for the caller to write itself, `rename` is one fixed move. `reserve` goes in P4.
+# window. A HostOp carries all expected bytes/effects; S4 removes caller-side reservations.
 struct page_host::HostOp
 field page_host::HostOp.pages
-field page_host::HostOp.moved
+field page_host::HostOp.moves
+# GS-FIX: apply's return cannot report publications after an Uncertain/Late
+# answer. Its optional in-memory sink records matching bytes at publication.
+field page_host::HostOp.publications
 field page_host::HostOp.policy
 field page_host::HostOp.kinds
 fn page_host::PageHost::apply
@@ -408,14 +515,26 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 10)
+# SB1-ACCEPT2 merge with SB2-DIAG: both branches added one re-export (13 -> 14).
+## Re-exports (ceiling: 15)
+# SB1's existing app-facing directory identity/containment witness, above.
+use crate::root_binding::BoundDirectory
+use crate::storage_diag::DraftAdoptionReason
+# GX4 S4: typed parameters/results for the existing reader registration door.
+use crate::store::change_summary::{QueryRegistration,QuerySubscription}
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
-use crate::transaction::{Content,IoError,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
+use crate::transaction::{Content,IoError,PagePlan,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,PageReadSource,QueryError,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
+# Card hB9Zjw: the inventory types moved beside their implementation in
+# store/inventory.rs (size ratchet seam); the same items, re-exported by store.
+use store::inventory::{Inventory,InventoryEntry,InventoryScope}
+# GH #863: PageRead moved beside its producer in store/page_read.rs with its
+# source enum (size ratchet seam, as hB9Zjw); the same items, re-exported by store.
+use store::page_read::{PageRead,PageReadSource}

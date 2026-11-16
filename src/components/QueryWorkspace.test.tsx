@@ -22,8 +22,8 @@ import { startEditing, endEdit } from "../editorController";
 import { backend } from "../backend";
 import { resetStore } from "../document";
 import { contextMenu, closeAllRightSidebarItems, rightSidebar } from "../ui";
-import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds } from "../panes";
-import { resetQueryTextOpenForTests } from "../navSettings";
+import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds, openRouteInOtherPane } from "../panes";
+import { resetQueryTextOpenForTests, resetSearchResultsOpenInThisTabForTests } from "../navSettings";
 import { setActiveLocale } from "../i18n";
 
 beforeAll(initParser);
@@ -31,6 +31,7 @@ beforeAll(initParser);
 afterEach(() => {
   clearTransientLayersForTest();
   resetQueryTextOpenForTests(false);
+  resetSearchResultsOpenInThisTabForTests(false);
   document.body.innerHTML = "";
 });
 
@@ -390,7 +391,8 @@ function workspaceDeps(): QueryWorkspaceDependencies {
 }
 
 async function waitFor(check: () => void): Promise<void> {
-  await vi.waitFor(check, { timeout: 1_000, interval: 5 });
+  // Search/full registrations may wait through HK3's 1.5-second quiet period.
+  await vi.waitFor(check, { timeout: 3_000, interval: 5 });
 }
 
 describe("QueryWorkspace", () => {
@@ -542,6 +544,60 @@ describe("QueryWorkspace", () => {
       expect(router.updateActiveQuery).toHaveBeenCalledWith({ source, sourceKind: "dsl" });
     } finally { dispose(); vi.restoreAllMocks(); }
   });
+  // GH #619 c6 (Q2, D-20261018-Q619): "Open in Search" carries the block's result kinds. A query-engine
+  // workspace shows the families its query asked for, not an always-present empty Pages section.
+  describe("result kinds of a query-engine workspace", () => {
+    const block = { id: "b1", raw: "TODO ship", marker: "TODO", collapsed: false, children: [], properties: [] };
+    const blockQuery: Query = { anchor: "block", filter: { kind: "true" }, diagnostics: [], source: { kind: "tql", original: "@block" } };
+    const pageQuery: Query = { ...blockQuery, anchor: "page" };
+    const ran = (anchor: "block" | "page") => anchor === "block"
+      ? { anchor, groups: [{ page: "Notes", kind: "page" as const, blocks: [block] }], diagnostics: [], total: 1, exceeded: false, report: { ran: [], ignored: [], supported: true } }
+      : { anchor, pages: [{ path: "pages/Alpha.md", name: "Alpha", kind: "page" as const, properties: [["status", "open"]] as [string, string][] }], diagnostics: [], total: 1, exceeded: false, report: { ran: [], ignored: [], supported: true } };
+    const mountDsl = async (anchor: "block" | "page", resultKinds?: "pages-and-blocks") => {
+      const route: QueryRoute = { kind: "query", id: `kinds-${anchor}-${resultKinds ?? "own"}`, sourceKind: "dsl", source: "{{tine-query @block}}", presentation: "list", ...(resultKinds ? { resultKinds } : {}) };
+      const deps = workspaceDeps();
+      vi.mocked(deps.parseQuery).mockResolvedValue({ query: anchor === "block" ? blockQuery : pageQuery, view: {} });
+      vi.mocked(deps.queryRun).mockResolvedValue(ran(anchor));
+      // the twin reading goes through the engine (print, parse, run), as the block's own twin does
+      vi.spyOn(backend(), "printQuery").mockResolvedValue(anchor === "block" ? "@page" : "@block");
+      vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: anchor === "block" ? pageQuery : blockQuery, view: {} });
+      vi.spyOn(backend(), "queryRun").mockResolvedValue(ran(anchor === "block" ? "page" : "block"));
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+      await waitFor(() => expect(root.querySelector("[data-query-result-kind] .query-results-list, [data-query-result-kind] .query-results-search")).not.toBeNull());
+      const kinds = () => [...root.querySelectorAll("[data-query-result-kind]")].map((el) => el.getAttribute("data-query-result-kind"));
+      return { root, dispose, kinds };
+    };
+    it("shows only Blocks for a block query and only Pages for a page query", async () => {
+      for (const anchor of ["block", "page"] as const) {
+        const { root, dispose, kinds } = await mountDsl(anchor);
+        try {
+          expect(kinds()).toEqual([anchor]);
+          expect(root.textContent).not.toContain("No matching");
+        } finally { dispose(); vi.restoreAllMocks(); }
+      }
+    });
+    it("shows both families, Pages above Blocks, when the route carries Pages and blocks (either anchor)", async () => {
+      for (const anchor of ["block", "page"] as const) {
+        const { root, dispose, kinds } = await mountDsl(anchor, "pages-and-blocks");
+        try {
+          await waitFor(() => expect(kinds()).toEqual(["page", "block"]));
+          expect(root.querySelector("[data-query-result-kind=page]")?.textContent).toContain("Alpha");
+          expect(root.querySelector("[data-query-result-kind=block]")?.textContent).toContain("ship");
+          // the page row shows its properties as text under the title (a query answer carries them all)
+          expect(root.querySelector("[data-query-result-kind=page] .query-page-props")?.textContent?.replace(/\s+/g, " ").trim()).toBe("status: open");
+        } finally { dispose(); vi.restoreAllMocks(); }
+      }
+    });
+    it("saves the choice back as tine.result-kinds", async () => {
+      const deps = materializeDeps();
+      const result = await materializeQueryWorkspace({ title: "Kinds", sourceKind: "dsl", source: "(todo TODO)", presentation: "list", resultKinds: "pages-and-blocks", routeId: "kinds-save" }, deps);
+      expect(result.ok && result.page.blocks[0].raw).toContain("\ntine.result-kinds:: pages-and-blocks");
+      const plain = await materializeQueryWorkspace({ title: "Kinds Two", sourceKind: "dsl", source: "(todo TODO)", presentation: "list", routeId: "kinds-save-2" }, materializeDeps());
+      expect(plain.ok && plain.page.blocks[0].raw).not.toContain("result-kinds");
+    });
+  });
+
   it("GH #660: a saved revision refreshes routed query membership after editing finishes", async () => {
     const route: QueryRoute = { kind: "query", id: "membership", sourceKind: "search", source: "alpha", presentation: "search" };
     const deps = workspaceDeps();
@@ -555,6 +611,7 @@ describe("QueryWorkspace", () => {
       await Promise.resolve(); await Promise.resolve();
       expect(root.textContent).toContain("An alpha result");
       endEdit("blur");
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledTimes(2));
       await waitFor(() => expect(root.textContent).not.toContain("An alpha result"));
       expect(deps.runGraphSearch).toHaveBeenCalledTimes(2);
     } finally { endEdit("blur"); dispose(); }
@@ -630,7 +687,7 @@ describe("QueryWorkspace", () => {
       const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
       input.value = "beta"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
       await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("No matching pages."));
-      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result");
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result"));
     } finally { dispose(); }
   });
   it("opens an alias match through the owner path and marks each family's truncation", async () => {
@@ -914,6 +971,130 @@ describe("QueryWorkspace", () => {
       expect(router.route()).toEqual(route);
       expect(root.querySelector<HTMLInputElement>(".query-workspace-source")!.value).toBe("alpha");
     } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+  });
+
+  // GH #796 (D-20261029-ST): Settings > Search results open in > This tab. The
+  // default (New tab) is the GH #416 test above and is unchanged.
+  describe("GH #796: Search results open in = This tab", () => {
+    const searchRoute = (id: string, presentation: QueryRoute["presentation"] = "search"): QueryRoute =>
+      ({ kind: "query", id, sourceKind: "search", source: "alpha", presentation });
+    const rowsOf = (root: HTMLElement) => {
+      const page = root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] button.query-result-row')!;
+      const blockSurface = root.querySelector<HTMLElement>('[data-query-result-kind="block"] [data-inpage-find-surface]')!;
+      const block = blockSurface instanceof HTMLButtonElement ? blockSurface : blockSurface.querySelector<HTMLButtonElement>("button")!;
+      return { page, block };
+    };
+    const tabOf = (router: PaneRouter, id: string) => router.tabs().find((tab) => tab.id === id)!;
+
+    it.each(["search", "list", "table", "board"] as const)("a plain click opens page and block results in this tab, which keeps Search one Back away (%s)", async (presentation) => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-click", presentation);
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const searchId = router.activeId();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        const { page, block } = rowsOf(root);
+        page.click();
+        expect(router.tabs()).toHaveLength(1);
+        expect(router.activeId()).toBe(searchId);
+        expect(router.route()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+        expect(tabOf(router, searchId).history).toEqual([route, expect.objectContaining({ kind: "page", name: "Alpha notes" })]);
+        router.goBack();
+        expect(router.route()).toEqual(route);
+        block.click();
+        expect(router.tabs()).toHaveLength(1);
+        expect(router.route()).toMatchObject({ kind: "page", name: "Research", path: "pages/client-b/Research.md" });
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
+
+    it("modifier and middle clicks keep their link destinations", async () => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-modifiers");
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const searchId = router.activeId();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        const { page, block } = rowsOf(root);
+        page.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.activeId()).toBe(searchId);
+        block.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+        expect(router.tabs()).toHaveLength(3);
+        expect(router.activeId()).toBe(searchId);
+        page.dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
+        expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: "Alpha notes" }));
+        const panes = layoutPaneIds().length;
+        page.dispatchEvent(new MouseEvent("click", { altKey: true, bubbles: true }));
+        expect(layoutPaneIds().length).toBeGreaterThan(panes);
+        expect(router.route()).toEqual(route);
+        expect(router.tabs()).toHaveLength(3);
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
+
+    it("Enter on a highlighted result opens it in this tab; Ctrl+Enter still opens a background tab", async () => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-enter");
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const root = document.createElement("div"); document.body.append(root);
+      const previous = HTMLElement.prototype.scrollIntoView;
+      HTMLElement.prototype.scrollIntoView = vi.fn();
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("button[data-query-result]")).toHaveLength(2));
+        const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+        const key = (name: string, init: KeyboardEventInit = {}) => (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, ...init }));
+        input.focus();
+        key("ArrowDown");
+        key("Enter", { ctrlKey: true });
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.route()).toEqual(route);
+        key("Enter");
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.route()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); HTMLElement.prototype.scrollIntoView = previous; }
+    });
+
+    it("a Search tab in a second pane navigates that pane's tab, not the main pane", async () => {
+      resetSearchResultsOpenInThisTabForTests(true);
+      const route = searchRoute("here-pane");
+      resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Home", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+      const otherId = openRouteInOtherPane(route)!;
+      const other = paneRouter(otherId);
+      const mainBefore = paneRouter("main").route();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={other} deps={workspaceDeps()} />, root);
+      try {
+        expect(other.route()).toMatchObject({ kind: "query", id: "here-pane" });
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        rowsOf(root).page.click();
+        expect(other.tabs()).toHaveLength(1);
+        expect(other.route()).toMatchObject({ kind: "page", name: "Alpha notes" });
+        expect(paneRouter("main").route()).toEqual(mainBefore);
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
+
+    it("the default stays New tab: a plain click leaves Search in place and opens a foreground tab", async () => {
+      const route = searchRoute("default-new-tab");
+      resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+      const router = paneRouter("main");
+      const searchId = router.activeId();
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+      try {
+        await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+        rowsOf(root).page.click();
+        expect(router.tabs()).toHaveLength(2);
+        expect(router.activeId()).not.toBe(searchId);
+        expect(tabOf(router, searchId).history).toEqual([route]);
+      } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+    });
   });
 
   it("shows evidence, diagnostics and explanations, and switches presentations without changing membership", async () => {

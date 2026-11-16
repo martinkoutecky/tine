@@ -1,6 +1,38 @@
-//! Name-discovery transport: readable names plus the unreadable paths.
-use super::{ResolvedWire, WholeGraph};
+//! Name-discovery transport: readable names plus the unreadable paths, and
+//! the wire form of one name's resolution.
+use super::WholeGraph;
 use serde::Serialize;
+use tine_store::{PageId, Resolved};
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ResolvedWire {
+    Existing { id: String, others: Vec<String> },
+    Alias { owners: Vec<String> },
+    Absent { id: String },
+}
+
+impl From<Resolved> for ResolvedWire {
+    fn from(value: Resolved) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<&Resolved> for ResolvedWire {
+    fn from(value: &Resolved) -> Self {
+        let id = |id: &PageId| id.as_str().to_owned();
+        match value {
+            Resolved::Existing { id: first, others } => Self::Existing {
+                id: id(first),
+                others: others.iter().map(id).collect(),
+            },
+            Resolved::Alias { owners } => Self::Alias {
+                owners: owners.iter().map(id).collect(),
+            },
+            Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
+        }
+    }
+}
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {
@@ -8,7 +40,7 @@ pub(crate) struct PageInventoryWire {
     /// older than one it already holds.
     rev: String,
     entries: Vec<PageInventoryEntryWire>,
-    /// Graph-relative paths whose page name could not be read.
+    /// Graph-relative paths and read reasons, as on the journal feed wire.
     unreadable: Vec<String>,
 }
 
@@ -20,6 +52,29 @@ pub(crate) struct PageInventoryEntryWire {
     is_journal: bool,
     day: Option<i64>,
     target: ResolvedWire,
+}
+
+/// The page header's alias group (D-20261019-AL2): the other names with no
+/// file of their own (a link opens an owner), and the other names a file
+/// claims (a link opens that file).
+#[derive(Serialize)]
+pub(crate) struct AliasGroupWire {
+    aliases: Vec<String>,
+    pages: Vec<String>,
+}
+
+pub(super) fn alias_group_wire(view: &WholeGraph, name: &str) -> AliasGroupWire {
+    let (mut aliases, mut pages) = (Vec::new(), Vec::new());
+    for entry in &view
+        .inventory(tine_store::InventoryScope::AliasGroup(name))
+        .0
+    {
+        match entry.target {
+            Resolved::Existing { .. } => pages.push(entry.name.clone()),
+            _ => aliases.push(entry.name.clone()),
+        }
+    }
+    AliasGroupWire { aliases, pages }
 }
 
 /// Last-modified times for the All pages view: `[graph-relative path, Unix
@@ -66,7 +121,7 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
         unreadable: view
             .unreadable_files()
             .iter()
-            .map(|(id, _)| id.as_str().to_owned())
+            .map(|(id, reason)| format!("{}: {reason}", id.as_str()))
             .collect(),
     }
 }
@@ -282,7 +337,9 @@ mod inventory_adapter_tests {
         store.refresh(tine_store::Depth::Stamps).unwrap();
         let wire = page_inventory_wire(&store.whole_graph().unwrap());
         assert!(wire.entries.iter().any(|entry| entry.name == "Good"));
-        assert_eq!(wire.unreadable, vec!["pages/Bad.md".to_owned()]);
+        assert_eq!(wire.unreadable.len(), 1);
+        assert!(wire.unreadable[0].starts_with("pages/Bad.md: "));
+        assert!(wire.unreadable[0].to_ascii_lowercase().contains("utf-8"));
         assert!(matches!(
             resolve_name(store.whole_graph().unwrap(), "Good", false),
             ResolvedWire::Existing { .. }

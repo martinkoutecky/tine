@@ -1,3 +1,4 @@
+import { editorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { startEditing } from "../editorController";
@@ -35,15 +36,15 @@ function mountEditor() {
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Block id="shared-id" />, root);
-  return { root, dispose, textarea: root.querySelector<HTMLTextAreaElement>("textarea.block-editor")! };
+  return { root, dispose, textarea: editorIn(root) };
 }
 
-async function choosePlugin(textarea: HTMLTextAreaElement) {
+async function choosePlugin(textarea: EditorDriver) {
   textarea.focus();
-  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "d" }));
+  textarea.select(textarea.value().length, textarea.value().length);
+  textarea.reportInput({ bubbles: true, inputType: "insertText", data: "d" });
   await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Delayed"));
-  textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+  textarea.keydown({ key: "Enter", code: "Enter", bubbles: true, cancelable: true });
 }
 
 afterEach(() => {
@@ -79,13 +80,13 @@ describe("plugin slash editor ownership", () => {
     startEditing("shared-id", 8);
     setGraphTransitioning(false);
     const graphB = mountEditor();
-    const focus = vi.spyOn(graphB.textarea, "focus");
+    const focus = vi.spyOn(graphB.textarea.element, "focus");
     resolve([{ kind: "insert-at-caret", text: "inserted" }]);
     await Promise.resolve();
     await Promise.resolve();
 
     expect(doc.byId["shared-id"].raw).toBe("/Delayed");
-    expect(graphB.textarea.value).toBe("/Delayed");
+    expect(graphB.textarea.value()).toBe("/Delayed");
     expect(focus).not.toHaveBeenCalled();
     graphB.dispose();
   });
@@ -103,9 +104,9 @@ describe("plugin slash editor ownership", () => {
     await choosePlugin(current.textarea);
     await vi.waitFor(() => expect(doc.byId["shared-id"].raw).toBe("inserted"));
     await Promise.resolve();
-    expect(current.textarea.value).toBe("inserted");
-    expect(current.textarea.selectionStart).toBe("inserted".length);
-    expect(document.activeElement).toBe(current.textarea);
+    expect(current.textarea.value()).toBe("inserted");
+    expect(current.textarea.selection()[0]).toBe("inserted".length);
+    expect(document.activeElement).toBe(current.textarea.element);
     current.dispose();
   });
 });

@@ -81,6 +81,7 @@ fn capture_target_for_state(state: &AppState) -> Result<String, String> {
 #[derive(serde::Serialize)]
 pub(crate) struct CaptureGraphBindingResult {
     pub(crate) binding_generation: u64,
+    pub(crate) meta: GraphMeta,
 }
 
 /// Complete this native show's read lease. A newer show returns None and
@@ -111,11 +112,21 @@ pub(crate) fn capture_graph_binding(
     if window.label() != "capture" {
         return Err("capture graph binding is only available to quick capture".into());
     }
-    let binding_generation = state
+    capture_graph_config(&state)
+}
+
+fn capture_graph_config(state: &AppState) -> Result<CaptureGraphBindingResult, String> {
+    let binding = state
         .capture_graph_binding()
-        .ok_or("no graph bound for quick capture")?
-        .binding_generation;
-    Ok(CaptureGraphBindingResult { binding_generation })
+        .ok_or("no graph bound for quick capture")?;
+    let slot = slot_for_window(state, &binding.target)?;
+    if slot.binding_generation != binding.binding_generation {
+        return Err("quick capture graph binding is stale".into());
+    }
+    Ok(CaptureGraphBindingResult {
+        binding_generation: binding.binding_generation,
+        meta: graph_meta(&slot),
+    })
 }
 
 struct LoadedGraph {
@@ -332,6 +343,7 @@ fn approve_external_assets_blocking(
 #[tauri::command]
 pub(crate) async fn load_graph(
     path: String,
+    relocated_from: Option<String>,
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<LoadGraphResult, String> {
@@ -341,7 +353,7 @@ pub(crate) async fn load_graph(
     let worker_label = label.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
-        load_graph_for_label(path, &worker_app, &worker_label, &state)
+        load_graph_with_relocation(path, relocated_from, &worker_app, &worker_label, &state)
     })
     .await
     .map_err(|error| format!("graph-open worker failed: {error}"))??;
@@ -389,12 +401,14 @@ pub(crate) async fn load_graph(
                 &worker_label,
                 Some(binding_generation),
             )?;
-            tine_graph_features::guide::copy_guide_into_graph(
+            // A local, so the host guard drops before `slot` (E0597).
+            let copied = tine_graph_features::guide::copy_guide_into_graph(
                 &slot.store,
-                slot.host_slot()?.running(),
+                slot.host_slot()?.running()?,
                 "Tine Guide",
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+            copied
         })
         .await
         .map_err(|error| format!("iOS Guide-copy probe worker failed: {error}"))?
@@ -517,6 +531,7 @@ fn claim_owner(
     app: &tauri::AppHandle,
     window_label: &str,
     root_key: &Path,
+    failure: &mut Option<crate::owner::OwnerError>,
 ) -> Result<Option<crate::owner::lease::Claimed>, String> {
     let Ok(app_data) = app.path().app_data_dir() else {
         // `start_host` refuses this open with the reason.
@@ -528,20 +543,26 @@ fn claim_owner(
     };
     // The window hears each change of serve's progress (§4.5), not only the start.
     let mut told: Option<String> = None;
-    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |progress| {
-        if told.as_deref() == Some(progress) {
-            return;
-        }
-        if told.is_none() {
-            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
-        }
-        told = Some(progress.to_string());
-        let _ = app.emit_to(
-            window_label,
-            "graph-open-owner-waiting",
-            progress.to_string(),
-        );
-    })
+    crate::owner::lease::claim_for_app(
+        root_key,
+        drafts,
+        OWNER_HANDOVER_WAIT,
+        |progress| {
+            if told.as_deref() == Some(progress) {
+                return;
+            }
+            if told.is_none() {
+                crate::debug::diag("graph-open-waits-for-the-command-line-owner");
+            }
+            told = Some(progress.to_string());
+            let _ = app.emit_to(
+                window_label,
+                "graph-open-owner-waiting",
+                progress.to_string(),
+            );
+        },
+        |error| *failure = Some(error.clone()),
+    )
 }
 
 /// How long an open waits for an overlapping graph that is still saving.
@@ -549,6 +570,16 @@ const RETIRING_OVERLAP_WAIT: std::time::Duration = std::time::Duration::from_sec
 
 pub(crate) fn load_graph_for_label(
     path: String,
+    app: &tauri::AppHandle,
+    window_label: &str,
+    state: &State<'_, AppState>,
+) -> Result<LoadGraphResult, String> {
+    load_graph_with_relocation(path, None, app, window_label, state)
+}
+
+fn load_graph_with_relocation(
+    path: String,
+    relocated_from: Option<String>,
     app: &tauri::AppHandle,
     window_label: &str,
     state: &State<'_, AppState>,
@@ -613,6 +644,42 @@ pub(crate) fn load_graph_for_label(
             (slot, meta, lease.map(Owner::Adopted))
         }
         None => {
+            #[cfg(target_os = "ios")]
+            let mut draft_namespace_adopted = false;
+            // Only a fresh open may move namespaces, after the retirement
+            // wait and before owner claim/host attachment. A live local host
+            // of either namespace makes relocation skip without blocking open.
+            if let Some(old) = relocated_from {
+                #[cfg(target_os = "ios")]
+                if crate::root_identity::is_container_rebase(Path::new(&old), &root_key) {
+                    if let Ok(data) = app.path().app_data_dir() {
+                        let relocation = crate::root_identity::relocate_if_idle(
+                            &data,
+                            Path::new(&old),
+                            &root_key,
+                            &state.graphs.read().unwrap(),
+                        );
+                        match relocation {
+                            Ok(adopted) => draft_namespace_adopted = adopted,
+                            Err(error) => {
+                                crate::debug::diag_private("graph-relocation-owner-held", error)
+                            }
+                        }
+                    }
+                } else {
+                    crate::debug::diag("graph-relocation-invalid-container-rebase");
+                }
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "android"
+                ))]
+                {
+                    let _ = old;
+                    crate::debug::diag("graph-relocation-ignored-on-this-platform");
+                }
+            }
             let root = root_key.display().to_string();
             let approved_assets = approved_external_assets(app, &root_key);
             let LoadedGraph { store, meta } = match app.state::<StartupGraph>().take(&root_key) {
@@ -625,9 +692,17 @@ pub(crate) fn load_graph_for_label(
                 ),
             }?;
             let mut slot = GraphSlot::new(store, root_key);
+            #[cfg(target_os = "ios")]
+            if draft_namespace_adopted {
+                slot.store.record_draft_namespace_adoption(
+                    tine_store::DraftAdoptionReason::AppContainerMove,
+                );
+            }
             // The owner lock before the host (CLI PROTOCOL §3.2); a
             // command-line owner yields first (§4).
-            let claimed = claim_owner(app, window_label, &slot.root_key)?;
+            let mut failure = None;
+            let claimed = claim_owner(app, window_label, &slot.root_key, &mut failure)?;
+            *slot.owner_failure.get_mut().unwrap() = failure;
             // On failure the dropped slot closes the Store, and the dropped
             // claim releases the lock.
             let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
@@ -667,8 +742,17 @@ pub(crate) fn load_graph_for_label(
     drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
+    let _ = slot.window.set(crate::owner::window::WindowLink::new(
+        app.clone(),
+        window_label.to_string(),
+        slot.binding_generation,
+        Arc::downgrade(&slot.store),
+    ));
+    crate::owner_protection::start_retry(app, &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
+    crate::seen::bound(app, &slot);
+    crate::git_settings::bound(app, &slot);
     // The graph is bound above; a settings write that fails (disk full, EIO)
     // must not return early, or `open_graph_window` skips its cleanup and the
     // graph stays owned by a window that never existed (master graph.rs:629).
@@ -753,11 +837,8 @@ pub(crate) fn open_graph_window_blocking(
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let builder = builder.decorations(crate::settings::native_frame_active());
         #[cfg(target_os = "windows")]
-        let builder = if let Some(arguments) = crate::windows_webdriver_args_from_env(None) {
-            builder.additional_browser_args(&arguments)
-        } else {
-            builder
-        };
+        let builder =
+            builder.additional_browser_args(&crate::webview2_args::windows_browser_args_from_env());
         #[cfg(target_os = "linux")]
         let builder = crate::youtube_identity::configure(builder, app);
         let builder = crate::workspace_windows::attach(builder, app, &label);
@@ -1137,6 +1218,27 @@ mod tests {
     }
 
     #[test]
+    fn capture_config_uses_the_shows_graph_and_rejects_a_replaced_binding() {
+        let dir = scratch("capture-workflow");
+        std::fs::create_dir_all(dir.join("logseq")).unwrap();
+        std::fs::write(dir.join("logseq/config.edn"), "{:preferred-workflow :todo}").unwrap();
+        let state = bound_state(&dir, "graph-1", "another-window");
+        let slot = slot_for_window(&state, "graph-1").unwrap();
+        state.bind_capture_graph("graph-1".into(), slot.binding_generation);
+        let result = capture_graph_config(&state).unwrap();
+        assert_eq!(result.binding_generation, slot.binding_generation);
+        assert_eq!(result.meta.preferred_workflow, "todo");
+        assert_eq!(result.meta.root, dir.display().to_string());
+        // The same label now owns a new binding. Never return its config for
+        // the old show, even if focus still points at that label.
+        state.bind_capture_graph("graph-1".into(), slot.binding_generation + 1);
+        assert!(capture_graph_config(&state).is_err());
+        drop(slot);
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn opening_a_root_bound_in_another_window_survives_a_queued_registry_writer() {
         // R2 / I-21: the "already open in another window" branch must not hold
         // a registry read guard while it activates that window and re-reads
@@ -1236,10 +1338,24 @@ mod tests {
     #[test]
     fn only_the_applied_proposal_renames_journal_files() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        // A test-only module (declared `#[cfg(test)] mod x;` in a crate root)
+        // runs no command: `host_off_refusal_tests.rs` calls the writer only to
+        // show an off host refuses it.
+        let test_only = |dir: &str, stem: &str| {
+            ["lib.rs", "main.rs"].iter().any(|crate_root| {
+                std::fs::read_to_string(root.join(dir).join(crate_root))
+                    .unwrap_or_default()
+                    .contains(&format!("#[cfg(test)]\nmod {stem};"))
+            })
+        };
         let mut callers = Vec::new();
         for dir in ["src-tauri/src", "crates/tine-graph-features/src"] {
             for entry in std::fs::read_dir(root.join(dir)).unwrap() {
                 let path = entry.unwrap().path();
+                let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+                if test_only(dir, &stem) {
+                    continue;
+                }
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
                 // A call, not the definition or this census's own string literals.
                 let calls = text.lines().filter(|line| {

@@ -2,11 +2,12 @@
 // persisting the choice so it reopens next launch.
 
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
+import { refreshRootRecovery } from "./rootRecoveryState";
 import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
+import { applyTaskWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { dismissToast, pushToast } from "./toasts";
 import { restartTine } from "./update";
@@ -14,7 +15,7 @@ import { bindHost, resetStore, flushAll, createPage, journalTemplatePage, demoJo
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession, type PageTarget } from "./router";
-import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
+import { resetPaneLayoutToSingle, removePageTargetAcrossPanes, rewritePageTargetAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalTitleFormat, appNow } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
@@ -36,6 +37,8 @@ import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
 import { msg, t } from "./i18n";
+import { APP_IOS_DISPLAY_NAME } from "./appIdentity";
+import { primeQuickShareGate } from "./quickShareGate";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -83,7 +86,7 @@ export function applyCustomCssChange(change: CustomCssChange): void {
  *  read when membership or the arrangement page moved. */
 export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | null): void {
   if (!previous || previous.preferred_workflow !== meta.preferred_workflow)
-    setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
+    applyTaskWorkflow(meta);
   if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format)
     setJournalTitleFormat(meta.journal_page_title_format);
   setGraphMeta(meta);
@@ -133,7 +136,7 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
   if (!external || access.approved) return true;
   const confirmation = await readOwned(owner, backend().confirm(
     t("graph-this-graph-s-assets-folder-points-outside-the", { assetsDirectory: displayExternal ?? external }),
-    t("graph-allow-external-assets-directory")
+    { title: t("graph-allow-external-assets-directory"), okLabel: t("confirm-allow-and-open"), cancelLabel: t("confirm-dont-allow") },
   ));
   if (confirmation.kind === "stale") return false;
   if (!confirmation.value) {
@@ -209,7 +212,7 @@ export async function loadGraphPath(
     if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
     if (prepared.status !== "ready") {
       pushToast(
-        msg("graph-tineoutline-can-only-open-folders-inside-on"),
+        msg("graph-tineoutline-can-only-open-folders-inside-on", { app: APP_IOS_DISPLAY_NAME }),
         "error",
         { sticky: true }
       );
@@ -289,7 +292,9 @@ export async function loadGraphPath(
     waitingToast = pushToast(msg("toast-graph-open-owner-waiting", { progress }), "info", { sticky: true });
   }).catch(() => () => {});
   try {
-    result = await backend().loadGraph(path);
+    const loadArgs: [string, { relocatedFrom: string }?] = path !== requestedPath
+      ? [path, { relocatedFrom: requestedPath }] : [path];
+    result = await backend().loadGraph(...loadArgs);
   } catch (error) {
     // load_graph failed before installing a replacement binding.  Publish a new
     // local generation for the still-bound old graph; the retired viewer stays
@@ -333,6 +338,7 @@ export async function loadGraphPath(
   // The shared config door publishes the title format before meta/epoch,
   // then starts derived reads in that epoch (including force refresh).
   applyConfigDerivedState(meta, null);
+  void refreshRootRecovery();
   const configProblem = "config_problem" in result ? result.config_problem : null;
   setGraphConfigProblem(configProblem);
   if (configProblem) reportUiFailure("config-read", configProblem);
@@ -351,6 +357,7 @@ export async function loadGraphPath(
   // whole-graph parse (master 5bb8ce020, GH #266).
   void injectCustomCss();
   void loadGlobalCss();
+  void primeQuickShareGate();
   if (!switching) void pruneSidebarBlocks();
   maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
@@ -441,9 +448,15 @@ async function reportLegacyDrafts(): Promise<void> {
  *  rewrites `[[refs]]` across many files through the self-write guard. The
  *  document intent refreshes the loaded pages it touched (GH #535). Refresh the
  *  app's navigation and graph-derived views, then navigate to the new name. */
-export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget): void {
+export function refreshAfterRename(from: string, to: string, exactTarget?: PageTarget, preserveRoutes = false): void {
   if (exactTarget) {
-    removePageTargetAcrossPanes(exactTarget);
+    if (preserveRoutes) {
+      // A CLI rename has no initiating control to reopen the destination.
+      // Keep every pane on the renamed page, including name-only routes.
+      const destination = { name: to, pageKind: exactTarget.pageKind };
+      rewritePageTargetAcrossPanes(exactTarget, destination);
+      rewritePageTargetAcrossPanes({ name: from, pageKind: exactTarget.pageKind }, destination);
+    } else removePageTargetAcrossPanes(exactTarget);
     renamePageInNavigation(exactTarget, { name: to, pageKind: exactTarget.pageKind });
   } else {
     renamePageInNavigation(from, to);
@@ -485,7 +498,7 @@ export async function renameOrMergePage(
     if (source !== reached[0]) into = reached[0];
   }
   if (into) {
-    const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: to, from: from })));
+    const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: to, from: from }), { okLabel: t("confirm-merge-pages"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
   }
   const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
@@ -530,8 +543,9 @@ function templateOwnerCurrent(owner: JournalTemplateOwner): boolean {
  * `deferred` means a write guard refused or an alias conflicted; `error`
  * carries a read/write failure for the feed's route error/toast policy.
  * `stale` means the graph, template or local day changed, possibly after a
- * successful save. A cold named lookup can scan O(graph pages) preambles;
- * the day read, template inventory, expansion and save add their own cost.
+ * successful save. The named template lookup reads the graph's files (one
+ * read per page file, a parse of those mentioning `template`) when the graph
+ * is still loading; the day read, expansion and save add their own cost.
  * The write uses the document's edit-kind and base-revision door. */
 export async function ensureJournalTemplateForDay(
   date: Date,
@@ -559,7 +573,10 @@ export async function ensureJournalTemplateForDay(
       if (page.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       const existing = page.value;
       if (existing && journalHasContent(existing.blocks)) return "ready";
-      const templates = await readOwned(graphOwner(), backend().listTemplates());
+      // The named lookup: the template graph-wide discovery picks, answered
+      // from the files when they settle it, so an empty today need not wait
+      // for the whole graph (BqbeQ).
+      const templates = await readOwned(graphOwner(), backend().listTemplates(owner.template));
       if (templates.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       const tmpl = templates.value.find((t) => t.name === owner.template);
       if (!tmpl) return "ready";
@@ -570,6 +587,8 @@ export async function ensureJournalTemplateForDay(
         id: "", raw: applyTemplateVars(b.raw, owner.title), collapsed: b.collapsed,
         children: b.children.map(resolve),
       });
+      // An unclaimed journal day resolves without the graph-wide parse
+      // (BqbeQ, `absent_journal_id`); the alias refusal stays the backstop.
       const resolution = existing?.id ? null : await readOwned(graphOwner(), backend().resolvePage(owner.title, "journal"));
       if (resolution?.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       if (!canWrite()) return "deferred";
@@ -685,7 +704,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     }
     if (platform === "ios" && result.status === "refused") {
       pushToast(
-        msg("graph-choose-a-folder-inside-on-my-iphone"),
+        msg("graph-choose-a-folder-inside-on-my-iphone", { app: APP_IOS_DISPLAY_NAME }),
         "info"
       );
     }
@@ -715,19 +734,27 @@ async function openPickedGraphPath(path: string): Promise<LoadGraphPathOutcome> 
  * narrated journal seed is best effort and its failure does not change a
  * loaded outcome. Creation/opening errors toast and return aborted; picker/parent errors
  * reject. Cost follows graph creation, templates and the graph load. */
-export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
+export async function chooseNewGraphParent(forClone = false): Promise<{ kind: "chosen"; dir: string } | { kind: "aborted" }> {
   const owner = bindingOwner();
   const platform = await platformKind();
   if (!owner()) return { kind: "aborted" };
   let dir: string | null;
-  if (platform === "ios") {
+  if (platform === "ios" || (platform === "android" && forClone)) {
     const picked = await readOwned(owner, backend().pickGraphFolder());
     if (picked.kind === "stale") return { kind: "aborted" };
     if (picked.value.status === "refused") {
       pushToast(
-        msg("graph-choose-a-folder-inside-on-my-iphone"),
+        msg("graph-choose-a-folder-inside-on-my-iphone", { app: APP_IOS_DISPLAY_NAME }),
         "info"
       );
+      return { kind: "aborted" };
+    }
+    if (picked.value.status === "local-folder-required") {
+      pushToast(msg("graph-tine-needs-a-folder-on-the-device-s"), "info");
+      return { kind: "aborted" };
+    }
+    if (picked.value.status === "permission-requested" || picked.value.status === "permission-needed") {
+      pushToast(msg("graph-grant-all-files-access-for-tine-then"), "info");
       return { kind: "aborted" };
     }
     dir = picked.value.status === "picked" ? picked.value.path : null;
@@ -751,7 +778,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     }
     if (prepared.status !== "ready") {
       pushToast(
-        msg("graph-tineoutline-can-only-create-graphs-inside-on"),
+        msg("graph-tineoutline-can-only-create-graphs-inside-on", { app: APP_IOS_DISPLAY_NAME }),
         "error",
         { sticky: true }
       );
@@ -759,6 +786,14 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     }
     dir = prepared.path ?? dir;
   }
+  return { kind: "chosen", dir };
+}
+
+export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
+  const owner = bindingOwner();
+  const chosen = await chooseNewGraphParent();
+  if (chosen.kind === "aborted" || !owner()) return { kind: "aborted" };
+  const dir = chosen.dir;
   let root: string;
   let displayRoot: string | undefined;
   try {

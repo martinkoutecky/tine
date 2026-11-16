@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { caretAtFirstRow, caretAtLastRow, textareaCaretPoints } from "./caretRows";
+import { caretAtFirstRow, caretAtLastRow, textareaCaretLineRect, textareaCaretPoints } from "./caretRows";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -39,4 +39,14 @@ it.each(["soft", "off"])("mirrors shaping and wrapping for wrap=%s", (wrap) => {
   expect(mirror!.style.fontFeatureSettings).toBe(ta.style.fontFeatureSettings);
   expect(mirror!.style.fontVariationSettings).toBe(ta.style.fontVariationSettings);
   ta.remove();
+});
+
+describe("caret line rect for an anchored popup (GH #737)", () => {
+  it("reports no rect without browser layout so callers fall back to the editor box", () => {
+    const textarea = document.createElement("textarea");
+    textarea.value = "a:: 1\nb:: 2\nc:: 3";
+    document.body.appendChild(textarea);
+    expect(textareaCaretLineRect(textarea, 8)).toBeNull();
+    textarea.remove();
+  });
 });

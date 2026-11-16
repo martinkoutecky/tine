@@ -1192,6 +1192,28 @@ fn committed_random_traces_match_every_state() {
     assert!(states >= traces);
 }
 
+// The frozen audit prefix is valid in Quint and the Rust transcription; paired
+// with the host replay reproducer, this isolates the refinement continuation.
+#[test]
+fn audit_1019_twin_then_delete_matches_quint_states() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/s2/audit-1019-twin-then-delete.json"
+    ))
+    .unwrap();
+    assert_eq!(replay_traces(&fixture), (1, 30));
+}
+
+// The frozen lane prefixes (no-op external delete, refused switch) are valid
+// in Quint and the transcription; the host replay pairs with this.
+#[test]
+fn lane_1020_continuation_prefixes_match_quint_states() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/s2/lane-1020-continuation-prefixes.json"
+    ))
+    .unwrap();
+    assert_eq!(replay_traces(&fixture), (2, 33 + 36));
+}
+
 #[test]
 fn targeted_quint_witnesses_match_states_and_disabled_choices() {
     let fixture: Value =
@@ -1201,14 +1223,21 @@ fn targeted_quint_witnesses_match_states_and_disabled_choices() {
 }
 
 #[test]
-#[cfg(test)]
+#[cfg(test)] // exempts its report from the I-5 stderr scan
+#[ignore = "optional generated corpus: set S3_TRACE_FIXTURE=<decoded traces.json>, run with --ignored"]
 fn generated_random_traces_match_every_state() {
-    // Optional larger local corpus; normal CI always runs the committed sample.
-    let Ok(path) = std::env::var("S3_TRACE_FIXTURE") else {
-        return;
-    };
-    let fixture: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    // Normal runs check the committed sample; this reports "ignored", not a pass.
+    let path = std::env::var_os("S3_TRACE_FIXTURE")
+        .expect("NOT RUN: S3_TRACE_FIXTURE must name a decoded generated corpus");
+    let fixture: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let (traces, states) = replay_traces(&fixture);
-    assert!(traces >= 256);
-    eprintln!("s3 full corpus: {traces} traces / {states} full states matched");
+    // The same declared minimum as the host replay of this corpus.
+    assert!(
+        traces >= 256,
+        "corpus has {traces} traces, below the declared minimum 256"
+    );
+    eprintln!(
+        "s3 full corpus: seeds {}; {traces} traces / {states} full states matched",
+        fixture["seeds"]
+    );
 }

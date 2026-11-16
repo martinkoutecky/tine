@@ -8,7 +8,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { initParser } from "../../render/parse";
 import { clearSeededFacets } from "../../render/facets";
-import { beginPageHeaderEdit, deleteBlock, finishPageHeaderEdit, flushPage, isDirty, markDirty, moveItem, readPageProperties, resetStore, setRaw, splitBlock } from "..";
+import { beginPageHeaderEdit, deleteBlock, finishPageHeaderEdit, flushPage, insertOutlineBefore, isDirty, markDirty, moveItem, readPageProperties, resetStore, setRaw, splitBlock } from "..";
 import { doc, setDoc } from "../model";
 import { loadSingle } from "../workingSet";
 import { pageToDto } from "../convert";
@@ -105,10 +105,11 @@ for (const kind of ["page", "journal"] as const) {
       headerKept(pageToDto(name));
     });
 
-    it("no move puts a block above the header (each would stop the page saving)", async () => {
+    it("no move or insert puts a block above the header (each would stop the page saving)", async () => {
       const { name } = await openPage(kind, [block("o1", "other")]);
       const h = beginPageHeaderEdit(name)!;
       expect(moveItem("o1", -1)).toBe(false);
+      expect(insertOutlineBefore(h, [{ raw: "x", children: [] }])).toBeNull();
       expect(page(name).roots).toEqual([h, "o1"]);
       headerKept(pageToDto(name));
     });

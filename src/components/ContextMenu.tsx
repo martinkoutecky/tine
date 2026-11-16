@@ -1,3 +1,6 @@
+import { PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "../pageIconImage";
+import { markPageSeenNow, seenAvailable, seenIdentityOf } from "../seen/seenState";
+import { pageIconPropertyInUse, readPageIconProperty } from "../pageIconBatch";
 import { focusOnMount } from "../focusOnMount";
 import { Rich } from "../i18n/Rich";
 import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
@@ -5,31 +8,34 @@ import { openRouteInNewWindow, workspaceWindowsSupported } from "../workspaceWin
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { openShareDialog } from "../shareState";
 import { isMobilePlatform } from "../nativeChrome";
-import { backgroundTabsAvailable } from "../linkGesture";
+import { touchPrimary } from "../inputCapability";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { isConflicted } from "../document";
+import { isConflicted, pageInstanceGeneration } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
 import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
 import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
-import { readPageProperty, setPageProperty } from "../document";
+import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedTrees, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
-import { favoriteBlock } from "../favorites";
+import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
+import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
+import { favoriteBlock, isFavoriteBlock, unfavoriteBlock } from "../favorites";
 import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
 import { cellBlockId, cellForBlockId, cellOwner, cellSel, focusCell, setCellSel } from "../sheet/selection";
 import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
-import { startEditing } from "../editorController";
+import { endEdit, startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import { cutBlocks } from "../cut";
@@ -183,6 +189,7 @@ export function ContextMenu(): JSX.Element {
                   page={(m() as { page: string }).page}
                   pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
                   path={(m() as { path?: string }).path}
+                  occurrence={(m() as { occurrence?: OwnedOccurrence }).occurrence}
                   close={close}
                 />
               </Match>
@@ -352,6 +359,9 @@ function CopyAsSubmenu(props: { items: MenuAction[]; page?: boolean; close: () =
 }
 
 function BlockMenu(props: { id: string; x: number; y: number; close: () => void }): JSX.Element {
+  // Margin dialogue: words selected in this block's rendered text when the menu
+  // opened (the menu's own focus change can clear the DOM selection later).
+  const commentSelection = renderedSelectionIn(props.id);
   const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
   // A heading command applies to the active selection when there is one (GH #240).
@@ -386,9 +396,8 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
 
       <Show when={!readOnly() || headingsWritable()}><div class="ctx-sep" /></Show>
 
-      <For each={blockActions(props.id, props.x, props.y)}>
+      <For each={blockActions(props.id, props.x, props.y, commentSelection)}>
         {(it) => (
-          <Show when={it.children} fallback={
           <div
             class="ctx-item"
             classList={{ danger: !!it.danger }}
@@ -396,7 +405,6 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
           >
             {renderUiText(it.label)}
           </div>
-          }>{children => <CopyAsSubmenu items={children()} close={props.close} />}</Show>
         )}
       </For>
 
@@ -649,17 +657,20 @@ function SheetMenu(props: {
 
 
 
-// Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced
-// (target) block: open it in the sidebar, jump to it, or copy a ref/embed. (OG's
-// menu also has delete/replace, which edit the containing block's text — those are
-// just a normal edit of the block here, so they're left off this menu.)
+// Right-click (touch: long-press) menu for an INLINE block ref `((uuid))`. Most
+// items act on the referenced (target) block: open it in the sidebar, jump to it,
+// or copy a ref/embed. Edit link and Remove reference act on this one occurrence
+// in the containing block (GH #417; OG `delete-current-ref!`), as do Replace with
+// text / Replace with embed (OG `replace-ref-with-text!` / `-embed!`).
 function BlockRefMenu(props: {
   uuid: string;
   page: string;
   pageKind: "journal" | "page";
   path?: string;
+  occurrence?: OwnedOccurrence;
   close: () => void;
 }): JSX.Element {
+  const o = props.occurrence;
   const items = [
     {
       label: msg("context-menu-ui-open-in-sidebar"),
@@ -675,6 +686,12 @@ function BlockRefMenu(props: {
       label: msg("context-menu-ui-copy-block-embed"),
       run: () => reportCopy(writeClipboardText(`{{embed ((${props.uuid}))}}`), msg("context-menu-ui-copied-block-embed")),
     },
+    ...(o ? [
+      { label: msg("ref-occurrence-edit"), run: () => void editOccurrence(o, o.owner) },
+      { label: msg("ref-occurrence-remove-ref"), run: () => void removeOccurrence(o) },
+      { label: msg("ref-occurrence-replace-text"), run: () => void replaceOccurrenceWithTargetText(o, props.uuid) },
+      { label: msg("ref-occurrence-replace-embed"), run: () => void replaceOccurrenceWithEmbed(o, props.uuid) },
+    ] : []),
   ];
   return (
     <For each={items}>
@@ -783,6 +800,7 @@ function PageMenu(props: {
 }): JSX.Element {
   // A name-only caller still pins the loaded file when the menu opens.
   const openedPage = pageByName(props.name);
+  const openedInstance = pageInstanceGeneration(props.name);
   const path = props.path ?? openedPage?.id;
   const target = (): PageTarget => ({ name: props.name, pageKind: props.pageKind, ...(path ? { path } : {}) });
   const fav = () => isFavorite(props.name, props.pageKind);
@@ -839,9 +857,9 @@ function PageMenu(props: {
     // delete the page with no prompt.
     // A conflicted page is deleted through its conflict (master parity): the
     // prompt says the unsaved changes go too.
-    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" })));
+    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" }), { okLabel: t("confirm-delete"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
-    if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
+    if (!captured.path && (pageByName(name) !== openedPage || pageInstanceGeneration(name) !== openedInstance || pageByName(name)?.id !== path)) {
       pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
       return;
     }
@@ -873,7 +891,7 @@ function PageMenu(props: {
   const items: MenuAction[] = [
     { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
-    ...(backgroundTabsAvailable() ? [{ id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } },
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
@@ -895,6 +913,7 @@ function PageMenu(props: {
         openExportModal([...page!.roots]);
       },
     },
+    ...(!pageByName(props.name)?.guide ? [{ id: "share", label: msg("context-menu-ui-share"), run: () => openShareDialog({ page: props.name }) }] : []),
     ...(!isMobilePlatform ? [{ id: "export-pdf", label: msg("context-menu-ui-export-to-pdf"), run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
@@ -902,9 +921,11 @@ function PageMenu(props: {
           { id: "open-default-app", label: msg("context-menu-ui-open-with-default-app"), run: () => void runFileAction(false) },
         ]
       : []),
-    // GH #338: phones have no Mod+F. The page header's menu opens Find, whose
-    // bar holds the replace row (GH #208).
-    ...(props.fileActions && isMobilePlatform ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
+    // "Changed since you last looked" (ADR 0079): only where a git read answered for this graph.
+    ...(seenAvailable() === true && seenIdentityOf(props.name) ? [{ id: "seen-mark", label: msg("seen-mark-page"), run: () => void markPageSeenNow(props.name) }] : []),
+    // GH #338: a touch-first device has no Mod+F. The page header's menu opens
+    // Find, whose bar holds the replace row (GH #208).
+    ...(props.fileActions && touchPrimary() ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
     ...(!readOnly() ? [{ id: "page-properties", label: msg("context-menu-ui-page-properties"), run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())
@@ -962,14 +983,17 @@ export function pageMenuAvailability(pageKind: PageKind): { rename: boolean; del
 
 function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => void }): JSX.Element {
   const subject = pageByName(props.name);
-  const owner = graphOwner(() => !!subject && pageByName(props.name) === subject);
+  const instance = pageInstanceGeneration(props.name);
+  const owner = graphOwner(() => !!subject && pageByName(props.name) === subject && pageInstanceGeneration(props.name) === instance);
   const [editing, setEditing] = createSignal(false);
-  const [value, setValue] = createSignal(readPageProperty(props.name, "icon") ?? "");
+  const [value, setValue] = createSignal(readPageIconProperty(props.name));
   let input: HTMLInputElement | undefined;
   let trigger: HTMLButtonElement | undefined;
   const write = (value: string | null) => {
     if (!owner()) pushToast(msg("page-icon-stale"), "error");
-    else setPageProperty(props.name, "icon", value);
+    else if (value === null) {
+      for (const property of PAGE_ICON_PROPERTIES) setPageProperty(props.name, property, null);
+    } else setPageProperty(props.name, pageIconPropertyInUse(props.name) || PAGE_ICON_PROPERTY, value);
     props.close();
   };
   createEffect(() => { if (editing()) queueMicrotask(() => input?.focus()); });
@@ -991,7 +1015,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
         <button type="button" class="ctx-template-submit" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
       </div>
     </Show>
-    <Show when={readPageProperty(props.name, "icon")}>
+    <Show when={readPageIconProperty(props.name)}>
       <button class="ctx-item ctx-page-item" role="menuitem" tabIndex={-1} data-page-action-id="remove-page-icon"
         onClick={() => write(null)}>{t("page-icon-remove")}</button>
     </Show>
@@ -1105,7 +1129,16 @@ function RenamePage(props: {
   );
 }
 
-function blockActions(id: string, x: number, y: number): MenuAction[] {
+/** Add the block to Favorites, or remove it when it already is one (GH #725).
+ *  Membership is the durable id's: a block without an `id::` yet is not a favorite. */
+function favoriteAction(id: string): MenuAction {
+  const durable = blockExternalId(id);
+  return durable && isFavoriteBlock(durable)
+    ? { label: msg("favorites-block-remove-action"), run: () => unfavoriteBlock(durable) }
+    : { label: msg("favorites-block-action"), run: () => void favoriteBlock(id) };
+}
+
+function blockActions(id: string, x: number, y: number, commentSelection: ReturnType<typeof renderedSelectionIn> = null): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
   const ids = multi ? selected : [id];
@@ -1126,7 +1159,7 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
     return [
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-      ...(backgroundTabsAvailable() ? [{ label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
       { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
         label: msg("context-menu-ui-copy-export-as"),
@@ -1139,9 +1172,14 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
   return [
     { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-    ...(backgroundTabsAvailable() ? [{ label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
+    // Margin dialogue (vision §3.7): comment on the words selected in this block.
+    ...(commentSelection && !multi
+      ? [{ label: msg("command-comment-on-selection"), run: () => commentOnRenderedSelection(commentSelection) }]
+      : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
+    ...(!multi && blockProperty(id, "tine.author") !== null ? [{ label: msg("comment-remove-author"), run: () => { endEdit("select-block"); setBlockProperty(id, "tine.author", null); } }] : []),
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).
@@ -1152,12 +1190,12 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
         if (inserted) startEditing(inserted, 0);
       },
     },
-    { label: msg("context-menu-ui-copy-as"), children: [
-      { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
-      { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
-      { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
-    ] },
-    ...(!multi ? [{ label: msg("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
+    // OG lists these as top-level rows (content.cljs block-context-menu-content:
+    // Copy block ref, Copy block embed, Copy block URL), not behind a submenu (GH #725).
+    { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
+    { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
+    { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
+    ...(!multi ? [favoriteAction(id)] : []),
     { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
@@ -1181,8 +1219,8 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
       label: numbered ? msg("context-menu-ui-remove-numbered-list") : msg("context-menu-ui-numbered-list"),
       run: () => mutate("number-selection", toggleOwnNumberedList),
     },
-    { label: msg("context-menu-ui-collapse-all"), run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
-    { label: msg("context-menu-ui-expand-all"), run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
+    { label: msg("context-menu-ui-collapse-all"), run: () => setCollapsedTrees(ids, true) },
+    { label: msg("context-menu-ui-expand-all"), run: () => setCollapsedTrees(ids, false) },
     ...(tmplName
       ? [
           {

@@ -39,6 +39,8 @@ impl Store {
     /// creation can additionally walk O(P) file-list metadata for twin checks
     /// and update the name index. It can
     /// wait for graph snapshot capture and other writers without a timeout.
+    /// While the graph first loads (no view yet), it waits for no
+    /// whole-graph build: the first complete view publishes the save.
     /// If a caller abandons that wait, it must re-read the file: cancellation
     /// outside this call does not reveal whether the bytes reached disk.
     /// Missing target parent directories are created during apply. A
@@ -89,9 +91,9 @@ impl Store {
         if doc.guide {
             return SaveOutcome::GuideEphemeral;
         }
-        let mut tx = self.transaction(Some(kind));
+        let mut tx = self.page_plan(Some(kind));
         tx.save_page(&[kind], id, base, doc);
-        match tx.commit() {
+        match tx.commit_internal() {
             crate::TxOutcome::Committed { mut steps, .. } => match steps.remove(0) {
                 crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
                 crate::StepResult::Unchanged { rev, .. } => SaveOutcome::Unchanged(rev),

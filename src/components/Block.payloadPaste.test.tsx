@@ -1,3 +1,4 @@
+import { maybeEditorIn, type EditorDriver } from "../tests/editorDriver";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
@@ -36,7 +37,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 
-function paste(textarea: HTMLTextAreaElement, text: string): Event {
+function paste(textarea: EditorDriver, text: string): Event {
   const event = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", {
     value: {
@@ -46,7 +47,7 @@ function paste(textarea: HTMLTextAreaElement, text: string): Event {
       getData: (type: string) => type === "text/plain" ? text : "",
     },
   });
-  textarea.dispatchEvent(event);
+  textarea.paste(event);
   return event;
 }
 
@@ -71,7 +72,7 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea")!, "- payload");
+      paste(maybeEditorIn(root)!, "- payload");
       await vi.waitFor(() => expect(toasts().some((toast) => toast.message === "Couldn't paste these blocks.")).toBe(true));
       expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("private graph path");
     } finally {
@@ -111,7 +112,7 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea")!, "- identity");
+      paste(maybeEditorIn(root)!, "- identity");
       await vi.waitFor(() => {
         expect(doc.byId[preserved]?.raw).toBe(`identity\nid:: ${preserved}`);
         expect(doc.byId[preserved]).toBeDefined();
@@ -152,7 +153,7 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea")!, "- folded\n\t- child");
+      paste(maybeEditorIn(root)!, "- folded\n\t- child");
       await vi.waitFor(() => {
         const pasted = doc.byId[pageByName("Paste")!.roots[0]];
         expect(pasted.raw).toBe("folded\ncollapsed:: true");
@@ -181,7 +182,7 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea")!, "- parent");
+      paste(maybeEditorIn(root)!, "- parent");
       await vi.waitFor(() => {
         const replayed = doc.byId[pageByName("Paste")!.roots[0]];
         expect(doc.byId[replayed.children[0]].raw).toBe("private child");
@@ -205,8 +206,8 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")!;
-      textarea.dispatchEvent(new KeyboardEvent("keydown", {
+      const textarea = maybeEditorIn(root)!;
+      textarea.keydown(new KeyboardEvent("keydown", {
         key: "v", code: "KeyV", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
       }));
       paste(textarea, "- payload");
@@ -231,7 +232,7 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      paste(root.querySelector("textarea")!, "foreign text");
+      paste(maybeEditorIn(root)!, "foreign text");
       expect(peekClipboardSlot()).toBeNull();
     } finally {
       dispose();
@@ -253,8 +254,8 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")!;
-      textarea.setSelectionRange(4, 4);
+      const textarea = maybeEditorIn(root)!;
+      textarea.select(4, 4);
       paste(textarea, "- payload");
       expect(peekClipboardSlot()?.op).toBe("cut");
       expect(doc.byId["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]).toBeUndefined();
@@ -278,8 +279,8 @@ describe("private block payload paste necessity", () => {
       <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
     ));
     try {
-      const textarea = root.querySelector("textarea")!;
-      textarea.setSelectionRange(4, 4);
+      const textarea = maybeEditorIn(root)!;
+      textarea.select(4, 4);
       paste(textarea, "foreign text");
       expect(peekClipboardSlot()).toBeNull();
     } finally {

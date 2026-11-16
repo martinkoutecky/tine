@@ -11,16 +11,21 @@ const clamp = (column: string, width: number) => Math.min(TABLE_COLUMN_MAX_WIDTH
 
 /** Table width controller for one sheet owner. Reads only its width property and
  * writes one property through the document edit door on pointer release. Drag
- * preview is ephemeral; cancel/Escape publishes nothing. */
-export function createTableColumnResize(ownerId: string, schemaPage?: string): {
+ * preview is ephemeral; cancel/Escape publishes nothing. Supplied host properties
+ * also display widths without a loaded owner; only a live home offers resizing. */
+export function createTableColumnResize(ownerId: string, schemaPage?: string, hostProperties?: () => readonly [string, string][] | undefined): {
   widths: () => ReadonlyMap<string, number>;
   resizing: () => string | null;
   handle: (column: string, label: string) => JSX.Element;
 } {
+  const suppliedWidths = createMemo(() => {
+    const properties = hostProperties?.();
+    return properties ? parseTableColumnWidths(properties.find(([key]) => key.toLowerCase() === "tine.table-widths")?.[1] ?? "") : undefined;
+  });
   const home = createMemo<Home | null>(() => {
     const owner = node(ownerId);
     if (owner) return { kind: "block", id: ownerId, page: owner.page,
-      widths: parseTableColumnWidths(blockProperty(ownerId, "tine.table-widths") ?? "") };
+      widths: suppliedWidths() ?? parseTableColumnWidths(blockProperty(ownerId, "tine.table-widths") ?? "") };
     if (!schemaPage) return null;
     return { kind: "page", page: schemaPage,
       widths: parseTableColumnWidths(readPageProperty(schemaPage, "tine.table-widths") ?? "") };
@@ -32,7 +37,7 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string): {
   };
   const [preview, setPreview] = createSignal<ReadonlyMap<string, number> | null>(null);
   const [resizing, setResizing] = createSignal<string | null>(null);
-  const widths = () => preview() ?? home()?.widths ?? new Map<string, number>();
+  const widths = () => preview() ?? suppliedWidths() ?? home()?.widths ?? new Map<string, number>();
   let cancelActive: (() => void) | undefined;
   const publish = (next: ReadonlyMap<string, number>) => {
     const target = home();

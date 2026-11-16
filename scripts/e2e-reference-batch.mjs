@@ -14,7 +14,7 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph,
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(run, dir));
 const uuid = "57000000-0000-4000-8000-000000000001";
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:favorites [] :tine/favorites-page "Favorites"}');
-fs.writeFileSync(path.join(graph, "pages/Favorites.md"), `tine/favorites:: true\n\n- ((${uuid}))\n`);
+fs.writeFileSync(path.join(graph, "pages/Favorites.md"), `tine.favorites:: true\n\n- ((${uuid}))\n`);
 fs.writeFileSync(path.join(graph, "pages/Canonical.md"), `alias:: Nickname\nstatus:: active\n\n- Important block\n  id:: ${uuid}\n- TODO call Alice\n- Bookmark this block\n`);
 fs.writeFileSync(path.join(graph, "pages/Home.md"), "- [[Nickname]]\n- [[TODO]]\n");
 const app = process.env.TINE_APP || path.join(root, "target/debug/tine");

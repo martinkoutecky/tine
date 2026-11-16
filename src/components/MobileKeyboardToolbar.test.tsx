@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "solid-js";
 
 const platform = vi.hoisted(() => ({ mobile: true }));
-vi.mock("../nativeChrome", () => ({
-  get isMobilePlatform() {
-    return platform.mobile;
-  },
+const geometry = vi.hoisted(() => ({ row: null as { top: number; bottom: number } | null }));
+vi.mock("../editor/caretRows", () => ({ textareaCaretRow: () => geometry.row }));
+vi.mock("../inputCapability", () => ({
+  touchPrimary: () => platform.mobile,
 }));
 
 type Render = typeof import("solid-js/web")["render"];
@@ -42,6 +42,7 @@ function pointer(type: string, init: { pointerId?: number; isPrimary?: boolean }
 
 describe("MobileKeyboardToolbar", () => {
   beforeEach(() => {
+    geometry.row = null;
     document.body.innerHTML = "";
     mockVisualViewport();
   });
@@ -118,9 +119,11 @@ describe("MobileKeyboardToolbar", () => {
   });
 
   it.each(["main-content", "right-sidebar", "left-sidebar-scroll"])("reveals the focused editor in its own %s scroller (GH #384, GH #751)", async (surface) => {
+    geometry.row = { top: 0, bottom: 20 };
     const { revealFocusedEditorAboveToolbar } = await import("./MobileKeyboardToolbar");
     const scroller = document.createElement("main");
     scroller.className = surface;
+    Object.defineProperty(scroller, "clientHeight", { value: 600 });
     const editor = document.createElement("textarea");
     editor.className = "block-editor";
     scroller.appendChild(editor);
@@ -132,14 +135,43 @@ describe("MobileKeyboardToolbar", () => {
       toJSON() { return {}; },
     });
     expect(revealFocusedEditorAboveToolbar(520)).toBe(true);
-    expect(scroller.scrollTop).toBe(28); // 20px overlap + 8px breathing room
+    expect(scroller.scrollTop).toBe(30); // caret bottom 490 -> 520 - three 20px body lines
 
     editor.getBoundingClientRect = () => ({
       top: 420, bottom: 500, left: 0, right: 300, width: 300, height: 80, x: 0, y: 420,
       toJSON() { return {}; },
     });
     expect(revealFocusedEditorAboveToolbar(520)).toBe(false);
-    expect(scroller.scrollTop).toBe(28);
+    expect(scroller.scrollTop).toBe(30);
+  });
+
+  it("reveals the editor above its docked formatting row, not only above the dock (GH #375)", async () => {
+    geometry.row = { top: 0, bottom: 20 };
+    const { revealFocusedEditorAboveToolbar } = await import("./MobileKeyboardToolbar");
+    const scroller = document.createElement("main");
+    scroller.className = "main-content";
+    Object.defineProperty(scroller, "clientHeight", { value: 600 });
+    const editor = document.createElement("textarea");
+    editor.className = "block-editor";
+    scroller.appendChild(editor);
+    // The editor's selection row floats above the dock (dock top 520, row 480-512).
+    const formatting = document.createElement("div");
+    formatting.setAttribute("data-mobile-selection-toolbar", "");
+    formatting.getBoundingClientRect = () => ({
+      top: 480, bottom: 512, left: 0, right: 300, width: 300, height: 32, x: 0, y: 480,
+      toJSON() { return {}; },
+    });
+    document.body.append(scroller, formatting);
+    editor.focus();
+    // A one-line selection just above the dock, under the formatting row.
+    editor.getBoundingClientRect = () => ({
+      top: 470, bottom: 500, left: 0, right: 300, width: 300, height: 30, x: 0, y: 470,
+      toJSON() { return {}; },
+    });
+    expect(revealFocusedEditorAboveToolbar(520)).toBe(true);
+    expect(scroller.scrollTop).toBe(70); // caret bottom 490 -> formatting row 480 - three body lines
+    formatting.remove();
+    scroller.remove();
   });
 
   it("routes drawer toolbar actions to the current editor after a pane/left/right handoff (GH #751)", async () => {
@@ -541,5 +573,97 @@ describe("MobileKeyboardToolbar", () => {
 
     unregister();
     dispose();
+  });
+  // GH #598 (D-20261019-N2): with "Navigation buttons at the bottom" on, the bottom
+  // row gives way to this toolbar while the keyboard is up, so the App hands the
+  // toolbar the same four-button group. The toolbar only hosts it.
+  describe("navigation group (GH #598)", () => {
+    async function mountWithNavigation(withNavigation: boolean) {
+      platform.mobile = true;
+      const { render } = await import("solid-js/web");
+      const bridge = await import("../editorCommandBridge");
+      const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
+      const calls: string[] = [];
+      const unregister = bridge.registerFocusedEditorCommandBridge({
+        blockId: "b1",
+        dispatch(command) { calls.push(command); return true; },
+        blur() { calls.push("blur"); },
+      });
+      const Navigation = () => (
+        <div class="navigation-actions">
+          {["Toggle sidebar", "Search", "Go back", "Go forward"].map((title) => (
+            <button type="button" class="icon-btn" title={title} onClick={() => calls.push(`nav:${title}`)} />
+          ))}
+        </div>
+      );
+      const { div, dispose } = mount(render, () => <MobileKeyboardToolbar navigation={withNavigation ? Navigation : undefined} />);
+      const toolbar = div.querySelector("[data-mobile-keyboard-toolbar]") as HTMLElement;
+      const back = () => toolbar.querySelector<HTMLButtonElement>('button[title="Go back"]')!;
+      return { div, toolbar, back, calls, cleanup: () => { unregister(); dispose(); } };
+    }
+
+    it("shows the four navigation buttons at the leading end, outside the scrolling strip", async () => {
+      const { toolbar, cleanup } = await mountWithNavigation(true);
+      try {
+        const nav = toolbar.querySelector(".mobile-keyboard-toolbar-nav")!;
+        expect(nav).not.toBeNull();
+        expect([...nav.querySelectorAll("button")].map((b) => b.title)).toEqual(["Toggle sidebar", "Search", "Go back", "Go forward"]);
+        // First child of the toolbar, and not inside the strip that scrolls away.
+        expect(toolbar.firstElementChild).toBe(nav);
+        expect(nav.closest(".mobile-keyboard-toolbar-strip")).toBeNull();
+        // The formatting buttons are all still there.
+        expect(toolbar.querySelectorAll(".mobile-keyboard-toolbar-strip .mobile-keyboard-toolbar-btn")).toHaveLength(14);
+      } finally { cleanup(); }
+    });
+
+    it("shows nothing extra when the App passes no navigation (setting off)", async () => {
+      const { toolbar, cleanup } = await mountWithNavigation(false);
+      try {
+        expect(toolbar.querySelector(".mobile-keyboard-toolbar-nav")).toBeNull();
+        expect(toolbar.querySelectorAll("button")).toHaveLength(15);
+      } finally { cleanup(); }
+    });
+
+    it("a finger tap ends the edit first, then runs the action once, and swallows the trailing click", async () => {
+      const { back, calls, cleanup } = await mountWithNavigation(true);
+      const probe = document.createElement("button");
+      let probeClicks = 0;
+      probe.onclick = () => probeClicks++;
+      document.body.appendChild(probe);
+      try {
+        const down = pointer("pointerdown");
+        back().dispatchEvent(down);
+        expect(down.defaultPrevented, "the editor keeps focus until the tap completes").toBe(true);
+        expect(calls).toEqual([]);
+        back().dispatchEvent(pointer("pointerup"));
+        expect(calls).toEqual(["blur", "nav:Go back"]);
+        // The compatibility click that trails the pointer sequence must not act again.
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+        Object.defineProperty(click, "pointerId", { value: 1 });
+        back().dispatchEvent(click);
+        expect(calls).toEqual(["blur", "nav:Go back"]);
+        expect(probeClicks).toBe(0);
+      } finally { probe.remove(); cleanup(); }
+    });
+
+    it("a keyboard or assistive-technology activation also ends the edit before acting", async () => {
+      const { back, calls, cleanup } = await mountWithNavigation(true);
+      try {
+        back().click(); // detail 0, no pointer sequence
+        expect(calls).toEqual(["blur", "nav:Go back"]);
+      } finally { cleanup(); }
+    });
+
+    it("sliding off the button cancels the tap", async () => {
+      const { back, calls, cleanup } = await mountWithNavigation(true);
+      try {
+        back().getBoundingClientRect = () => ({ left: 0, right: 40, top: 0, bottom: 44, width: 40, height: 44, x: 0, y: 0, toJSON() { return {}; } });
+        back().dispatchEvent(pointer("pointerdown"));
+        const up = new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 });
+        Object.defineProperty(up, "pointerId", { value: 1 });
+        back().dispatchEvent(up);
+        expect(calls).toEqual([]);
+      } finally { cleanup(); }
+    });
   });
 });

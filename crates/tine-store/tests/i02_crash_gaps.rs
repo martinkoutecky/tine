@@ -1,12 +1,12 @@
 #![cfg(feature = "test-faults")]
 
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_graph_features::{conflicts, pages};
-use tine_store::{Area, FaultPoint, OpenOptions, PageId, RenameMap, RestoreFile, SaveBase, Store};
+use tine_store::{Area, FaultPoint, OpenOptions, RestoreFile, Store};
 
 /// Renames are the page host's (STEP3 §7): each runs through a host started
 /// for it under its own app data, as the app's graph binding runs one.
@@ -72,213 +72,8 @@ fn recovery_has(root: &Path, expected: &[u8]) -> bool {
     walk(&root.join("logseq/.tine-trash"), expected)
         || walk(&root.join("assets/.tine-restore-recovery"), expected)
 }
-
-fn child(root: &Path, worker: &str, boundary: usize) {
-    let output = Command::new(std::env::current_exe().unwrap())
-        .arg("--exact")
-        .arg(worker)
-        .arg("--nocapture")
-        .env("TINE_CRASH_ROOT", root)
-        .env("TINE_CRASH_BOUNDARY", boundary.to_string())
-        .output()
-        .unwrap();
-    assert!(!output.status.success(),
-        "I-2: child must abort at durable boundary {boundary}; exemplar Transaction::commit / Store::restore: {}",
-        String::from_utf8_lossy(&output.stdout));
-}
-
 #[test]
-fn crash_transaction_worker() {
-    let _integration_guard = crate::integration_lock();
-    let Ok(root) = std::env::var("TINE_CRASH_ROOT") else {
-        return;
-    };
-    let Ok(boundary) = std::env::var("TINE_CRASH_BOUNDARY") else {
-        return;
-    };
-    if std::env::var("TINE_CRASH_KIND").as_deref() == Ok("restore") {
-        return;
-    }
-    let root = Path::new(&root);
-    let store = open(root);
-    let a = PageId::from("pages/A.md");
-    let b = store.file_id(Area::Pages, "B.md").unwrap();
-    let d = store.file_id(Area::Pages, "D.md").unwrap();
-    let c = store.file_id(Area::Assets, "c.bin").unwrap();
-    let a_rev = store.read(&a.file(), None).unwrap().1;
-    let b_rev = store.read(&b, None).unwrap().1;
-    let c_rev = store.read(&c, None).unwrap().1;
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.save_page(
-        &[tine_store::EditKind::ReplacePage],
-        &a,
-        SaveBase::Existing(a_rev),
-        &page("A", "new A"),
-    );
-    tx.move_file(&b, b_rev, &d, None);
-    tx.trash(&c, c_rev, tine_store::TrashIf::Any);
-    store.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
-    let _ = tx.commit();
-    panic!("I-2: transaction fault did not abort; exemplar Transaction::commit");
-}
-
-#[test]
-fn transaction_kill_reopen_preserves_each_old_or_new_file() {
-    let _integration_guard = crate::integration_lock();
-    for boundary in 0..3 {
-        let root = scratch("tx");
-        fs::write(root.join("pages/A.md"), b"- old A\n").unwrap();
-        fs::write(root.join("pages/B.md"), b"- old B\n").unwrap();
-        fs::write(root.join("assets/c.bin"), b"old C").unwrap();
-        child(&root, "i02_crash_gaps::crash_transaction_worker", boundary);
-        let reopened = open(&root);
-        reopened.whole_graph().unwrap();
-        let a = fs::read(root.join("pages/A.md")).unwrap();
-        assert!(a == b"- old A\n" || a == b"- new A\n",
-            "I-2: no torn page after commit crash; exemplar Transaction::commit at {boundary}: {a:?}");
-        let b = fs::read(root.join("pages/B.md")).ok();
-        let d = fs::read(root.join("pages/D.md")).ok();
-        assert!(
-            b.as_deref() == Some(b"- old B\n") || d.as_deref() == Some(b"- old B\n"),
-            "I-2: moved page survives at boundary {boundary}; exemplar Transaction::commit"
-        );
-        assert!(fs::read(root.join("assets/c.bin")).is_ok_and(|bytes| bytes == b"old C")
-            || recovery_has(&root, b"old C"),
-            "I-2: trashed asset remains live or recoverable at boundary {boundary}; exemplar Transaction::commit");
-        drop(reopened);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[test]
-fn crash_block_reference_worker() {
-    let _integration_guard = crate::integration_lock();
-    let Ok(root) = std::env::var("TINE_CRASH_REF_ROOT") else {
-        return;
-    };
-    let source_name = std::env::var("TINE_CRASH_REF_SOURCE").unwrap();
-    let store = open(Path::new(&root));
-    let target = PageId::from("pages/M target.md");
-    let source = PageId::from(format!("pages/{source_name}.md"));
-    let target_rev = store.read(&target.file(), None).unwrap().1;
-    let source_rev = store.read(&source.file(), None).unwrap().1;
-    let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
-    let mut tx = store.transaction(Some(tine_store::EditKind::SaveBlock));
-    tx.save_page(
-        &[tine_store::EditKind::SaveBlock],
-        &target,
-        SaveBase::Existing(target_rev),
-        &page("M target", &format!("target\nid:: {uuid}")),
-    );
-    tx.save_page(
-        &[tine_store::EditKind::SaveBlock],
-        &source,
-        SaveBase::Existing(source_rev),
-        &page(&source_name, &format!("(({uuid}))")),
-    );
-    store.inject_fault(FaultPoint::AbortAfterStep(0));
-    let _ = tx.commit();
-    panic!("block-reference transaction did not abort");
-}
-
-#[test]
-fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders() {
-    let _integration_guard = crate::integration_lock();
-    let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
-    for source_name in ["A source", "Z source"] {
-        let root = scratch("block-reference");
-        fs::write(root.join(format!("pages/{source_name}.md")), b"- draft\n").unwrap();
-        fs::write(root.join("pages/M target.md"), b"- target\n").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .arg("--exact")
-            .arg("i02_crash_gaps::crash_block_reference_worker")
-            .env("TINE_CRASH_REF_ROOT", &root)
-            .env("TINE_CRASH_REF_SOURCE", source_name)
-            .output()
-            .unwrap();
-        assert!(
-            !output.status.success(),
-            "child must abort at the first save step"
-        );
-        let reopened = open(&root);
-        reopened.whole_graph().unwrap();
-        let source = fs::read_to_string(root.join(format!("pages/{source_name}.md"))).unwrap();
-        let target = fs::read_to_string(root.join("pages/M target.md")).unwrap();
-        assert!(
-            !source.contains(&format!("(({uuid}))")),
-            "source reference reached disk first"
-        );
-        assert!(
-            target.contains(&format!("id:: {uuid}")),
-            "target ID missing after first step"
-        );
-        drop(reopened);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[test]
-fn crash_rewritten_move_worker() {
-    let _integration_guard = crate::integration_lock();
-    let Ok(root) = std::env::var("TINE_CRASH_MOVE_ROOT") else {
-        return;
-    };
-    let point = match std::env::var("TINE_CRASH_MOVE_POINT").as_deref() {
-        Ok("rename") => FaultPoint::AbortAfterMoveRename,
-        Ok("rewrite") => FaultPoint::AbortAfterMoveRewrite,
-        _ => return,
-    };
-    let store = open(Path::new(&root));
-    let ext = std::env::var("TINE_CRASH_MOVE_EXT").unwrap_or_else(|_| "md".into());
-    let source = store.file_id(Area::Pages, &format!("Old.{ext}")).unwrap();
-    let destination = store.file_id(Area::Pages, &format!("New.{ext}")).unwrap();
-    let rev = store.read(&source, None).unwrap().1;
-    let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.move_file(
-        &source,
-        rev,
-        &destination,
-        Some(&RenameMap(vec![("Old".into(), "New".into())])),
-    );
-    store.inject_fault(point);
-    let _ = tx.commit();
-    panic!("rewritten move did not abort at injected boundary");
-}
-
-#[test]
-fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
-    let _integration_guard = crate::integration_lock();
-    for (point, expected) in [
-        ("rename", b"- [[Old]]\n".as_slice()),
-        ("rewrite", b"- [[New]]\n".as_slice()),
-    ] {
-        let root = scratch("rewritten-move");
-        fs::write(root.join("pages/Old.md"), b"- [[Old]]\n").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .arg("--exact")
-            .arg("i02_crash_gaps::crash_rewritten_move_worker")
-            .arg("--nocapture")
-            .env("TINE_CRASH_MOVE_ROOT", &root)
-            .env("TINE_CRASH_MOVE_POINT", point)
-            .output()
-            .unwrap();
-        assert!(!output.status.success(), "child must abort at {point}");
-        for _ in 0..2 {
-            let reopened = open(&root);
-            reopened.whole_graph().unwrap();
-            assert!(
-                !root.join("pages/Old.md").exists(),
-                "source must not reappear after {point}"
-            );
-            assert_eq!(fs::read(root.join("pages/New.md")).unwrap(), expected);
-            drop(reopened);
-        }
-        fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[test]
-fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
+fn rewritten_move_with_preamble_title_retries_after_external_move() {
     let _integration_guard = crate::integration_lock();
     for (ext, old, new_title) in [
         ("md", "title:: Old\n- [[Old]]\n", "title:: New"),
@@ -286,15 +81,11 @@ fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
     ] {
         let root = scratch("move-title-retry");
         fs::write(root.join(format!("pages/Old.{ext}")), old).unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .arg("--exact")
-            .arg("i02_crash_gaps::crash_rewritten_move_worker")
-            .env("TINE_CRASH_MOVE_ROOT", &root)
-            .env("TINE_CRASH_MOVE_EXT", ext)
-            .env("TINE_CRASH_MOVE_POINT", "rename")
-            .output()
-            .unwrap();
-        assert!(!output.status.success(), "child must abort after rename");
+        fs::rename(
+            root.join(format!("pages/Old.{ext}")),
+            root.join(format!("pages/New.{ext}")),
+        )
+        .unwrap();
         let reopened = open(&root);
         reopened.whole_graph().unwrap();
         assert!(!root.join(format!("pages/Old.{ext}")).exists());
@@ -320,57 +111,6 @@ fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
         fs::remove_dir_all(root).unwrap();
     }
 }
-
-#[test]
-fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
-    let _integration_guard = crate::integration_lock();
-    let root = scratch("move-trash-rollback");
-    let old = b"title:: Old\n- [[Old]]\n";
-    fs::write(root.join("pages/Old.md"), old).unwrap();
-    let store = open(&root);
-    let source = store.file_id(Area::Pages, "Old.md").unwrap();
-    let destination = store.file_id(Area::Pages, "New.md").unwrap();
-    let rev = store.read(&source, None).unwrap().1;
-    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-    tx.move_file(
-        &source,
-        rev,
-        &destination,
-        Some(&RenameMap(vec![("Old".into(), "New".into())])),
-    );
-    store.inject_fault(FaultPoint::MoveAfterTrashCopyIo);
-    assert!(matches!(
-        tx.commit(),
-        tine_store::TxOutcome::NotCommitted { .. }
-    ));
-    assert_eq!(fs::read(root.join("pages/Old.md")).unwrap(), old);
-    assert!(!root.join("pages/New.md").exists());
-    let trash = root.join("logseq/.tine-trash");
-    fn count_files(path: &Path) -> usize {
-        fs::read_dir(path)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|entry| {
-                        if entry.path().is_dir() {
-                            count_files(&entry.path())
-                        } else {
-                            1
-                        }
-                    })
-                    .sum()
-            })
-            .unwrap_or(0)
-    }
-    assert_eq!(
-        count_files(&trash),
-        0,
-        "failed move leaked a new trash copy"
-    );
-    drop(store);
-    fs::remove_dir_all(root).unwrap();
-}
-
 #[test]
 fn crash_restore_worker() {
     let _integration_guard = crate::integration_lock();
@@ -381,15 +121,10 @@ fn crash_restore_worker() {
     let store = open(&root);
     let files = ["A.md", "B.md"]
         .into_iter()
-        .map(|rel| {
-            let source = File::open(root.join("snapshot").join(rel)).unwrap();
-            let len = source.metadata().unwrap().len();
-            RestoreFile {
-                area: Area::Pages,
-                rel: rel.into(),
-                source,
-                len,
-            }
+        .map(|rel| RestoreFile {
+            area: Area::Pages,
+            rel: rel.into(),
+            bytes: std::fs::read(root.join("snapshot").join(rel)).unwrap(),
         })
         .collect();
     let _ = store.restore(tine_store::EditKind::ReplacePage, files, None);
@@ -442,6 +177,136 @@ fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
 }
 
 #[test]
+fn generated_restore_crash_worker() {
+    let _guard = crate::integration_lock();
+    let Ok(seed) = std::env::var("TINE_F3_CRASH_SEED") else {
+        return;
+    };
+    let root = PathBuf::from(std::env::var("TINE_CRASH_ROOT").unwrap());
+    let case = crate::restore::generated_case(seed.parse().unwrap());
+    let store = open(&root);
+    let _ = store.restore(tine_store::EditKind::ReplacePage, case.files(), None);
+    panic!("generated restore missed the requested durable cut");
+}
+
+#[test]
+fn generated_restore_abort_every_cut_conserves_payloads_and_external_arrivals() {
+    use crate::conformance_f3::{
+        conserved, discover_restore_recovery, fresh, restore_recovery, seeds, Graph,
+    };
+    use crate::restore::{generated_case, GeneratedRestore};
+    let _guard = crate::integration_lock();
+    let mut cuts = 0;
+    let mut detached_arrivals = 0;
+    for seed in 1..=seeds() {
+        let case = generated_case(seed);
+        // A move and a copy per input, plus each of the three extras' moves.
+        for boundary in 0..case.inputs.len() * 2 + 3 {
+            let graph = Graph::new(&case.live);
+            let backup = graph.dir.path().join("backup");
+            case.backup(&backup);
+            graph.store.close();
+            let at = format!("restore abort seed {seed} cut {boundary}");
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "i02_crash_gaps::generated_restore_crash_worker",
+                    "--nocapture",
+                ])
+                .env("TINE_F3_CRASH_SEED", seed.to_string())
+                .env("TINE_CRASH_ROOT", &graph.root)
+                .env("TINE_RESTORE_ABORT_BOUNDARY", boundary.to_string())
+                .output()
+                .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                assert_eq!(
+                    output.status.signal(),
+                    Some(6),
+                    "{at}: child must SIGABRT, not panic/error: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            #[cfg(not(unix))]
+            assert!(!output.status.success(), "{at}");
+            let mut recovery = discover_restore_recovery(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &at);
+            case.backup_intact(&backup);
+            // Every published backup payload must be whole. Unpublished input
+            // still belongs to the caller/backup; restore has not admitted it.
+            for (area, rel, new) in &case.inputs {
+                let path = GeneratedRestore::path(*area, rel);
+                if let Ok(bytes) = fs::read(graph.root.join(&path)) {
+                    assert!(
+                        bytes == *new || bytes == case.live[&path],
+                        "torn input at {at}: {path}"
+                    );
+                }
+            }
+            let reopened = open(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &format!("post-reopen {at}"));
+            fresh(&reopened, &graph.root, &["Before", "After"], &at);
+            reopened.close();
+            drop(reopened);
+            // Honest external arrival exactly at this interrupted protocol
+            // step, preferentially taking the just-detached input's live name.
+            let target = case
+                .inputs
+                .iter()
+                .map(|(area, rel, _)| GeneratedRestore::path(*area, rel))
+                .find(|rel| !graph.root.join(rel).exists());
+            if target.is_some() {
+                detached_arrivals += 1;
+            }
+            let target = target.unwrap_or_else(|| "pages/Arrived.md".into());
+            let external = format!("- external-at-{seed}-{boundary}\n").into_bytes();
+            fs::write(graph.root.join(&target), &external).unwrap();
+            let retry = open(&graph.root);
+            fresh(&retry, &graph.root, &["Before", "After"], &at);
+            let report = retry
+                .restore(tine_store::EditKind::ReplacePage, case.files(), None)
+                .unwrap();
+            assert_eq!(report.restored as usize, case.inputs.len(), "{at}");
+            let retry_recovery = restore_recovery(&graph.root, &report.recovery);
+            recovery.extend(retry_recovery.iter().cloned());
+            case.assert_live_set(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &at);
+            conserved(
+                &graph.root,
+                &external,
+                std::slice::from_ref(&target),
+                &retry_recovery,
+                &at,
+            );
+            case.backup_intact(&backup);
+            for (area, rel, bytes) in &case.inputs {
+                assert_eq!(
+                    &fs::read(graph.root.join(GeneratedRestore::path(*area, rel))).unwrap(),
+                    bytes,
+                    "{at}"
+                );
+            }
+            fresh(&retry, &graph.root, &["Before", "After"], &at);
+            retry.close();
+            let reopened = open(&graph.root);
+            case.assert_custody(&graph.root, &recovery, &format!("post-retry reopen {at}"));
+            conserved(
+                &graph.root,
+                &external,
+                std::slice::from_ref(&target),
+                &retry_recovery,
+                &at,
+            );
+            reopened.close();
+            cuts += 1;
+        }
+    }
+    assert!(detached_arrivals >= seeds() * 5);
+    eprintln!("F3 process restore: cuts={cuts}, detached_target_arrivals={detached_arrivals}, image_checks={}", cuts*3);
+}
+
+#[test]
 fn crash_graph_restore_worker() {
     let _integration_guard = crate::integration_lock();
     if std::env::var("TINE_CRASH_KIND").as_deref() != Ok("graph-restore") {
@@ -451,15 +316,10 @@ fn crash_graph_restore_worker() {
     let store = open(&root);
     let files = ["pages/A.md", "Root.md"]
         .into_iter()
-        .map(|rel| {
-            let source = File::open(root.join("snapshot").join(rel)).unwrap();
-            let len = source.metadata().unwrap().len();
-            RestoreFile {
-                area: Area::Graph,
-                rel: rel.into(),
-                source,
-                len,
-            }
+        .map(|rel| RestoreFile {
+            area: Area::Graph,
+            rel: rel.into(),
+            bytes: std::fs::read(root.join("snapshot").join(rel)).unwrap(),
         })
         .collect();
     let _ = store.restore(tine_store::EditKind::ReplacePage, files, Some(&[]));
@@ -533,7 +393,10 @@ fn crash_feature_worker() {
     store.inject_fault(FaultPoint::AbortAfterStep(boundary));
     match journey.as_str() {
         "merge" => {
-            pages::merge_pages(&store, None, "pages/src.md", "pages/dst.md").unwrap();
+            hosted(&store, |host| {
+                pages::merge_pages(&store, host, "pages/src.md", "pages/dst.md")
+            })
+            .unwrap();
         }
         "rename" => {
             hosted(&store, |host| {
@@ -565,18 +428,20 @@ fn crash_feature_worker() {
                 .iter()
                 .map(|row| (row.id.clone(), "both".to_owned()))
                 .collect();
-            conflicts::resolve_sync_conflict(
-                &store,
-                None,
-                "pages/Foo.md",
-                copy,
-                &decisions,
-                &diff.base_rev,
-                &diff.conflict_rev,
-                None,
-                &[],
-                "union",
-            )
+            hosted(&store, |host| {
+                conflicts::resolve_sync_conflict(
+                    &store,
+                    host,
+                    "pages/Foo.md",
+                    copy,
+                    &decisions,
+                    &diff.base_rev,
+                    &diff.conflict_rev,
+                    None,
+                    &[],
+                    "union",
+                )
+            })
             .unwrap();
         }
         _ => panic!("unknown crash journey"),
@@ -782,8 +647,8 @@ fn durable_transition_inventory_names_crash_proofs() {
         ),
         (
             "src-tauri/src/backup.rs",
-            "fn do_backup_source_cancellable",
-            "publish_snapshot(&dest",
+            "fn publish_zip",
+            "fn remove_partials",
         ),
         (
             "crates/tine-store/src/publish.rs",

@@ -1,0 +1,481 @@
+{
+ "schemaVersion": 1,
+ "version": "0.9.0-beta.3",
+ "baseTag": "v0.9.0-beta.2",
+ "focusedAudit": {
+  "required": false,
+  "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+ },
+ "items": [
+  {
+   "section": "Added",
+   "text": "Clone a graph from an HTTPS git URL from Welcome or the graph menu, with the same device sign-in as git sync. Tine opens the remote's default branch with its upstream set; automatic commits and sync stay off.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GIT-CLONE-GRAPH"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GIT-CLONE-GRAPH. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "scripts/e2e-git-clone-init.mjs",
+     "src-tauri/src/git_setup_tests.rs",
+     "src/components/CloneGraphDialog.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Added",
+   "text": "Make the open graph a git repository from Settings → Graph, with Tine's ignore rules and a first commit that preserves page files. Optionally publish that commit to an empty HTTPS remote using the existing sign-in. Git stays optional, and automatic commits and sync stay off.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GIT-INIT-GRAPH"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GIT-INIT-GRAPH. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "scripts/e2e-git-clone-init.mjs",
+     "src-tauri/src/git_setup_tests.rs",
+     "src/components/GitAutocommitSetting.test.tsx"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "Block embeds are back to one bullet, as in 0.8 (#417, #748). In 0.9.0-beta.1 a block embed showed two bullets, one for the block holding `{{embed ((…))}}` and one for the embedded block. Now the embedded block's bullet sits where the embed does, and dragging it, **Tab**/**Shift+Tab**, **Move block up/down**, selecting it and its menu act on the block holding the embed on that page; its text and children are still the source's. Moving it up or down therefore no longer moves the source block on its own page or shows the \"moved in\" notice (GH #641); page embeds, Linked References and query results keep that behaviour. Folding the embedded block is still remembered per page; folding a block further inside the embed now folds that source block on its own page and in every embed of it, as in Logseq. A block with its own text besides the embed keeps its own bullet.",
+   "userVisible": true,
+   "regressions": [
+    "UI-BLOCK-EMBED-ROOT-BULLET-001",
+    "UI-GH726-EMBED-BULLET-OWNERSHIP"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-BLOCK-EMBED-ROOT-BULLET-001, UI-GH726-EMBED-BULLET-OWNERSHIP. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "Margin comments by someone else (an `author::` other than your name in **Settings → Editor → Your name**) now sit on a background of their own, one colour per author matching their name chip, so a reply is no longer mistaken for part of the comment above it (UI-MARGIN-AUTHOR-TINT). The comment column also grows wider when the window has room beside the page, up to about half again its width (UI-MARGIN-WIDTH).",
+   "userVisible": true,
+   "regressions": [
+    "UI-MARGIN-AUTHOR-TINT",
+    "UI-MARGIN-WIDTH"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-MARGIN-AUTHOR-TINT, UI-MARGIN-WIDTH. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/MarginColumn.test.tsx",
+     "src/commentIdentity.test.tsx",
+     "scripts/shot-margin-position.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Changed",
+   "text": "Microsoft Store package: needs Windows 11, and only Tine's own three data folders (`%APPDATA%\\page.tine.Tine`, `%LOCALAPPDATA%\\page.tine.Tine`, `%LOCALAPPDATA%\\tine-owners`) are shared with other installs and kept after uninstall; all other app data stays private to the Store package. Windows 10 users install from GitHub.",
+   "userVisible": true,
+   "regressions": [],
+   "regressionEvidence": {
+    "status": "not-applicable",
+    "reason": "Packaging change: proven by msix.yml on the installed Store test package (three folders real, a control folder virtualized, data kept after uninstall) and the stage-msix identity check (D-20261031-MSV).",
+    "refs": [
+     ".github/workflows/msix.yml"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Where the comment column is not shown (narrow windows, journals, the sidebar, references), a block's comments now appear directly under the block, before its other children, instead of after its whole subtree (#110, UI-MARGIN-INLINE-UNDER-BLOCK). The file keeps them where they were written. A comment in the column also stays beside its passage while the commented block is edited (UI-MARGIN-POS-EDIT-JUMP).",
+   "userVisible": true,
+   "regressions": [
+    "UI-MARGIN-INLINE-UNDER-BLOCK",
+    "UI-MARGIN-POS-EDIT-JUMP"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-MARGIN-INLINE-UNDER-BLOCK, UI-MARGIN-POS-EDIT-JUMP. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/margin.test.ts",
+     "src/components/MarginColumn.test.tsx",
+     "scripts/shot-margin-position.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Block embeds in published read-only apps now show their source block's children and grandchildren. Collapsed sources can be expanded while viewing the export.",
+   "userVisible": true,
+   "regressions": [
+    "UI-EXPORT-EMBED-CHILDREN"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-EXPORT-EMBED-CHILDREN. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": [
+     "src/components/LiveRefGroup.published.test.tsx",
+     "scripts/shot-export-live-embed.mjs"
+    ]
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A block that fails to render now shows its raw text in place, so it can be edited while the rest of the page stays usable; opening another page also clears a page-level render failure (#741).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH741-BLOCK-RENDER-ISOLATION"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH741-BLOCK-RENDER-ISOLATION. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Typing DONE over a bare DOING task with a LOGBOOK now closes its clock. Marker commands also recognize the bare task before its hidden history, keeping one marker and the existing clocks (#741).",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH741-BARE-MARKER-CLOCK"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH741-BARE-MARKER-CLOCK. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "On Linux, middle-clicking a link while editing another block now only opens the link. The middle-click selection was also pasted at the caret of the block being edited.",
+   "userVisible": true,
+   "regressions": [
+    "UI-MIDDLE-CLICK-LINK-PASTES"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-MIDDLE-CLICK-LINK-PASTES. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "A block inside a grid cell now looks and works as it does on a page (#782). Task markers with their checkbox, priorities, SCHEDULED and DEADLINE chips and properties show in the cell and in every block nested under it, however deep; ticking a checkbox in a cell saves the new marker. Nested blocks have the page's bullet and indent one fixed step per level instead of a step that grew with each level, so deep outlines no longer run off the cell. A sub-grid inside a cell is unchanged.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH782-CELL-RENDERS-PAGE-BLOCKS"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH782-CELL-RENDERS-PAGE-BLOCKS. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "The Table view of a query (and of a block's children) draws each block as the page does (#551). A Markdown list, quote, code block or table inside a result used to appear as source text (`* apples * pears`); it is now rendered.",
+   "userVisible": true,
+   "regressions": [
+    "UI-GH551-TABLE-RESULT-LISTS"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-GH551-TABLE-RESULT-LISTS. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it); the fade is kept.",
+   "userVisible": true,
+   "regressions": [
+    "UI-CARRY-REVEAL-FLICKER"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: UI-CARRY-REVEAL-FLICKER. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "On Android, saving a page that already exists on shared storage no longer stays unconfirmed (\"Couldn't save … yet; Tine keeps trying\") on devices whose storage refreshes a file's times when it is read (#811).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH811-ANDROID-PASSTHROUGH-UNCERTAIN"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH811-ANDROID-PASSTHROUGH-UNCERTAIN. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "On Android shared storage, a page saved again now gets a new modification time each time, so Syncthing and other sync apps notice edits that keep the file the same size (before, the page kept its first version's time on devices with the newer storage mode). The diagnostics report counts each time-reset that failed (#811).",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH811-ANDROID-FROZEN-MTIME"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH811-ANDROID-FROZEN-MTIME. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  },
+  {
+   "section": "Fixed",
+   "text": "When a page save stays unconfirmed (\"Couldn't save … yet; Tine keeps trying\"), the message now names the check that failed when it is Tine's own check of the saved file after the folder was synced (no file there, or a file that changed), and the diagnostics report counts each kind (#811). Saving itself is unchanged; this is so that a report can show why the save could not be confirmed.",
+   "userVisible": true,
+   "regressions": [
+    "REG-GH811-UNCERTAIN-NAMES-CHECK"
+   ],
+   "regressionEvidence": {
+    "status": "current",
+    "reason": "Catalog coverage: REG-GH811-UNCERTAIN-NAMES-CHECK. Gated on develop and release/0.9 (Linux native journeys).",
+    "refs": []
+   },
+   "docs": {
+    "status": "not-applicable",
+    "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+    "refs": []
+   },
+   "website": {
+    "status": "not-applicable",
+    "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+    "refs": []
+   },
+   "blog": {
+    "status": "not-applicable",
+    "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+    "refs": []
+   }
+  }
+ ]
+}

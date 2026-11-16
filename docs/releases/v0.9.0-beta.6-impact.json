@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.6",
+  "baseTag": "v0.9.0-beta.5",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Every property Tine gives its own meaning is now named `tine.<name>`, so your own properties with the same name stay yours (Discussion #825). A child bullet with your own `quote::` no longer turns into a margin comment, and an `author::` in your book notes stays a property row instead of becoming an author chip. Margin comments now write `tine.quote::`, `tine.quote-prefix::`, `tine.quote-suffix::` and `tine.author::`; the command line's `tine add` / `tine edit --author` write `tine.author::`; folder exports record their folder as `tine.export::`; and the Favorites, Today's sections and Exports pages are marked `tine.favorites::`, `tine.journal-sections::` and `tine.exports::`. Pages marked with the older `tine/favorites::`, `tine/journal-sections::` or `tine/exports::` keep working. **If you made comments or folder exports in a 0.9 Beta**, rename their properties with find/replace: on comment blocks and their replies `quote::` → `tine.quote::`, `quote-prefix::` → `tine.quote-prefix::`, `quote-suffix::` → `tine.quote-suffix::` and `author::` → `tine.author::`; on folder-export query blocks `export::` → `tine.export::` (in Org files the same keys appear as `:quote:`, `:author:`, `:export:` …). Leave `author::` on your other blocks alone (UI-PROPNAMES-USER-QUOTE, UI-PROPNAMES-USER-AUTHOR, REG-PROPNAMES-CLI-AUTHOR, REG-PROPNAMES-STABLE-MARKERS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PROPNAMES-USER-QUOTE",
+        "UI-PROPNAMES-USER-AUTHOR",
+        "REG-PROPNAMES-CLI-AUTHOR",
+        "REG-PROPNAMES-STABLE-MARKERS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-PROPNAMES-USER-QUOTE, UI-PROPNAMES-USER-AUTHOR, REG-PROPNAMES-CLI-AUTHOR, REG-PROPNAMES-STABLE-MARKERS. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/guideBeta090.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Guide pages and CLI man pages renamed to tine.* keys in the same change (559c9c566).",
+        "refs": [
+          "crates/tine-core/src/templates/command-line.md",
+          "crates/tine-core/src/templates/tips.md",
+          "crates/tine-core/src/templates/share-pages.md",
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md",
+          "docs/tine-edit.1"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Macros in `config.edn` named with keywords, as Logseq writes them (`:macros {:bar \"...\"}`), now work like `\"bar\"` names. Before, `{{bar 5}}` stayed raw text, and every macro listed after the first keyword name was ignored as well (GH #854, REG-GH854-CONFIG-MACRO-KEYWORD-NAMES).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH854-CONFIG-MACRO-KEYWORD-NAMES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH854-CONFIG-MACRO-KEYWORD-NAMES. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-core/src/config.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A journal section shown under today's journal now sorts and groups by the View settings saved on its block on the sections page (GH #855, UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH855-SECTIONS-FEED-VIEW-PROPERTIES. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/QueryMacro.hostRaw.test.tsx",
+          "src/components/TodaySections.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "**Review** on the \"changed on disk while you were editing\" banner now shows the page's review of your edits against the disk version, also when the page is already open and scrolled down. Before, it did nothing there (GH #858, UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH858-CONFLICT-REVIEW-SHOWS-RESOLVER. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/e2e-conflict-review-scroll.mjs",
+          "src/components/ConflictBar.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On Windows, images no longer look washed out next to other image viewers: Tine's windows now draw colours in sRGB (GH #804, REG-GH804-WINDOWS-WEBVIEW-SRGB).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH804-WINDOWS-WEBVIEW-SRGB"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-GH804-WINDOWS-WEBVIEW-SRGB. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/webview2_args.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "The left sidebar's \"All pages\" heading is the same size as the other section headings (GH #704, UI-GH704-SIDEBAR-HEADINGS-ONE-SIZE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH704-SIDEBAR-HEADINGS-ONE-SIZE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH704-SIDEBAR-HEADINGS-ONE-SIZE. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/shot-sidebar-headings.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Typing a page link in Quick Capture no longer shows the red error \"Couldn't refresh the page list. The last loaded list is kept.\" in the capture window. Nothing was lost: the capture window asked for a list of pages it is not given, and page completion there never needed it (UI-CAPTURE-NO-PAGE-INVENTORY).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CAPTURE-NO-PAGE-INVENTORY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-CAPTURE-NO-PAGE-INVENTORY. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/capture.pageInventory.test.tsx",
+          "scripts/e2e-capture.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

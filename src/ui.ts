@@ -9,6 +9,7 @@ import { isMobilePlatform } from "./nativeChrome";
 import { createEffect, createRoot, createSignal, useContext } from "solid-js";
 import type { JournalConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
+import type { OwnedOccurrence } from "./refOccurrence";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
@@ -25,22 +26,14 @@ import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationName } from "./pageIndex";
 import { forgetDeletedFavorite, renameFavorite } from "./favorites";
-import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
+import { changeGraphSetting } from "./graphPreferences";
 
 export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
 export type { ThemePreference } from "./themePreference";
 import { theme, setAppearancePreference } from "./themePreference";
 import { isHTMLElementNode, onEachWindow, windowOf } from "./windowRealm";
 
-// Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
-export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
-/** Set workflow optimistically and persist to graph config; failure rolls back
- * and toasts. The file is re-read on next graph open. */
-export function changeWorkflow(wf: "now" | "todo") {
-  if (wf === workflow()) return;
-  writeGraphSignal("workflow", workflow, setWorkflow, wf,
-    (next) => backend().setPreferredWorkflow(next), "preferred workflow");
-}
+export { workflow, setWorkflow, applyTaskWorkflow, changeWorkflow } from "./taskWorkflow";
 
 export function timetrackingEnabled(): boolean {
   return graphMeta()?.enable_timetracking ?? true;
@@ -85,7 +78,7 @@ export function changeLogicalOutdenting(on: boolean) {
 }
 
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
-function loadStr(key: string): string | null {
+export function loadStr(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
@@ -93,7 +86,7 @@ function loadStr(key: string): string | null {
     return null;
   }
 }
-function saveStr(key: string, val: string | null, what: "display preference" | "keyboard shortcuts" = "display preference"): boolean {
+export function saveStr(key: string, val: string | null, what: "display preference" | "keyboard shortcuts" = "display preference"): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);
@@ -224,6 +217,7 @@ export function changeJournalTitleFormat(fmt: string) {
   void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
     .then((result) => {
       if (result.kind === "stale") return;
+      setGraphMeta({ ...graphMeta()!, journal_config_diagnostics: result.value });
       bumpGraphEpoch();
       void refreshJournalConflicts(); // the queue surfaces any day the new format reveals
     })
@@ -700,10 +694,13 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
 /** After backend rename, re-key favorite, recent and sidebar entries in order,
  * deduplicating destinations even if source is absent. Only changed stores
  * schedule persistence; writes need not finish before a later openPage. Does
- * not rename or open a page. O(favorites + recents² + sidebar items). */
-export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: { favorites?: boolean }): void;
-export function renamePageInNavigation(from: string, to: string, opts?: { favorites?: boolean }): void;
-export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: { favorites?: boolean } = {}) {
+ * not rename or open a page. O(favorites + recents² + sidebar items).
+ * A pathless `from` matches every file of that name, unless `exactPath`
+ * restricts it to entries without a path (other files' entries keep their owner). */
+type NavigationRenameOptions = { favorites?: boolean; exactPath?: boolean };
+export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: NavigationRenameOptions): void;
+export function renamePageInNavigation(from: string, to: string, opts?: NavigationRenameOptions): void;
+export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: NavigationRenameOptions = {}) {
   const from: PageTarget = typeof fromOrName === "string"
     ? { name: fromOrName, pageKind: "page" }
     : fromOrName;
@@ -714,7 +711,7 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
 
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const matches = item.kind === from.pageKind && item.name === from.name
-      && (from.path === undefined || item.path === from.path);
+      && ((from.path === undefined && !opts.exactPath) || item.path === from.path);
     const next = matches
       ? { name: to.name, kind: to.pageKind, ...(to.path ? { path: to.path } : {}) }
       : item;
@@ -730,8 +727,8 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
   const nextSidebar: SidebarItem[] = [];
   for (const item of rightSidebar()) {
     const matches = item.kind === "page"
-      ? item.name === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path)
-      : item.page === from.name && item.pageKind === from.pageKind && (from.path === undefined || item.path === from.path);
+      ? item.name === from.name && item.pageKind === from.pageKind && ((from.path === undefined && !opts.exactPath) || item.path === from.path)
+      : item.page === from.name && item.pageKind === from.pageKind && ((from.path === undefined && !opts.exactPath) || item.path === from.path);
     const next: SidebarItem = !matches ? item : item.kind === "page"
       ? { ...item, name: to.name, pageKind: to.pageKind, path: to.path }
       : { ...item, page: to.name, pageKind: to.pageKind, path: to.path };
@@ -1305,7 +1302,7 @@ export type CtxTarget =
       /** Exact title-row owner for focus restoration after menu dismissal. */
       focusOwner?: HTMLElement;
     }
-  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page"; path?: string }
+  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page"; path?: string; occurrence?: OwnedOccurrence }
   | { kind: "sheet-cell"; blockId: string; remove?: SheetCellRemoveCtx }
   | {
       kind: "sheet";
@@ -1367,14 +1364,10 @@ export function openPageContextMenu(
   setContextMenu({ x, y, kind: "page", ...target, fileActions, focusOwner: owner });
 }
 export function openBlockRefContextMenu(
-  x: number,
-  y: number,
-  uuid: string,
-  page: string,
-  pageKind: "journal" | "page" = "page",
-  path?: string,
+  x: number, y: number, uuid: string, page: string,
+  pageKind: "journal" | "page" = "page", path?: string, occurrence?: OwnedOccurrence,
 ) {
-  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind, path });
+  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind, path, occurrence });
 }
 export function openSheetCellContextMenu(x: number, y: number, blockId: string, remove?: SheetCellRemoveCtx) {
   setContextMenu({ x, y, kind: "sheet-cell", blockId, remove });
@@ -1414,7 +1407,7 @@ export function requestBlockReferences(id: string) {
   setBlockReferencesRequest({ id, token: ++blockReferencesRequestToken });
 }
 
-export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "plugins" | "diagnostics" | "shortcuts" | "about";
+export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "sharing" | "plugins" | "diagnostics" | "shortcuts" | "about";
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 

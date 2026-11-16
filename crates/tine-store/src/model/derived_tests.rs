@@ -550,3 +550,84 @@ fn an_owner_publication_installs_its_bytes_not_a_foreign_document() {
     );
     store.close();
 }
+
+/// REG-NAME-LOOKUP-DURING-RELEASE-KEEPS-PAGE: a host's release (and an
+/// open's hold) moves the held map and no generation. A listing walk whose
+/// certify read the map on both sides of a release dropped the page (its
+/// disk row was the owner's when checked, and no owner was left to list
+/// it), and the memo it installed stood for the whole generation: the name
+/// found nothing, the page list lost the page, and a new file claiming the
+/// name passed the twin guard. Forced at both memo installers.
+#[test]
+fn a_name_walk_during_a_release_keeps_the_released_page() {
+    use crate::{EditKind, Refusal, SaveBase, Why};
+    let (temp, store) = graph(&[
+        ("pages/a.md", b"title:: Renamed\n- a\n"),
+        ("pages/b.md", b"- b\n"),
+    ]);
+    let path = store.graph.root.join("pages/a.md");
+    let mut wrong = Vec::new();
+    for reader in ["claimants", "list"] {
+        // An open's hold of the unchanged file: no generation moves.
+        hold_open(&store, "pages/a.md", || {});
+        // Both memos walk at this generation (dropping a memo is safe).
+        store.graph.forget_name_memos();
+        let pause: Pause = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        *store.graph.certify_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        let walk = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || match reader {
+                "claimants" => (store.graph.find_claimants("Renamed", PageKind::Page))
+                    .into_iter()
+                    .map(|entry| entry.path)
+                    .collect::<Vec<_>>(),
+                _ => (store.graph.list_pages_shared().iter())
+                    .filter(|entry| entry.name == "Renamed")
+                    .map(|entry| entry.path.clone())
+                    .collect(),
+            })
+        };
+        // The walk has checked its disk rows' authority; the release lands
+        // before it lists the owners' rows.
+        wait_paused(&pause);
+        *store.graph.certify_pause.lock().unwrap() = None;
+        {
+            let _writer = store.writer.lock().unwrap();
+            store.graph.release("pages/a.md");
+        }
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        if walk.join().unwrap() != [path.clone()] {
+            wrong.push(format!("{reader}: the walk lost the released page"));
+        }
+        // The memos at this same generation.
+        if store
+            .graph
+            .find_entry("Renamed", PageKind::Page)
+            .map(|entry| entry.path)
+            != Some(path.clone())
+        {
+            wrong.push(format!("{reader}: the name finds nothing"));
+        }
+        if !(store.graph.list_pages_shared().iter()).any(|entry| entry.path == path) {
+            wrong.push(format!("{reader}: the page list lost the page"));
+        }
+        // A new file claiming the name is the page's twin.
+        let twin = store.graph.root.join("pages/renamed.md");
+        let dto = (store.graph.page_dto_for_bytes(&twin, b"- twin\n"))
+            .unwrap()
+            .unwrap();
+        let mut tx = store.page_plan(Some(EditKind::SaveBlock));
+        tx.save_page(
+            &[EditKind::SaveBlock],
+            &PageId::from("pages/renamed.md"),
+            SaveBase::CreateNew,
+            &dto,
+        );
+        if !matches!(tx.plan(), Err(Why::Refused(Refusal::Twin { .. }))) {
+            wrong.push(format!("{reader}: a twin of the page was planned"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    store.close();
+}

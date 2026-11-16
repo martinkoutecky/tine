@@ -16,7 +16,7 @@ import { initParser } from "./render/parse";
 import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
-import { datePicker } from "./ui";
+import { applyTaskWorkflow, datePicker } from "./ui";
 import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw, node as docNode } from "./document";
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
@@ -24,7 +24,7 @@ import { backend } from "./backend";
 import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
 import { startUiLanguage } from "./i18n/preference";
 import { reportUiFailure } from "./uiFailure";
-import { latestOwner, readOwned } from "./owned";
+import { latestOwner, ownedWhen, readOwned, readOwnedResource, type Owner } from "./owned";
 import { installBackendClock } from "./journal";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
@@ -49,12 +49,17 @@ import "./styles/inter.css";
 import "@fontsource-variable/noto-emoji/wght.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
 import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
+import { installMiddleClickPasteGuard } from "./middleClickPaste";
+import { withoutPageInventory } from "./pageIndex";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/capture.css";
 
+// The capture WebView is granted no graph-wide read (no graph slot).
+withoutPageInventory();
 installEditableEmojiPlatform();
 installTextareaPrimarySelectionGuard();
+installMiddleClickPasteGuard();
 
 const SCRATCH = CAPTURE_SCRATCH_NAME;
 
@@ -82,6 +87,7 @@ function Capture() {
   const [shortcuts, setShortcuts] = createSignal<Record<string, string>>({});
   const [captureStatus, setCaptureStatus] = createSignal<"idle" | "saving" | "error">("idle");
   const [captureMessage, setCaptureMessage] = createSignal("");
+  const [previousGraph, setPreviousGraph] = createSignal(false);
   const submitBinding = () => shortcuts()["editor/quick-capture-file"] ?? "mod+shift+enter";
   const bulletHint = () => submitBinding() === "false"
     ? "Edit as usual; use File capture to submit"
@@ -249,9 +255,20 @@ function Capture() {
   // either use adaptive or issue its query without any graph candidates.
   // A later show wins if refreshes overlap while the window is being hidden or
   // re-shown, so stale reads cannot activate an older lifecycle.
+  let configRevision = 0;
+  let configGeneration = 0;
+  const refreshCaptureConfig = async (owner: Owner) => {
+    const revision = configRevision;
+    const result = await readOwned(owner, backend().bindCaptureGraph());
+    // A live publication can arrive while a show or retry snapshot is in flight.
+    if (result.kind === "current"
+        && (revision === configRevision || configGeneration !== backend().graphBindingGeneration()))
+      applyTaskWorkflow(result.value);
+    return result;
+  };
   const refreshPolicyThenResettleAndActivate = async () => {
     const owner = latestOwner(captureScope, "policy", () => captureAlive);
-    const result = await readOwned(owner, Promise.all([initLinkDefault(), backend().bindCaptureGraph()]));
+    const result = await readOwned(owner, Promise.all([initLinkDefault(), refreshCaptureConfig(owner)]));
     if (result.kind === "stale") return;
     resettleAndActivate();
   };
@@ -318,11 +335,7 @@ function Capture() {
     }
   };
 
-  // Editor shortcuts (incl. the configurable `editor/quick-capture-file` that
-  // files the capture) are merged from config.edn + the user's Settings
-  // overrides, which live in the MAIN window's localStorage — unreadable here.
-  // Ask the main window for the merged map and re-install our keybindings with
-  // it, so a remapped shortcut is honored in the capture window too.
+  // Ask the graph window for its merged config/device shortcut map.
   let disposeKeys: () => void = () => {};
   const requestShortcuts = async () => {
     const owner = latestOwner(captureScope, "shortcuts-request", () => captureAlive);
@@ -341,15 +354,71 @@ function Capture() {
   onCleanup(() => { submitAlive = false; });
   const scratchMarkdown = () => roots().map((r) => blockSubtreeMarkdown(r)).join("\n");
   let scratchRevision = 0;
+  let composing = false;
+  let afterComposition: (() => void) | undefined;
+  const scratchNodes = (): Array<{ id: string; raw: string }> => {
+    const nodes: Array<{ id: string; raw: string }> = [];
+    const visit = (id: string) => {
+      const node = docNode(id);
+      if (!node) return;
+      nodes.push({ id, raw: node.raw });
+      node.children.forEach(visit);
+    };
+    roots().forEach(visit);
+    return nodes;
+  };
+  // Subtract only text whose identity and prefix still match. Work with the
+  // outline's nodes, never with Markdown syntax or a replacement of the tree.
+  const consumeSnapshot = (nodes: Array<{ id: string; raw: string }>) => {
+    for (const prior of [...nodes].reverse()) {
+      const node = docNode(prior.id);
+      if (!node || !node.raw.startsWith(prior.raw)) continue;
+      const remainder = node.raw.slice(prior.raw.length);
+      if (!remainder && !node.children.length && (node.parent || roots().length > 1)) deleteBlock(prior.id);
+      else setRaw(prior.id, remainder, { timetracking: false });
+    }
+    resumeScratchEditor();
+  };
+  // An unacknowledged insertion owns its snapshot across manual retries too.
+  let retry: { id: string; scratch: string; nodes: ReturnType<typeof scratchNodes>; title: string; revision: number; generation: number; target?: string } | undefined;
+  let needsRebind = false;
+  let rebinding = false;
+  let unconfirmedText = false;
   const submit = () => {
-    if (pendingCapture) return;
+    if (pendingCapture || rebinding) return;
     const submitOwner = latestOwner(submitScope, "capture", () => submitAlive);
-    const submittedScratch = scratchMarkdown(), submittedTitle = title();
-    const submittedRevision = scratchRevision;
-    const bindingGeneration = backend().graphBindingGeneration();
+    if (composing) return;
+    if (needsRebind && !retry) {
+      rebinding = true;
+      void refreshCaptureConfig(submitOwner).then(result => {
+        rebinding = false;
+        if (result.kind === "stale") return;
+        needsRebind = false;
+        submit();
+      }).catch(() => {
+        rebinding = false;
+        if (!submitOwner()) return;
+        setCaptureStatus("error");
+        setCaptureMessage(t("app-capture-couldn-t-be-saved-its-text"));
+        scheduleFit();
+      });
+      return;
+    }
+    retry ??= { id: createQuickCaptureRequestId(), scratch: scratchMarkdown(), nodes: scratchNodes(), title: title(), revision: scratchRevision, generation: backend().graphBindingGeneration() };
+    const snapshot = retry;
+    const submittedScratch = snapshot.scratch, submittedTitle = snapshot.title;
+    const submittedRevision = snapshot.revision;
+    const bindingGeneration = snapshot.generation;
     const md = submittedScratch.trim(), pageTitle = submittedTitle.trim();
     void (async () => {
-      if (!md) {
+      if (!md || (snapshot.nodes.length > 0 && snapshot.nodes.every(node => !node.raw.trim()))) {
+        retry = undefined;
+        if (pageTitle) {
+          setCaptureStatus("error");
+          setCaptureMessage(t("capture-title-needs-text"));
+          scheduleFit();
+          return;
+        }
         setCaptureStatus("idle");
         setCaptureMessage("");
         clearScratch();
@@ -357,14 +426,16 @@ function Capture() {
         await hideWindow();
         return;
       }
-      const id = createQuickCaptureRequestId();
+      unconfirmedText = true;
+      const id = snapshot.id;
       let target: string;
       try {
         const result = await readOwned(submitOwner, backend().captureTarget());
         if (result.kind === "stale") return;
-        target = result.value;
+        target = snapshot.target ??= result.value;
       } catch {
         if (submitOwner()) {
+          if (!snapshot.target) retry = undefined;
           setCaptureStatus("error");
           setCaptureMessage("No graph window is ready — text kept");
           scheduleFit();
@@ -381,12 +452,15 @@ function Capture() {
         if (pendingCapture !== pending) return;
         disposePendingCapture();
         if (ok) {
+          retry = undefined;
+          unconfirmedText = false;
           setCaptureStatus("idle");
           setCaptureMessage("");
-          // The ack owns the submitted snapshot, not edits made while transport
-          // or save awaited. Input revisions also cover DOM-local IME text.
+          // Input revisions also cover DOM-local IME text.
           if (scratchRevision !== submittedRevision || scratchMarkdown() !== submittedScratch || title() !== submittedTitle) {
-            setCaptureMessage("Submitted capture saved — newer edits kept");
+            if (composing) afterComposition = () => consumeSnapshot(snapshot.nodes);
+            else consumeSnapshot(snapshot.nodes);
+            setCaptureMessage(t("capture-snapshot-saved"));
             scheduleFit();
             return;
           }
@@ -403,7 +477,8 @@ function Capture() {
         if (pendingCapture !== pending) return;
         disposePendingCapture();
         setCaptureStatus("error");
-        setCaptureMessage("graph window not ready — try again");
+        setPreviousGraph(false);
+        setCaptureMessage(t("capture-retry-unconfirmed"));
         scheduleFit();
       };
       setCaptureStatus("saving");
@@ -445,7 +520,16 @@ function Capture() {
       };
       try {
         const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
-          if (quickCaptureAckMatches(pending.id, e.payload)) void finish(e.payload.ok);
+          if (!quickCaptureAckMatches(pending.id, e.payload)) return;
+          if (!e.payload.ok && !e.payload.landed) {
+            retry = undefined;
+            needsRebind = true;
+          }
+          void finish(e.payload.ok).then(() => {
+            if (!submitOwner()) return;
+            setPreviousGraph(!!e.payload.closedGraph);
+            if (e.payload.closedGraph) setCaptureMessage(t("capture-previous-graph"));
+          });
         });
         if (pendingCapture !== pending) {
           unlisten();
@@ -463,11 +547,30 @@ function Capture() {
   const cancel = () => {
     latestOwner(submitScope, "capture");
     disposePendingCapture();
+    // An unproved insertion may already be in a host; even a proved refusal
+    // leaves attempted text in custody. Hide without discarding either scratch
+    // or an uncertain retry identity.
+    if (retry || unconfirmedText) {
+      setCaptureStatus("error");
+      if (retry && !previousGraph()) setCaptureMessage(t("capture-retry-unconfirmed"));
+      void hideWindow();
+      return;
+    }
     setCaptureStatus("idle");
     setCaptureMessage("");
     clearScratch();
     setTitle("");
     void hideWindow();
+  };
+
+  const startNewCapture = () => {
+    if (pendingCapture) return;
+    // Explicitly retire the uncertain attempt, keeping every character for the
+    // user to reconcile against the previous graph before filing a new request.
+    retry = undefined;
+    setPreviousGraph(false);
+    setCaptureStatus("idle");
+    setCaptureMessage(t("capture-new-request"));
   };
 
   const captureApi: CaptureApi = {
@@ -478,10 +581,7 @@ function Capture() {
     quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit, pinyinMatchingEnabled()),
   };
 
-  // Grow/shrink the window whenever the rendered content changes: new/removed
-  // blocks and popups (childList), or a textarea autosizing (inline `style`).
-  // Plus the date-picker signal, which a MutationObserver on the DOM also catches
-  // but the effect makes the dependency explicit.
+  // Refit after content, editor autosizing, popup or status changes.
   createEffect(() => {
     datePicker();
     captureMessage();
@@ -501,6 +601,20 @@ function Capture() {
     void initSpellcheckSettings();
     void initRefCompletionSettings();
     seed();
+    let stopConfig = () => {};
+    onCleanup(() => stopConfig());
+    void readOwnedResource(ownedWhen(() => captureAlive), backend().onGraphConfigChanged(change => {
+      if (captureAlive && change.binding_generation === backend().graphBindingGeneration()) {
+        configRevision++;
+        configGeneration = change.binding_generation;
+        applyTaskWorkflow(change.meta);
+      }
+    }), stop => stop()).then(result => {
+      if (result.kind === "current") {
+        if (captureAlive) stopConfig = result.value;
+        else result.value();
+      }
+    }).catch(error => { if (captureAlive) reportUiFailure("capture-preference", error); });
 
     const root = document.getElementById("capture-root");
     if (root) {
@@ -525,10 +639,8 @@ function Capture() {
           disposeKeys = installKeybindings(e.payload ?? {});
           setShortcuts(e.payload ?? {}); // keep the hint's submit shortcut current
         });
-        // Rust emits this every time it shows the window — the reliable re-fit
-        // trigger (the focus event isn't guaranteed for a `focus:false` frameless
-        // window). Also refresh the pref/theme/shortcuts that may have changed
-        // while we were hidden.
+        // Rust's show event refits even without a focus event and refreshes
+        // preferences, theme and shortcuts changed while hidden.
         const unShown = await listen("capture-shown", () => {
           void initPinyinMatchingSetting();
           loadPref();
@@ -583,7 +695,11 @@ function Capture() {
 
   return (
     <CaptureCtx.Provider value={captureApi}>
-      <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { scratchRevision++; }}>
+      <div class="capture-shell" onInput={() => { scratchRevision++; }} onCompositionStart={() => { composing = true; scratchRevision++; }}
+        onCompositionEnd={() => {
+          composing = false;
+          queueMicrotask(() => { const consume = afterComposition; afterComposition = undefined; consume?.(); });
+        }}>
         <Show when={ready()}>
           {/* Optional page title. Filled → the capture becomes a NEW page; empty →
               appended to today. Plain Enter drops into the bullet; the submit
@@ -627,6 +743,9 @@ function Capture() {
               classList={{ "capture-status-error": captureStatus() === "error" }}
             >
               {captureMessage()}
+              <Show when={previousGraph()}>
+                <button type="button" data-testid="capture-start-new" disabled={captureStatus() === "saving"} onClick={startNewCapture}>{t("capture-start-new")}</button>
+              </Show>
             </div>
           </Show>
         </Show>

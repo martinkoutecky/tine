@@ -4,22 +4,31 @@ import { t } from "../i18n";
 // Visits at most 64 ancestor levels per branch and shows a message below that;
 // cost is O(rendered blocks), bounded by the supplied result tree.
 
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
-import { pageProperties, visibleBody } from "../render/block";
-import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
+import { pageProperties } from "../render/block";
+import { effectiveHeadingLevel, facetsFromDto, renderedProperties } from "../render/facets";
 import { taskCheckboxState } from "../markers";
-import { InlineText } from "../render/inline";
-import { formatForPage } from "../document";
+import { AstBody } from "../render/body";
+import { BlockRenderBoundary } from "./BlockRenderBoundary";
+import { blockWritable, formatForPage, node as docNode, resolveBlockRef, setCollapsed } from "../document";
+import { loadSourcePage } from "../sourcePage";
+import { graphOwner } from "../owned";
 import { openBlockInSidebar } from "../ui";
 import { openInNewTab, type Route } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { PagePropertyValue } from "./PagePropertyValue";
+import { PropertyKey, visiblePageProperties } from "../render/PropertyKey";
+import { PropertyRows } from "../render/PropertyRows";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { isElementNode } from "../windowRealm";
+import { CalGlyph } from "./blockParts";
+import { annotationInfo } from "../editor/annotation";
+import { AnnotationBody } from "./AnnotationBody";
+import { visibleBody } from "../render/block";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -37,6 +46,11 @@ export function RefBlocks(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   queryResult?: boolean;
   readOnly?: boolean;
+  /** Hover previews share the source's fold (GH #748). Unwritable or missing
+   *  sources retain a local fold. Text remains read-only. */
+  pageBody?: boolean;
+  /** An embed's fallback copy preserves folds without writing the source. */
+  localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
   return <RefBlocksAtDepth {...props} treeDepth={1} />;
@@ -50,6 +64,8 @@ function RefBlocksAtDepth(props: {
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
   readOnly?: boolean;
+  pageBody?: boolean;
+  localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
   treeDepth: number;
   queryResult?: boolean;
@@ -65,6 +81,8 @@ function RefBlocksAtDepth(props: {
           path={props.path}
           onEditPageProperties={props.onEditPageProperties}
           readOnly={props.readOnly}
+          pageBody={props.pageBody}
+          localFolds={props.localFolds}
           onOpenBlock={props.onOpenBlock}
           depth={props.depth ?? b.breadcrumb?.length ?? 0}
           treeDepth={props.treeDepth}
@@ -81,38 +99,70 @@ function RefBlock(props: {
   path?: string;
   onEditPageProperties?: (event: MouseEvent) => void;
   readOnly?: boolean;
+  pageBody?: boolean;
+  localFolds?: boolean;
   onOpenBlock?: (id: string) => void;
   depth: number;
   treeDepth: number;
   queryResult?: boolean;
 }): JSX.Element {
-  // Header facts (marker/done) off the one lsdoc parse (cache hit if the panel's
-  // DTOs were seeded); the visible body lines via the shared body-text extractor.
-  // Memoized — read several times in the markup, and the ref panels render hundreds
-  // of rows.
-  // Off the DTO's shipped facet fields — NO frontend parse (the backend already
-  // computed these). Ref/linked/unlinked panels render hundreds of rows; parsing each
-  // was a real hot-path cost and churned the facet cache (audit P3).
+  // Header facts stay on the DTO's shipped fields (audit P3): no facet parse.
+  // M-19: the body shares AstBody with Block, so fences and dates match the
+  // live row. Measured: no slower on the normal path; slower only while a
+  // source page cannot be read (D-20261023-VC, tine-agents evidence/m19-wave4).
   const facets = createMemo(() => facetsFromDto(props.block));
   const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), props.depth));
   const format = createMemo(() => formatForPage(props.page));
-  const lines = createMemo(() => visibleBody(props.block.raw));
-  // Keep the DTO hot path parse-free for ordinary references. Only an exact
-  // whole-block candidate pays for lsdoc confirmation before execution.
+  const annotation = () => annotationInfo(facets().properties);
+  // Only an exact whole-block candidate needs query confirmation here.
   const beginQuery = createMemo(() =>
     !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
       ? inspectBeginQuery(props.block.raw, format())
       : null
   );
   const properties = createMemo(() =>
-    props.block.page_property ? pageProperties(props.block.raw, format()) : []
+    props.block.page_property ? visiblePageProperties(pageProperties(props.block.raw, format())) : []
   );
+  const [localFold, setLocalFold] = createSignal<boolean>();
+  const hasKids = () => props.block.children.length > 0;
   const refTarget = () => ({
     uuid: blockDtoExternalId(props.block),
     page: props.page ?? "",
     pageKind: (props.pageKind ?? "page") as "journal" | "page",
     ...(props.path ? { path: props.path } : {}),
   });
+  const sourceId = createMemo(() => props.pageBody && !props.localFolds && props.page ? resolveBlockRef(refTarget()) : null);
+  const folded = () => {
+    if (!props.pageBody || !hasKids()) return false;
+    if (props.localFolds) return localFold() ?? props.block.collapsed;
+    const id = sourceId();
+    const stored = (id ? docNode(id)?.collapsed : undefined) ?? props.block.collapsed;
+    return id && blockWritable(id) ? stored : (localFold() ?? stored);
+  };
+  let alive = true;
+  let folding = false;
+  onCleanup(() => { alive = false; });
+  const toggleFold = async () => {
+    if (!hasKids() || folding) return;
+    const next = !folded();
+    if (props.localFolds) { setLocalFold(next); return; }
+    const ref = refTarget();
+    const owner = graphOwner(() => alive);
+    folding = true;
+    try {
+      // Same admission and identity resolution as reference-row edits. Never
+      // load a preview DTO (which may be capped) as a whole source document.
+      const loaded = ref.page && await loadSourcePage(ref, "The source fold was not changed.");
+      if (!owner()) return;
+      const id = loaded ? resolveBlockRef(ref) : null;
+      if (id && blockWritable(id)) {
+        setLocalFold(undefined);
+        setCollapsed(id, next); // ordinary undo and guarded save path
+      } else setLocalFold(next);
+    } catch {
+      if (owner()) setLocalFold(next);
+    } finally { folding = false; }
+  };
   const openRefRoute = (open: (route: Route) => unknown): void => {
     const t = refTarget();
     open({ kind: "page", name: t.page, pageKind: t.pageKind, block: t.uuid });
@@ -122,12 +172,24 @@ function RefBlock(props: {
       class="ls-block ref-block"
       data-block-id={props.block.id}
       data-block-ref={blockDtoExternalId(props.block)}
-      classList={{ "page-property-reference": !!props.block.page_property }}
+      classList={{ "page-property-reference": !!props.block.page_property, collapsed: folded() }}
     >
       <div class="block-main" classList={{ [`bullet-h${headingLevel()}`]: headingLevel() != null }}>
         <div class="block-controls">
+          <Show when={props.pageBody}>
+            <span
+              class="collapse-toggle"
+              classList={{ "has-children": hasKids() }}
+              onClick={(e) => { e.stopPropagation(); void toggleFold(); }}
+            >
+              <Show when={hasKids()}>
+                <svg viewBox="0 0 24 24" class="triangle"><path d="M8 5l8 7-8 7z" /></svg>
+              </Show>
+            </span>
+          </Show>
           <span
             class="bullet-container"
+            classList={{ "bullet-closed": folded() }}
             title={props.block.page_property ? t("macro-ref-blocks-page-property-reference") : t("macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new")}
             onMouseDown={(e) => {
               // GH #207's other half: suppress shift-range selection and
@@ -159,6 +221,10 @@ function RefBlock(props: {
           </span>
         </div>
         <div class="block-content-wrapper">
+          <BlockRenderBoundary raw={props.block.raw} onOpen={() => {
+              if (props.onOpenBlock) props.onOpenBlock(blockDtoExternalId(props.block));
+              else openRefRoute(openInNewTab);
+            }}>
           <div
             class="block-content"
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
@@ -191,23 +257,11 @@ function RefBlock(props: {
                 <Show
                   when={beginQuery()}
                   fallback={
-                    <For each={lines()}>
-                      {(line, i) => (
-                        <>
-                          <Show when={i() > 0}>
-                            <br />
-                          </Show>
-                          <Show
-                            when={i() === 0 && headingLevel() != null}
-                            fallback={<InlineText text={line} format={format()} />}
-                          >
-                            <span class={`heading-text h${headingLevel()}`}>
-                              <InlineText text={line} format={format()} />
-                            </span>
-                          </Show>
-                        </>
-                      )}
-                    </For>
+                    <Show when={annotation()?.areaStamp} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />}>
+                      <AnnotationBody page={props.page ?? ""} highlightId={blockDtoExternalId(props.block)}
+                        color={annotation()!.color} hlPage={annotation()!.hlPage} areaStamp={annotation()!.areaStamp}
+                        line={visibleBody(props.block.raw, format()).join("\n")} />
+                    </Show>
                   }
                 >
                   {(match) => <BeginQuery match={match()} currentPage={props.page} />}
@@ -221,7 +275,7 @@ function RefBlock(props: {
                       <br />
                     </Show>
                     <span class="page-property-reference-row">
-                      <span class="prop-key">{key}</span>{" "}
+                      <span class="prop-key"><PropertyKey name={key} /></span>{": "}
                       <span class="prop-value">
                         <PagePropertyValue propertyKey={key} value={value} format={format()} />
                       </span>
@@ -230,21 +284,31 @@ function RefBlock(props: {
                 )}
               </For>
             </Show>
+            <Show when={!props.block.page_property}>
+              <PropertyRows entries={renderedProperties(props.block.raw, format())} format={format()} blockId={props.block.id} />
+            </Show>
+            <Show when={facets().scheduled}>
+              <span class="date-chip scheduled"><CalGlyph /> {facets().scheduled}</span>
+            </Show>
+            <Show when={facets().deadline}>
+              <span class="date-chip deadline"><CalGlyph /> {facets().deadline}</span>
+            </Show>
           </div>
+          </BlockRenderBoundary>
         </div>
       </div>
-      <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH}>
+      <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH && !folded()}>
         <div class="block-children-container">
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
               queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
-              readOnly={props.readOnly} onOpenBlock={props.onOpenBlock}
+              readOnly={props.readOnly} pageBody={props.pageBody} localFolds={props.localFolds} onOpenBlock={props.onOpenBlock}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>
         </div>
       </Show>
-      <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH}>
+      <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH && !folded()}>
         <div class="ref-block-depth-warning">{t("macro-ref-blocks-more-nested-blocks-are-available-on-the-page")}</div>
       </Show>
     </div>
