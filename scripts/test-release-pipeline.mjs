@@ -75,6 +75,12 @@ function e2eRegistry(suite, query) {
 }
 const windowsFanOut = e2eRegistry("windows-smoke", "--fan-out");
 const windowsScenarios = e2eRegistry("windows-smoke", "--scripts").map((script) => path.basename(script));
+// A scenario that refuses to start off Windows cannot be in the Linux suite: the nightly
+// ran windows-core there and went red with "windows smoke must run on Windows".
+for (const script of e2eRegistry("linux-release", "--scripts")) {
+  assert.doesNotMatch(fs.readFileSync(path.join(process.cwd(), script), "utf8"), /process\.platform !== "win32"\) throw/,
+    `${script} is Windows-only and must not be in the linux-release suite`);
+}
 
 const successfulFullCiRun = {
   id: 1234,

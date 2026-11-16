@@ -155,8 +155,6 @@ const suites = {
     ["cm-query-alias", "scripts/e2e-cm-query-alias.mjs", {}, BY_NAME],
     ["keyed-refresh", "scripts/e2e-keyed-refresh.mjs", {}, BY_NAME],
     ["panes-keys", "scripts/e2e-panes-keys.mjs", {}, BY_NAME],
-    ["windows-core", "scripts/e2e-windows-smoke.mjs", {}, BY_NAME],
-    ["windows-portable", "scripts/e2e-windows-portable.mjs", {}, BY_NAME],
     ["beta-win-863-809", "scripts/e2e-beta-win-863-809.mjs", {}, BY_NAME],
     ["gh745-outdent", "scripts/e2e-gh745-windows-probe.mjs", {}, BY_NAME],
     ["empty-page-edit", "scripts/e2e-empty-page-edit.mjs", {}, BY_NAME],

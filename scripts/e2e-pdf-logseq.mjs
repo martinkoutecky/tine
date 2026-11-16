@@ -604,7 +604,9 @@ function ednHighlightEntry(content, id, color) {
 }
 
 function ednBounding(entry) {
-  const match = entry.match(/:bounding \{:x1 ([^ ]+) :y1 ([^ ]+) :x2 ([^ ]+) :y2 ([^ ]+) :width ([^ ]+) :height ([^ }\n]+)/);
+  // EDN separates entries with spaces, commas or newlines: Logseq's Fipp layout (written
+  // for new records since #954) wraps one key per line with trailing commas.
+  const match = entry.match(/:bounding \{:x1[\s,]+([^\s,}]+)[\s,]+:y1[\s,]+([^\s,}]+)[\s,]+:x2[\s,]+([^\s,}]+)[\s,]+:y2[\s,]+([^\s,}]+)[\s,]+:width[\s,]+([^\s,}]+)[\s,]+:height[\s,]+([^\s,}]+)/);
   if (!match) throw new Error(`sidecar highlight has no Logseq bounding geometry: ${entry}`);
   const [x1, y1, x2, y2, width, height] = match.slice(1).map(Number);
   if (![x1, y1, x2, y2, width, height].every(Number.isFinite)) {
