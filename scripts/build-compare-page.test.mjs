@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { renderComparison, root, fixturePath, publishedPath } from "./build-compare-page.mjs";
 
@@ -10,14 +9,8 @@ const data = () => JSON.parse(read("website/compare/rows.json"));
 test("checked-in generated page matches data, template, evidence and package version", () => {
   assert.equal(read(fixturePath), renderComparison());
 });
-test("published page matches generator, or the exact pre-stable-cut baseline", () => {
-  const published = read(publishedPath);
-  // Temporary migration allowance: develop cannot regenerate master's public
-  // website. Only this exact old page is exempt; compare:check never exempts it.
-  const legacy = "0af8236db43b73c84f61e51b5b440a194609bb51a659cb2a412c90c9a84c4088";
-  if (createHash("sha256").update(published).digest("hex") !== legacy) {
-    assert.equal(published, renderComparison());
-  }
+test("published page matches generator", () => {
+  assert.equal(read(publishedPath), renderComparison());
 });
 test("missing local evidence and changed Guide anchors/excerpts fail generation", () => {
   for (const change of [

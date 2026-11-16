@@ -8,6 +8,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-16
+
+Tine 0.9.0 makes the 0.9 Beta line stable. It is Tine Beta 0.9.0-beta.14 (the
+fourteen Beta sections below list everything it changed since 0.8.0; the 0.8.1
+to 0.8.4 fixes are included). Your settings, graphs and sessions carry over
+from 0.8.x. The highlights: margin comments on selected words, with replies;
+git built in, on phones too (automatic commits, sync with a remote, cloning a
+graph or making one a repository), with **Changed since you last looked**
+marking what others committed; a Share dialog for folder exports and encrypted
+quick-share links; a command line that can write blocks and pages, for scripts
+and AI agents working beside you, now also on Windows; open tabs in the sidebar
+and an **All graphs** switcher; editable hover previews; launch backups as one
+zip each; and launches that rebuild their indexes about twice as fast on large
+graphs. Properties Tine gives its own meaning are now named `tine.<name>`, so
+your own `author::` or `quote::` stay yours.
+
+**Known issues:** Agents writing through the Tine CLI to the page you are typing in can end in a save conflict. Nothing is lost: Tine keeps both versions and you resolve it in the app (#964).
+
+### Changed
+
+- Stable Tine now carries the 0.9 Beta line. Beta keeps its separate app and update channel, and continues with the next development line.
+
 ## [0.9.0-beta.14] - 2026-11-15
 
 ### Fixed
@@ -230,6 +252,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - On Android shared storage, a page saved again now gets a new modification time each time, so Syncthing and other sync apps notice edits that keep the file the same size (before, the page kept its first version's time on devices with the newer storage mode). The diagnostics report counts each time-reset that failed (#811).
 - When a page save stays unconfirmed ("Couldn't save … yet; Tine keeps trying"), the message now names the check that failed when it is Tine's own check of the saved file after the folder was synced (no file there, or a file that changed), and the diagnostics report counts each kind (#811). Saving itself is unchanged; this is so that a report can show why the save could not be confirmed.
 
+## [0.8.4] - 2026-10-31
+
+Fixes for Tine 0.8.3: the Microsoft Store package, scrolling past a block embed, and sync apps missing edits on Android shared storage.
+
+### Changed
+
+- Microsoft Store package: needs Windows 11, and only Tine's own three data folders (`%APPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\page.tine.Tine`, `%LOCALAPPDATA%\tine-owners`) are shared with other installs and kept after uninstall; all other app data stays private to the Store package. Windows 10 users install from GitHub.
+
+### Fixed
+
+- Scrolling a long page with an expanded block embed no longer makes the page jump (#810). Scrolling back up past an embed made everything below it jump up by the height of the embed's rows, and jump back when the embed's rows appeared; the embed now keeps the height it had when it scrolled out of view.
+- On Android shared storage, a page saved again now gets a new modification time each time, so Syncthing and other sync apps notice edits that keep the file the same size (before, the page kept its first version's time on devices with the newer storage mode) (#811).
+
 ## [0.9.0-beta.2] - 2026-10-30
 
 ### Fixed
@@ -243,6 +278,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The Journals feed opens even when today's journal cannot be created from the default journal template (#811). The feed used to fail as a whole ("Could not load journal feed"), as on Android in 0.9.0-beta.1; now an error says the template was not added and the journals are shown without it.
 - Linux: the carry buttons and the star, share and page-actions icons on a journal title should no longer flicker (back at full opacity for a moment after fading out) when the pointer leaves the title row. It showed only with GPU rendering (`TINE_GPU=0` avoided it). The 0.1 s fade is kept, but it now runs as an ordinary page animation instead of a compositor opacity animation (an earlier attempt that kept a standing compositing layer did not help on every GPU, so that layer is gone again). Not yet confirmed on the reporter's GPU.
 - PDF pages are now set off by a thin edge line instead of a soft drop shadow. On HiDPI screens without GPU compositing the shadow was re-blurred on every scrolled frame, making scrolling sluggish and leaving pages blank for a second or two during fast scrolling (PDF9-5).
+
+## [0.8.3] - 2026-10-30
+
+### Fixed
+
+- A page with both unsaved edits that could not be saved (it changed on disk) and a sync conflict copy can be resolved again (#800). Its "Two versions of this page arrived" panel used to hide the review of the unsaved edits, and its Apply only said "Resolve this page’s save conflict first". The page now shows the review of the unsaved edits first, noting that the copy comes next, and then the copy's comparison; every version is kept until it is applied. Resolving the unsaved edits also no longer makes the page fail to display ("This page could not be displayed") or show the file as it was before the review, and keeping both versions of a block no longer shows one of the two twice in place of the other (whose next save could have lost it).
+- Choosing a whole side in conflict review now includes its page properties, avoiding an unexplained `io:InvalidInput` failure. A sync copy removed since review leaves the page unchanged and clears the stale conflict; other resolution failures explain what needs attention (CONFLICT-INVALIDINPUT).
 
 ## [0.9.0-beta.1] - 2026-10-29
 
