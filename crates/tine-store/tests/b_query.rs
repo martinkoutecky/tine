@@ -1,7 +1,4 @@
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::time::Instant;
-use tine_store::{Cancel, SearchRequest, Store};
+use tine_store::Store;
 
 #[test]
 fn b_query_cross_row_atom_uniqueness_and_prefix_matching_reach_the_store() {
@@ -102,46 +99,4 @@ fn b_query_org_template_metadata_is_removed_by_the_copy_door() {
     assert!(!copied.raw.contains(":template:"));
     assert!(!copied.raw.contains(":template-including-parent:"));
     assert!(copied.children[0].raw.contains(":template: literal"));
-}
-
-#[test]
-#[ignore = "manual before/after 10k search benchmark"]
-fn b_query_search_10k_bench() {
-    let _integration_guard = crate::exclusive_integration_lock();
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("pages")).unwrap();
-    for i in 0..10_000 {
-        std::fs::write(
-            dir.path().join(format!("pages/Page{i:05}.md")),
-            format!("- TODO alpha searchable {i}\n- other body\n"),
-        )
-        .unwrap();
-    }
-    let store = Store::open(dir.path(), Default::default()).unwrap().0;
-    let graph = store.whole_graph().unwrap();
-    let request = SearchRequest {
-        transliteration: false,
-        text: "searchable".into(),
-        within: None,
-        page_limit: 20,
-        block_limit: 50,
-        explain: false,
-        page_match_scope: None,
-        page_view: None,
-        block_view: None,
-    };
-    let cancel = Cancel(Arc::new(AtomicBool::new(false)));
-    let mut samples = Vec::new();
-    for _ in 0..7 {
-        let start = Instant::now();
-        let result = graph.search(&request, &cancel).unwrap();
-        assert_eq!(result.hits.len(), 50);
-        samples.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
-    let cold = samples.remove(0);
-    samples.sort_by(f64::total_cmp);
-    println!(
-        "10k search debug: cold_ms={cold:.3}, warm_median_ms={:.3}, samples_ms={samples:?}",
-        (samples[2] + samples[3]) / 2.0
-    );
 }

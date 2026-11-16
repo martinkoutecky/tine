@@ -680,41 +680,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "lane measurement: GH181_FIXTURES names disposable graph fixtures"]
-    fn measure_closed_graph_link_search() {
-        let roots = std::env::var("GH181_FIXTURES").unwrap();
-        let request = LinkRequest {
-            graph: None,
-            page: None,
-            block: Some("11111111-1111-4111-8111-111111111111".into()),
-        };
-        for root in roots.split(':') {
-            let root = std::path::Path::new(root);
-            let began = std::time::Instant::now();
-            let mut open_elapsed = std::time::Duration::ZERO;
-            let mut opens = 0;
-            let result = closed_lookup(root, &request, None, || {
-                opens += 1;
-                let began = std::time::Instant::now();
-                let store = Store::open(root, Default::default())
-                    .map(|x| x.0)
-                    .map_err(|e| e.to_string());
-                open_elapsed = began.elapsed();
-                store
-            })
-            .unwrap();
-            eprintln!(
-                "fixture={} total_ms={:.3} open_return_ms={:.3} opens={} found={}",
-                root.file_name().unwrap().to_string_lossy(),
-                began.elapsed().as_secs_f64() * 1000.0,
-                open_elapsed.as_secs_f64() * 1000.0,
-                opens,
-                result.is_some()
-            );
-        }
-    }
-
-    #[test]
     fn cold_runtime_block_link_matches_full_open_without_persisted_id() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join("pages")).unwrap();
