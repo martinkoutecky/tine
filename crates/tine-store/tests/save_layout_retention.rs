@@ -361,6 +361,170 @@ fn a_new_subtree_with_a_parents_text_does_not_take_its_children() {
     );
 }
 
+/// Review 293fa of #960: equal text is not identity, for children either. Two
+/// parents share their text and their children repeat: identical children,
+/// partly repeated children, repeated children with distinct grandchildren.
+/// Moving the first parent (under, after, before `target`) or adding a new
+/// subtree with the first parent's texts (under, before, after it) leaves every
+/// existing block it does not move byte-identical; a moved block's descendants
+/// keep their offsets from it. A new subtree is rendered in the page's step.
+#[test]
+fn repeated_children_keep_each_parents_bytes() {
+    let _integration_guard = crate::integration_lock();
+    let mut failures = Vec::new();
+    let mut cases = 0;
+    let shapes = [
+        ("- dup", "dup", "- dup"),
+        ("- ", "", "- "),
+        ("- # dup", "# dup", "- # dup"),
+        ("# dup", "# dup", "- # dup"),
+    ];
+    // Each family: the first and second parent's descendants as
+    // (indent units, text, depth below the parent).
+    let families: [(&str, &[(usize, &str, usize)], &[(usize, &str, usize)]); 3] = [
+        ("identical", &[(2, "x", 1)], &[(3, "x", 1)]),
+        (
+            "partly-repeated",
+            &[(2, "x", 1), (2, "a", 1)],
+            &[(3, "x", 1), (3, "b", 1)],
+        ),
+        (
+            "distinct-grandchildren",
+            &[(2, "x", 1), (3, "g1", 2)],
+            &[(3, "x", 1), (5, "g2", 2)],
+        ),
+    ];
+    for (line, raw, bulleted) in shapes {
+        for unit in ["\t", "  ", " \t"] {
+            let u = |n: usize| unit.repeat(n);
+            let step = if unit == "  " { "  " } else { "\t" };
+            for (family, first, second) in families {
+                let lines = |rows: &[(usize, &str, usize)], base: &str| -> String {
+                    rows.iter()
+                        .map(|(k, t, _)| format!("{base}{}- {t}\n", u(*k)))
+                        .collect()
+                };
+                let p1 = format!("{line}\n{}", lines(first, ""));
+                let p2 = format!("{line}\n{}", lines(second, ""));
+                // A new copy of the first parent's subtree, in the page's step.
+                let fresh = |base: &str| -> String {
+                    let head = format!("{base}- {raw}");
+                    let body: String = first
+                        .iter()
+                        .map(|(_, t, d)| format!("{base}{}- {t}\n", step.repeat(*d)))
+                        .collect();
+                    format!("{}\n{body}", head.trim_end())
+                };
+                let subtree = || {
+                    let mut new = block(raw);
+                    for (_, t, d) in first {
+                        let mut at = &mut new;
+                        for _ in 1..*d {
+                            at = at.children.last_mut().unwrap();
+                        }
+                        at.children.push(block(t));
+                    }
+                    new
+                };
+                for newline in ["\n", "\r\n", "\r"] {
+                    let source = format!("{p1}{p2}- target\n").replace('\n', newline);
+                    let mut check = |name: String, written: String, expected: String| {
+                        cases += 1;
+                        let expected = expected.replace('\n', newline);
+                        if written != expected {
+                            failures
+                                .push(format!("{name}: expected {expected:?}, got {written:?}"));
+                        }
+                    };
+                    let name = |op: &str| format!("{line:?} {unit:?} {newline:?} {family} {op}");
+                    for at in ["under", "after", "before"] {
+                        let written = saved(&source, EditKind::MoveBlocks, |doc| {
+                            assert_eq!(doc.blocks[0].raw, raw);
+                            let moving = doc.blocks.remove(0);
+                            match at {
+                                "under" => doc.blocks[1].children.push(moving),
+                                "after" => doc.blocks.push(moving),
+                                _ => doc.blocks.insert(1, moving),
+                            }
+                        });
+                        let expected = match at {
+                            "under" => {
+                                format!("{p2}- target\n{step}{bulleted}\n{}", lines(first, step))
+                            }
+                            "after" => format!("{p2}- target\n{p1}"),
+                            // Swapping identical subtrees leaves the document
+                            // as it was, so the file keeps its bytes (A5).
+                            _ if family == "identical" => format!("{p1}{p2}- target\n"),
+                            _ => format!("{p2}{p1}- target\n"),
+                        };
+                        check(name(&format!("move {at}")), written, expected);
+                    }
+                    for at in ["under", "before", "after"] {
+                        let written = saved(&source, EditKind::InsertBlocks, |doc| match at {
+                            "under" => doc.blocks[0].children.push(subtree()),
+                            "before" => doc.blocks.insert(0, subtree()),
+                            _ => doc.blocks.insert(1, subtree()),
+                        });
+                        // Under the first parent the copy joins its last child's
+                        // column; at the root it stands at column zero.
+                        let expected = match at {
+                            "under" => format!("{p1}{}{p2}- target\n", fresh(&u(2))),
+                            "before" => format!("{}{p1}{p2}- target\n", fresh("")),
+                            _ => format!("{p1}{}{p2}- target\n", fresh("")),
+                        };
+                        check(name(&format!("add {at}")), written, expected);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 648);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Identity survives a save: after a move the store keeps the moved blocks'
+/// live identities, which a fresh parse of the saved bytes would not assign
+/// (it numbers blocks by position). A second move of the same subtree still
+/// carries its own children and leaves the other parent's bytes alone.
+#[test]
+fn a_second_move_after_a_save_keeps_identity() {
+    let _integration_guard = crate::integration_lock();
+    for unit in ["\t", "  ", " \t"] {
+        for newline in ["\n", "\r\n", "\r"] {
+            let u = |n: usize| unit.repeat(n);
+            let step = if unit == "  " { "  " } else { "\t" };
+            let p1 = format!("- dup\n{}- x\n{}- a\n", u(2), u(2));
+            let p2 = format!("- dup\n{}- x\n{}- b\n", u(3), u(3));
+            let page = Page::new(&format!("{p1}{p2}- target\n").replace('\n', newline));
+            let under = page.save(EditKind::MoveBlocks, |doc| {
+                let moving = doc.blocks.remove(0);
+                doc.blocks[1].children.push(moving);
+            });
+            let moved = format!("{step}- dup\n{step}{}- x\n{step}{}- a\n", u(2), u(2));
+            assert_eq!(
+                under,
+                format!("{p2}- target\n{moved}").replace('\n', newline),
+                "{unit:?} {newline:?} first move"
+            );
+            // Back out, then before the second parent.
+            let back = page.save(EditKind::MoveBlocks, |doc| {
+                let moving = doc.blocks[1].children.remove(0);
+                doc.blocks.insert(0, moving);
+            });
+            assert_eq!(
+                back,
+                format!("{p1}{p2}- target\n").replace('\n', newline),
+                "{unit:?} {newline:?} second move"
+            );
+        }
+    }
+}
+
 #[test]
 fn an_unchanged_parent_keeps_mixed_child_prefixes_verbatim() {
     let _integration_guard = crate::integration_lock();

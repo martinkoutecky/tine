@@ -41,7 +41,8 @@ pub(crate) use page_identity::{
     graph_text_watch_relevant,
 };
 use page_parse::{
-    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content, prime_projections,
+    carry_saved_runtime_ids, identify_old_blocks, isolate_page_parse, page_dto, parse_page_content,
+    prime_projections,
 };
 
 use crate::path_identity::canonical_existing_path;
@@ -4550,7 +4551,17 @@ impl Graph {
             |source| {
                 #[cfg(feature = "test-faults")]
                 crate::cost_counters::old_source_parse();
-                let (old, opts) = parse_doc_with_opts(path, source);
+                let (mut old, opts) = parse_doc_with_opts(path, source);
+                let cached = self
+                    .with_cached(path, |row| row.map(|(_, cached)| Arc::clone(cached)))
+                    .flatten();
+                identify_old_blocks(
+                    &mut old,
+                    path.strip_prefix(&self.root).ok().and_then(Path::to_str),
+                    cached.as_deref(),
+                    &doc,
+                );
+                prime_projections(&old);
                 (Some(old), opts)
             },
         );
