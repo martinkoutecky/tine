@@ -4,8 +4,9 @@
 // happens, and how it ends.
 //
 // Step fields: who ('narrator' | 'martin' | 'system'), text, mode ('ask' | 'aha'), act ('<verb>:<propId>'
-//   or '<verb>'), gain ({ party: [who], lv, tower, calm }), at (exact date of a quote), src (public
-//   source line), more (card text), dur (seconds, for steps without text).
+//   or '<verb>'), gain ({ party: [who], lv, tower, calm }), at (exact date of a quote), was (date of a quote
+//   said earlier than the scene: the dialogue shows it, the clock does not go back), src (public source
+//   line), more (card text), dur (seconds, for steps without text).
 // Martin's lines are verbatim from his chats ("..." marks a cut); all were checked against the
 // transcripts. Claude and Codex never get invented quotes: what they do is shown as PARTY lines.
 // Regulars are not named in the story until they agree; the credits use public GitHub handles.
@@ -13,7 +14,9 @@
 // Prop kinds: snail, qblock {pop}, bug {label}, flags {flags, big}, machine {built, shaky}, disk {label},
 //   lever, wall {label}, pipe, box {label} (opens on 'pop'), visitor {name, col}, panes {label},
 //   lines {labels} (paths fork on 'fork'), bots {n, keep} ('crash' leaves keep of them),
-//   sign {label, later} ('defer' turns it to the later label).
+//   sign {label, later} ('defer' turns it to the later label), thread {label} ('comment' adds margin
+//   comments, 'reply' the answers), book {scraps, cover, page, label} ('gather' makes the book, 'flip'
+//   opens it), reviews ('count' shows the record, 'shrink' the fix size).
 //
 // Adding a release: append a world and its scenes, move `finale` to the new release, and turn the old
 // finale scene into an ordinary ending of its world.
@@ -33,6 +36,8 @@ window.TINE_SCENES = {
       sky: ['#0f1a36', '#3d6496'], mood: 'night', drone: 0 },
     { id: 'w7', n: 7, title: 'Calm and quick', sub: 'Keep building, without shaking what people rely on',
       sky: ['#2d86c4', '#cdeee6'], mood: 'day', drone: 0 },
+    { id: 'w8', n: 8, title: 'The rulebook', sub: 'Many agents, one way of building',
+      sky: ['#35609f', '#f0c98a'], mood: 'day', drone: 0 },
   ],
   // Model changes show on the agents' name tags as the date passes them (no dialogue line).
   models: [
@@ -47,7 +52,7 @@ window.TINE_SCENES = {
   // The release the story ends on (at: the GitHub release's publish time; pending: true marks a placeholder
   // date before the cut).
   finale: {
-    tag: 'v0.8.0', at: '2026-10-26T11:08:29', name: 'Calm and quick',
+    tag: 'v0.9.0', at: '2026-11-16T11:07', name: 'The rulebook',
     // What Martin learned (R3-learning.md chapters), one real question each
     syllabus: [
       { chapter: 'How one builds an app at all', q: 'What is an ARD folder?' },
@@ -56,15 +61,17 @@ window.TINE_SCENES = {
       { chapter: 'What good architecture means', q: 'What should be the invariants?' },
       { chapter: 'Proving it', q: 'What is TLC?' },
       { chapter: 'The layers below, and release craft', q: 'what is semver and is this a big deal?' },
+      { chapter: 'Running a team of agents', q: 'are the reviews a net positive, or not?' },
     ],
     trophies: [
-      { label: 'Calm', text: 'Quieter query blocks with one menu, a Journal sections page for what today shows, a Soft theme refined by a tester.' },
-      { label: 'Your words are safe', text: 'One background saver per graph: every edit saved as you type, from any window.' },
-      { label: 'Speaks Chinese', text: 'The interface in Simplified Chinese, and Pinyin search for page titles.' },
-      { label: 'Lives in your phone', text: 'Share sheets on Android and iOS, a Quick Settings tile, Spotlight, Shortcuts.' },
-      { label: 'Desktop grows up', text: 'Pages in their own windows, a tray icon, and Homebrew on macOS.' },
-      { label: 'More Logseq', text: 'Advanced queries translate, journal queries, page icons, colored text.' },
-      { label: 'Tools', text: 'A command line, find and replace, an All pages table for tens of thousands of pages.' },
+      { label: 'Git built in', text: 'Automatic commits and sync from inside Tine, on computers and phones.' },
+      { label: 'Changed since you last looked', text: 'In a git graph, a bar marks what other people or tools changed since you last left the page.' },
+      { label: 'Margin comments', text: 'Select words and comment in the margin. Reply, fold, and review every open thread on a page or in the graph.' },
+      { label: 'Share', text: 'A page or a query as a site in a folder, or as an encrypted link anyone can open in a browser.' },
+      { label: 'A command line that writes', text: 'Scripts and agents add, edit and move blocks through the same guarded save as the app, on Windows too.' },
+      { label: 'Tabs in the sidebar', text: 'Open tabs listed in the sidebar, to switch, reorder and nest, at every width and on phones.' },
+      { label: 'Editable hover previews', text: "The blocks in a preview are the page's own blocks: click one and edit it right there." },
+      { label: 'Storage model: done', text: 'The rules for saving your files are a formal model, checked by machine and proved in Lean, and the code is tested against that model, not proved.', href: 'https://github.com/martinkoutecky/tine/discussions/702', link: 'What is proved, and what is tested' },
     ],
     closing: 'Not vibe coding: agentic engineering. Taking a project past v0.1 to something people rely on takes care, tests and attention to detail, and you can learn all of it on the way.',
   },
@@ -225,12 +232,46 @@ window.TINE_SCENES = {
         text: 'I wanted to ship 0.8 as the one where "we have a proven storage model" I cannot claim that before integrating this, right?' },
       { who: 'narrator', act: 'defer:claim', text: 'So 0.8 claims only what is checked. The full claim waits for 0.9.' },
     ] },
-    { world: 'w7', final: true, at: '2026-10-26T06:29:05', props: [{ id: 'f8', kind: 'flags', x: 300, flags: ['12 BETAS', 'TESTED'], big: '0.8.0' }], steps: [
+    { world: 'w7', at: '2026-10-26T06:29:05', props: [{ id: 'f8', kind: 'flags', x: 300, flags: ['12 BETAS', 'TESTED'], big: '0.8.0' }], steps: [
       { who: 'narrator', text: 'Twelve Betas in eleven days. Nothing severe is left in the reports.',
         more: 'Tine 0.8.0 is Beta 12 (October 24) plus one fix on top: on macOS, command-line commands could not reach the running app (GH #771).' },
       { who: 'martin', text: 'Ok, yeah, cut 0.8.0 as you described.', src: "Martin's chat with Claude, 2026-10-26" },
       { who: 'narrator', act: 'raise:f8', at: '2026-10-26T11:08:29', text: 'October 26: Tine 0.8.0 is stable, for everyone.' },
       { who: 'system', act: 'cheer', text: 'STAGE CLEAR! The PARTY celebrates. Then back to work: 0.9 is next.' },
+    ] },
+
+    // ── World 8: many agents, one way of building ───────────────────────────
+    { world: 'w8', at: '2026-10-30T02:03', props: [{ id: 'mc', kind: 'thread', x: 420, label: 'MARGIN COMMENTS' }], steps: [
+      { who: 'narrator', text: 'October 30: the first 0.9 Beta. Margin comments, the feature found buried, ship at last.' },
+      { who: 'martin', act: 'comment:mc', at: '2026-10-31T12:32', src: "Martin's chat with Claude, 2026-10-31",
+        text: 'I made two margin comments. Answer me there so we test the feature.' },
+      { who: 'system', act: 'reply:mc', text: 'CLAUDE answers in the margin, under each comment.' },
+    ] },
+    { world: 'w8', at: '2026-11-08T13:45:54', props: [{ id: 'rules', kind: 'book', x: 410, scraps: ['8 FILES', '290 NOTES', '70 GUARD TESTS'], cover: '15', page: ['6', 'EDITABLE', 'EVERYWHERE'], label: 'PRINCIPLES' }], steps: [
+      { who: 'narrator', text: 'Many agents work on Tine now. The rules for how to build it are scattered, and no agent sees them all.',
+        more: 'The rules lived in eight prose files, about 290 memory notes that only one of the agents could read, and about 70 guard tests.' },
+      { who: 'martin', src: "Martin's chat with Claude, 2026-11-08",
+        text: 'The cleanup needs to happen regardless, indeed what you described as the current state is a huge mess.' },
+      { who: 'narrator', act: 'gather:rules', text: 'So they become one short list: fifteen principles. Every agent gets it with its task, and every merge is checked against it.',
+        more: 'A new principle has to replace or merge an old one, so the list stays at fifteen. The detailed rules a change is checked against are in one checklist, each in one place.' },
+      { who: 'narrator', act: 'flip:rules', text: 'Principle 6 started as a question Martin asked two weeks before:' },
+      { who: 'martin', mode: 'ask', was: '2026-10-23T15:59', src: "Martin's chat with Claude, 2026-10-23",
+        text: 'I would like Tine to have it as a basic principle that anything that is editable somewhere is editable everywhere - is that a bad idea?' },
+    ] },
+    { world: 'w8', at: '2026-11-14T12:22', props: [{ id: 'rev', kind: 'reviews', x: 400 }], steps: [
+      { who: 'narrator', text: 'An agent reviewer checks every merge, and holds it back when it finds a problem. Work slows down.' },
+      { who: 'martin', mode: 'ask', src: "Martin's chat with Claude, 2026-11-14",
+        text: "are the reviews a net positive, or not? ... I'm still concerned that things will get bloated.",
+        more: 'The whole question: "Work has slowed down because reviews find issues. That is the point, but it feels like it means either before we were merging crappy code, or those issues are minor, or? So: are the reviews a net positive, or not? If you had to rate from -10 to +10, about where do they land? And, do they have an effect on code size? ..."' },
+      { who: 'narrator', act: 'count:rev', text: 'The record: 616 reviews held back 130 merges. Of the 148 problems found, 140 were real.',
+        more: 'Up to November 14. The real ones: 73 wrong behaviour, 38 about data, 25 about speed or memory, 4 about the build. Merges per day did not drop. The agent\'s answer: net positive, about +5.' },
+      { who: 'narrator', act: 'shrink:rev', text: 'Since November 10, a reviewer must show the failure it found, and name the smallest fix. Fixes shrank from 43 lines to 14.' },
+      { who: 'system', text: 'The PARTY learns: a problem that comes back after two rounds of fixes needs a new design, not a third patch.' },
+    ] },
+    { world: 'w8', final: true, at: '2026-11-16T06:00', props: [{ id: 'f9', kind: 'flags', x: 300, flags: ['GIT', 'COMMENTS', 'SHARE'], big: '0.9.0' }], steps: [
+      { who: 'narrator', text: 'Fourteen Betas. When nothing severe is left in the reports, a Beta becomes stable.' },
+      { who: 'narrator', act: 'raise:f9', at: '2026-11-16T11:07', text: 'Tine 0.9.0 is stable, for everyone.' },
+      { who: 'system', act: 'cheer', text: 'STAGE CLEAR! The PARTY celebrates. Then back to work: 0.10 is next.' },
     ] },
   ],
 };
