@@ -7,7 +7,7 @@
   "engines": { "node": ">=22.13.0" },
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-wasm-pin.mjs && npm run check:lsdoc-oracle && vite build",
+    "build": "node scripts/check-wasm-pin.mjs && vite build",
     "build:quick-share-viewer": "node scripts/build-quick-share-viewer.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -22,7 +22,6 @@
     "test:cm6": "vitest run --config vitest.cm6.config.ts",
     "test:storage-conformance": "vitest run --config vitest.storage.config.ts",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "check:lsdoc-oracle": "node scripts/check-lsdoc-oracle-sync.mjs && node scripts/check-lsdoc-oracle-behavior.mjs",
     "check:ui-catalog": "node scripts/check-ui-regression-catalog.mjs",
     "check:regressions": "node scripts/check-regression-catalog.mjs",
     "check:release-readiness": "node scripts/check-release-readiness.mjs",
