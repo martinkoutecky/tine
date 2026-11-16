@@ -183,3 +183,94 @@ fn cli_move_and_add_beside_a_repeated_parent_keep_each_parents_children() {
         assert_eq!(after, expected.replace('\n', newline), "add {newline:?}");
     }
 }
+
+/// Review 293fa of #960, through the CLI verbs with positional handles and
+/// `rev`: the parents share their text and so do (some of) their children.
+/// Moving the first parent, twice in a row, or adding a copy of its subtree
+/// under it, leaves every block it does not move byte-identical.
+#[test]
+fn cli_move_and_add_beside_repeated_children_keep_untouched_bytes() {
+    let handle = |read: &Value, path: &[usize]| {
+        let mut block = &read["page"]["blocks"][path[0]];
+        for &i in &path[1..] {
+            block = &block["children"][i];
+        }
+        let handle = block["handle"].as_str().unwrap();
+        format!("proof/{}", handle.split('~').next().unwrap())
+    };
+    let families = [
+        ("\t\t- x\n", "\t\t\t- x\n"),
+        ("\t\t- x\n\t\t- a\n", "\t\t\t- x\n\t\t\t- b\n"),
+        ("\t\t- x\n\t\t\t- g1\n", "\t\t\t- x\n\t\t\t\t\t- g2\n"),
+    ];
+    let (mut cases, mut failures) = (0, Vec::new());
+    let mut check = |name: String, after: String, expected: String| {
+        cases += 1;
+        if after != expected {
+            failures.push(format!("{name}: expected {expected:?}, got {after:?}"));
+        }
+    };
+    for newline in ["\n", "\r\n", "\r"] {
+        for (first, second) in families {
+            let p1 = format!("- dup\n{first}");
+            let p2 = format!("- dup\n{second}");
+            let input = format!("{p1}{p2}- target\n").replace('\n', newline);
+            let moved = format!("\t- dup\n{}", first.replace("\t\t", "\t\t\t"));
+            for at in ["under", "after", "before"] {
+                let (graph, slot, path) = fixture(&input, false);
+                let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+                let args = json!({"handle": handle(&read, &[0]), "to": handle(&read, &[2]), "at": at, "rev": read["rev"]});
+                verb(&slot, "block.move", args).unwrap();
+                let expected = match at {
+                    "under" => format!("{p2}- target\n{moved}"),
+                    "after" => format!("{p2}- target\n{p1}"),
+                    _ if first == "\t\t- x\n" => format!("{p1}{p2}- target\n"),
+                    _ => format!("{p2}{p1}- target\n"),
+                };
+                let after = std::fs::read_to_string(&path).unwrap();
+                check(
+                    format!("{at} {input:?}"),
+                    after,
+                    expected.replace('\n', newline),
+                );
+                if at == "under" {
+                    // The second move starts from the first one's bytes.
+                    let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+                    let args = json!({"handle": handle(&read, &[1, 0]), "to": handle(&read, &[0]), "at": "before", "rev": read["rev"]});
+                    verb(&slot, "block.move", args).unwrap();
+                    let after = std::fs::read_to_string(&path).unwrap();
+                    check(format!("back {input:?}"), after, input.clone());
+                }
+                drop(graph);
+            }
+            // The reviewer's case: a copy of the first subtree added under it.
+            let (_graph, slot, path) = fixture(&input, false);
+            let read = verb(&slot, "page.show", json!({"name": "proof"})).unwrap();
+            let content = format!("- dup\n{}", first.trim_end());
+            let args = json!({"under": handle(&read, &[0]), "content": content, "rev": read["rev"], "no_author": true});
+            verb(&slot, "block.add", args).unwrap();
+            let after = std::fs::read_to_string(&path).unwrap();
+            let id = after
+                .split(['\n', '\r'])
+                .find_map(|line| line.strip_prefix("  id:: "))
+                .map(|id| format!("  id:: {id}\n"))
+                .unwrap_or_default();
+            // The copy joins the last child's column; its own children sit one
+            // page step (a tab) below it.
+            let copy = format!("\t\t- dup\n{}", first.replace("\t\t", "\t\t\t"));
+            let expected = format!("- dup\n{id}{first}{copy}{p2}- target\n");
+            check(
+                format!("add {input:?}"),
+                after,
+                expected.replace('\n', newline),
+            );
+        }
+    }
+    assert_eq!(cases, 45);
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
