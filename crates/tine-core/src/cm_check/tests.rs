@@ -421,11 +421,16 @@ fn a_renamed_key_clashes_under_its_new_key() {
 /// or rename may change a file's line endings.
 #[test]
 fn preamble_prose_reads_with_normalized_line_endings() {
-    let survivor = "- target\n- Intro\n  \n- source\n";
+    // The prose reads as the block the outline makes of it, without the
+    // newline that ends it (SPEC P4: line endings and blank lines are not
+    // observed; GUARANTEES: no separate preamble observation), so the merged
+    // block is `- Intro` and no blank continuation line follows it.
+    let survivor = "- target\n- Intro\n- source\n";
     for source in [
         "Intro\n- source\n",
         "Intro\r\n- source\r\n",
         "Intro\r- source\r",
+        "Intro\n\n- source\n",
     ] {
         assert!(merge_ok(source, "- target\n", survivor), "{source:?}");
         // Negative control: the preamble lost.
@@ -434,6 +439,25 @@ fn preamble_prose_reads_with_normalized_line_endings() {
             "{source:?}"
         );
     }
+    // Negative controls: a real line of the prose dropped, and the blank line
+    // between two prose lines dropped.
+    let (two, gap) = ("Intro\nmore\n- source\n", "Intro\n\nmore\n- source\n");
+    assert!(merge_ok(
+        two,
+        "- target\n",
+        "- target\n- Intro\n  more\n- source\n"
+    ));
+    assert!(!merge_ok(two, "- target\n", survivor));
+    assert!(merge_ok(
+        gap,
+        "- target\n",
+        "- target\n- Intro\n  \n  more\n- source\n"
+    ));
+    assert!(!merge_ok(
+        gap,
+        "- target\n",
+        "- target\n- Intro\n  more\n- source\n"
+    ));
     for before in [
         "Intro [[Old]]\r\n\r\n- x\r\n",
         "Intro [[Old]]\r\r- x\r",
@@ -457,6 +481,40 @@ fn preamble_prose_reads_with_normalized_line_endings() {
             !rename_ok("Old", "New", before, before, Format::Md),
             "{before:?}"
         );
+    }
+}
+
+/// Manager ruling Q1: the check reads text before the first block exactly as
+/// the outline's block of it (`page_properties::preamble_block`, the text the
+/// page shows and promotes), with no rule of its own: 0, 1 and 2 blank lines
+/// before the first block, CRLF, and a file ending in the prose with no final
+/// newline, Markdown and Org.
+#[test]
+fn preamble_prose_reads_as_the_outlines_block() {
+    for (format, bullet) in [(Format::Md, "- x"), (Format::Org, "* x")] {
+        let org = format == Format::Org;
+        let texts = [
+            format!("Intro\nmore\n{bullet}\n"),
+            format!("Intro\nmore\n\n{bullet}\n"),
+            format!("Intro\nmore\n\n\n{bullet}\n"),
+            format!("Intro\r\nmore\r\n\r\n{bullet}\r\n"),
+            "Intro\nmore".to_owned(),
+        ];
+        for text in &texts {
+            let doc = match org {
+                true => crate::org::parse_org(text),
+                false => crate::doc::parse(text),
+            };
+            let pre = doc.pre_block.as_deref().expect("prose is a pre-block");
+            let outline = crate::page_properties::preamble_block(pre, org).expect("prose");
+            assert_eq!(outline.raw(), "Intro\nmore", "{text:?}");
+            let reading = observe(text, format);
+            assert_eq!(
+                reading.blocks[0].body,
+                vec![Atom::Text(outline.raw().to_owned())],
+                "{format:?} {text:?}"
+            );
+        }
     }
 }
 

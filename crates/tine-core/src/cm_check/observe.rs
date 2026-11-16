@@ -47,10 +47,12 @@ pub fn observe(text: &str, format: Format, names: FileNameFormat) -> Content {
     observe_parsed(text, &doc, format, names)
 }
 
-/// [`observe`] of `text` whose whole-document parse `doc` the caller already
+/// [`observe`] of a text whose whole-document parse `doc` the caller already
 /// holds (the store parses a candidate once for this check and its save).
+/// Everything is read from `doc`; the text argument is unused and goes with
+/// the dead query override (manager ruling Q5, with the measurement harness).
 pub fn observe_parsed(
-    text: &str,
+    _text: &str,
     doc: &crate::doc::Document,
     format: Format,
     names: FileNameFormat,
@@ -83,12 +85,14 @@ pub fn observe_parsed(
             content.header = header_rows(&block, reader, properties.iter().copied());
             other_header_text(&block, reader, &regions, &mut content.header);
         }
+        // The prose is the block the outline makes of it, exactly its text
+        // (`page_properties::preamble_block`, the one range the page shows and
+        // promotes): the newlines that end it separate it from the first
+        // block (SPEC P4: line endings and blank lines are not observed).
         if let Some(prose) =
             tine_outline::page_preamble::preamble_content_range_in(pre, org, &regions)
         {
-            // The parser's text: its line endings are LF (`pre` is a prefix).
-            let text = crate::doc::normalize_line_endings(text);
-            let block = projected(preamble(&text, pre, prose.0), org);
+            let block = projected(&pre[prose.0..prose.1], org);
             content.blocks.push(Block {
                 depth: 0,
                 body: whole_row(&block, reader),
@@ -106,21 +110,6 @@ pub fn observe_parsed(
     }
     walk(roots, 0, false, reader, &mut content.blocks);
     content
-}
-
-/// The preamble prose as the model reads it: from where the parser's prose
-/// starts to the first outline block of the parser's text `text`, so the
-/// blank lines before that block stay (the parser's pre-block drops them).
-/// When `pre` is not a prefix of `text`, the parser's own range.
-fn preamble<'t>(text: &'t str, pre: &'t str, start: usize) -> &'t str {
-    match text.strip_prefix(pre) {
-        Some(rest) => {
-            let blank = &rest[..rest.len() - rest.trim_start().len()];
-            let end = pre.len() + blank.rfind('\n').map_or(0, |at| at + 1);
-            &text[start..end]
-        }
-        None => &pre[start..],
-    }
 }
 
 fn projected(raw: &str, org: bool) -> DocBlock {

@@ -115,6 +115,7 @@ static MODEL_CHECKS: AtomicU64 = AtomicU64::new(0);
 static MODEL_CHECK_PARSES: AtomicU64 = AtomicU64::new(0);
 static MODEL_CHECK_NANOS: AtomicU64 = AtomicU64::new(0);
 static MODEL_CHECK_INPUT_CHECKS: AtomicU64 = AtomicU64::new(0);
+static MODEL_CHECK_SAVE_PARSES: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -495,6 +496,10 @@ pub struct Counts {
     /// scans of the candidate and of its render): part of
     /// `parse_input_checks`.
     pub model_check_input_checks: u64,
+    /// Of `model_check_parses`, those inside the unchanged save P3 runs (the
+    /// save path's own re-read of what it rendered); the rest read the new
+    /// text, once for P2 and P3, and an old text no writer read.
+    pub model_check_save_parses: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -555,6 +560,7 @@ pub fn reset() {
         &MODEL_CHECK_PARSES,
         &MODEL_CHECK_NANOS,
         &MODEL_CHECK_INPUT_CHECKS,
+        &MODEL_CHECK_SAVE_PARSES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -618,7 +624,18 @@ pub fn snapshot() -> Counts {
         model_check_parses: MODEL_CHECK_PARSES.load(Ordering::Relaxed),
         model_check_nanos: MODEL_CHECK_NANOS.load(Ordering::Relaxed),
         model_check_input_checks: MODEL_CHECK_INPUT_CHECKS.load(Ordering::Relaxed),
+        model_check_save_parses: MODEL_CHECK_SAVE_PARSES.load(Ordering::Relaxed),
     }
+}
+
+/// Bill the unchanged save inside a model check: the store parses it made
+/// (one caller at a time in cost tests).
+pub(crate) fn model_check_save<R>(save: impl FnOnce() -> R) -> R {
+    let before = PARSES.load(Ordering::Relaxed);
+    let result = save();
+    let after = PARSES.load(Ordering::Relaxed);
+    MODEL_CHECK_SAVE_PARSES.fetch_add(after.saturating_sub(before), Ordering::Relaxed);
+    result
 }
 
 /// Bill one model check: `check` returns its result; the store parses and

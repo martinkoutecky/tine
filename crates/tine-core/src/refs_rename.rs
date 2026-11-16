@@ -844,13 +844,13 @@ fn link_edits(
             ));
         }
     };
-    let label = |inner: Range<usize>, emphasis: &[char]| {
+    let label = |inner: Range<usize>, is_org: bool| {
         label_edit(
             raw,
+            range.clone(),
             range.start + inner.start..range.start + inner.end,
-            name,
-            &to,
-            emphasis,
+            (name, &to),
+            is_org,
             renames,
         )
     };
@@ -859,7 +859,7 @@ fn link_edits(
             // Org file link: its label names the page (the evidence's rule);
             // the path stem is a rewrite target of its own.
             Some(split) if body.starts_with("file:") => {
-                edits.extend(label(2 + split + 2..node.len() - 2, ORG_EMPHASIS));
+                edits.extend(label(2 + split + 2..node.len() - 2, true));
             }
             Some(split) => push(2..2 + split),
             None => push(2..node.len() - 2),
@@ -875,52 +875,92 @@ fn link_edits(
             // Markdown file link (`[Old](file:x.md)`, `[Old](../pages/x.md)`,
             // or an image link the evidence names): its label names the page
             // (the evidence's rule), as for Org.
-            edits.extend(label(open.len()..split, MARKDOWN_EMPHASIS));
+            edits.extend(label(open.len()..split, false));
         }
     }
 }
 
-/// Characters that delimit formatting inside a label, by format.
-const MARKDOWN_EMPHASIS: &[char] = &['*', '_', '~', '^', '=', '`'];
-const ORG_EMPHASIS: &[char] = &['*', '/', '_', '=', '~', '+'];
-
 /// A file link's label names its page: the evidence's name, which it reads
 /// through the label's formatting (`[**Old**](file:x.md)` names `Old`). The
 /// name is respelled where it stands when it is one contiguous run of the
-/// label and the label can hold the new name (no bracket or line break, and
-/// inside formatting no formatting delimiter); the formatting stays.
-/// Otherwise, a name split by markup (`[**Ol**_d_](…)`, Org `[[file:x.org][*Ol*d]]`) or a new name the label
-/// cannot hold, the site is left as it is and reported (O7). The name's
-/// identity is the evidence's; the label text is only searched for where
-/// that name is written, never looked up again.
+/// label, the formatting kept, in the first spelling the parser reads back as
+/// the new name: the name itself, else (Markdown) the name with its
+/// punctuation backslash-escaped (`New\\Tail` is written `New\\\\Tail`). The
+/// link `node` with the candidate in place is parsed and the link it holds
+/// must name exactly `to`: the spelling is the parser's answer, never a list
+/// of characters. Otherwise, a name split by markup (`[**Ol**_d_](…)`, Org
+/// `[[file:x.org][*Ol*d]]`) or a new name no spelling holds, the site is left
+/// as it is and reported (O7). A line break is never written: it would end
+/// the block's line. The name's identity is the evidence's; the label text
+/// is only searched for where that name is written. Cost: one parse of the
+/// link node per spelling tried (at most two).
 fn label_edit(
     raw: &str,
+    node: Range<usize>,
     label: Range<usize>,
-    name: &str,
-    to: &str,
-    emphasis: &[char],
+    (name, to): (&str, &str),
+    is_org: bool,
     renames: &Renames<'_>,
 ) -> Option<Edit> {
     let text = &raw[label.clone()];
     let mut runs = text.match_indices(name);
     let run = match (runs.next(), runs.next()) {
-        (Some((at, _)), None) if !name.is_empty() => Some(at),
+        (Some((at, _)), None) if !name.is_empty() && !to.contains(['\n', '\r']) => {
+            Some(label.start + at)
+        }
         _ => None,
     };
-    let formatted = run.is_some_and(|at| at != 0 || name.len() != text.len());
-    let holds = !to.contains(['[', ']', '\n', '\r']) && !(formatted && to.contains(emphasis));
-    match run {
-        Some(at) if holds => Some(renames.edit(
-            label.start + at..label.start + at + name.len(),
-            name,
-            to,
-            to.to_owned(),
-        )),
-        _ => {
+    let reads = |at: usize, spelling: &str| {
+        let candidate = format!(
+            "{}{spelling}{}",
+            &raw[node.start..at],
+            &raw[at + name.len()..node.end]
+        );
+        link_names(&candidate, is_org, to)
+    };
+    let spelled = run.and_then(|at| {
+        std::iter::once(to.to_owned())
+            .chain((!is_org).then(|| markdown_escaped(to)))
+            .find(|spelling| reads(at, spelling))
+            .map(|spelling| (at, spelling))
+    });
+    match spelled {
+        Some((at, spelling)) => Some(renames.edit(at..at + name.len(), name, to, spelling)),
+        None => {
             renames.miss(label, Unrealized::LinkLabel, SiteKind::Link);
             None
         }
     }
+}
+
+/// Whether the link `node` (the whole text of one link) reads, to the same
+/// evidence walk the rename reads, as one link naming exactly `to`.
+fn link_names(node: &str, is_org: bool, to: &str) -> bool {
+    let mut block = DocBlock::new(node);
+    block.set_org(is_org);
+    let projection = block.projection();
+    let mut links = projection
+        .reference_source()
+        .explicit
+        .iter()
+        .filter(|reference| reference.rule == "explicit_link");
+    matches!(
+        (links.next(), links.next()),
+        (Some(link), None) if link.range == (0..node.len()) && link.name == to
+    )
+}
+
+/// Markdown plain text for `to`: each ASCII punctuation character
+/// backslash-escaped (CommonMark backslash escapes).
+fn markdown_escaped(to: &str) -> String {
+    let mut out = String::with_capacity(to.len() * 2);
+    for c in to.chars() {
+        if c.is_ascii_punctuation() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1270,8 +1310,10 @@ mod tests {
     /// name is rewritten; one that cannot is left and reported"): a Markdown
     /// file link is a link named by its label (`[Old](file:x.md)`,
     /// `[Old](../pages/x.md)`), so its label is respelled like an Org file
-    /// link's; a new name the label cannot hold (a `]`) leaves it as it is and
-    /// reports the site.
+    /// link's. A `]` is written escaped, the spelling the parser reads back as
+    /// `a]b` (residual F1 ruling: the parser confirms the spelling, no
+    /// character list refuses it); a new name no label spelling holds (a line
+    /// break) leaves it as it is and reports the site.
     #[test]
     fn a_markdown_file_link_label_follows_the_rename_or_is_reported() {
         for target in ["file:x.md", "../pages/x.md"] {
@@ -1287,16 +1329,30 @@ mod tests {
             .unwrap();
             assert_eq!(p.text, format!("- see [New]({target})\n"), "{target}");
             assert!(p.unrealized.is_empty(), "{target}: {:?}", p.unrealized);
-            let map = HashMap::from([(crate::refs::page_key("Old"), "a]b".to_owned())]);
-            let p = crate::refs::rename_proposal(
-                &text,
-                false,
-                &map,
-                &HashMap::new(),
-                FileNameFormat::TripleLowbar,
-            )
-            .unwrap();
-            assert_eq!(p.text, text, "{target}: the label cannot hold `]`");
+            let proposal = |to: &str| {
+                let map = HashMap::from([(crate::refs::page_key("Old"), to.to_owned())]);
+                crate::refs::rename_proposal(
+                    &text,
+                    false,
+                    &map,
+                    &HashMap::new(),
+                    FileNameFormat::TripleLowbar,
+                )
+                .unwrap()
+            };
+            let p = proposal("a]b");
+            assert_eq!(p.text, format!("- see [a\\]b]({target})\n"), "{target}");
+            assert!(p.unrealized.is_empty(), "{target}: {:?}", p.unrealized);
+            let parsed = crate::render::parse_projection(&p.text, false);
+            let names: Vec<String> =
+                crate::reference_evidence::project(&p.text, false, &parsed.blocks)
+                    .explicit
+                    .iter()
+                    .map(|reference| reference.name.clone())
+                    .collect();
+            assert_eq!(names, ["a]b"], "{target}: the reader's name");
+            let p = proposal("a\nb");
+            assert_eq!(p.text, text, "{target}: no label holds a line break");
             let [site] = p.unrealized.as_slice() else {
                 panic!("{target}: one reported site: {:?}", p.unrealized);
             };
@@ -1342,6 +1398,22 @@ mod tests {
                 "New",
                 "* h [[file:x.org][*New*]]\n",
             ),
+            // Residual F1: the spelling is the one the parser reads back as
+            // the name, escaped for `a]b` and as it is for `a*b`, which the
+            // parser reads inside the emphasis as `a*b` (the reader's name is
+            // asserted in `a_label_respelling_reads_as_the_new_name_or_is_reported`).
+            (
+                "- [**Old**](file:x.md)\n",
+                false,
+                "a]b",
+                "- [**a\\]b**](file:x.md)\n",
+            ),
+            (
+                "- [**Old**](file:x.md)\n",
+                false,
+                "a*b",
+                "- [**a*b**](file:x.md)\n",
+            ),
         ] {
             let p = proposal(text, org, to);
             assert_eq!(p.text, after, "{text}");
@@ -1352,9 +1424,9 @@ mod tests {
         for (text, org, to, label) in [
             ("- [**Ol**_d_](file:x.md)\n", false, "New", "**Ol**_d_"),
             ("- [Ol`d`](file:x.md)\n", false, "New", "Ol`d`"),
-            ("- [**Old**](file:x.md)\n", false, "a]b", "**Old**"),
-            ("- [**Old**](file:x.md)\n", false, "a*b", "**Old**"),
             ("* h [[file:x.org][*Ol*d]]\n", true, "New", "*Ol*d"),
+            // A new name no spelling of the label holds: a line break.
+            ("- [**Old**](file:x.md)\n", false, "a\nb", "**Old**"),
         ] {
             let p = proposal(text, org, to);
             assert_eq!(p.text, text, "{text} -> {to}: left as it is");
@@ -1372,6 +1444,77 @@ mod tests {
         let p = proposal(text, false, "New");
         assert_eq!(p.text, text);
         assert!(p.unrealized.is_empty(), "{:?}", p.unrealized);
+    }
+
+    /// Review round 2, residual F1 (manager ruling, 2026-11-16): a label's
+    /// new spelling is confirmed by the parser, never by a character list. A
+    /// destination holding a Markdown escape (`New\\Tail`, `a\#b`, `a\*b`)
+    /// or other inline syntax is either written so that the link reads as
+    /// exactly that name, or the label is left and reported: never a label
+    /// that reads as another name. Plain and formatted labels, an image, Org.
+    #[test]
+    fn a_label_respelling_reads_as_the_new_name_or_is_reported() {
+        let name_of = |text: &str, org: bool| -> Vec<String> {
+            let parsed = crate::render::parse_projection(text, org);
+            crate::reference_evidence::project(text, org, &parsed.blocks)
+                .explicit
+                .iter()
+                .filter(|reference| reference.rule == "explicit_link")
+                .map(|reference| reference.name.clone())
+                .collect()
+        };
+        let mut respelled = Vec::new();
+        for (text, org) in [
+            ("- [Old](file:x.md)\n", false),
+            ("- [**Old**](file:x.md)\n", false),
+            ("- ![Old](../pages/x.md)\n", false),
+            ("* h [[file:x.org][Old]]\n", true),
+            ("* h [[file:x.org][*Old*]]\n", true),
+        ] {
+            for to in [
+                r"New\\Tail",
+                r"a\#b",
+                r"a\*b",
+                "a*b",
+                "a]b",
+                "a_b",
+                "&amp;",
+                "New",
+            ] {
+                let map = HashMap::from([(crate::refs::page_key("Old"), to.to_owned())]);
+                let p = crate::refs::rename_proposal(
+                    text,
+                    org,
+                    &map,
+                    &HashMap::new(),
+                    FileNameFormat::TripleLowbar,
+                )
+                .unwrap();
+                if p.text == text {
+                    let [site] = p.unrealized.as_slice() else {
+                        panic!("{text} -> {to}: left, so one report: {:?}", p.unrealized);
+                    };
+                    assert_eq!(site.reason, super::Unrealized::LinkLabel, "{text} -> {to}");
+                } else {
+                    assert_eq!(name_of(&p.text, org), [to], "{text} -> {to}: {}", p.text);
+                    assert!(
+                        p.unrealized.is_empty(),
+                        "{text} -> {to}: {:?}",
+                        p.unrealized
+                    );
+                    respelled.push((text, to));
+                }
+            }
+        }
+        // The known failing family is now written faithfully in Markdown:
+        // the escaped spelling reads back as the name.
+        for to in [r"New\\Tail", r"a\#b", r"a\*b"] {
+            assert!(
+                respelled.contains(&("- [Old](file:x.md)\n", to)),
+                "{to}: {respelled:?}"
+            );
+        }
+        assert!(respelled.contains(&("* h [[file:x.org][Old]]\n", "New")));
     }
 
     /// Review round 2 follow-up: an image link is a site only when the parser

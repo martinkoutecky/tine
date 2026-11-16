@@ -31,12 +31,23 @@ const REEXPRESSED: &[(&str, &str, &str)] = &[(
 )];
 
 /// Rows no Tine text expresses, with the reason. They fail as written.
-const NOT_EXPRESSIBLE: &[(&str, &str)] = &[(
-    "bare_bullet_header",
-    "the row means a header entry that is not meaningful, which then vanishes; \
-     Tine reads a bare first bullet as an ordinary empty block that a merge keeps \
-     (ruling Q-a, P4), and every header entry Tine reads holds a property",
-)];
+/// In the matrix's row order.
+const NOT_EXPRESSIBLE: &[(&str, &str)] = &[
+    (
+        "source_preamble",
+        "the matrix's toy reader counts the line terminators that end preamble prose \
+         as the prose's content (its after text gives each prose block two blank \
+         continuation lines); Tine's parser reads the prose as the outline's block of \
+         it, without them (manager ruling Q1, 2026-11-16: SPEC P4, line endings and \
+         blank lines are not observed; GUARANTEES, no separate preamble observation)",
+    ),
+    (
+        "bare_bullet_header",
+        "the row means a header entry that is not meaningful, which then vanishes; \
+         Tine reads a bare first bullet as an ordinary empty block that a merge keeps \
+         (ruling Q-a, P4), and every header entry Tine reads holds a property",
+    ),
+];
 
 fn days() -> JournalFormat {
     // The fixture's days: `2026-11-02` (a default format) and `2026/10/26`.
@@ -206,6 +217,20 @@ fn the_reexpressed_header_row_reads_as_intended() {
     let row = fixture("header_children_leftover");
     let original = row["before"][0]["text"].as_str().unwrap();
     assert_eq!(roles(original), [HeaderRole::Title]);
+    assert!(check_row(&row, &days()).is_err());
+}
+
+/// Ruling Q1: each file's preamble prose is the block the outline makes of
+/// it, so the survivor holds `- target prose` and `- source prose` with no
+/// blank continuation lines; the row's own after text (the toy reader's) and
+/// a survivor that lost the source's prose both fail.
+#[test]
+fn preamble_prose_merges_as_the_outlines_block() {
+    let mut row = fixture("source_preamble");
+    assert!(check_row(&row, &days()).is_err());
+    row["after"][0]["text"] = Value::from("- target prose\n- target\n- source prose\n- source\n");
+    assert_eq!(check_row(&row, &days()), Ok(()));
+    row["after"][0]["text"] = Value::from("- target prose\n- target\n- source\n");
     assert!(check_row(&row, &days()).is_err());
 }
 

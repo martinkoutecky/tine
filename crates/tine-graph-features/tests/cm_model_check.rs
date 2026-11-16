@@ -102,8 +102,11 @@ fn a_verbatim_move_is_checked() {
     assert_eq!(refusal, p2("pages/A.md"));
 }
 
-/// The same marked page with no writer bug moves: the unchanged save of
-/// bytes the rename did not change refuses (markers), which is no P3 breach.
+/// The same marked page with no writer bug moves (SPEC O4: "a moved file with
+/// conflict markers needs no rewrite (it moves verbatim)"): its unchanged
+/// save refuses (R-VCS-MARKERS) and publishes nothing, which leaves its bytes
+/// and its path. The one moved file P3 lets through a refusing save; it is
+/// open with the manager (receipt Q9), since ruling Q6 names no exception.
 #[test]
 fn a_marked_page_still_moves_verbatim() {
     let _guard = crate::integration_lock();
@@ -237,5 +240,50 @@ fn a_referrer_tine_would_reformat_is_refused_with_p3() {
     assert!(
         message.contains("pages/r.md") && message.contains("save it once"),
         "{message}"
+    );
+}
+
+/// Manager ruling Q6: a moved file is changed (Lean `changed G H`: its path
+/// is new), so P3 checks it even when its bytes move as they are. The
+/// renamed page, whose only block is a properties-only bullet (Tine's save
+/// makes it the page header, as `a_childless_properties_only_first_bullet_does_not_survive`
+/// pins), is refused naming the file at its old path; nothing is written. So
+/// is a namespace child of that shape, moved verbatim; without the
+/// properties the child moves (control).
+#[test]
+fn a_moved_page_tine_would_reformat_is_refused_with_p3() {
+    let _guard = crate::integration_lock();
+    let p3 = |file: &str| CheckRefused {
+        guarantee: Guarantee::P3,
+        file: file.to_owned(),
+    };
+    // `A___b.md` is the namespace child `A/b` under this codec.
+    let codec = ("logseq/config.edn", "{:file/name-format :triple-lowbar}");
+    // The referrer shape of `a_referrer_tine_would_reformat_is_refused_with_p3`.
+    let (root, store) = fixture("check-p3-move", &[codec, ("pages/A.md", "- tags:: x\n")]);
+    assert_eq!(
+        refused(&root, &store, "A", "C", RenameChoice::Rename),
+        p3("pages/A.md")
+    );
+    let (root, store) = fixture(
+        "check-p3-child",
+        &[
+            codec,
+            ("pages/A.md", "- a\n"),
+            ("pages/A___b.md", "- tags:: x\n"),
+        ],
+    );
+    assert_eq!(
+        refused(&root, &store, "A", "C", RenameChoice::Rename),
+        p3("pages/A___b.md")
+    );
+    let (root, store) = fixture(
+        "check-p3-move-ok",
+        &[codec, ("pages/A.md", "- a\n"), ("pages/A___b.md", "- b\n")],
+    );
+    rename(&store, "A", "C", RenameChoice::Rename).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("pages/C___b.md")).unwrap(),
+        "- b\n"
     );
 }

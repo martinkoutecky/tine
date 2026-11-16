@@ -370,18 +370,30 @@ fn place(
     text.push_str(bytes);
 }
 impl Writer {
+    /// The pre-block prose as its block. The blank lines that end the range
+    /// separate the prose from the first block; they are not the block's
+    /// text (the outline's `preamble_block` and the model check read the
+    /// prose without them, manager ruling Q1), so they are layout.
     fn prose(&mut self, file: usize, range: Range<usize>, org: bool) -> Result<(), TraceError> {
         self.insert(if org { "* " } else { "- " });
         let mut at = range.start;
         let lines: Vec<_> = tine_core::doc::physical_lines(&self.trace.inputs[file][range.clone()])
-            .map(str::len)
+            .map(|line| (line.len(), line.trim().is_empty()))
             .collect();
-        for len in lines {
-            self.original(file, at..at + len)?;
-            at += len;
-            if at < range.end && !org {
-                self.insert("  ");
+        let content = lines
+            .iter()
+            .rposition(|&(_, blank)| !blank)
+            .map_or(0, |n| n + 1);
+        for (n, &(len, _)) in lines.iter().enumerate() {
+            if n >= content {
+                self.layout(file, at..at + len)?;
+            } else {
+                self.original(file, at..at + len)?;
+                if n + 1 < content && !org {
+                    self.insert("  ");
+                }
             }
+            at += len;
         }
         self.newline();
         Ok(())

@@ -55,8 +55,8 @@ pub enum Guarantee {
 
 /// The bytes of the merge survivor and of each changed or moved file, checked
 /// as `step` asks (`observed`: the old reading the step's writer made, when
-/// preflight ran it). A file whose bytes were never read (an oversized page
-/// moved as opaque bytes, which no parser reads) has nothing to observe.
+/// preflight ran it). A moved file whose bytes were never read (an oversized
+/// page moved as opaque bytes, which no parser reads) is refused (P3).
 /// Cost: one store parse of the new text, shared by P2 and P3, the reading of
 /// it, and the unchanged save's serialization (and its own parse where it
 /// re-reads what it rendered); the old text is parsed again only for a
@@ -67,9 +67,6 @@ pub(super) fn check(
     prepared: &Prepared,
     observed: Option<Arc<Observed>>,
 ) -> Result<(), Why> {
-    let (Some(old), Some(new)) = (&prepared.old, &prepared.new) else {
-        return Ok(());
-    };
     let source_file = &prepared.src;
     let file = prepared.dst.as_ref().unwrap_or(source_file);
     // The file as it is on disk now: the one the user can open and save.
@@ -79,14 +76,29 @@ pub(super) fn check(
             file: source_file.clone(),
         })
     };
-    // Bytes that are not text are opaque to the model, as an oversized page
-    // is: moved as they are they pass; changed into them, they cannot read
-    // as the plan intends.
-    let (Ok(text), Ok(old_text)) = (std::str::from_utf8(new), std::str::from_utf8(old)) else {
-        return if old == new {
-            Ok(())
+    // Lean `changed G H`: a file is changed unless both its path and its
+    // bytes are the old ones, so a verbatim move is checked (manager ruling
+    // Q6): its save at the new path must leave its bytes.
+    let moved = file != source_file;
+    let (Some(old), Some(new)) = (&prepared.old, &prepared.new) else {
+        // Bytes never read (an oversized page moved opaque): Tine's save
+        // cannot take them. A rename's planner refuses such a page before it
+        // queues a move (C3W W2), so this is the store's backstop.
+        return if moved {
+            Err(refuse(Guarantee::P3))
         } else {
-            Err(refuse(Guarantee::P2))
+            Ok(())
+        };
+    };
+    let unchanged = !moved && old == new;
+    // Bytes that are not text cannot be read or saved: moved as they are,
+    // the save refuses them (P3); changed into them, they cannot read as the
+    // plan intends (P2).
+    let (Ok(text), Ok(old_text)) = (std::str::from_utf8(new), std::str::from_utf8(old)) else {
+        return match (unchanged, old == new) {
+            (true, _) => Ok(()),
+            (false, true) => Err(refuse(Guarantee::P3)),
+            (false, false) => Err(refuse(Guarantee::P2)),
         };
     };
     let path = Path::new(file.as_str());
@@ -126,13 +138,23 @@ pub(super) fn check(
     if !cm_check::matches(&expected, &reading, check.source.is_some()) {
         return Err(refuse(Guarantee::P2));
     }
-    // P3. A save that refuses publishes nothing: for bytes the rename did not
-    // change (a verbatim move, a file with conflict markers among them) that
-    // leaves the file as it was; for changed bytes it means Tine wrote a page
-    // its own save cannot take, which is refused.
-    match crate::model::unchanged_save::unchanged_save(path, Some(file.as_str()), text, parsed) {
+    // P3: every changed file, a moved one included, saves unchanged. The one
+    // exception is SPEC O4's: "a moved file with conflict markers needs no
+    // rewrite (it moves verbatim)"; the save refuses it (R-VCS-MARKERS) and
+    // publishes nothing, which leaves its bytes and its path (open question
+    // Q9 for the manager: ruling Q6 and O4 disagree on this file).
+    let saved = crate::cost_counters::model_check_save(|| {
+        crate::model::unchanged_save::unchanged_save(path, Some(file.as_str()), text, parsed)
+    });
+    match saved {
         Ok(saved) if saved == text => Ok(()),
-        Err(_) if old == new => Ok(()),
+        Err(_) if unchanged => Ok(()),
+        Err(_)
+            if old == new
+                && !tine_core::concord_queue::vcs_conflict_markers(text, format).is_empty() =>
+        {
+            Ok(())
+        }
         _ => Err(refuse(Guarantee::P3)),
     }
 }
