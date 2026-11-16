@@ -4320,6 +4320,76 @@
     },
     {
       "section": "Fixed",
+      "text": "On Android, Search and Commands opened while editing accept typing straight away; before, the search field stayed empty (UI-CM6-PALETTE-FOCUS-HANDOFF-1116).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CM6-PALETTE-FOCUS-HANDOFF-1116"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "New catalog row UI-CM6-PALETTE-FOCUS-HANDOFF-1116 with a fail-before/pass-after test, added in the 0.10.0-beta.1 cut.",
+        "refs": [
+          "src/components/Cm6BlockEditor.blur.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The search tour now says Search and Commands accept typing straight away while editing, including on a phone with a hardware keyboard.",
+        "refs": [
+          "crates/tine-guide/src/templates/find-and-revisit.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The published website and demo follow stable. This Beta is described in its changelog; website and demo regeneration remains part of the stable release process.",
+        "refs": [
+          "docs/RELEASE-CHECKLIST.md"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Beta notes are in CHANGELOG.md and the prerelease. No blog post is required or prepared.",
+        "refs": [
+          "docs/RELEASE-CHECKLIST.md"
+        ]
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "While you type in the CodeMirror editor, the caret stays visible below the sticky notice and pinned parent blocks, as it does in the classic editor (UI-CM6-CARET-REVEAL-SCROLL-HANDLER-1116).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CM6-CARET-REVEAL-SCROLL-HANDLER-1116"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "New catalog row UI-CM6-CARET-REVEAL-SCROLL-HANDLER-1116 with a fail-before/pass-after test, added in the 0.10.0-beta.1 cut.",
+        "refs": [
+          "src/editor/cm6CaretReveal.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Caret following is not a documented workflow; no Guide change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "The published website and demo follow stable. This Beta is described in its changelog; website and demo regeneration remains part of the stable release process.",
+        "refs": [
+          "docs/RELEASE-CHECKLIST.md"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Beta notes are in CHANGELOG.md and the prerelease. No blog post is required or prepared.",
+        "refs": [
+          "docs/RELEASE-CHECKLIST.md"
+        ]
+      }
+    },
+    {
+      "section": "Fixed",
       "text": "A page link with a label, Org `[[Page][label]]` or Markdown `[label](Page)`, now renders as a page reference with the Show brackets setting, and opens the page, like a plain `[[Page]]` link (#966).",
       "userVisible": true,
       "regressions": [

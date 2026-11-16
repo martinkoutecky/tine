@@ -134,6 +134,8 @@ The first Tine 0.10 Beta, with every fix in stable 0.9.0. CodeMirror becomes the
 
 ### Fixed
 
+- On Android, Search and Commands opened while editing accept typing straight away; before, the search field stayed empty (UI-CM6-PALETTE-FOCUS-HANDOFF-1116).
+- While you type in the CodeMirror editor, the caret stays visible below the sticky notice and pinned parent blocks, as it does in the classic editor (UI-CM6-CARET-REVEAL-SCROLL-HANDLER-1116).
 - A page link with a label, Org `[[Page][label]]` or Markdown `[label](Page)`, now renders as a page reference with the Show brackets setting, and opens the page, like a plain `[[Page]]` link (#966).
 - Hierarchy page links follow **Show brackets**, collapsed numbered-list markers stay circular and centered, and bullet threading no longer draws stubs through margin comment messages (#959, #963, #129).
 - Moving or reindenting a block carries its children's indentation with it, including multiline bodies and drawers ([discussion #960](https://github.com/martinkoutecky/tine/discussions/960)).

@@ -12,6 +12,8 @@ it("the search tour teaches pointer and keyboard activation in the focused split
   expect(page).toContain("Click or tap a result to open it in the pane you were using");
   expect(page).toContain("click or tap a command, or highlight it and press **Enter**");
   expect(page).toContain("Search and Commands keep your focused split pane");
+  expect(page).toContain("Open Search or Commands while editing, then type your search immediately");
+  expect(page).toContain("phone with a hardware keyboard");
   expect(page).toContain("Picking a slash command or a `[[` page suggestion while editing also keeps that editor's split pane focused");
 });
 

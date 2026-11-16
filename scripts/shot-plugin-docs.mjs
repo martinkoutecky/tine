@@ -234,11 +234,9 @@ try {
   }
   await page.locator(".toast-close").evaluateAll((buttons) => buttons.forEach((button) => button.click()));
   await page.keyboard.press("Control+k");
-  // The phone palette can reset its query while it opens over a live editor; type once it is settled.
   const switcher = page.locator(".switcher-input");
   await switcher.waitFor();
   await page.waitForFunction(() => document.activeElement?.classList.contains("switcher-input"));
-  await page.waitForTimeout(0);
   await switcher.fill("hide completed");
   await page.waitForFunction(() => document.querySelector(".switcher-input")?.value === "hide completed");
   await page.getByText("Query view: hide completed rows", { exact: true }).waitFor();
