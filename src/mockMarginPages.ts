@@ -4,8 +4,25 @@ import type { BlockDto } from "./types";
 
 /** Page names and their blocks; mock.ts wraps them as pages (I-12 keeps page
  * construction in the mock backend and document/convert.ts). */
-export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[]][] {
+export function marginRegressionPages(b: (raw: string, children?: BlockDto[], collapsed?: boolean) => BlockDto): [string, BlockDto[], "org"?][] {
   return [
+    ["Org label brackets 966", [b("A [[git]] tool for [[Emacs][my favorite editor]]")], "org"],
+    ["Rendering regression", [
+      b("Numbered fold markers", Array.from({ length: 12 }, (_, i) =>
+        b(`Numbered item ${i + 1}\nlogseq.order-list-type:: number\ncollapsed:: true`, [b("Hidden child")], true))),
+      b("Threaded parent with a passage", [
+        b("First outline child", [b("A deeper branch", [b("Deep leaf")])]),
+        b("Last outline child"),
+        b("A margin message\ntine.quote:: passage\ntine.date:: 2026-11-07T13:37Z", [
+          b("A reply message\ntine.date:: 2026-11-07T13:38Z", [b("An outline within the reply", [b("Reply outline leaf")])]),
+          b("Supporting outline", [b("Supporting leaf")]),
+        ]),
+        b("An undated comment\ntine.quote:: Threaded parent", [
+          b("An undated reply", [b("A nested undated reply")]),
+        ]),
+      ]),
+      b("[[Rendering regression/Child]]"),
+    ]],
     ["Message outlines regression", [
       b("A passage worth discussing.", [
         b("The first message\ntine.quote:: passage\ntine.date:: 2026-11-07T13:37Z", [
@@ -67,6 +84,68 @@ export function marginRegressionPages(b: (raw: string, children?: BlockDto[], co
       ],
     ],
     ["Author mark refs", [b("This page is mentioned by an agent block.")]],
+    [
+      // GH #892: runs across depth, a break by your own block, a second author, a folded authored block.
+      "Author thread", [
+        b("You wrote the introduction."),
+        b("Claude drafted this section.\ntine.author:: Claude", [
+          b("First point, one level in.\ntine.author:: Claude", [b("A detail under the first point.\ntine.author:: Claude")]),
+          b("Second point.\ntine.author:: Claude"),
+        ]),
+        b("Claude's closing line for the section, after its children.\ntine.author:: Claude"),
+        b("Your reply, which ends the thread."),
+        b("Mira reviewed the draft.\ntine.author:: Mira", [
+          b("Mira's note on the second point.\ntine.author:: Mira"),
+          b("A folded note by Mira.\ntine.author:: Mira\ncollapsed:: true\nid:: 89200000-0000-4000-8000-000000000001", [b("Hidden child")], true),
+        ]),
+        b("Mira's last word.\ntine.author:: Mira"),
+      ],
+    ],
+    [
+      // GH #892 review F2: one run of rows whose trailing comment controls differ: a plain row, a stale-quote
+      // marker (phone: the open-comment marker), a resolved label and a folded block's "N below" chip.
+      "Author thread trailing", [
+        b("Claude's plain row.\ntine.author:: Claude"),
+        b("Claude's row with a comment marker.\ntine.author:: Claude", [
+          b("A passage that no longer exists.\ntine.quote:: words that were rewritten\ntine.author:: Ellis"),
+        ]),
+        b("Claude's row with a resolved comment.\ntine.author:: Claude", [
+          b("Settled.\ntine.quote:: resolved comment\ntine.resolved:: true\ntine.author:: Ellis"),
+        ]),
+        b("Claude's folded row with a comment below.\ntine.author:: Claude\ncollapsed:: true\nid:: 89200000-0000-4000-8000-000000000002", [
+          b("A hidden child\ntine.author:: Claude", [
+            b("A hidden comment.\ntine.quote:: hidden child\ntine.author:: Ellis"),
+          ]),
+        ], true),
+        b("Claude's closing row.\ntine.author:: Claude"),
+      ],
+    ],
+    [
+      // GH #892 review round 2: long author names. Every authored row starts a run (an owner row sits between), has a
+      // long first line, and sits beside one kind of trailing control: none, a comment marker, a resolved label, a
+      // folded block's "N below" chip.
+      "Author thread long names", [
+        b("An owner row with a first line long enough to run across the whole reading column and wrap onto a second line, as a paragraph does, so the text column of an unauthored row can be measured against the authored ones."),
+        b("Alexandria wrote a first line long enough to run across the whole reading column and wrap onto a second line, as a paragraph does, right where the author's name is drawn.\ntine.author:: Alexandria"),
+        b("An owner row between the runs."),
+        b("Alexandria Montgomery-Winterbourne wrote a first line long enough to run across the whole column, beside a comment marker.\ntine.author:: Alexandria Montgomery-Winterbourne", [
+          b("A passage that no longer exists.\ntine.quote:: words that were rewritten\ntine.author:: Ellis"),
+        ]),
+        b("An owner row between the runs."),
+        b("Alexandria wrote a first line long enough to run across the whole column, beside a resolved comment.\ntine.author:: Alexandria", [
+          b("Settled.\ntine.quote:: resolved comment\ntine.resolved:: true\ntine.author:: Ellis"),
+        ]),
+        b("An owner row between the runs."),
+        b("Alexandria wrote a first line long enough to run across the whole column, folded with a comment below.\ntine.author:: Alexandria\ncollapsed:: true\nid:: 89200000-0000-4000-8000-000000000003", [
+          b("A hidden child\ntine.author:: Alexandria", [
+            b("A hidden comment.\ntine.quote:: hidden child\ntine.author:: Ellis"),
+          ]),
+        ], true),
+        // An unauthored row with a fold button (phone: the 44px area at the row's end), folded so its child stays hidden.
+        b("An owner row with a fold button and a first line long enough to run across the whole reading column.\ncollapsed:: true", [b("A hidden owner child.")], true),
+        b("An owner row to close."),
+      ],
+    ],
     [
       // GH #893: an authored block that also carries a margin comment on a passage of its text.
       "Author tint comment", [

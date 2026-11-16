@@ -6,7 +6,7 @@ icon:: 🎨
   - 1. Open Settings (**t s**) → **Themes** and look at **Color scheme**. Default, Nord, Solarized, Gruvbox, and **Soft** are built in. Soft is a medium-brightness palette: warm gray in light mode and lifted slate gray in dark mode, with warm highlights and quiet active tabs. Its page, sidebars, menus, and code surfaces move together while text stays readable.
   - 2. Pick one. It applies at once and is remembered on this device.
   - 3. Precedence, lowest to highest: Tine's stock palette, then the color scheme you picked, then the **Fine-tuning** choices below, then device-wide `global.css`, then your graph's `logseq/custom.css`. Your CSS always has the last word, and an installed theme package never edits it. A **Style** preset such as editorial reading type keeps its own look, but the font and size tokens below still override its fonts and text size. A theme package's **Use typography** choice (fonts and line height) sets the same font tokens at the theme layer, so your own tokens below still win over it, and it wins over a **Style** preset's fonts.
-  - 4. Open **Advanced** in Appearance for **Fine-tuning**, a few visual details that are not worth a theme of their own. **Embedded blocks** shows embeds as a shaded box (the default) or with only the accent line and dot. **Links to the web or a file** is a solid underline (the default), a dotted one, or none; links to pages never have one, so the two kinds read differently. **Links to pages that do not exist yet** is the dimmed link color (the default), a stronger one, or the same color as other links. **Color indent guides by level** (on by default) gives each level of nesting its own muted color on the vertical guide lines, repeating every six levels and counted from the outline you are looking at (a zoomed-in block's children are level 1; an embed or a Linked References entry starts again at level 1); choose **One color for all levels** for the single plain guide. A theme's own guide color tints the level colors, and to restyle them set `--guide-hue-1` to `--guide-hue-6` (or the finished `--guide-level-1` to `--guide-level-6`) on `:root` in `custom.css`. Every choice starts at Tine's default look, takes effect at once, and has its own **Reset**. Settings search also finds these controls and opens Advanced.
+  - 4. Open **Advanced** in Appearance for **Fine-tuning**, a few visual details that are not worth a theme of their own. **Embedded blocks** shows embeds as a shaded box (the default) or with only the accent line and dot. **Links to the web or a file** is a solid underline (the default), a dotted one, or none; links to pages never have one, so the two kinds read differently. **Links to pages that do not exist yet** is the dimmed link color (the default), a stronger one, or the same color as other links. **Color indent guides by level** (on by default) gives each level of nesting its own muted color on the vertical guide lines, repeating every six levels and counted from the outline you are looking at (a zoomed-in block's children are level 1; an embed or a Linked References entry starts again at level 1); choose **One color for all levels** for the single plain guide. **Author marks** shows a block someone else wrote as a **Tint** (the default) or as a **Thread** (section 5). A theme's own guide color tints the level colors, and to restyle them set `--guide-hue-1` to `--guide-hue-6` (or the finished `--guide-level-1` to `--guide-level-6`) on `:root` in `custom.css`. Every choice starts at Tine's default look, takes effect at once, and has its own **Reset**. Settings search also finds these controls and opens Advanced.
   - **Arrows and dashes** (`->`, `<-`, `=>`, `--`, `---`) show exactly as you typed them, as in Logseq. To see them as glyphs (→, ⇒, –, —), set Settings → **Appearance** → **Typographic replacements** to **On (while reading)**, which changes only what you see and leaves your Markdown as typed, or **On (while typing)**, which rewrites the text itself as you type. It is **Off** by default; a device that used the earlier default, where arrows were drawn as glyphs, needs to pick **On (while reading)** once.
   - Fine-tuning choices are saved on this device (under `style.knobs.v1` in Tine's device settings), never in your graph, so they do not follow the graph to another computer. **Disable custom CSS** switches them off for the session along with your stylesheet, and your `custom.css` outranks them.
   - **Block embed breadcrumbs** is off by default. Turn it on to show a muted source page and parent trail above block embeds. For a quick switch, open the command palette (**Mod+Shift+P**) and run **Toggle embed breadcrumbs**. It changes the same device setting as the Fine-tuning switch above, so your choice is remembered. The command has no default key; assign one under **Settings → Keyboard shortcuts**.
@@ -33,6 +33,8 @@ icon:: 🎨
     | `--tine-highlight-bg` | Background of `^^highlighted^^` text | The theme's highlight color |
     | `--tine-comment-highlight-bg` | Background of the commented passage, including its active highlight | 14% accent, or 30% for the active wide-margin passage |
     | `--tine-comment-card-bg` | Background of comment cards and passage groups | 6% accent; authored cards use 7% author tint, resolved cards the secondary background |
+    | `--tine-author-gutter` | Width of the strip at the end of every block that holds the author chip and the thread line, while **Author marks** is **Thread** (section 5): a length in px | 96px (64px on a phone) |
+    | `--tine-author-icon-size` | Turns an author's chip into an icon this wide (up to 16px), the name staying in the tooltip; set on that author's chip together with a `background-image` (section 5) | Unset: the chip keeps its name |
     | `--tine-missing-page-color` | Color of a link to a page that does not exist yet | A dimmed tint of the link color |
     | `--tine-external-link-underline` | The line under a link to a web address or file | `1px solid` (use `none` to remove it) |
     | `--tine-content-width` | Maximum width of the page column | 810px |
@@ -104,14 +106,83 @@ icon:: 🎨
   - ```css
     html[data-theme="light"] { --ls-primary-background-color: #fdf6e3; }
     ```
-- ## 5. Find out what styles an element
+- ## 5. Show who wrote a block
+  - A block someone else wrote (an agent, a collaborator) carries `tine.author:: <name>`. Tine tints it with that author's color and puts the author's name in a chip on the first of a run of their blocks. Each of these is a supported name for your `custom.css`:
+  - | Name | What it is |
+    | --- | --- |
+    | `[data-author="Name" i]` | Every block with that author, with the stored text as the value (the `i` ignores case, so `claude` and `Claude` match; a stray space in the file is kept in the value). Blocks without an author have no attribute |
+    | `.ls-block.authored` | A block by another author. A block you wrote (**Your name** in Settings) is never `authored` |
+    | `.ls-block.author-tinted` | A block by another author that draws the author mark: not a comment, and none while author marks are switched off (**Show/Hide author marks**) |
+    | `--author-color` | That author's color. Override it on the block and on its chip: `.ls-block[data-author="Claude" i], .ls-block[data-author="Claude" i] .author-chip { --author-color: #d97757; }` |
+    | `.author-run-continued`, `.author-run-continues` | The block drawn right above (below) this one is by the same author. A run continues from a parent into its first child, and out of the last child to the next block; a folded block ends where it is drawn. A block you wrote, a comment or an embed ends a run |
+  - A thread instead of a tint: every block keeps a strip at its end, the same width on every block, and a line runs down it beside one author chip at the start of each run. A long name is cut to the strip, with the full name in the tooltip. Your text stays where it was. To switch it on, choose **Thread** for **Author marks** in Settings → **Appearance** → **Advanced** → **Fine-tuning** (**Tint** is the default); **Reset** puts the tint back. The strip's width is `--tine-author-gutter` (96px, or 64px on a phone, unless you set it on `:root`); on a phone the 44px fold button stays at the very end, right of the strip, and while author marks are hidden (**Show/Hide author marks**) no row keeps a strip (Tine puts the class `tine-author-marks-off` on the window then, which the paste below reads). To draw it yourself, or to restyle it, paste this into `custom.css` and the tint goes away:
+  - ```css
+    :root {
+      --author-thread-gutter: var(--tine-author-gutter, 96px);
+      --author-thread-clear: 0px;
+      --author-thread-reserve: calc(var(--author-thread-gutter) + var(--author-thread-clear));
+    }
+    @media (max-width: 640px) and (pointer: coarse) {
+      :root {
+        --author-thread-gutter: var(--tine-author-gutter, 64px);
+        --author-thread-clear: 44px;
+      }
+    }
+    :root:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {
+      position: relative;
+      padding-inline-end: var(--author-thread-reserve);
+    }
+    .ls-block.author-tinted > .block-main > .block-content-wrapper {
+      padding-inline: 0;
+      margin-inline: 0;
+      background: none;
+    }
+    :root:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main > .block-content-wrapper,
+    .ls-block.author-tinted > .block-main:has(> .block-controls > .collapse-toggle.has-children) > .block-content-wrapper {
+      padding-inline-end: 0;
+    }
+    .ls-block.author-tinted > .block-main > .block-content-wrapper::after {
+      content: "";
+      position: absolute;
+      inset-block: 15px 1px;
+      inset-inline-end: calc(var(--author-thread-reserve) - 5px);
+      width: 2px;
+      background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
+    }
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: 0; }
+    .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: 0; }
+    .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip,
+    .ls-block.author-tinted > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
+      display: inline-block;
+      position: absolute;
+      z-index: 1;
+      inset-inline-start: calc(100% - var(--author-thread-reserve) + 10px);
+      max-width: calc(var(--author-thread-gutter) - 14px);
+      margin-inline: 0;
+      text-overflow: ellipsis;
+      background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary));
+    }
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip,
+    .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .authored-editor > .author-chip { display: none; }
+    ```
+  - An icon for one author: set a `background-image` and `--tine-author-icon-size` on that author's chip (`.author-chip` carries the same `data-author`, as the trimmed name). The image must be a `data:` address (it is inside the file, so it works offline) or an `https:` address. A relative path to a file in your graph's assets folder does not work in `custom.css`: it is read from Tine's own page, not from your graph folder. The name stays in the tooltip. Tine ships no icons; this one is a plain diamond:
+  - ```css
+    .author-chip[data-author="Claude" i] {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l6 7-6 7-6-7z' fill='%23d97757'/%3E%3C/svg%3E");
+      --tine-author-icon-size: 16px;
+    }
+    ```
+  - Set both on the chip, as above, not on the block: the size token would be inherited by the chips of the block's children, even when someone else wrote them. Add one rule per author that should have an icon.
+  - The **Author marks** choice sets a class on the window that `custom.css` cannot add, which is why the thread above is written out in full for a stylesheet. The class names `author-run-continued` and `author-run-continues` are the part that does the hard work: they know which block comes before and after in the outline, so you do not have to guess with selectors.
+  - What you should see: next to a block by that author, a small diamond where the name was, and with the thread rules a colored line running down the strip at the right edge of the column, beside the chips.
+- ## 6. Find out what styles an element
   - 1. Settings → **Appearance** → **Advanced** → **Custom CSS** → **Developer tools** (desktop), or press **Ctrl+Shift+J** (**Cmd+Shift+J** on macOS), opens the inspector. It is part of every desktop build, release builds included. Use its element picker, then read the **Styles** pane.
   - 2. Look for a `var(--tine-…)` or `var(--ls-…)` in the rule that draws what you want to change. Setting that variable in `custom.css` is the stable way to change it.
   - 3. When no variable exists, a class selector such as `.embed-block` works today, but class names and the structure of the page can change between releases, so a rule written that way may need a touch-up after an update. Prefer a token.
   - 4. The `just-toggled` class is a promise to theme authors, because a stylesheet cannot work it out from the page. When you press a task's checkbox or its marker word (also the checkbox of a task shown inside a block reference), Tine adds `just-toggled` to that task's `.block-task-checkbox` and `.block-marker` for about 0.7 seconds, then removes it. It is never there when a page loads, when a row scrolls back into view, or when a sync or another editor changes the task. So `.block-task-checkbox.just-toggled { animation: pop 300ms; }` (with your own `@keyframes pop`) plays on your own toggle and nowhere else, which a bare `animation` on `.block-task-checkbox` cannot do. Put motion inside `@media (prefers-reduced-motion: no-preference)`.
-  - Comments have supported styling classes too: `.comment-group`, `.comment-card`, `.comment-in-thread`, `.comment-quote`, `.comment-quote-anchor`, `.comment-header`, `.author-chip` (and `.author-chip.agent` for another author), `.comment-date`, `.comment-composer` and `.comment-popup-content`. Use `--tine-comment-highlight-bg` for the passage highlight and `--tine-comment-card-bg` for cards. Comments and ordinary blocks carrying `tine.author::` expose its stored value as `data-author`, even if the chip says "you": `[data-author="claude"] { opacity: 0.65; }` dims that agent's blocks, and `.comment-in-thread[data-author="Ada"] { outline: 1px solid steelblue; }` styles Ada's messages. Unsigned blocks have no `data-author` attribute.
+  - Comments have supported styling classes too: `.comment-group`, `.comment-card`, `.comment-in-thread`, `.comment-quote`, `.comment-quote-anchor`, `.comment-header`, `.author-chip` (and `.author-chip.agent` for another author), `.comment-date`, `.comment-composer` and `.comment-popup-content`. Use `--tine-comment-highlight-bg` for the passage highlight and `--tine-comment-card-bg` for cards. Comments and ordinary blocks carrying `tine.author::` expose its stored value as `data-author`, even if the chip says "you" (section 5): `[data-author="claude"] { opacity: 0.65; }` dims that agent's blocks, and `.comment-in-thread[data-author="Ada"] { outline: 1px solid steelblue; }` styles Ada's messages. Unsigned blocks have no `data-author` attribute.
   - What you should see: the inspector opens and highlights the element you point at, with its rules listed in the **Styles** pane.
-- ## 6. If it does not look right
+- ## 7. If it does not look right
   - A token seems to do nothing: check that you set it on `:root` or `html` (or `html[data-theme="dark"]`) and that the page-width Settings fields are reset for the two width tokens.
   - The whole window became unreadable: **Disable custom CSS** in Settings, or restart Tine with the file edited.
   - If a **custom.css could not be read** message appears, fix the file's permissions or size with an external text editor, then try **Edit custom.css** again.

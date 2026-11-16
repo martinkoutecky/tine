@@ -72,7 +72,7 @@ async function fakeBackend(elsewhere: boolean, saveOk = true) {
       saves.push(published);
       taken = null;
     }
-    return true;
+    return [];
   });
   const trashAsset = vi.spyOn(backend(), "trashAsset").mockImplementation(async () => {
     if (published.includes("x.png") || elsewhere) return "referenced" as never;

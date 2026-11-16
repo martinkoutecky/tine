@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0-beta.14",
+  "baseTag": "v0.9.0-beta.13",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Skipping a new code block's language picker keeps the caret after typed or composed text, so typing `123` no longer produces `231` (#879).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH879-MOBILE-FIRST-INPUT",
+        "UI-GH879-CODE-SOURCE",
+        "UI-GH879-MOBILE-RENDER-STATE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH879-MOBILE-FIRST-INPUT, UI-GH879-CODE-SOURCE, UI-GH879-MOBILE-RENDER-STATE. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/Block.codeMobileInput.test.tsx",
+          "scripts/shot-codeblock-mobile-879.mjs",
+          "src/components/Block.codeSource.test.tsx",
+          "src/components/Block.tabOwnership.test.tsx",
+          "scripts/e2e-editor-context.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On Windows, **Open in new window** no longer freezes Tine once a page window has been opened in an earlier session. The window-size memory no longer restores page windows from inside window creation, where it deadlocked; Tine's own session restore still places the windows it reopens (GH #809; UI-GH809-POPUP-RESTORE-DEADLOCK).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH809-POPUP-RESTORE-DEADLOCK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH809-POPUP-RESTORE-DEADLOCK. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src-tauri/src/lib.rs::window_state_policy_tests",
+          "scripts/e2e-popup-relaunch-809.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Scheduled & Deadline and other journal queries no longer vanish for a moment while you type in a journal or fold them (#944).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH944-AGENDA-REPLACEMENT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH944-AGENDA-REPLACEMENT. Fail-before: proven. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "src/components/QueryMacro.test.tsx",
+          "src/resultMembership.test.tsx",
+          "scripts/e2e-agenda-flicker.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Multiline and quoted PDF highlights keep annotation properties together so block references survive in Logseq (#953).",
+      "userVisible": true,
+      "regressions": [
+        "REG-PDF-HLS-953"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-PDF-HLS-953. Fail-before: unrecorded. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "crates/tine-core/src/pdf.rs::tests::multiline_highlight_keeps_one_property_group_after_refresh",
+          "crates/tine-core/src/pdf.rs::tests::r3_quote_annotations_keep_identity_after_creation_and_refresh",
+          "src/components/pdfSelection.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Quick share is available again in Beta builds when the deployed viewer reads the build's shares (internal: REG-QS-VIEWER-09).",
+      "userVisible": true,
+      "regressions": [
+        "REG-QS-VIEWER-09"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-QS-VIEWER-09. Fail-before: At f839caf44 the deployed c119aa0b2 viewer fails before browser startup because fixture_sha256 differs from the Beta writer, although its browser compatibility journey passes. Evidence. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/quick-share-compatibility.test.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "iOS TestFlight and Microsoft Store builds now enable quick share when their deployed-viewer check passes (internal: REG-QS-ATTEST-STORES-09).",
+      "userVisible": true,
+      "regressions": [
+        "REG-QS-ATTEST-STORES-09"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: REG-QS-ATTEST-STORES-09. Fail-before: At e524e8346 the new check passes release desktop/Android but fails iOS and MSIX. Gated on develop and release/0.9 (Linux native journeys).",
+        "refs": [
+          "scripts/test-quick-share-build-attestation.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix or Beta change: no documented behaviour changes beyond the Guide pages updated in the same change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/ follows stable, regenerated at the stable cut (D-20261019-G1).",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

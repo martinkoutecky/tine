@@ -87,12 +87,25 @@
   line-height: 16px;
   border-radius: 7px;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background-color: var(--bg-tertiary);
   user-select: none;
+  /* An icon for the author (docs/contracts/theme-tokens.md section 8): a stylesheet sets `background-image` on the
+     chip, and with the icon size set the chip is that wide, its padding drops to nothing (the calc is 6px unset,
+     0 for any size) and its name is indented out of the clipped box (the tooltip and data-author keep it).
+     Unset, the chip is as before. */
+  box-sizing: border-box;
+  width: var(--tine-author-icon-size, auto);
+  padding-inline: max(0px, calc(6px - var(--tine-author-icon-size, 0px) * 1000));
+  text-indent: var(--tine-author-icon-size, 0px);
+  overflow: hidden;
+  white-space: nowrap;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
 }
 .author-chip.agent {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .block-content.done > .author-chip {
   text-decoration: none;
@@ -128,7 +141,7 @@
 .author-tint-7 { --author-color: #ea580c; }
 .author-chip.agent[class*="author-tint-"] {
   color: color-mix(in srgb, var(--author-color) 70%, var(--text-primary));
-  background: color-mix(in srgb, var(--author-color) 18%, transparent);
+  background-color: color-mix(in srgb, var(--author-color) 18%, transparent);
 }
 .ls-block.comment-in-thread[class*="author-tint-"] > .block-main {
   margin: 0 -6px;
@@ -144,40 +157,111 @@
 /* GH #893: another author's block sits on a faint tint of that author's colour, behind the
    block's own row (never its children). The tint hangs four pixels into the bullet gap (three
    for numbered bullets) and four past the right edge, and padding takes the same room back, so
-   text coordinates never change. Same-author siblings join into one card: the run's inner
-   corners are square and the one pixel of block-main padding between rows is covered. */
-.ls-block.author-tinted > .block-main > .block-content-wrapper {
+   text coordinates never change. Same-author siblings join into one card (the `author-card-*`
+   classes, sibling rows only): the card's inner corners are square and the one pixel of
+   block-main padding between rows is covered. The thread look below replaces the tint. */
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted > .block-main > .block-content-wrapper {
   --author-tint-bleed: 4px;
   padding-inline: var(--author-tint-bleed);
   margin-inline: calc(-1 * var(--author-tint-bleed));
   border-radius: 5px;
   background: color-mix(in srgb, var(--author-color, var(--accent)) 11%, transparent);
 }
-.ls-block.author-tinted > .block-main:has(> .block-controls > .bullet-container.ordered) > .block-content-wrapper {
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted > .block-main:has(> .block-controls > .bullet-container.ordered) > .block-content-wrapper {
   --author-tint-bleed: 3px;
   margin-inline-end: -4px;
   padding-inline-end: 4px;
 }
-.ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper {
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted.author-card-continued > .block-main > .block-content-wrapper {
   margin-top: -1px;
   padding-top: 1px;
   border-start-start-radius: 0;
   border-start-end-radius: 0;
 }
-.ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper {
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted.author-card-continues > .block-main > .block-content-wrapper {
   margin-bottom: -1px;
   padding-bottom: 1px;
   border-end-start-radius: 0;
   border-end-end-radius: 0;
 }
+/* A results list starts every hit with a chip (the thread never links hits). Under the tint a hit that the
+   card joins to the one above keeps no chip, as for siblings in an outline. */
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-card-continued > .block-main > .block-content-wrapper > .block-content > .author-chip,
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-card-continued > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
+  display: none;
+}
 /* The phone layout reserves 44px beside a foldable block's text (app.css); keep that, plus the bleed. */
 @media (max-width: 640px) and (pointer: coarse) {
-  .ls-block.author-tinted > .block-main:has(> .block-controls > .collapse-toggle.has-children) > .block-content-wrapper {
+  :where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted > .block-main:has(> .block-controls > .collapse-toggle.has-children) > .block-content-wrapper {
     padding-inline-end: 48px;
   }
 }
 /* A selected row has one colour, the selection's. */
-.ls-block.author-tinted > .block-main.selected > .block-content-wrapper { background: transparent; }
+:where(:root:not(.tine-author-marks-thread)) .ls-block.author-tinted > .block-main.selected > .block-content-wrapper { background: transparent; }
+
+/* GH #892: the thread look, switched on by one class on <html> (`tine-author-marks-thread`, which Settings >
+   Appearance > Fine-tuning > "Author marks" sets; a stylesheet cannot add a class, so the Guide also shows a copy for custom.css). Instead of a tint, a line runs down the right edge
+   beside one author chip per run (docs/contracts/theme-tokens.md section 8; one line per run, `author-run-*`, any
+   depth). Every outline row, authored or not, reserves ONE gutter at the end of the FULL row (`.block-main`), so the
+   text column has the same width on every row and the controls after the text (comment markers, the resolved label,
+   a folded block's "N below" chip) lay out before it. The gutter is `--tine-author-gutter` wide (a length in px: an
+   em would be read at the row and at the chip, which differ). The line (the text box's ::after) and the chip are
+   placed against the row's end edge and live inside the gutter: a long name is cut to it with an ellipsis (the
+   tooltip keeps the name). The phone's 44px fold area stays at the very end, right of the gutter. Everything is
+   logical, so a mirrored layout puts the thread on the left. Marks hidden (`tine-author-marks-off`, set by
+   authorMarksPref.ts; a documented hook, the Guide's thread example reads it) reserve nothing. */
+.tine-author-marks-thread {
+  --author-thread-gutter: var(--tine-author-gutter, 96px);
+  --author-thread-clear: 0px;
+  --author-thread-reserve: calc(var(--author-thread-gutter) + var(--author-thread-clear));
+}
+@media (max-width: 640px) and (pointer: coarse) {
+  .tine-author-marks-thread {
+    --author-thread-gutter: var(--tine-author-gutter, 64px);
+    --author-thread-clear: 44px;
+  }
+}
+.tine-author-marks-thread:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main {
+  position: relative;
+  padding-inline-end: var(--author-thread-reserve);
+}
+/* The text keeps what it had: the row's gutter replaces the phone's own 44px reserve beside the text. */
+.tine-author-marks-thread:not(.tine-author-marks-off) .ls-block:not(.comment-in-thread, .block-embed-host) > .block-main > .block-content-wrapper { padding-inline-end: 0; }
+.tine-author-marks-thread .ls-block.author-tinted > .block-main {
+  --author-thread-top: calc(var(--ls-block-content-pad-y) + var(--ls-block-line-height) / 2);
+}
+/* The line is the text box's ::after, which no other feature draws on (the thread-lines decoration owns the
+   row's own ::before and ::after). The text box is not positioned, so the line is placed against the row: 2px wide,
+   3px inside the gutter's start. */
+.tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper::after {
+  content: "";
+  position: absolute;
+  top: calc(1px + var(--author-thread-top));
+  bottom: 1px;
+  inset-inline-end: calc(var(--author-thread-reserve) - 5px);
+  width: 2px;
+  background: color-mix(in srgb, var(--author-color, var(--accent)) 40%, transparent);
+  pointer-events: none;
+}
+/* The row's padding above and below is two pixels between rows: the line crosses it. */
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper::after { top: 0; }
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continues > .block-main > .block-content-wrapper::after { bottom: 0; }
+/* The chip hangs on the line, inside the gutter (the wrapper is not positioned, so the row is its containing
+   block), cut to the gutter's width; only a run's first row keeps one. */
+.tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper > .block-content > .author-chip,
+.tine-author-marks-thread .ls-block.author-tinted > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: calc(100% - var(--author-thread-reserve) + 10px);
+  max-width: calc(var(--author-thread-gutter) - 14px);
+  margin-inline: 0;
+  text-overflow: ellipsis;
+  background-color: color-mix(in srgb, var(--author-color, var(--accent)) 18%, var(--bg-primary, transparent));
+}
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .block-content > .author-chip,
+.tine-author-marks-thread .ls-block.author-tinted.author-run-continued > .block-main > .block-content-wrapper > .authored-editor > .author-chip {
+  display: none;
+}
 
 /* Threads read flat in file pre-order, including hand-nested replies.
    Keep the stored tree intact: no structure or save operation runs to flatten it. */
@@ -229,7 +313,7 @@
 .comment-card.comment-resolved { background: var(--tine-comment-card-bg, var(--bg-secondary)); color: var(--text-muted); }
 .comment-card.comment-resolved .block-main,
 .comment-card.comment-resolved .comment-in-thread > .block-main { background: transparent; color: var(--text-muted); }
-.comment-card.comment-resolved .author-chip { color: var(--text-muted); background: var(--bg-tertiary); }
+.comment-card.comment-resolved .author-chip { color: var(--text-muted); background-color: var(--bg-tertiary); }
 .comment-in-thread:not(.comment-message) > .block-children-container > .block-children > .ls-block,
 .comment-messages > .ls-block {
   margin-top: 8px;

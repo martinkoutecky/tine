@@ -44,7 +44,7 @@ function holdPublication() {
   const held = new Promise<void>((resolve) => { release = resolve; });
   const save = vi.spyOn(backend(), "pageWait").mockImplementation(async () => {
     await held;
-    return true;
+    return [];
   });
   return { save, finish: () => release() };
 }

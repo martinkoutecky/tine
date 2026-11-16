@@ -237,7 +237,8 @@ fn the_creator_behind_in_line_writes_in_the_turn_it_holds() {
     );
 }
 
-/// What one `block.edit` of an existing page's block spends below the owner
+/// What one `block.edit` of an existing page's block, or one `block.move` of a
+/// subtree within its page, spends below the owner
 /// (card DuDHQ), from the request to the host's quiescence, at every page
 /// size: the old bytes parsed once (by the serializer), the new bytes twice
 /// (the serializer's round-trip check, and the publication's row, R8), never
@@ -278,18 +279,33 @@ fn a_block_edit_spends_its_lower_bound() {
     }
     use tine_store::cost_counters;
     let id = format!("  id:: {}\n", super::UUID);
-    for (label, old, text) in [
-        ("1-block", format!("- one\n{id}"), "edited".to_owned()),
+    let edit = |text: String| ("block.edit", json!({ "handle": super::UUID, "text": text }));
+    // A move of a subtree (#960) costs what an edit costs.
+    let target = "11111111-2222-4333-8444-555555555555";
+    let moved = (
+        "block.move",
+        json!({ "handle": super::UUID, "to": target, "at": "under" }),
+    );
+    let subtree =
+        format!("- one\n{id}\t\t- child\n\t\t\t- grandchild\n- target\n  id:: {target}\n");
+    for (label, old, (verb, args)) in [
+        ("1-block", format!("- one\n{id}"), edit("edited".to_owned())),
         (
             "60-block",
             format!("- one\n{id}{}", "- filler block\n".repeat(59)),
-            "edited".to_owned(),
+            edit("edited".to_owned()),
         ),
-        ("2 MiB", format!("- one\n{id}"), "x".repeat(2 << 20)),
+        ("2 MiB", format!("- one\n{id}"), edit("x".repeat(2 << 20))),
         (
             "already 2 MiB",
             format!("- {}\n{id}", "x".repeat(2 << 20)),
-            format!("{}!", "x".repeat(2 << 20)),
+            edit(format!("{}!", "x".repeat(2 << 20))),
+        ),
+        ("4-block move", subtree.clone(), moved.clone()),
+        (
+            "60-block move",
+            format!("{subtree}{}", "- filler block\n".repeat(56)),
+            moved.clone(),
         ),
     ] {
         let graph = Graph::seeded(Default::default(), &[("pages/a.md", &old)]);
@@ -315,9 +331,7 @@ fn a_block_edit_spends_its_lower_bound() {
         spent(&slot);
         cost_counters::reset();
         let start = Instant::now();
-        let written = conn
-            .call("block.edit", json!({ "handle": super::UUID, "text": text }))
-            .unwrap();
+        let written = conn.call(verb, args).unwrap();
         let elapsed = start.elapsed();
         quiet();
         let c = cost_counters::snapshot();
@@ -352,10 +366,14 @@ fn a_block_edit_spends_its_lower_bound() {
             c.bytes_written,
             old.len()
         );
-        assert_eq!(
-            spent(&slot),
-            cost(1, 1, 1, 1),
-            "{label}: the owner's own counts"
-        );
+        // A move names two blocks: two lookups. Each handle's page is found in
+        // a view of its own (`write::move_block` calls `handle_page` twice);
+        // one view would do. Pinned, not changed here.
+        let owner = if verb == "block.move" {
+            cost(1, 2, 2, 1)
+        } else {
+            cost(1, 1, 1, 1)
+        };
+        assert_eq!(spent(&slot), owner, "{label}: the owner's own counts");
     }
 }

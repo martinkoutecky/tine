@@ -759,7 +759,7 @@ function MountedRefGroup(props: LiveRefGroupProps & { occurrence: RefOccurrence;
           splitAsChild: props.surface === "query" || props.surface === "ref" ? (id) => resultRootIds().has(id) : undefined,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
-        <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} render={(id, authorNeighbors) => {
+        <CommentSurface page={pageByName(props.page)} roots={groupedIds()}><BlockList ids={groupedIds()} results render={(id, authorNeighbors) => {
             const crumb = createMemo<Crumb[]>((previous) => {
               if (!props.showBreadcrumb) return [];
               const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));

@@ -32,7 +32,7 @@ function ownerFile(host: TestHost, initial: string[], during?: (writes: number) 
   const api = backend();
   const submit = api.pageSubmit.bind(api);
   // A conflicted page is never published (`page_wait` is false on a conflict).
-  vi.spyOn(api, "pageWait").mockImplementation(async (_session, needs) => !(disk.conflict && needs.some((n) => n.key === OWNER)));
+  vi.spyOn(api, "pageWait").mockImplementation(async (_session, needs) => disk.conflict && needs.some((n) => n.key === OWNER) ? false : []);
   vi.spyOn(api, "getPageByPath").mockImplementation(async () => page("Owner", disk.raws, disk.rev));
   vi.spyOn(api, "pageOpen").mockImplementation(async (_session, id, target) => {
     if (target.path === null && target.name === "Draft") return { reason: "alias" as const, owners: [OWNER] };
@@ -80,8 +80,8 @@ describe("L9-05: alias draft landing whose owner settle returns false", () => {
     // (a save backoff on a disk error, REVIEW-3b-P2b F2): settle returns false.
     let ownerWaits = 0;
     vi.mocked(backend().pageWait).mockImplementation(async (_session, needs) => {
-      if (needs.some((n) => n.key === OWNER)) return ++ownerWaits > 1;
-      return true;
+      if (needs.some((n) => n.key === OWNER) && ++ownerWaits <= 1) return false;
+      return [];
     });
     setRaw(first, "a1");
     await vi.waitFor(() => expect(submittedPages(ownerSubmit, "Owner")).toHaveLength(1), { timeout: 2000 });

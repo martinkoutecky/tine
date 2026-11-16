@@ -78,7 +78,8 @@ async function snapshot(id) {
     return { textX, wrapperX: wr.left,
       bulletRight: br?.right, tint: tinted ? { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom } : null,
       gutterLines: row.querySelectorAll(".author-mark").length, title: wrapper.getAttribute("title"),
-      chip: wrapper.querySelector(".author-chip")?.textContent ?? null };
+      // The chip the reader sees: a results list (an embed) renders a joined hit's chip but hides it (`display: none`).
+      chip: (c => c && c.getClientRects().length > 0 ? c.textContent : null)(wrapper.querySelector(".author-chip")) };
   }, id);
 }
 async function palette(label) {
@@ -121,7 +122,12 @@ try {
   assert.ok(number.tint && Math.abs(number.textX - number.bulletRight - 4) <= 0.75, "Numbered authored block lost its tint or moved its text");
   await browser.$(".block-embed-host .ls-block.authored").waitForExist({ timeout: 10000 });
   assert.equal((await browser.$$(".block-embed-host.author-tinted")).length, 0, "Bulletless embed host tinted itself");
-  assert.equal(await browser.$(".block-embed-host .ls-block > .block-main .author-chip").getText(), "Ada", "Block embed inherited its host's author instead of showing the source author");
+  // The chip clips its own box (overflow: hidden, for the icon knob), so WebDriver's getText atom reads it as empty:
+  // assert the outcome with the chip's text content, that the driver finds it displayed, and that it has a visible box.
+  const embedChip = await browser.$(".block-embed-host .ls-block > .block-main .author-chip");
+  assert.equal((await embedChip.getProperty("textContent")).trim(), "Ada", "Block embed inherited its host's author instead of showing the source author");
+  assert.ok(await embedChip.isDisplayed(), "The block embed's source author chip is not visible");
+  assert.ok((await embedChip.getSize()).width > 0, "The block embed's source author chip has no box");
   assert.ok(Math.abs(alpha.tint.bottom - beta.tint.top) <= 0.5 && Math.abs(beta.tint.bottom - gamma.tint.top) <= 0.5, "Same-author sibling tint has a gap");
   for (const text of ["Parent outline", "Child first", "After nesting", "After thread", "After embed", "Source first"])
     assert.equal((await snapshot(ids[text])).chip, "Ada", `${text} must start a separate run`);

@@ -7,8 +7,8 @@
 mod binding;
 pub use binding::{
     ApplyRefusal, DiskToken, Effect, Expected, HostInputs, HostOp, HostRead, HostReadError, Input,
-    Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded, Saved, StopMode, StopState,
-    Stopped,
+    Opened, PageHost, PageMail, PageOperation, PageRefusal, PublishedRevision, Reloaded, Saved,
+    StopMode, StopState, Stopped,
 };
 pub use io::DraftStatus;
 #[cfg(test)]

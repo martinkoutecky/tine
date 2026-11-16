@@ -244,15 +244,15 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     return n ? propertySession.facets(n.raw, fmt()) : EMPTY_FACETS;
   });
-  const { outlineChildren, marginComments, commentChildren, quoteCoverage } = marginOutline(node, surfaceKey, fmt);
+  const { outlineChildren, marginComments, commentChildren, commentIndex, quoteCoverage } = marginOutline(node, surfaceKey, fmt);
   const groupedQuote = quoteInGroup(props.id);
   const hasChildren = () => outlineChildren().length > 0;
   const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id); // a query host folds its results (OG; GH #619)
   // The children-source sheet this block owns (a query block's table/board is the macro's).
   const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
-  // Only ordinary-outline parents (including folded ones) read plugin decoration.
-  const threadLineDecoration = (): ThreadLineDecoration => {
-    if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
+  // Bulletless comments keep their own presentation instead of outline threading.
+  const threadLineDecoration = (withoutBullet: boolean): ThreadLineDecoration => {
+    if (!(hasChildren() && sheet().view === null) || withoutBullet) return NO_THREAD_LINES;
     return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
       key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
@@ -283,7 +283,12 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // the host's position (`rowHost`). Page embeds and hosts with text keep theirs.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
-  const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, { id: () => props.id, neighbours: () => props.authorNeighbors });
+  const { commentSelector, storedAuthor, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt, {
+    id: () => props.id, neighbours: () => props.authorNeighbors,
+    // A thread runs through the rows drawn: the first child shown, and a prior sibling's last row (fold state as this surface draws it).
+    firstChild: () => (props.forceExpanded || !collapsed()) && sheet().view === null ? outlineChildren()[0] : undefined,
+    folded: id => viewFoldSurface(id, collapseSurface)?.collapsed(id, storedFold(id)) ?? storedFold(id),
+  });
   const hasCommentIdentity = createMemo(() => author() !== null || bulletless());
   // GH #893: the author mark is a faint tint behind the row's own text. Comments, replies and the
   // bulletless host of a whole-block embed keep their own presentation; the source block tints itself.
@@ -301,13 +306,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       class="ls-block"
       dir={noteLayoutDirAttr()}
       {...(() => {
-        const thread = threadLineDecoration();
+        const comments = commentClasses(), thread = threadLineDecoration(!!comments["comment-in-thread"]);
         return {
           style: rowDecorationStyle(thread, thread.enabled && thread.levels ? depthOf(props.id) : 0),
           classList: {
             collapsed: collapsed(),
             "block-embed-host": blockEmbedHost(),
-            ...commentClasses(),
+            ...comments,
             "author-tinted": authorTinted(),
             // The card of a thread with a message changed since the user last looked (DESIGN §12),
             // also while the thread is folded to "N replies" and its message rows are not drawn.
@@ -443,7 +448,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="block-children-container">
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={viewCollapseSurface()} />
               <div class="block-children">
-                <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />)} />
+                <For {...blockListProps(outlineChildren, (id, neighbours) => <Block id={id} authorNeighbors={neighbours} />,
+                  { head: props.id, index: commentIndex, after: () => { const sides = props.authorNeighbors?.(); return sides?.results ? undefined : sides?.next ?? sides?.after; } })} />
               </div>
             </div>
           </Match>

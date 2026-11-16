@@ -32,7 +32,7 @@ function ownerFile(host: TestHost, initial: string[], during?: (writes: number) 
   const api = backend();
   const submit = api.pageSubmit.bind(api);
   // A conflicted page is never published (`page_wait` is false on a conflict).
-  vi.spyOn(api, "pageWait").mockImplementation(async (_session, needs) => !(disk.conflict && needs.some((n) => n.key === OWNER)));
+  vi.spyOn(api, "pageWait").mockImplementation(async (_session, needs) => disk.conflict && needs.some((n) => n.key === OWNER) ? false : []);
   vi.spyOn(api, "getPageByPath").mockImplementation(async () => page("Owner", disk.raws, disk.rev));
   vi.spyOn(api, "pageOpen").mockImplementation(async (_session, id, target) => {
     if (target.path === null && target.name === "Draft") return { reason: "alias" as const, owners: [OWNER] };

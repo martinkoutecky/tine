@@ -34,7 +34,13 @@ export function normalizeAuthorName(value: string): string {
  * ignoring case. False when no name is set. Reactive. */
 export function isOwnAuthor(author: string): boolean {
   const own = nameSig();
-  return own !== "" && normalizeAuthorName(author).toLowerCase() === own.toLowerCase();
+  return own !== "" && authorKey(author) === own.toLowerCase();
+}
+
+/** One person's one key: the name as `normalizeAuthorName` writes it, compared ignoring case. Two blocks are by
+ * the same author, join a run and share a tint exactly when their keys are equal. Pure. */
+export function authorKey(author: string): string {
+  return normalizeAuthorName(author).toLowerCase();
 }
 
 /** How many author tints the stylesheet defines (`.author-tint-0` …, comments.css). */
@@ -45,7 +51,7 @@ export const AUTHOR_TINTS = 8;
  * a shared graph keeps one colour. Pure. */
 export function authorTint(author: string): number {
   let h = 0;
-  for (const ch of normalizeAuthorName(author).toLowerCase()) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  for (const ch of authorKey(author)) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
   return h % AUTHOR_TINTS;
 }
 

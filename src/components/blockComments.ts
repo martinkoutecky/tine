@@ -1,7 +1,7 @@
 // What a Block needs from the margin dialogue (vision §3.7), kept out of
 // Block.tsx so the component only wires it (the size ratchet, PARITY-CAMPAIGN §3).
 
-import { createMemo, useContext } from "solid-js";
+import { createMemo, getOwner, runWithOwner, useContext, type Accessor } from "solid-js";
 import type { OutlineScope } from "../document";
 import { storedAuthorOf, quoteSelectorOf } from "../comments";
 import { authorTint, isOwnAuthor } from "../commentIdentity";
@@ -9,11 +9,11 @@ import { marginNext, marginPrev, outlineNext, outlinePrev, threadRootOf } from "
 import { inCommentThread } from "./CommentParts";
 import { MarginContext } from "./marginContext";
 import { commentMarginHidden } from "../commentMarginPref";
-import { authorRunContinues, type AuthorNeighbors } from "./authorRuns";
+import { authorRunContinues, authorThreadSides, lastRow, type AuthorNeighbors, type RowSides } from "./authorRuns";
 import { threadResolved } from "../commentResolution";
 import { useResolvedComments } from "./CommentResolutionScope";
 import { editingId } from "../editorController";
-import { createCommentChildren } from "../commentIndex";
+import { createCommentChildren, createCommentIndexFor, type CommentIndex } from "../commentIndex";
 import { NO_COMMENT_CHILDREN } from "../commentChildren";
 import { createQuoteCoverage } from "../render/quoteHighlight";
 import { datedThreadRoot, hasMessageDate } from "../document";
@@ -23,11 +23,17 @@ interface CommentNode { id: string; raw: string; parent: string | null; children
 type Props = readonly (readonly [string, string])[];
 const NO_IDS: readonly string[] = [];
 const NO_COMMENT_CLASSES: Record<string, boolean> = {};
+const NO_SIDES: RowSides = {};
+const NO_THREAD = { continued: false, continues: false } as const;
+
+/** What `commentFacts` needs from a row to compare it with its neighbours: its own id, the sides its list gives
+ * it, the first child it renders (none when folded) and whether a row's children are folded away here. */
+export interface RunRow { id: () => string; neighbours: () => AuthorNeighbors | undefined; firstChild: () => string | undefined; folded: (id: string) => boolean }
 
 /** Local facets and a memo for the adjacent authorship pairs. The thread test
  * walks up the parents rather than providing a context per level (128-level
  * outlines must render). Unauthored blocks do no neighbour comparisons. */
-export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org", run?: { id: () => string; neighbours: () => AuthorNeighbors | undefined }) {
+export function commentFacts(node: () => CommentNode, properties: () => Props, fmt: () => "md" | "org", run?: RunRow) {
   const inThread = () => inCommentThread(node().parent, fmt());
   const commentSelector = () => (node().parent !== null ? quoteSelectorOf(properties()) : null);
   // Carry stored attribution through the memo that already owns adjacent-run comparisons.
@@ -37,30 +43,64 @@ export function commentFacts(node: () => CommentNode, properties: () => Props, f
     const author = written !== null && isOwnAuthor(written) ? null : written;
     // Thread presentation is gated below. Do not read ancestors here: their
     // raw text would make a parent's keystroke recompute every descendant run.
-    if (author === null || commentSelector() !== null) return { stored, author, continued: false, continues: false };
-    const neighbours = run?.neighbours()?.();
-    return { stored, author, continued: authorRunContinues(neighbours?.[0], run?.id(), fmt()), continues: authorRunContinues(run?.id(), neighbours?.[1], fmt()) };
+    if (author === null || commentSelector() !== null || !run) return { stored, author, continued: false, continues: false };
+    const sides = run.neighbours()?.() ?? NO_SIDES, id = run.id();
+    return { stored, author, continued: authorRunContinues(sides.prev, id, fmt()), continues: authorRunContinues(id, sides.next, fmt()) };
   });
   const storedAuthor = () => authorship().stored;
   const author = () => authorship().author;
   const continued = () => authorship().continued;
   const continues = () => authorship().continues;
-  const showsAuthor = () => (author() !== null && !continued()) || bulletless();
+  // The thread's run reaches across depth (the parent above the first child, the last descendant above the next
+  // sibling), so it depends on more rows than the card. It is read where the classes are, not in a memo of its
+  // own: a memo would cost every plain row an owner (Block.loadCost), and keeping it out of the card memo stops
+  // a parent's keystroke from re-running the card comparisons of its children. Plain rows read nothing.
+  // The row above is the previous sibling's last drawn row. It is memoized, created on the first authored row's
+  // read (plain rows pay nothing) and under the row's own owner, and it reads comment membership from the
+  // covering index (`isComment`), not from the siblings' text: typing re-runs none of it.
+  const owner = getOwner();
+  let previousLast: Accessor<string | undefined> | undefined;
+  let own: Accessor<CommentIndex | null> | undefined;
+  const previousRow = () => (previousLast ??= runWithOwner(owner, () => {
+    // A fold reads the row's raw text. Each visited row's fold is a memo owned by this walk, so the walk sees a
+    // boolean (typing in a spine row does not re-walk it) and a rerun, which only a real fold, membership or
+    // structure change causes, disposes exactly the old spine's memos.
+    const foldOf = (id: string) => createMemo(() => run!.folded(id))();
+    return createMemo(() => {
+      const sides = run!.neighbours()?.() ?? NO_SIDES;
+      if (sides.prev === undefined || sides.results) return undefined;   // a hit never uses the row above: no index
+      // The index that covers the previous sibling covers the whole spine below it, and its list already knows it
+      // (its parent's). Only a list that is not under a parent row (a page's roots) resolves its own, at its depth.
+      const index = sides.index ?? (own ??= runWithOwner(owner, () => createCommentIndexFor(() => run!.neighbours()?.()?.prev ?? null))!)();
+      return lastRow(sides.prev, foldOf, id => index?.isComment(id) ?? false);
+    });
+  }))!();
+  const threadSides = () => {
+    if (!run || author() === null || commentSelector() !== null || bulletless()) return NO_THREAD;
+    return authorThreadSides(run.id(), run.neighbours()?.() ?? NO_SIDES, run.firstChild(), previousRow(), fmt());
+  };
+  // Every hit of a results list starts with its own chip: the tint card may still join adjacent hits (the
+  // stylesheet hides the chip of a joined one under the tint), but the thread never links across hits.
+  const inResults = () => !!run?.neighbours()?.()?.results;
+  const showsAuthor = () => (author() !== null && (!continued() || inResults())) || bulletless();
   // Comments and their replies draw no bullet; the chip keeps the block menu.
   const bulletless = () => (commentSelector() !== null || inThread()) && (!datedThreadRoot(node().id) || hasMessageDate(node().id));
   const commentClasses = () => {
     const by = author();
     const selector = commentSelector();
-    const thread = inThread();
-    if (by === null && selector === null && !thread) return NO_COMMENT_CLASSES;
+    const inReplies = inThread();
+    if (by === null && selector === null && !inReplies) return NO_COMMENT_CLASSES;
+    const thread = threadSides();
     const classes: Record<string, boolean> = {
-      "comment-card": selector !== null && !thread,
-      "comment-resolved": selector !== null && !thread && threadResolved(node().id),
+      "comment-card": selector !== null && !inReplies,
+      "comment-resolved": selector !== null && !inReplies && threadResolved(node().id),
       "comment-in-thread": bulletless(),
       "comment-message": bulletless() && datedThreadRoot(node().id) !== null,
       authored: by !== null,
-      "author-run-continued": !bulletless() && continued(),
-      "author-run-continues": !bulletless() && continues(),
+      "author-card-continued": !bulletless() && continued(),
+      "author-card-continues": !bulletless() && continues(),
+      "author-run-continued": thread.continued,
+      "author-run-continues": thread.continues,
     };
     // Someone else's comment or reply gets its own background, one tint per name
     // (Martin 2026-10-31: the chip alone did not tell them apart).
@@ -86,13 +126,16 @@ export function marginOutline(node: () => CommentNode, _surfaceKey: string, fmt:
     outlineChildren: () => state()?.outlineChildren() ?? node().children,
     marginComments: () => state()?.marginComments() ?? NO_IDS,
     commentChildren: () => state()?.comments() ?? NO_COMMENT_CHILDREN,
+    /** The index that covers this block's children; its child list passes it to its rows. */
+    commentIndex: () => state()?.index() ?? null,
     quoteCoverage: () => state()?.quoteCoverage,
   };
 }
 
 function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", showResolved: () => boolean) {
   const quoteCoverage = createQuoteCoverage();
-  const comments = createCommentChildren(() => node().id);
+  const index = createCommentIndexFor(() => node().id);
+  const comments = createCommentChildren(() => node().id, index);
   const main = () => !!node() && threadRootOf(node().id, fmt()) === null;
   // A body editor that is hand-writing its first quote property must finish
   // that buffer before moving to an annotation surface. Otherwise accepting
@@ -116,7 +159,7 @@ function parentMarginOutline(node: () => CommentNode, fmt: () => "md" | "org", s
   }, [], { equals: sameIds });
   const marginComments = createMemo(() => (main() && !commentMarginHidden() ? comments().entries.flatMap(entry => entry.id !== heldBody()
     && (showResolved() || !entry.resolved) ? [entry.id] : []) : []), [], { equals: sameIds });
-  return { outlineChildren, marginComments, comments, quoteCoverage };
+  return { outlineChildren, marginComments, comments, index, quoteCoverage };
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {

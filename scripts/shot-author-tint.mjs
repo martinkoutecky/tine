@@ -59,7 +59,7 @@ function measureRows(scopeEl) {
       tinted: row.classList.contains("author-tinted"), hasBackground: bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent",
       selected: main.classList.contains("selected"), gutterLines: row.querySelectorAll(":scope > .block-main .author-mark").length,
       folded: bullet.classList.contains("bullet-closed"), ordered: bullet.classList.contains("ordered"), editing: !!(editor || cm),
-      continued: row.classList.contains("author-run-continued"), continues: row.classList.contains("author-run-continues"),
+      continued: row.classList.contains("author-card-continued"), continues: row.classList.contains("author-card-continues"),
       title: wrapper.getAttribute("title"), bulletRight: br.right, textX,
       wrapperLeft: wr.left, wrapperRight: wr.right, top: wr.top, bottom: wr.bottom });
   }

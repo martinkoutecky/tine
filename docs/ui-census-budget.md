@@ -65,6 +65,9 @@ The alternatives to growing a surface are palette-only, config-only or cut.
 Run `UI_CENSUS_PRINT=1 npx vitest run --config vitest.render.config.ts src/uiCensus.budget.test.tsx`
 to print every count with the labels of the controls counted.
 
+- 2026-11-15, D-20261115-ALF / GH #892 (Martin: "put it under fine tuning"): `settings.appearance.advanced`
+  18→19 for the one **Author marks** Fine-tuning row (Tint or Thread). It stays behind Advanced; the
+  alternative, a custom.css-only look, was declined because `custom.css` cannot add the window class.
 - 2026-11-08, D-20261107-MC3 §7 (UI-MC010-VISIBILITY, GH #891): ordinary page
   and journal header menus gain one Show comments/Hide comments row: desktop
   16→17, mobile 15→16. The approved design requires a visible mobile control

@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { bindingOwner } from "../owned";
 import { doc, pageByName } from "./model";
@@ -50,6 +51,37 @@ for (const [name, load] of Object.entries(loaders)) it(`${name}: a delayed A rea
   expect(shown()).toEqual(["B"]);
   expect(baseRevFor("Fresh")).toBe("B");
   expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("custody invalidates a delayed read before publication is proved", async () => {
+  ensurePageLoaded(page("A"));
+  const host = await bindTestHost();
+  answerOpensFromDocument(host);
+  const submit = vi.spyOn(backend(), "pageSubmit").mockResolvedValue(null);
+  let publish!: (published: boolean) => void;
+  const wait = vi.spyOn(backend(), "pageWait").mockReturnValue(new Promise(resolve => {
+    publish = published => resolve(published ? [{ key: "pages/Fresh.md", version: 4, rev: "B" }] : false);
+  }));
+  setRaw("fresh-block", "B", { timetracking: false });
+  const flushed = flushPage("Fresh");
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  let deliver!: (dto: PageDto) => void;
+  const read = vi.fn<() => Promise<PageDto>>()
+    .mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }))
+    .mockResolvedValue(page("B"));
+  const request = admitRead(bindingOwner(), read, dto => [dto.name], dto => dto.rev);
+  host.deliver({ key: "pages/Fresh.md",
+    answer: { id: submit.mock.calls[0][1], version: 4, took: true, outcome: { kind: "applied" } },
+    page: { version: 4, conflict: false, risk: false, disk: { kind: "file", rev: "A" },
+      text: { kind: "unchanged", rev: "B" } } });
+  await vi.waitFor(() => expect(wait).toHaveBeenCalled());
+  deliver(page("A"));
+  expect(await request).toEqual({ kind: "current", value: "B" });
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(baseRevFor("Fresh")).toBe("A");
+  publish(true);
+  expect(await flushed).toBe(true);
+  expect(baseRevFor("Fresh")).toBe("B");
 });
 
 for (const invalidations of [0, 1, 2, 5, 20]) it(`${invalidations} relevant invalidations cost at most one read each and then admit newest text`, async () => {

@@ -115,7 +115,7 @@ fn authored_id_spellings_survive_guarded_saves_byte_exactly() {
 /// `edits` submits of the page's first block, each answered before the next,
 /// then publication of the last. Returns the counts from the first submit to
 /// publication, and the page file's final length.
-fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
+fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64, u64) {
     let dir = tempfile::Builder::new()
         .prefix("host-edit-cost-")
         .tempdir()
@@ -169,6 +169,7 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
     }
     let mut doc = store.page(&page).unwrap().doc;
     cost_counters::reset();
+    cost_counters::take_byte_hashes();
     for n in 0..edits {
         id += 1;
         doc.blocks[0].raw = format!("after {n}");
@@ -184,12 +185,15 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
         .unwrap();
         version = answer_version(&mail, id);
     }
-    let published = host.wait_published(
-        session,
-        &[(key.clone(), version, None)],
-        Duration::from_secs(10),
-    );
+    let published = host
+        .wait_published(
+            session,
+            &[(key.clone(), version, None)],
+            Duration::from_secs(10),
+        )
+        .0;
     let counts = cost_counters::snapshot();
+    let hashes = cost_counters::take_byte_hashes();
     assert_eq!(
         format!("{published:?}"),
         "Applied",
@@ -201,7 +205,7 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
         .starts_with(&format!("- after {}\n", edits - 1)));
     drop(host);
     store.close();
-    (counts, len)
+    (counts, len, hashes)
 }
 
 #[test]
@@ -209,7 +213,7 @@ fn an_ordinary_edit_is_one_guarded_save_with_no_draft() {
     let _integration_guard = crate::exclusive_integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for blocks in [1, 60] {
-        let (one, len) = edit(blocks, 1, ALONE);
+        let (one, len, _) = edit(blocks, 1, ALONE);
         eprintln!("I-25 host edit unit cost: blocks={blocks} page bytes={len} one edit={one:?}");
         // One guarded save: the page's temporary file, renamed over the page,
         // then the temp file's and the directory's syncs. No draft record: an
@@ -237,7 +241,7 @@ fn a_burst_of_submits_is_bounded_by_its_submits() {
     // Five submits answered back to back (the window sends at most one per
     // debounce, 400 ms with a 1 s max wait): the host saves at most once per
     // submit and writes no draft.
-    let (burst, len) = edit(60, 5, ALONE);
+    let (burst, len, _) = edit(60, 5, ALONE);
     eprintln!("I-25 host edit unit cost: 60 blocks, 5 submits={burst:?}");
     assert!(
         burst.files_written <= 5,
@@ -271,10 +275,11 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
                 held: 0,
                 no_watcher: true,
             };
-            let (counts, _) = edit(1, 1, graph);
-            eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?}");
-            counts
+            let (counts, _, hashes) = edit(1, 1, graph);
+            eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?} byte hashes={hashes}");
+            (counts, hashes)
         });
+        let ((small, hashes), (large, _)) = (small, large);
         let path = |c: &Counts| {
             [
                 ("full_reads", c.full_reads),
@@ -331,6 +336,14 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
             pinned,
             "PC-3: a save's delivery costs exactly this (aged={aged})"
         );
+        // Every in-memory revision (`FileRev::from_bytes`, O(page bytes)) on
+        // the same path. The publication's bookkeeping adds none: it keeps
+        // the revision its indexing hashed (#964 review F1; was 11).
+        assert_eq!(
+            hashes, 10,
+            "PC-4: a successful own publication hashes its bytes once, in indexing \
+             (aged={aged}); exemplar page_host/binding_bridge.rs index()"
+        );
     }
 }
 
@@ -349,7 +362,7 @@ fn an_edit_among_many_held_pages_visits_what_changed() {
             held: held as usize,
             no_watcher: true,
         };
-        let (counts, _) = edit(1, 1, graph);
+        let (counts, ..) = edit(1, 1, graph);
         eprintln!("M4 held={held}: {counts:?}");
         (held, counts)
     });

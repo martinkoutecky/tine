@@ -152,6 +152,14 @@ settings-guides-by-level = 每层一种柔和颜色
 
 settings-guides-one-color = 所有层级使用同一颜色
 
+settings-author-mark-style = 作者标记
+
+settings-author-mark-style-hint = 他人所写的块如何显示作者。“着色”为块背景上色；“线索”在右侧边缘画一条细线穿过作者名称，每段连续的同一作者的块只显示一次名称，不改变文字位置。仅在显示作者标记时生效。
+
+settings-author-mark-tint = 着色
+
+settings-author-mark-thread = 线索
+
 settings-links = 链接
 
 settings-links-to-the-web-or-a-file = 网页或文件链接

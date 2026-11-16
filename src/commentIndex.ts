@@ -29,6 +29,10 @@ export interface CommentIndex {
   childrenOf(parentId: string): Accessor<CommentChildren>;
   /** Thread roots in file order; notifies on every rescan and root change. */
   roots(): readonly CommentChild[];
+  /** Whether `id` is a comment child of its parent (it carries a quote selector). O(1); notifies only when
+   * membership changes (a block gains or loses a quote, a block arrives or leaves), never on an edit of
+   * its selector or of ordinary text. */
+  isComment(id: string): boolean;
   /** Parents of thread roots, in source outline order. Shares the membership
    * scan; reading is O(1), including parents hidden by collapsed ancestors. */
   parents(): readonly string[];
@@ -55,6 +59,7 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
   const [revision, bump] = createSignal(undefined, { equals: false });
   const [membership, remeasure] = createSignal(undefined, { equals: false });
   const [scanned, didScan] = createSignal(undefined, { equals: false });
+  const [members, membersChanged] = createSignal(undefined, { equals: false });
   let comments = new Map<string, CommentChild>();
   let byParent = new Map<string, CommentChild[]>();
   let rootList: readonly CommentChild[] = [];
@@ -111,6 +116,7 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
         }
       }
       const previousParents = byParent;
+      if (previous.size !== found.size || [...found.keys()].some(id => !previous.has(id))) membersChanged();
       comments = found; byParent = parents; treeRoots = new Set(ids); above = ancestors;
       // The one root predicate (`threadRootOf`), asked once per comment.
       rootList = [...found.values()].filter(entry => threadRootOf(entry.id, formatOf(docNode(entry.id)!.page)) === entry.id);
@@ -181,6 +187,7 @@ export function createCommentIndex(trees: Accessor<readonly string[]>): CommentI
       // One leased producer per parent, shared by its outline and review views.
       return held.value;
     },
+    isComment: id => { scan(); members(); return untrack(() => comments.has(id)); },
     roots: () => { scan(); scanned(); revision(); return rootList; },
     parents: () => { scan(); scanned(); return rootParents; },
     openBelow: id => openRootsBelow(id).length,
@@ -235,9 +242,9 @@ export function createCommentIndexFor(id: Accessor<string | null>): Accessor<Com
 /** Which children of a block are comments, with their selectors and resolution:
  * a view of the covering index. Typing in an ordinary child costs one screen
  * and re-runs nothing here; a comment child's edit notifies only when its
- * selector or resolution changed. */
-export function createCommentChildren(parentId: Accessor<string | null>): Accessor<CommentChildren> {
-  const index = createCommentIndexFor(parentId);
+ * selector or resolution changed. A caller that already resolved the covering
+ * index of `parentId` passes it. */
+export function createCommentChildren(parentId: Accessor<string | null>, index: Accessor<CommentIndex | null> = createCommentIndexFor(parentId)): Accessor<CommentChildren> {
   const view = createMemo(() => {
     const own = index();
     const id = parentId();

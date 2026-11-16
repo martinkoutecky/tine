@@ -95,6 +95,12 @@ async function blockWith(text) {
   if (!id) throw new Error(`No block containing ${text}`);
   return browser.$(`[data-block-id="${id}"]`);
 }
+// The chip clips its own box (overflow: hidden, for the icon knob), so WebDriver's getText atom reads a visible chip
+// as empty: assert the chip's text content, that the driver finds it displayed, and that it has a visible box.
+async function assertAuthorChip(block, name, message) {
+  const chip = await block.$(".author-chip");
+  if ((await chip.getProperty("textContent")).trim() !== name || !await chip.isDisplayed() || !((await chip.getSize()).width > 0)) throw new Error(message);
+}
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
@@ -113,7 +119,7 @@ try {
   const initialBytes = fs.readFileSync(PAGE_FILE, "utf8");
   const quote = await blockWith("A quoted passage");
   if ((await quote.$(".md-quote").getText()).includes("tine.author")) throw new Error("Author metadata rendered inside the quote");
-  if (await quote.$(".author-chip").getText() !== "Quote Agent") throw new Error("Quote lost its author mark");
+  await assertAuthorChip(quote, "Quote Agent", "Quote lost its author mark");
   await shot("00-author-and-quote");
   if (fs.readFileSync(PAGE_FILE, "utf8") !== initialBytes) throw new Error("Viewing the quote rewrote its bytes");
   const authored = await blockWith("Authored note");
@@ -139,7 +145,8 @@ try {
   await waitForFileText(PAGE_FILE, text => text.includes("> A revised passage") && text.includes("tine.author:: Quote Agent  \t"), { timeoutMs: 20_000 });
   await browser.refresh(); await ensureMainWindow(browser); await openPageByName(browser, PAGE_NAME);
   const reopenedQuote = await blockWith("A revised passage");
-  if ((await reopenedQuote.$(".md-quote").getText()).includes("tine.author") || await reopenedQuote.$(".author-chip").getText() !== "Quote Agent") throw new Error("Saved quote lost its text/author separation after reload");
+  if ((await reopenedQuote.$(".md-quote").getText()).includes("tine.author")) throw new Error("Saved quote lost its text/author separation after reload");
+  await assertAuthorChip(reopenedQuote, "Quote Agent", "Saved quote lost its text/author separation after reload");
   proof.steps.push("quote author never rendered as prose; retained author bytes survive an edit and reload");
   const reopened = await blockWith("Authored note revised");
   await reopened.$(".block-content").click();

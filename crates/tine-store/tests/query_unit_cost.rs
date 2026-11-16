@@ -183,6 +183,7 @@ fn one_character_host_submit_at_60_and_1000_blocks() {
                 &[(key.to_string(), next, None)],
                 std::time::Duration::from_secs(30),
             )
+            .0
         });
         let allocations = ALLOCATION_CALLS.load(Ordering::Relaxed);
         assert_eq!(format!("{published:?}"), "Applied");

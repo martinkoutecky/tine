@@ -150,7 +150,8 @@ const documentPort: DocumentPort = {
     return true;
   },
   tombstoned: (name) => deletedPages.has(name),
-  took: (name, rev) => { invalidatePageRead(name); baseRev.set(name, rev); },
+  took: invalidatePageRead,
+  published: (name, rev) => { baseRev.set(name, rev); },
   released: invalidatePageRead,
 };
 
@@ -163,7 +164,8 @@ function portFor(current: () => boolean): DocumentPort {
     ...documentPort,
     install: (name, content) => { if (current()) documentPort.install(name, content); },
     holdsPush: (name) => current() && documentPort.holdsPush(name),
-    took: (name, rev) => { if (current()) documentPort.took(name, rev); },
+    took: (name) => { if (current()) documentPort.took(name); },
+    published: (name, rev) => { if (current()) documentPort.published(name, rev); },
     released: name => { if (current()) documentPort.released(name); },
   };
 }

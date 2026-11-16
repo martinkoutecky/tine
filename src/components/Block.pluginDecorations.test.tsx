@@ -39,6 +39,27 @@ function page(roots: string[]): FeedPage {
 // row, so a leaf (most blocks of a large flat page) must not subscribe to plugin
 // installation/settings changes at all.
 describe("plugin thread-lines decoration host", () => {
+  it("GH #129: bulletless messages do no plugin work; their ordinary child outlines still thread", () => {
+    const hasDecoration = vi.spyOn(pluginManager, "hasDeclarativeDecoration").mockReturnValue(true);
+    const setting = vi.spyOn(pluginManager, "declarativeDecorationSetting").mockReturnValue(undefined);
+    setDoc({ byId: {
+      parent: node("parent", null, ["message"]),
+      message: { ...node("message", "parent", ["child"]), raw: "Comment\ntine.quote:: parent\ntine.date:: 2026-11-07T13:37Z" },
+      child: node("child", "message"),
+    }, pages: [page(["parent"])], feed: ["Decorations"], loaded: true });
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <Block id="message" />, host);
+    try {
+      expect(host.querySelector('.comment-message > .block-main > .block-controls')).toBeNull();
+      expect(hasDecoration).not.toHaveBeenCalled();
+      expect(setting).not.toHaveBeenCalled();
+      setDoc("byId", "leaf", node("leaf", "child"));
+      setDoc("byId", "child", "children", ["leaf"]);
+      expect(hasDecoration).toHaveBeenCalledTimes(1);
+      expect(host.querySelector('[data-block-id="child"]')?.classList.contains("plugin-thread-lines")).toBe(true);
+      expect(host.querySelector('[data-block-id="message"]')?.classList.contains("plugin-thread-lines")).toBe(false);
+    } finally { dispose(); }
+  });
   it("bounds host styles, keeps theme defaults, and repeats hierarchy colors", () => {
     for (const thickness of [0, 1, 4, 10]) {
       const thread = threadLineSettings(true, key => key === "thickness" ? thickness : undefined);

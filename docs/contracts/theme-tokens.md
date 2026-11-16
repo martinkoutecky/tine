@@ -45,6 +45,8 @@ entry and a row here (the guard fails otherwise).
 | `--tine-highlight-bg` | Background of `^^highlighted^^` text | `var(--mark-bg)`, i.e. `--ls-page-mark-bg-color` |
 | `--tine-comment-highlight-bg` | Background of a comment's quoted passage in the source text, including the active passage | `color-mix(in srgb, var(--accent) 14%, transparent)`; active wide-margin passage: 30% |
 | `--tine-comment-card-bg` | Background of comment cards and passage groups | `color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent))`; authored card: 7% `var(--author-color)` instead; resolved card: `var(--bg-secondary)` |
+| `--tine-author-gutter` | Width of the strip at the end of every outline row that holds the thread look's line and author chip (section 8): a length in px (an `em` would be read at the row and at the chip, which have different font sizes). Set it on `:root` | 96px; 64px on a phone (narrow, coarse pointer) |
+| `--tine-author-icon-size` | Turns the chip into an icon of this width, at most the chip's 16px height; set it together with a `background-image` on the same chip (section 8) | Unset: the chip keeps its name |
 | `--tine-missing-page-color` | Color of a `[[link]]` to a page that does not exist yet | A link-colored tint pulled toward `var(--text-secondary)` (`color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))`) |
 | `--tine-external-link-underline` | The line under a link to a web address or file (`border-bottom` shorthand; `none` removes it) | `1px solid`, in the text color (OG's `.external-link`) |
 | `--tine-content-width` | Maximum width of the standard page column | 810px (what `--ls-main-content-max-width` is by default) |
@@ -241,12 +243,9 @@ layout wrappers and the nesting between these elements are not promised.
 | `.comment-composer` | The reply composer |
 | `.comment-popup-content` | The comment content inside a popover or phone sheet |
 
-Every rendered block carrying `tine.author::` has `data-author="<name>"` on
-its block element, including comments and replies. The value is the stored
-property facet value, even when its visible chip says "you" or author marks
-are hidden. An empty value gives `data-author=""`; an absent property gives no
-attribute. No other block properties are exposed as attributes by this hook.
-For example, dim blocks attributed to an agent, and outline Ada's comments:
+Comments and replies carry the authorship hooks of section 8 (`data-author`,
+`--author-color`, the chip). For example, dim blocks attributed to an agent, and
+outline Ada's comments:
 
 ```css
 [data-author="claude"] { opacity: 0.65; }
@@ -260,16 +259,103 @@ For example, dim blocks attributed to an agent, and outline Ada's comments:
 The two comment tokens are independent of `--tine-highlight-bg` (which styles
 `^^highlights^^`). Unset, they preserve the existing state-specific backgrounds.
 
+## 8. Authorship styling
+
+Public hooks for blocks and comments that carry `tine.author::` (GH #892,
+D-20261115-ATH): the author mark's presentation is something a theme or
+`custom.css` may build on, and a rename of any name below needs a contract
+update and a CHANGELOG Changed entry. The tests at the end render the real
+components.
+
+**Who counts as another author.** A block is *authored* when its `tine.author::`
+value is not empty and is not your configured name ("Your name" in Settings).
+Names are compared by their key: trimmed, runs of spaces collapsed to one, case
+ignored (`commentIdentity.authorKey`). The same key gives the same colour, the
+same run and the same "you". The stored text is never rewritten.
+
+| Hook | Marks |
+|---|---|
+| `data-author="<name>"` | On every rendered block row that carries `tine.author::`, including comments, replies and your own name's blocks. The value is the property's value as the parser reads it: not trimmed, case-folded or collapsed by Tine (a hand-written `Ada ` gives `"Ada "`), empty for an empty property, and the attribute is absent without the property. Select with `[data-author="claude" i]` (case) rather than relying on a normalised form |
+| `.ls-block.authored` | A row (block, comment or reply) by another author |
+| `.ls-block.author-tinted` | An authored outline row that draws the author mark: not a comment or reply, not the bulletless host of a whole-block embed, and none while Settings' **Show/Hide author marks** is off |
+| `.author-run-continued`, `.author-run-continues` | On an authored outline row (not a comment): the row drawn directly above, respectively below, is by the same author. Defined below |
+| `--author-color` | The author's colour, one of eight chosen from the name's key and defined on every authored row and on its chip. Read it as `var(--author-color, var(--accent))`. A rule sets it per author, on the row and its chip: `.ls-block[data-author="Claude"], .ls-block[data-author="Claude"] .author-chip { --author-color: #d97757; }` |
+| `.ls-block > .block-main` | The full row, never its children: bullet column, text and the controls drawn after the text (comment marker, resolved label, folded "N below" chip). Its right edge is the row's edge, whatever trails the text: anchor a drawing at the row's end here (the thread look does) |
+| `.ls-block > .block-main > .block-content-wrapper` | The row's own text box, which the trailing controls make narrower; never its children. The chip is `> .block-content > .author-chip` (an editing row: `> .authored-editor > .author-chip`). These two paths are the only structure promised here, because a thread or any other row-level drawing needs them |
+| `.author-chip`, `.author-chip.agent` | The label (section 7). The first row of a run of same-author siblings carries it; a row that another sibling continues does not. It carries `data-author="<trimmed name>"` (none on a "you" chip). With `--tine-author-icon-size` (section 2) and a `background-image` set on it, it shows the icon instead of the name |
+| `html.tine-author-marks-thread` | Tine's own thread look, below. A class on `<html>`, not a token: Settings > Appearance > Fine-tuning > **Author marks** (Tint, the default, or Thread; the class `tine-<id>-<option>` of the class knob `author-marks`) sets it. `custom.css` cannot add a class, so a stylesheet draws the same line from the run classes (the Guide page shows how); a theme package cannot set it |
+| `html.tine-author-marks-off` | On `<html>` exactly while **Show/Hide author marks** is off (no `author-tinted` row then, and the thread look reserves nothing). Read it, as the Guide's thread example does, to end a gutter your own stylesheet reserves; never set it |
+
+The tint's own join classes (`author-card-continued`, `author-card-continues`,
+sibling rows only, so a card never bends around a child) and the eight
+`author-tint-N` classes are internal; use `--author-color` and `data-author`.
+
+**Runs.** Rows are read top to bottom as drawn. The row directly below row A is
+A's first child when A shows its children (A is not folded in this view and is
+not a sheet), else A's next sibling, else the row below A's parent's subtree.
+The row directly above B is the last row drawn inside B's previous sibling,
+else B's parent. A run is a maximal sequence of rows each by the same author
+and each directly below the one before: it passes from a parent into its first
+child, between siblings through a folded sibling, and out from the last
+descendant to the next sibling of an ancestor, and it stops at the first row of
+anyone else (a block you wrote included). Never in a run: a comment, a reply or
+any row carrying `tine.quote::`, a row whose text embeds with `{{embed ...}}`,
+and the children of a sheet. Quoted comments are not rows of the outline. In a
+list of results (references, queries, embeds) the hits do not join one another;
+inside one hit the outline rules apply. A surface counts only the rows it draws,
+so the same block in an embed starts a run of its own. Computing both sides is
+O(1) per row for the parent, the first child and the next sibling, plus the
+last-child chain of the previous sibling (each row lies on at most one such
+chain, so a page costs O(rows) in all); unauthored rows compute nothing. The
+previous sibling's last row is kept per row from the covering comment index
+(which blocks are comments) and the folds, never from the siblings' text:
+typing in any block, or editing a comment, re-runs none of it.
+
+**Thread look (`html.tine-author-marks-thread`).** Instead of the tint: every outline
+row, authored or not (not a comment or reply, not the bulletless host of a whole-block
+embed), reserves one gutter of `--tine-author-gutter` at the end of its full row
+(`.block-main`), so the text column has the same width on every row and never shifts
+between authored and unauthored rows. The controls after the text (comment markers,
+the resolved label, a folded block's "N below" chip, the reference count) lay out
+before the gutter, never inside it. The phone's 44px fold area stays at the very end,
+right of the gutter. In the gutter a 2px line in the author's colour sits 3px inside
+its start, and the chip hangs 5px right of the line, at one distance from the row's
+edge, cut to the gutter's width with an ellipsis when the name is longer (the tooltip
+and the accessible name keep it whole; an icon chip fits as is). The line starts under
+the chip of a run's first row, crosses the two pixels between rows
+(`author-run-continues`, `author-run-continued`) and ends at the bottom of the run's
+last row. Only a run's first row keeps its chip. Text starts where it always did.
+While **Show/Hide author marks** is off nothing is reserved (the window carries the
+class `html.tine-author-marks-off`, which a stylesheet that draws the thread itself
+reads, as the Guide's example does). Logical properties
+throughout: a mirrored layout draws the thread on the left. At 390px (phone) the
+gutter is 64px plus the 44px fold area, so every row gives up 108px at its end.
+
+**Icons.** Set `--tine-author-icon-size` and a `background-image` on the chip
+(in practice `.author-chip[data-author="..." i]`) and it becomes that image, the
+name staying in the tooltip and in `data-author`. Set them on the chip, not on
+the row: the size token is inherited, so a row's value would reach the chips
+of its children by other authors. A chip's `data-author` is the trimmed name
+(the row's is the stored text); a "you" chip has none. The image is a `url()`; in `custom.css` it is
+a `data:` URI or an `https:` address. A relative path resolves against Tine's own
+page, never against the graph (`../assets/x.svg` finds nothing), the graph's
+`tine-media:` addresses carry a per-session number and serve audio and video
+only, and theme packages may not contain `url()` at all (`docs/themes/README.md`).
+Tine ships no icon of its own.
+
 ## Tests
 
 - src/commentIdentity.test.tsx (public comment selectors rendered by real components, stored data-author and absent attribution)
+- src/components/Block.authorRuns.test.tsx (section 8: the authored and run classes on real rows, runs across depth, folds, embeds, comments, results lists, data-author values)
+- src/components/authorRuns.test.ts (the run definition on plain trees and the thread look's stylesheet hooks)
+- scripts/shot-author-thread.mjs (browser: the Guide's thread and icon examples as written, the thread look in light and dark, the tint)
 - scripts/shot-comment-styling.mjs (routed browser custom.css: comment tokens and author rules at wide, compact and phone widths)
 
 - src/components/justToggled.test.tsx (the `just-toggled` class: absent on load and remount, present on a user toggle, removed after the window)
 - src/themes/typography.test.ts (the typography vocabulary: every accepted and rejected fixture, judged by both the app parser and `tine-theme.mjs check`; the CSS built from parsed families only)
 - src/themeGallery.typography.test.tsx and src/components/Settings.themeTypography.test.tsx (the third composition role: apply, revert, uninstall, revoke, persistence; the Settings actions and the not-installed hint)
 - src/themeTokens.guard.test.ts (the token tables against the shipped CSS, the code and the Guide page)
-- src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control)
+- src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control, the Author marks row's class on `<html>`)
 - src/customCss.test.tsx (live reload, transient read failures keep the last sheet, latest read wins, safe mode, the palette command, the Settings affordances)
 - src/styles/themes/soft.test.ts (the Soft palette's contrast on every real text/surface pair, including on-accent, links on the selection overlay and markers, GH #649)
 - crates/tine-store/src/watch/custom_css.rs (the lane's own tests, including the metadata shortcut that skips hashing an unchanged file)

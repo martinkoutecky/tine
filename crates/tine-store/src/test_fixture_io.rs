@@ -103,7 +103,7 @@ pub(crate) fn delete(
             .map(|(key, version)| (key, version, None))
             .collect();
         let bound = std::time::Duration::from_secs(20);
-        let published = host.wait_published(session, &needs, bound) == PageOperation::Applied;
+        let published = host.wait_published(session, &needs, bound).0 == PageOperation::Applied;
         // Q-P2b-4: `Applied` vouches for the disk, at once.
         if let Some(file) = file.filter(|_| published) {
             assert!(

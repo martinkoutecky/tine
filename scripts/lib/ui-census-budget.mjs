@@ -47,7 +47,7 @@ export const SURFACES = Object.freeze({
   "settings.tabs": { env: "desktop", budget: 11, what: "Settings tabs", source: "Settings nav items (components/Settings.tsx TABS, plugins tab included)" }, // D-20261113 / #926: Themes is its own category.
   "settings.appearance.open": settingsOpen("appearance", 45), // D-20261113-UI / #926: 23 after Themes moved out, + 3 move controls × 7 toolbar actions + Reset
   // D-20261102-GUIDES / GH #856: Martin asked for one advanced toggle to turn the level colours off.
-  "settings.appearance.advanced": settingsAdvanced("appearance", 18), // D-20261111-QP2 / GH #926: Show the help button
+  "settings.appearance.advanced": settingsAdvanced("appearance", 19), // D-20261111-QP2 / GH #926: Show the help button; D-20261115-ALF / GH #892: Author marks
   "settings.themes.open": settingsOpen("themes", 8),
   // GH #861 (roadmap AG, 2026-11-03): the approved default-on video-paste setting.
   "settings.editor.open": settingsOpen("editor", 10),

@@ -134,6 +134,24 @@ describe("Settings: Fine-tuning control", () => {
     dispose();
   });
 
+  it("Author marks (GH #892): Thread puts the thread class on <html>, Tint takes it off and stores nothing", async () => {
+    await start("");
+    const { root, dispose } = mount();
+    const select = row(root, "Author marks").querySelector("select")!;
+    expect(select.value).toBe("tint");
+    expect([...select.options].map((option) => option.textContent)).toEqual(["Tint", "Thread"]);
+    expect(htmlClasses()).toEqual([]);
+    select.value = "thread";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(htmlClasses()).toEqual(["tine-author-marks-thread"]);
+    await vi.waitFor(() => expect(backend().setAppString).toHaveBeenLastCalledWith(STYLE_KNOBS_KEY, JSON.stringify({ "author-marks": "thread" })));
+    select.value = "tint";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(htmlClasses()).toEqual([]);
+    await vi.waitFor(() => expect(backend().setAppString).toHaveBeenLastCalledWith(STYLE_KNOBS_KEY, "{}"));
+    dispose();
+  });
+
   it("keeps a stored choice for a knob this build does not know", async () => {
     await start(JSON.stringify({ "retired-knob": "x" }));
     const { root, dispose } = mount();

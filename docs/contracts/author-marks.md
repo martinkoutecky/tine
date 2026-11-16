@@ -30,6 +30,20 @@ sidebar copies. Every tinted row has the author's name as its tooltip (not
 while it is being edited), so a continuation without a chip still names its
 author. The first chip retains its **Remove author** menu.
 
+The card above is the tint's own rule, kept to siblings so a card never bends
+around a child (classes `author-card-continued` and `author-card-continues`,
+internal). The public run classes `author-run-continued` and `author-run-continues`
+follow reading order through depth, for the thread look and for theme authors
+(GH #892): a run goes from a parent into its first drawn child and out of the
+last descendant to the next block, and a folded block ends where it is drawn.
+Their definition, the `html.tine-author-marks-thread` look (every outline row reserves
+one gutter, `--tine-author-gutter` wide, at its end, which holds the line and the chip and
+never a text line or a trailing control; a long name is cut to it), the author icon token and
+the `data-author` hooks are in `docs/contracts/theme-tokens.md` section 8. Nothing
+here changes the default look: the thread look is the **Author marks** row in
+Settings > Appearance > Fine-tuning (Tint by default, Thread), and applies only
+while author marks are shown.
+
 **Remove author** is a palette command and bindable shortcut, without a default
 key. It acts on the complete block selection (folded descendants included), or
 the edited block when there is no selection. The block context menu acts on
@@ -59,7 +73,13 @@ map and run memos unchanged. This same stable list feeds the renderer, so equal
 IDs do not rerun whole-list geometry or run derivation. A row compares only its two rendered neighbours,
 using cached parser facets and parent/page/child metadata. An ordinary text edit
 invalidates at most that row and its two neighbours for authorship, never a
-whole-page authorship computation or graph scan. No disk read, IPC, save,
+whole-page authorship computation or graph scan. The thread's run sides read, per
+authored row, the row's parent (first child), its last-drawn-descendant chain
+(next sibling) and its next sibling; an edit re-runs them for the row and the
+one or two rows next to it in reading order, never its other descendants
+(`Block.authorRuns.test.tsx` counts the calls). The thread look's gutter is one stylesheet
+padding rule over the outline rows (no element, class, listener or signal per row), and hiding
+marks toggles one class on `<html>`. No disk read, IPC, save,
 fsync, lock, index or transport record is added. The preference writes one
 localStorage opt-out (`1`); graph bytes per edit remain unchanged.
 Embed detection's opening-token gate is O(local raw bytes); its body AST

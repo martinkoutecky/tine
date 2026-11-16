@@ -858,6 +858,22 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
     assert_eq!(live.disk(&key), "- target\n- more\n");
     let barrier = |version| vec![(key.clone(), version, Some(ID.to_string()))];
     assert!(live.host.pages_published(&[(key.clone(), v2, None)]));
+    assert_eq!(
+        live.host.wait_published(
+            live.host.session(),
+            &[(key.clone(), v2, None)],
+            Duration::from_secs(20)
+        ),
+        (
+            PageOperation::Applied,
+            vec![PublishedRevision {
+                key: key.clone(),
+                version: v3,
+                rev: Some(FileRev::from_bytes(b"- target\n- more\n")),
+            }]
+        ),
+        "a skipped version returns the revision actually published"
+    );
     assert!(
         !live.host.pages_published(&barrier(v2)),
         "Q2: no publication of the target held the id"
@@ -869,6 +885,9 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
     assert!(live.host.pages_published(&barrier(v2)));
     // Typing on: the page is dirty again, and v4's completed publication
     // (the index watermark) still answers the barrier.
+    // Hold the next index result so the driver cannot prove the newer input
+    // while the wait is in flight.
+    live.index_faults(u32::MAX);
     let more = format!("{stamped}- typing\n");
     let id = live.submit(&key, &more, v4, None).unwrap();
     live.answer(&key, id);
@@ -876,7 +895,81 @@ fn q2_a_block_reference_barrier_needs_the_id_in_the_published_bytes() {
         live.host.pages_published(&barrier(v4)),
         "§4.4: a completed publication at v4 satisfies a v4 barrier"
     );
+    assert_eq!(
+        live.host
+            .wait_published(live.host.session(), &barrier(v4), Duration::from_secs(20))
+            .1,
+        vec![PublishedRevision {
+            key: key.clone(),
+            version: v4,
+            rev: Some(FileRev::from_bytes(stamped.as_bytes()))
+        }],
+        "newer unproved input does not replace the publication evidence"
+    );
+    live.index_faults(0);
     live.host.stop();
+}
+
+#[test]
+fn gh964_publication_evidence_survives_observations_and_failed_indexing() {
+    let mut book = Book::default();
+    let publication = |version: Option<u64>, bytes: &[u8]| Publication {
+        key: "a.md".into(),
+        spelling: "a.md".into(),
+        bytes: Some(Arc::from(bytes)),
+        own: version.map(|v| (v, None)),
+        stamp: None,
+    };
+    // Indexing's result carries the revision it hashed (`bridge::index`).
+    let indexed = |bytes: &[u8]| Indexing::Indexed(Some(FileRev::from_bytes(bytes)));
+    book.record(
+        vec![(publication(Some(3), b"- saved\n"), indexed(b"- saved\n"))],
+        0,
+    );
+    book.record(
+        vec![(publication(None, b"- external\n"), indexed(b"- external\n"))],
+        0,
+    );
+    assert_eq!(book.index["a.md"].1, 3);
+    assert_eq!(
+        book.index["a.md"].2,
+        Some(FileRev::from_bytes(b"- saved\n"))
+    );
+    book.record(
+        vec![(publication(Some(4), b"- not indexed\n"), Indexing::Failed)],
+        0,
+    );
+    assert_eq!(book.index["a.md"].1, 3);
+    assert_eq!(
+        book.index["a.md"].2,
+        Some(FileRev::from_bytes(b"- saved\n"))
+    );
+    book.record(
+        vec![(publication(Some(5), b"- latest\n"), indexed(b"- latest\n"))],
+        0,
+    );
+    assert_eq!(book.index.len(), 1);
+    assert_eq!(book.index["a.md"].1, 5);
+    assert_eq!(
+        book.index["a.md"].2,
+        Some(FileRev::from_bytes(b"- latest\n"))
+    );
+    book.record(
+        vec![(
+            Publication {
+                bytes: None,
+                ..publication(Some(6), b"")
+            },
+            Indexing::Indexed(None),
+        )],
+        0,
+    );
+    assert_eq!(book.index["a.md"].1, 6);
+    assert_eq!(book.index["a.md"].2, None);
+    println!(
+        "gh964 retained revision inline bytes: {}",
+        std::mem::size_of::<(Text, u64, Option<FileRev>)>() - std::mem::size_of::<(Text, u64)>()
+    );
 }
 
 /// Q5 (REVIEW-3): an untouched opened page owes no save. Once its Open
@@ -1467,7 +1560,7 @@ fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
 /// index failure keeps the restore waiting and a success lets it close.
 #[test]
 fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
-    for (indexing, ready) in [(Indexing::Failed, false), (Indexing::Indexed, true)] {
+    for (failed, ready) in [(true, false), (false, true)] {
         let mut u = Unit::new();
         let version = u.version();
         u.submit("saved", version, None, "saved");
@@ -1486,6 +1579,10 @@ fn v5_a_restore_waits_for_a_collected_publication_in_flight() {
             StopState::Waiting,
             "V5: the restore was ready with a publication in flight"
         );
+        let indexing = match failed {
+            true => Indexing::Failed,
+            false => Indexing::Indexed(publication.bytes.as_deref().map(FileRev::from_bytes)),
+        };
         u.book.record(vec![(publication, indexing)], 0);
         let state = stop_state(&u.progress, &u.book);
         assert_eq!(state == StopState::Ready, ready, "{state:?}");
@@ -1600,7 +1697,10 @@ fn a_publication_of_bytes_no_parse_may_take_costs_that_file_only() {
             own: None,
             stamp: None,
         };
-        assert!(index(&store, &publication), "{tag}");
+        assert!(
+            matches!(index(&store, &publication), Indexing::Indexed(_)),
+            "{tag}"
+        );
         drop(writer);
         let view = store.whole_graph().unwrap();
         let listed: Vec<_> = (view.unreadable_files().iter())
@@ -1636,7 +1736,7 @@ fn a_consumer_publication_names_the_bytes_it_publishes() {
         own: None,
         stamp: None,
     };
-    assert!(index(&store, &publication));
+    assert!(matches!(index(&store, &publication), Indexing::Indexed(_)));
     drop(writer);
     let view = store.whole_graph().unwrap();
     assert!(
@@ -1684,7 +1784,7 @@ fn a_journal_file_delivered_on_a_held_path_during_load_names_its_day() {
         own: None,
         stamp: None,
     };
-    assert!(index(&store, &publication));
+    assert!(matches!(index(&store, &publication), Indexing::Indexed(_)));
     drop(writer);
     assert_eq!(
         store.journal_id(day, false).as_str(),
@@ -1738,7 +1838,10 @@ fn a_filtered_echo_keeps_the_delivery_that_raced_it() {
         let _writer = store.writer.lock().unwrap();
         store.graph.hold_unhosted("pages/c.md");
         fs::write(&path, "- own\n").unwrap();
-        assert!(index(&store, &publication(Some((1, None)))));
+        assert!(matches!(
+            index(&store, &publication(Some((1, None)))),
+            Indexing::Indexed(_)
+        ));
         assert!(store
             .deferred_rev(&FileId::from("pages/c.md".to_owned()))
             .is_some());
@@ -1749,7 +1852,10 @@ fn a_filtered_echo_keeps_the_delivery_that_raced_it() {
             .unwrap()
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
             .unwrap();
-        assert!(index(&store, &publication(None)));
+        assert!(matches!(
+            index(&store, &publication(None)),
+            Indexing::Indexed(_)
+        ));
     }
     {
         let (state, ready) = &*parsed;
@@ -1834,6 +1940,7 @@ fn f1_publication_queries_never_answer_for_another_session() {
         let wait = scope.spawn(|| {
             live.host
                 .wait_published(first, &unpublished, Duration::from_secs(20))
+                .0
         });
         std::thread::sleep(Duration::from_millis(200));
         live.host.window_reloaded();
@@ -1849,12 +1956,14 @@ fn f1_publication_queries_never_answer_for_another_session() {
     let now = live.host.session();
     assert_eq!(
         live.host
-            .wait_published(now, &published, Duration::from_secs(20)),
+            .wait_published(now, &published, Duration::from_secs(20))
+            .0,
         PageOperation::Applied
     );
     assert_eq!(
         live.host
-            .wait_published(first, &published, Duration::from_secs(20)),
+            .wait_published(first, &published, Duration::from_secs(20))
+            .0,
         PageOperation::Refused,
         "F1: never success for an earlier session"
     );
@@ -1870,7 +1979,8 @@ fn f1_publication_queries_never_answer_for_another_session() {
         "F1: a relaunched host refuses it too"
     );
     assert_eq!(
-        host.wait_published(now, &published, Duration::from_secs(1)),
+        host.wait_published(now, &published, Duration::from_secs(1))
+            .0,
         PageOperation::Refused
     );
     host.stop();
@@ -2000,7 +2110,7 @@ fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let long = Duration::from_secs(20);
     let session = live.host.session();
     let wait = |needs: &[(String, u64, Option<String>)], bound| {
-        live.host.wait_published(session, needs, bound)
+        live.host.wait_published(session, needs, bound).0
     };
     assert_eq!(
         wait(&[(key.clone(), version, None)], long),
@@ -2054,7 +2164,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     ended.host.driver.join();
     assert!(ended.host.driver.shared.ended());
     assert_eq!(
-        ended.host.wait_published(session, &needs, bound),
+        ended.host.wait_published(session, &needs, bound).0,
         PageOperation::Refused,
         "an ended driver publishes nothing"
     );
@@ -2067,7 +2177,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
         .shared
         .with_state_for_tests(|state| state.progress.host.stop());
     assert_eq!(
-        down.host.wait_published(session, &needs, bound),
+        down.host.wait_published(session, &needs, bound).0,
         PageOperation::Refused,
         "a host that is down publishes nothing"
     );
@@ -2083,7 +2193,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     });
     assert!(poisoner.join().is_err());
     let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        poisoned.host.wait_published(session, &needs, bound)
+        poisoned.host.wait_published(session, &needs, bound).0
     }));
     // Torn down before the assertion: a failure's unwind would meet the
     // failed host's panicking teardown and abort the binary.
@@ -2124,7 +2234,8 @@ fn q_p2b_4_a_deletion_in_flight_is_owed_and_unpublished_until_its_file_is_gone()
         let needs = [(owed[0].0.clone(), owed[0].1, None)];
         assert_eq!(
             live.host
-                .wait_published(session, &needs, Duration::from_millis(300)),
+                .wait_published(session, &needs, Duration::from_millis(300))
+                .0,
             PageOperation::Pending
         );
         assert!(live.root.join("pages/a.md").exists());
@@ -2136,7 +2247,8 @@ fn q_p2b_4_a_deletion_in_flight_is_owed_and_unpublished_until_its_file_is_gone()
         );
         assert_eq!(
             live.host
-                .wait_published(session, &needs, Duration::from_secs(20)),
+                .wait_published(session, &needs, Duration::from_secs(20))
+                .0,
             PageOperation::Applied
         );
     });
@@ -2183,7 +2295,8 @@ fn q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk() {
     let needs: Vec<_> = owed.into_iter().map(|(k, v)| (k, v, None)).collect();
     assert_eq!(
         live.host
-            .wait_published(session, &needs, Duration::from_millis(300)),
+            .wait_published(session, &needs, Duration::from_millis(300))
+            .0,
         PageOperation::Pending
     );
     assert_eq!(live.disk(&key), "- one\n");
@@ -2198,7 +2311,8 @@ fn q_p2b_4_a_queued_submit_is_owed_until_its_text_is_on_disk() {
         let needs: Vec<_> = owed.into_iter().map(|(k, v)| (k, v, None)).collect();
         assert_eq!(
             live.host
-                .wait_published(session, &needs, Duration::from_secs(20)),
+                .wait_published(session, &needs, Duration::from_secs(20))
+                .0,
             PageOperation::Applied
         );
     }

@@ -89,6 +89,7 @@ static QUERY_FACTS_DERIVED: AtomicU64 = AtomicU64::new(0);
 static QUERY_CARRY_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 static QUERY_REGISTRY_PAGES_READ: AtomicU64 = AtomicU64::new(0);
 static HASH_READS: AtomicU64 = AtomicU64::new(0);
+static BYTE_HASHES: AtomicU64 = AtomicU64::new(0);
 static STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static ASSET_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static LISTING_STAMPS: AtomicU64 = AtomicU64::new(0);
@@ -760,6 +761,17 @@ pub(crate) fn query_registry_pages_read() {
 pub(crate) fn hash_read() {
     if !watcher_read() {
         HASH_READS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+/// Take and reset the in-memory byte revisions computed off the watcher
+/// (`FileRev::from_bytes`, O(bytes) each), so a test can pin how often a
+/// path hashes the same bytes. Apart from `Counts`, which tests compare whole.
+pub fn take_byte_hashes() -> u64 {
+    BYTE_HASHES.swap(0, Ordering::Relaxed)
+}
+pub(crate) fn byte_hash() {
+    if !on_watcher() {
+        BYTE_HASHES.fetch_add(1, Ordering::Relaxed);
     }
 }
 
