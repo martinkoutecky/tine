@@ -1536,7 +1536,15 @@ impl Store {
     }
     /// Every day the day index holds a file for, in any directory (a
     /// date-named pages file is its day, CM SPEC §2.1), unordered. The index
-    /// [`Self::journal_id`] reads with `active_only = false`. O(D), no I/O.
+    /// [`Self::journal_id`] reads with `active_only = false`. O(D) for D
+    /// indexed days (one copy of the keys), no I/O.
+    ///
+    /// The journals feed's first page needs it because that page is served
+    /// before the first view exists and without waiting for it
+    /// (`feed_page_through` with references off): the journals-directory
+    /// listing it walks cannot see a day a pages file holds, and
+    /// `InventoryScope::JournalFilesBefore` / the indexed feed window answer
+    /// only from a view (`WholeGraph`). Later scroll steps use that window.
     pub fn journal_days(&self) -> Vec<Day> {
         self.journal_ids.lock().unwrap().keys().copied().collect()
     }

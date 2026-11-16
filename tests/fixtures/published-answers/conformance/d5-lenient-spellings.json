@@ -101,10 +101,28 @@
         }
       },
       {
+        "kind": "page",
+        "name": "Oct 22nd, 2026",
+        "target": {
+          "id": "journals/2026_10_22.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
         "kind": "journal",
         "name": "Oct 22st, 2026",
         "target": {
           "id": "journals/2026_10_22.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
+        "kind": "page",
+        "name": "Oct 2nd, 2026",
+        "target": {
+          "id": "journals/2026_10_02.md",
           "kind": "existing",
           "others": []
         }

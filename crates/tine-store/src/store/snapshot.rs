@@ -166,6 +166,18 @@ pub(super) static TEST_PATCH_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
 
 impl Snapshot {
+    /// The entry this generation holds for `path`: its name, its kind and
+    /// the day it actually claims (CM SPEC §2.1: a `title::` may name a day
+    /// other than its file name's, and a year-less title names none), as the
+    /// claimant index recorded it from the file's bytes. An incremental
+    /// update takes the day a file held from here, never from its path or
+    /// its displayed name. O(claimants of that name).
+    fn held_entry(&self, path: &Path) -> Option<&PageEntry> {
+        let (kind, name) = self.name_by_path.get(path)?;
+        let key = (*kind == PageKind::Journal, tine_core::refs::page_key(name));
+        (self.claimants.get(&key)?.iter()).find(|entry| entry.path == path)
+    }
+
     /// The active pages changed by this publication, including opening
     /// siblings that no physical write touched. Physical evidence stays in
     /// Change::files for conflict refresh and mutation bookkeeping.
@@ -274,9 +286,12 @@ impl Snapshot {
                     return None;
                 }
                 let old_name = old.and_then(|snapshot| snapshot.name_by_path.get(&path));
-                // A removal is named by the path and its previous name alone
-                // (R2): no file is read for it.
-                let removed = || Some((ChangeKind::Removed, graph.tombstone(&path, old_name?)));
+                // A removal is the entry the previous generation held (R2):
+                // no file is read for it, and it keeps the day it held.
+                let removed = || {
+                    let held = old?.held_entry(&path)?;
+                    Some((ChangeKind::Removed, held.clone()))
+                };
                 if *kind == ChangeKind::Removed {
                     return removed();
                 }
@@ -341,10 +356,10 @@ impl Snapshot {
                 let buckets = Arc::make_mut(&mut claimants);
                 // The day this file named before, when a retitle moved it off
                 // that day: its next claimant takes the day.
-                let old_day = (previous.name_by_path.get(&path))
-                    .filter(|(old_kind, _)| *old_kind == PageKind::Journal)
-                    .map(|named| (graph.tombstone(&path, named), named.1.clone()))
-                    .filter(|(old, _)| old.date_key.is_some() && old.date_key != entry.date_key);
+                let old_day = (previous.held_entry(&path))
+                    .filter(|old| old.kind == PageKind::Journal)
+                    .filter(|old| old.date_key.is_some() && old.date_key != entry.date_key)
+                    .map(|old| (old.clone(), old.name.clone()));
                 if let Some((old_kind, old_name)) = previous.name_by_path.get(&path) {
                     let old_key = (
                         *old_kind == PageKind::Journal,
@@ -415,15 +430,21 @@ impl Snapshot {
                 .map(|(key, _)| key.clone())
                 .collect()
         } else {
+            // The day a file holds now and the one it held: a retitle off a
+            // day promotes that day's next claimant.
             files
                 .iter()
-                .filter_map(|(id, _, _)| {
+                .flat_map(|(id, _, _)| {
                     let path = graph.root.join(id.as_str());
-                    name_by_path
-                        .get(&path)
-                        .or_else(|| old.and_then(|old| old.name_by_path.get(&path)))
-                        .filter(|(kind, _)| *kind == PageKind::Journal)
-                        .map(|(_, name)| (true, tine_core::refs::page_key(name)))
+                    [
+                        name_by_path.get(&path),
+                        old.and_then(|old| old.name_by_path.get(&path)),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .filter(|(kind, _)| *kind == PageKind::Journal)
+                    .map(|(_, name)| (true, tine_core::refs::page_key(name)))
+                    .collect::<Vec<_>>()
                 })
                 .collect()
         };
@@ -755,8 +776,9 @@ impl ChangeFeed {
     }
 
     /// Patch the day index for the files a capture took: the day each one
-    /// named before and names now (a `title::` can move a file between days,
-    /// CM SPEC §2.1) takes the journal `snapshot` lists for it (one per day,
+    /// held before and holds now, as each generation's entry records it (a
+    /// `title::` can move a file between days, CM SPEC §2.1; never re-derived
+    /// from the path or name) takes the journal `snapshot` lists for it (one per day,
     /// the claimant order's first), or none. A file whose name did not
     /// change rewrites its day to the same id.
     fn patch_journal_ids(&self, old: &Snapshot, snapshot: &Snapshot, paths: &[PathBuf]) {
@@ -765,11 +787,11 @@ impl ChangeFeed {
         }
         let mut ids = self.journal_ids.lock().unwrap();
         for path in paths {
-            let days = [snapshot.name_by_path.get(path), old.name_by_path.get(path)]
+            let days = [snapshot.held_entry(path), old.held_entry(path)]
                 .into_iter()
                 .flatten()
-                .filter(|(kind, _)| *kind == PageKind::Journal)
-                .filter_map(|named| self.graph.tombstone(path, named).date_key);
+                .filter(|entry| entry.kind == PageKind::Journal)
+                .filter_map(|entry| entry.date_key);
             for day in days {
                 match snapshot
                     .list

@@ -610,32 +610,6 @@ impl Graph {
         }
     }
 
-    /// The entry a snapshot removes for `path`, which it named `old` (R2): a
-    /// tombstone named by the path alone, with no file read and no cache.
-    pub(crate) fn tombstone(&self, path: &Path, (kind, name): &(PageKind, String)) -> PageEntry {
-        let format = self.current_journal_format();
-        let journals = self.journals_path();
-        let listed = listed_entry(
-            self,
-            (&format, &journals, self.current_config().file_name_format),
-            path.to_path_buf(),
-        );
-        // A day only a `title::` names (SPEC §2.1) is named by its title.
-        let date_key = (*kind == PageKind::Journal)
-            .then(|| {
-                (listed.and_then(|entry| entry.date_key))
-                    .or_else(|| format.parse(name).map(|day| day.ordinal_key()))
-            })
-            .flatten();
-        PageEntry {
-            name: name.clone(),
-            kind: *kind,
-            date_key,
-            rel_path: Some(self.rel_path(path).into()),
-            path: path.to_path_buf(),
-        }
-    }
-
     /// Paths a transition settled since the last capture (E105).
     pub(crate) fn take_retired(&self) -> BTreeSet<PathBuf> {
         std::mem::take(&mut self.held.retired.lock().unwrap())

@@ -452,6 +452,101 @@ fn canonical_page_order(doc: &mut Value) {
     }
 }
 
+/// Compare a frozen document written before CM-DATE (D-20261110-CM) with a
+/// fresh one (contract, "Fixtures"): drop from `fresh` each `answers.resolve`
+/// entry the frozen document does not hold that asks a day's row of the same
+/// document as a page and answers that row's own target. A date names the
+/// day whatever kind is asked, so today's graph answers that lookup; the
+/// table and its meaning are unchanged. Any other added, missing or different
+/// entry still differs.
+fn without_cm_date_day_pages(frozen: &Value, fresh: &mut Value) {
+    let Some(answers) = fresh["snapshot"].get_mut("answers") else {
+        return;
+    };
+    let days: Vec<(Value, Value)> = (answers["inventory"].as_array().into_iter().flatten())
+        .filter(|row| !row["day"].is_null())
+        .map(|row| (row["name"].clone(), row["target"].clone()))
+        .collect();
+    let held = frozen["snapshot"]["answers"]["resolve"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(resolve) = answers["resolve"].as_array_mut() {
+        resolve.retain(|entry| {
+            held.contains(entry)
+                || entry["kind"] != "page"
+                || !days.contains(&(entry["name"].clone(), entry["target"].clone()))
+        });
+    }
+}
+
+/// The CM-DATE allowance above covers a day asked as a page with its own
+/// target, and nothing else (negative controls).
+#[test]
+fn the_cm_date_allowance_admits_only_a_day_asked_as_a_page() {
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/quick-share/g1/answers");
+    let read = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(dir.join(name)).unwrap()).unwrap()
+    };
+    let frozen = read("document.json");
+    let writer = read("writer.json");
+    let day = |doc: &Value| -> Value {
+        doc["snapshot"]["answers"]["inventory"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| !row["day"].is_null())
+            .cloned()
+            .unwrap()
+    };
+    let row = day(&writer);
+    let resolve = |doc: &Value| doc["snapshot"]["answers"]["resolve"].clone();
+    // The entry today's writer adds is the allowed one, and is pinned by writer.json.
+    let day_page =
+        serde_json::json!({"kind": "page", "name": row["name"], "target": row["target"]});
+    assert_eq!(resolve(&writer), serde_json::json!([day_page.clone()]));
+    let mut fresh = writer.clone();
+    without_cm_date_day_pages(&frozen, &mut fresh);
+    assert_eq!(resolve(&fresh), resolve(&frozen));
+    let other = serde_json::json!({"id": "pages/Project.md", "kind": "existing", "others": []});
+    for extra in [
+        // A name that is not a day row.
+        serde_json::json!({"kind": "page", "name": "Project", "target": other}),
+        // The day asked as a page, answered by another target.
+        serde_json::json!({"kind": "page", "name": row["name"], "target": other}),
+        // The day asked as a journal.
+        serde_json::json!({"kind": "journal", "name": row["name"], "target": row["target"]}),
+    ] {
+        let mut fresh = writer.clone();
+        fresh["snapshot"]["answers"]["resolve"]
+            .as_array_mut()
+            .unwrap()
+            .push(extra.clone());
+        without_cm_date_day_pages(&frozen, &mut fresh);
+        assert_ne!(
+            resolve(&fresh),
+            resolve(&frozen),
+            "{extra} must still differ"
+        );
+    }
+    // An entry the frozen document holds and the writer no longer writes still differs.
+    let mut held = frozen.clone();
+    held["snapshot"]["answers"]["resolve"] =
+        serde_json::json!([{"kind": "page", "name": "Project", "target": other}]);
+    let mut fresh = writer.clone();
+    without_cm_date_day_pages(&held, &mut fresh);
+    assert_ne!(resolve(&fresh), resolve(&held));
+    // A different day entry the frozen document already holds is kept, so a
+    // changed target of it still differs.
+    let mut held = frozen.clone();
+    held["snapshot"]["answers"]["resolve"] = serde_json::json!([day_page]);
+    let mut fresh = writer.clone();
+    fresh["snapshot"]["answers"]["resolve"][0]["target"] = other.clone();
+    without_cm_date_day_pages(&held, &mut fresh);
+    assert_ne!(resolve(&fresh), resolve(&held));
+}
+
 #[test]
 fn quick_share_generation_1_fixtures_stay_readable() {
     let _integration_guard = crate::integration_lock();
@@ -459,13 +554,15 @@ fn quick_share_generation_1_fixtures_stay_readable() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/quick-share/g1");
     let root = base();
     let store = corpus(&root);
-    for (case, argument, name) in [
-        ("pages", MANY, "Fixture share"),
-        ("one-page", "@page and name = 'Project'", "Ignored"),
+    // The last field: frozen before CM-DATE (D-20261110-CM). A case frozen
+    // later says `false` and compares its `resolve` table whole.
+    for (case, argument, name, before_cm_date) in [
+        ("pages", MANY, "Fixture share", true),
+        ("one-page", "@page and name = 'Project'", "Ignored", true),
         // Written with `answers` v1 (CM step 2, census Q13).
-        ("answers", MANY, "Fixture share"),
+        ("answers", MANY, "Fixture share", true),
         // Written with the query in page properties baked (REG-QS-PAGE-PROPERTY-QUERY).
-        ("page-queries", PAGE_QUERIES, "Fixture share"),
+        ("page-queries", PAGE_QUERIES, "Fixture share", true),
     ] {
         let (_, doc) = document(&store, &root, argument, name);
         let mut fresh: Value = serde_json::from_slice(&doc).unwrap();
@@ -532,6 +629,11 @@ fn quick_share_generation_1_fixtures_stay_readable() {
                 .as_array_mut()
                 .unwrap()
                 .retain(|query| !page_property_record(query));
+        }
+        // And so is a day asked as a page (contract, "Fixtures"), only for a
+        // document frozen before CM-DATE.
+        if before_cm_date {
+            without_cm_date_day_pages(&frozen, &mut fresh_canonical);
         }
         canonical_page_order(&mut frozen);
         canonical_page_order(&mut fresh_canonical);

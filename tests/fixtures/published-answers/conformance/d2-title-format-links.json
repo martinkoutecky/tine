@@ -108,6 +108,15 @@
         }
       },
       {
+        "kind": "page",
+        "name": "22.10.2026",
+        "target": {
+          "id": "journals/2026_10_22.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
         "kind": "journal",
         "name": "Oct 22nd, 2026",
         "target": {

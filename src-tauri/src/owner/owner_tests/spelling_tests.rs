@@ -237,3 +237,118 @@ fn the_page_a_name_writes_to_is_the_page_the_app_opens() {
     );
     assert!(!graph.root.join("journals/2026_11_03.md").exists());
 }
+
+/// Re-scan until `done` holds (an outside edit may publish in parts).
+fn settle(graph: &Graph, what: &str, done: impl Fn(&tine_store::WholeGraph) -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        graph.store.refresh(tine_store::Depth::Stamps).unwrap();
+        if done(&graph.store.whole_graph().unwrap()) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: never converged"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+fn add_to_day(graph: &Graph, day: &str) -> String {
+    let wrote = add(graph, json!({ "journal": day, "content": "- added" }))
+        .unwrap_or_else(|e| panic!("{day}: {e:?}"));
+    wrote["page"].as_str().unwrap().to_owned()
+}
+
+/// CM-DAYFILE (D-20261111-CMR14): an add to a day is saved into the file
+/// that holds the day, where it lies. A date-named pages file alone takes
+/// it; beside a journals file for the same day the add is refused as
+/// ambiguous and both stay byte-identical. A file an outside edit
+/// retitled off a day is no longer that day: an add to the day it left
+/// makes the day's journals file and leaves it alone.
+#[test]
+fn an_add_to_a_day_is_saved_into_the_file_that_holds_it() {
+    let retitled = "pages/2026-11-07.md";
+    let graph = Graph::seeded(
+        Default::default(),
+        &[
+            ("pages/2026-11-02.md", "- page side\n"),
+            ("journals/2026_11_05.md", "- journal side\n"),
+            ("pages/2026-11-05.md", "- page twin\n"),
+            (retitled, "title:: 2026-11-08\n\n- notes\n"),
+        ],
+    );
+    let slot = Arc::new(graph.slot());
+    let (_endpoint, _gate) = super::endpoint(&graph, slot);
+    // Pages-only day: the pages file changes.
+    assert_eq!(add_to_day(&graph, "2026-11-02"), "pages/2026-11-02.md");
+    assert_eq!(
+        disk(&graph, "pages/2026-11-02.md")
+            .matches("- added")
+            .count(),
+        1
+    );
+    assert!(!graph.root.join("journals/2026_11_02.md").exists());
+    // Both files: pinned as it is, the CLI's existing ambiguity guard refuses
+    // a write by the day's name while two files claim it (threat: a twin
+    // from sync or an external editor; the app shows the conflict), and
+    // neither file changes. See the receipt's question.
+    let both = ["journals/2026_11_05.md", "pages/2026-11-05.md"];
+    let before: Vec<_> = (both.iter())
+        .map(|rel| std::fs::read(graph.root.join(rel)).unwrap())
+        .collect();
+    let refused = add(
+        &graph,
+        json!({ "journal": "2026-11-05", "content": "- added" }),
+    );
+    assert_eq!(failure_code(&refused), "ambiguous", "{refused:?}");
+    let after: Vec<_> = (both.iter())
+        .map(|rel| std::fs::read(graph.root.join(rel)).unwrap())
+        .collect();
+    assert_eq!(after, before, "neither file changes");
+    // The day a title names, then an outside retitle to another day.
+    let retitle = "title:: 2026-11-09\n\n- notes, retitled\n";
+    std::fs::write(graph.root.join(retitled), retitle).unwrap();
+    settle(&graph, "outside retitle", |view| {
+        matches!(
+            view.resolve("Nov 9th, 2026", true),
+            Resolved::Existing { .. }
+        )
+    });
+    assert_eq!(add_to_day(&graph, "2026-11-08"), "journals/2026_11_08.md");
+    assert_eq!(
+        disk(&graph, retitled),
+        retitle,
+        "the old day's add misses it"
+    );
+    assert_eq!(add_to_day(&graph, "2026-11-09"), retitled);
+}
+
+/// With a year-less title format two pages files titled by one full date
+/// share the day; with the winner deleted outside the app, an add to that
+/// day is saved into the other, and the deleted file is not recreated.
+#[test]
+fn an_add_after_a_year_less_day_winner_is_deleted_goes_to_its_twin() {
+    let graph = Graph::seeded(
+        Default::default(),
+        &[
+            (
+                "logseq/config.edn",
+                "{:file/name-format :triple-lowbar :journal/page-title-format \"MM-dd\"}\n",
+            ),
+            ("pages/A.md", "title:: 2026-11-02\n\n- a\n"),
+            ("pages/B.md", "title:: 2026-11-02\n\n- b\n"),
+        ],
+    );
+    let slot = Arc::new(graph.slot());
+    let (_endpoint, _gate) = super::endpoint(&graph, slot);
+    std::fs::remove_file(graph.root.join("pages/A.md")).unwrap();
+    settle(&graph, "outside delete", |view| {
+        matches!(view.resolve("2026-11-02", true), Resolved::Existing { id, others }
+            if id.as_str() == "pages/B.md" && others.is_empty())
+    });
+    assert_eq!(add_to_day(&graph, "2026-11-02"), "pages/B.md");
+    assert_eq!(disk(&graph, "pages/B.md").matches("- added").count(), 1);
+    assert!(!graph.root.join("pages/A.md").exists());
+    assert!(!graph.root.join("journals/2026_11_02.md").exists());
+}

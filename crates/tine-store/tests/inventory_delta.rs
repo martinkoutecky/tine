@@ -512,15 +512,17 @@ fn a_date_named_pages_file_is_the_day_and_its_alias_delta_patches() {
                 .collect::<Vec<_>>()
         };
         assert_eq!(shape(&literal), shape(&groups));
-        if !aliased {
-            assert_eq!(
-                literal
-                    .iter()
-                    .map(|group| group.blocks.len())
-                    .sum::<usize>(),
-                2
-            );
+        // One block in Notes and one in the day. Once Owner aliases the day,
+        // Owner is in the day's group, so both its blocks match: its alias
+        // property block and `- owner`, whose page is a member.
+        let mut counts = shape(&literal);
+        counts.sort();
+        let mut expected = vec![("2026_10_23".to_owned(), 1), ("Notes".to_owned(), 1)];
+        if aliased {
+            expected.push(("Owner".to_owned(), 2));
         }
+        expected.sort();
+        assert_eq!(counts, expected);
         assert_eq!(
             view.inventory(InventoryScope::AliasGroup("2026_10_23"))
                 .0

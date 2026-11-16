@@ -229,6 +229,7 @@ mod journal_guide_tests {
         let journals = include_str!("templates/journals-tasks-scheduling.md");
         assert!(journals.contains("A date is always a day's journal, never an ordinary page."));
         assert!(journals.contains("is that day's journal where it lies"));
+        assert!(journals.contains("your edits of the day are saved into that file"));
         assert!(journals.contains("the one in `journals/` is shown"));
         assert!(journals.contains("A day without a file gets its new file in `journals/`."));
     }

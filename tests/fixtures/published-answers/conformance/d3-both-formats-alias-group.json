@@ -101,6 +101,15 @@
     },
     "resolve": [
       {
+        "kind": "page",
+        "name": "2026_22_10",
+        "target": {
+          "id": "journals/22.10.2026.md",
+          "kind": "existing",
+          "others": []
+        }
+      },
+      {
         "kind": "journal",
         "name": "22.10.2026",
         "target": {

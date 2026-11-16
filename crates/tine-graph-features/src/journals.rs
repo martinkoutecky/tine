@@ -155,7 +155,8 @@ fn load_feed_read(
 /// First-page cost O((J + D) log(J + D) + R + returned page bytes), plus indexed
 /// alias lookups for date-shaped names on completion. Loaded scroll steps seek
 /// the day index and visit bounded windows; reference-name enumeration remains
-/// O(R log D). J is journal files, R reference names, D referenced dates.
+/// O(R log D). J is journal files plus the days files outside the journals
+/// directory hold (`Store::journal_days`), R reference names, D referenced dates.
 /// No reference-content scan or graph file write.
 /// Before a name index exists, active selection also discovers ordinary
 /// preambles once per invalidation (O(P)); it does not wait for graph parsing.

@@ -57,6 +57,15 @@
           "kind": "existing",
           "others": []
         }
+      },
+      {
+        "kind": "page",
+        "name": "Oct 26th, 2026",
+        "target": {
+          "id": "journals/2026_10_26.md",
+          "kind": "existing",
+          "others": []
+        }
       }
     ],
     "v": 1

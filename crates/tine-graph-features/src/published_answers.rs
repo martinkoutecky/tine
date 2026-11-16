@@ -111,12 +111,10 @@ pub(crate) fn answers(
                 continue;
             }
             let target = ResolvedWire::from(graph.resolve(&row.name, is_journal));
-            // A day's row answers both lookups of it (CM-DATE: a date names
-            // no ordinary page, so its page lookup is the same day; the
-            // reader `publishedAnswers.ts` falls back to the day's row), as
-            // the frozen v1 documents record it: no second entry.
-            let same_day = row.day.is_some() && target == row.target;
-            if !matches!(target, ResolvedWire::Absent { .. }) && !same_day {
+            // Every non-absent wrong-kind answer, also a day asked as a page
+            // (CM-DATE): the frozen v1 reader reads only the asked kind's
+            // row and this table (`docs/contracts/quick-share.md`).
+            if !matches!(target, ResolvedWire::Absent { .. }) {
                 resolve.push(json!({ "name": row.name,
                     "kind": if is_journal { "journal" } else { "page" }, "target": target }));
             }

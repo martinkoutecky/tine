@@ -296,6 +296,141 @@ fn a_year_less_title_format_leaves_a_label_named_page_ordinary() {
     assert_eq!(bytes(dir.path(), &files), before);
 }
 
+/// What the store answers about `days` and `names`: the day index with and
+/// without the active lookup, the indexed days, and every name's resolve as
+/// a page and as a journal.
+fn day_answers(store: &Store, days: &[Day], names: &[&str]) -> Vec<String> {
+    let view = store.whole_graph().unwrap();
+    let mut indexed = store.journal_days();
+    indexed.sort();
+    let mut out = vec![format!("indexed days {indexed:?}")];
+    for day in days {
+        out.push(format!(
+            "{day:?}: active {}, index {}",
+            store.journal_id(*day, true).as_str(),
+            store.journal_id(*day, false).as_str()
+        ));
+    }
+    for name in names {
+        for is_journal in [false, true] {
+            out.push(format!(
+                "{name} ({is_journal}): {:?}",
+                view.resolve(name, is_journal)
+            ));
+        }
+    }
+    out
+}
+
+/// The same answers from a cold open of a copy of `rels` under `root`.
+fn cold_answers(root: &Path, rels: &[&str], days: &[Day], names: &[&str]) -> Vec<String> {
+    let files: Vec<(&str, String)> = (rels.iter())
+        .filter(|rel| root.join(rel).exists())
+        .map(|rel| (*rel, fs::read_to_string(root.join(rel)).unwrap()))
+        .collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(rel, text)| (*rel, text.as_str()))
+        .collect();
+    let (_dir, store) = graph(&files);
+    day_answers(&store, days, names)
+}
+
+/// Re-scan until `done` holds (an outside edit may publish in parts).
+fn settle(store: &Store, what: &str, done: impl Fn(&Store) -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        if done(store) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: never converged"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// A pages file named by one date and titled by another holds the title's
+/// day (SPEC §2.1). Retitled outside the app to a third date, the
+/// incremental update moves it off the day it held onto the new one, as a
+/// cold open reads it: the old day has no file, so a write to it goes to a
+/// new journals file, never to this one (CM-DAYFILE).
+#[test]
+fn an_outside_retitle_moves_a_file_off_the_day_it_held() {
+    let _guard = crate::integration_lock();
+    let file = "pages/2026-11-02.md";
+    let (dir, store) = graph(&[(file, "title:: 2026-11-03\n\n- notes\n")]);
+    let (nov_3, nov_4) = (Day(20261103), Day(20261104));
+    // Ready first, so the retitle is an incremental update, not the load.
+    store.whole_graph().unwrap();
+    assert_eq!(store.journal_id(nov_3, false).as_str(), file);
+    fs::write(
+        dir.path().join(file),
+        "title:: 2026-11-04\n\n- notes, retitled\n",
+    )
+    .unwrap();
+    settle(&store, "outside retitle", |store| {
+        let view = store.whole_graph().unwrap();
+        matches!(
+            view.resolve("Nov 4th, 2026", true),
+            Resolved::Existing { .. }
+        )
+    });
+    let (days, names) = (
+        [NOV_2, nov_3, nov_4],
+        ["Nov 2nd, 2026", "Nov 3rd, 2026", "Nov 4th, 2026"],
+    );
+    let incremental = day_answers(&store, &days, &names);
+    assert_eq!(
+        incremental,
+        cold_answers(dir.path(), &[file], &days, &names),
+        "incremental after the retitle equals a cold open"
+    );
+    assert_eq!(
+        store.journal_id(nov_3, false).as_str(),
+        "journals/2026_11_03.md"
+    );
+    assert_eq!(
+        store.journal_id(nov_3, true).as_str(),
+        "journals/2026_11_03.md"
+    );
+    assert_eq!(store.journal_id(nov_4, false).as_str(), file);
+}
+
+/// With a year-less title format two pages files titled by one full date
+/// share that day; the winner deleted outside the app, the other takes the
+/// day as a cold open gives it, though the remembered label `11-02` names
+/// no day (the day is the entry's, never parsed back from its label).
+#[test]
+fn deleting_a_year_less_day_winner_promotes_its_twin() {
+    let _guard = crate::integration_lock();
+    let config = "{:journal/page-title-format \"MM-dd\"}\n";
+    let rels = ["logseq/config.edn", "pages/A.md", "pages/B.md"];
+    let (dir, store) = graph(&[
+        (rels[0], config),
+        (rels[1], "title:: 2026-11-02\n\n- a\n"),
+        (rels[2], "title:: 2026-11-02\n\n- b\n"),
+    ]);
+    store.whole_graph().unwrap();
+    assert_eq!(store.journal_id(NOV_2, false).as_str(), "pages/A.md");
+    fs::remove_file(dir.path().join(rels[1])).unwrap();
+    settle(&store, "outside delete", |store| {
+        let view = store.whole_graph().unwrap();
+        matches!(view.resolve("2026-11-02", true), Resolved::Existing { id, others }
+            if id.as_str() == "pages/B.md" && others.is_empty())
+    });
+    let (days, names) = ([NOV_2], ["2026-11-02"]);
+    assert_eq!(
+        day_answers(&store, &days, &names),
+        cold_answers(dir.path(), &rels, &days, &names),
+        "incremental after the delete equals a cold open"
+    );
+    assert_eq!(store.journal_id(NOV_2, false).as_str(), "pages/B.md");
+    assert!(!dir.path().join(rels[1]).exists(), "nothing recreates A");
+}
+
 #[test]
 fn a_day_with_no_file_is_created_in_the_journals_directory() {
     let _guard = crate::integration_lock();

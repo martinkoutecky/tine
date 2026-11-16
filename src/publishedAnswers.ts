@@ -141,12 +141,8 @@ function answersV1(snapshot: PublishedSnapshot, answers: PublishedAnswersV1): Pu
   for (const page of snapshot.pages) if (!byPath.has(page.path)) byPath.set(page.path, page);
   const resolve = (name: string, kind: PageKind): ResolvedPage => {
     const key = pageIdentityKey(name);
-    // A date names no ordinary page (CM-DATE, D-20261110-CM): a page lookup
-    // of a day's row is that day, so the writer records no second entry.
-    const day = kind === "page" ? rows.journals.get(key) : undefined;
     return (kind === "journal" ? rows.journals : rows.pages).get(key)?.target
       ?? resolved.get(`${kind}\0${key}`)
-      ?? (day?.day != null ? day.target : undefined)
       ?? { kind: "absent", id: "" };
   };
   const page = (name: string, kind: PageKind): PublishedPage | null => {

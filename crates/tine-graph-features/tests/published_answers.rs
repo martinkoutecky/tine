@@ -89,6 +89,57 @@ fn a_date_alias_group_wire_names_the_day_and_its_file_once_one_holds_it() {
     }
 }
 
+/// The frozen v1 reader's `resolve(name, kind)`, transcribed from
+/// `src/publishedAnswers.ts` as it shipped (`answersV1`): the asked kind's
+/// row, else the `resolve` table, else absent. No other fallback exists in
+/// a deployed `/s/1/` viewer.
+fn v1_resolve(snapshot: &Value, name: &str, kind: &str) -> Value {
+    let key = tine_core::refs::page_key(name);
+    let answers = &snapshot["answers"];
+    let rows = answers["inventory"].as_array().unwrap();
+    let row = rows.iter().find(|row| {
+        row["is_journal"] == (kind == "journal")
+            && tine_core::refs::page_key(row["name"].as_str().unwrap()) == key
+    });
+    if let Some(row) = row {
+        return row["target"].clone();
+    }
+    let entries = answers["resolve"].as_array().unwrap();
+    (entries.iter())
+        .find(|entry| {
+            entry["kind"] == kind
+                && tine_core::refs::page_key(entry["name"].as_str().unwrap()) == key
+        })
+        .map(|entry| entry["target"].clone())
+        .unwrap_or_else(|| serde_json::json!({ "kind": "absent", "id": "" }))
+}
+
+/// A pages file whose `title::` is a date is that day (CM-DATE). A snapshot
+/// the current writer makes must still read so in an already-deployed v1
+/// viewer: `{{embed [[Nov 2nd, 2026]]}}` asks `getPage(title, "page")`, which
+/// the frozen reader answers only from a page row or a `resolve` entry
+/// (`docs/contracts/quick-share.md`, "Permanence").
+#[test]
+fn a_date_titled_page_reads_as_a_page_in_the_frozen_v1_reader() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("pages/meeting.md", "title:: Nov 2nd, 2026\n\n- minutes\n"),
+        ("pages/Dashboard.md", "- {{embed [[Nov 2nd, 2026]]}}\n"),
+    ];
+    let snapshot = static_snapshot(dir.path(), &files, true);
+    for kind in ["page", "journal"] {
+        let target = v1_resolve(&snapshot, "Nov 2nd, 2026", kind);
+        assert_eq!(target["kind"], "existing", "{kind}: {target}");
+        assert_eq!(target["id"], "pages/meeting.md", "{kind}: {target}");
+    }
+    let pages = snapshot["pages"].as_array().unwrap();
+    assert!(
+        pages.iter().any(|page| page["path"] == "pages/meeting.md"),
+        "the snapshot holds the minutes"
+    );
+}
+
 /// Runtime block ids are fresh per parse: renumber them by first occurrence.
 fn normalize(doc: &mut Value) {
     fn collect(v: &Value, ids: &mut HashMap<String, String>) {
