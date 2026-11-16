@@ -333,8 +333,12 @@ fn reference_sites(
     regions: &BlockRegions,
     r: Reader,
 ) -> Vec<(Range<usize>, Site)> {
-    let values: Vec<&ProjectedPageRef> =
-        crate::reference_evidence::linkable_property_references(source, regions).collect();
+    // Which evidence items are linkable property values, by identity: one
+    // set lookup per reference, not a search of the list.
+    let values: std::collections::HashSet<*const ProjectedPageRef> =
+        crate::reference_evidence::linkable_property_references(source, regions)
+            .map(std::ptr::from_ref)
+            .collect();
     let mut sites: Vec<(Range<usize>, Site)> = Vec::new();
     let mut nested: Option<Range<usize>> = None;
     for p in source.explicit {
@@ -369,7 +373,8 @@ fn reference_sites(
             }
             continue;
         }
-        let value = values.iter().any(|v| std::ptr::eq(*v, p));
+        super::step();
+        let value = values.contains(&std::ptr::from_ref(p));
         let (kind, slot) = match p.rule {
             "explicit_property_key" => (SiteKind::PropertyKey, 0..node.len()),
             "explicit_task_marker" => (SiteKind::Task, 0..node.len()),
