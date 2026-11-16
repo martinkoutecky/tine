@@ -73,16 +73,26 @@ pub fn lone_cr_to_lf(content: &str) -> std::borrow::Cow<'_, str> {
 /// depth (the store's reader does). Pure, infallible; one lsdoc parse, O(n).
 pub fn parse_org(content: &str) -> Document {
     let content = &*normalize_line_endings(content);
+    if content.trim_end_matches('\n').is_empty() {
+        return Document::default();
+    }
+    parse_org_with(
+        content,
+        &outline::headers_or_none(content, OutlineFormat::Org),
+    )
+}
+
+/// [`parse_org`] of LF text `content` whose outline `headers` the caller has.
+pub(crate) fn parse_org_with(content: &str, headers: &[outline::Header]) -> Document {
     let body = content.trim_end_matches('\n');
     if body.is_empty() {
         return Document::default();
     }
     let lines: Vec<&str> = body.split('\n').collect();
-    let headers = outline::headers_or_none(content, OutlineFormat::Org);
     let first = headers.first().map_or(lines.len(), |header| header.line);
     Document {
         pre_block: (first > 0).then(|| lines[..first].join("\n")),
-        roots: outline::blocks(&lines, &headers, true),
+        roots: outline::blocks(&lines, headers, true),
     }
 }
 

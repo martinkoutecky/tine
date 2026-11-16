@@ -48,7 +48,7 @@ impl PageHost {
             let Some((old, rev)) = read(&id)? else {
                 continue;
             };
-            let new = rewrite_page(&id, &old);
+            let (new, _) = rewrite_page(&id, &old);
             if new != old {
                 let keyed = |pairs: &[(String, String)]| {
                     pairs

@@ -480,7 +480,7 @@ pub(crate) fn bytes_hold_block_id(path: &Path, bytes: &[u8], id: &str) -> bool {
     found
 }
 
-fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
+pub(crate) fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
     unchanged_save::counted_parse();
@@ -4552,6 +4552,12 @@ pub(crate) const TEST_EXTERNAL_SYNC_PARSE_PANIC_SENTINEL: &str =
 /// page move runs under the writer lock (og-gh644 F3).
 #[cfg(any(test, feature = "test-faults"))]
 pub(crate) const TEST_TITLE_READ_PANIC_SENTINEL: &str = "__TINE_TEST_TITLE_READ_PANIC__";
+
+/// Test-only: a rename or merge step whose final bytes hold this loses it
+/// before the model's check, as a writer bug would (feature `test-faults`).
+#[cfg(any(test, feature = "test-faults"))]
+/// Letters only, so it reads as plain text inside any site (an alias name).
+pub const TEST_RENAME_WRITER_BUG_SENTINEL: &str = "TineTestRenameWriterBug";
 /// Test-only: graph roots whose next whole-graph explicit-reference index
 /// build (not an incremental update) panics, so a test can fail exactly the
 /// full rebuild a Settings rescan publishes (`publish_rebuilt`).

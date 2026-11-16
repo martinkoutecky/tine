@@ -167,8 +167,15 @@ fn rename_publication_parses_only_changed_documents() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     for referrers in [8, 64] {
         let counts = rename(80, referrers);
-        assert!(counts.parses <= referrers as u64 + 2,
+        assert!(counts.parses - counts.model_check_parses <= referrers as u64 + 2,
             "GH #623/I-25: own reference rewrites must parse the new document once, without serializing/parsing the old one; exemplar model/transaction_publish.rs: {counts:?}");
+        // CM step 2 P2/P3 (design "Cost"), billed apart: the model check
+        // parses each changed file's new text once (every referrer and the
+        // move), and P3's unchanged save re-parses its render once.
+        assert!(
+            counts.model_check_parses <= 2 * (referrers as u64 + 1),
+            "the model check parses each changed file at most twice: {counts:?}"
+        );
     }
 }
 

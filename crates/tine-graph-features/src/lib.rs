@@ -187,6 +187,13 @@ fn why_error(why: Why) -> io::Error {
             Refusal::AssetReferenced => {
                 io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
             }
+            // The rename's or merge's model check (R-RENAME-CHECK), before
+            // any write: the reason the rename reports.
+            Refusal::ModelCheck { guarantee, file } => pages::CheckRefused {
+                guarantee,
+                file: file.as_str().to_owned(),
+            }
+            .error(),
             Refusal::UnreadableOwner { file } => io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(

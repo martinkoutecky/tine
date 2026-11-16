@@ -293,6 +293,14 @@ pub(super) fn rename_named_page(slot: &GraphSlot, args: &Value) -> Result<Value,
             // The planner's refusal, before any write (O4, O5): no dialog
             // here, so a held destination is refused, never merged.
             return rename_refused(blocked, page.as_ref());
+        } else if let Some(check) = tine_graph_features::pages::CheckRefused::of(&e) {
+            // The model's check of a file the rename would write (P2, P3),
+            // before any write: `rename-refused`, with its message.
+            return refused(
+                "rename-refused",
+                page.as_ref(),
+                format!("{check}; nothing changed"),
+            );
         } else {
             // Any I/O kind can also follow admission or incomplete rollback.
             body.detail = Some(json!({"admitted":null,"page":path}));

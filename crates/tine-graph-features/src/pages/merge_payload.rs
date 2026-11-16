@@ -44,7 +44,6 @@ pub enum RealizationError {
     HeaderChildren,
     HiddenOccurrence,
     SurvivorIdentity,
-    AliasField,
     DirectiveEscape,
     FusedLineEnding,
     MissingNativeNameRange,
@@ -639,7 +638,6 @@ pub fn propose<'f>(
             .position(members)
             .map(|n| (file, n))
     });
-    let mut expected_aliases = Vec::new();
     let mut seen = HashSet::new();
     let mut additions = Vec::new();
     for file in 0..2 {
@@ -652,11 +650,8 @@ pub fn propose<'f>(
                     w.trace.readings.insert(id, read.clone());
                 }
                 let kept = seen.insert(read);
-                if kept {
-                    expected_aliases.push(name);
-                    if retained != Some((file, n)) {
-                        additions.push(w.trace.interval(file, token.clone())?);
-                    }
+                if kept && retained != Some((file, n)) {
+                    additions.push(w.trace.interval(file, token.clone())?);
                 }
                 a.kept.push(kept);
             }
@@ -914,22 +909,8 @@ pub fn propose<'f>(
         // as another title is refused, not patched.
         return Err(RealizationError::SurvivorIdentity);
     }
-    let header = tine_core::page_header::page_header_text(
-        read.pre_block.as_deref(),
-        read.roots.first().map(|b| b.raw()),
-    );
-    let fields: Vec<_> = header
-        .into_iter()
-        .flat_map(|h| tine_core::page_header::page_property_lines(h, org))
-        .filter(|(k, _)| tine_core::page_header::is_alias_key(k))
-        .map(|(_, v)| tine_core::property_refs::linkable_names(&v, org))
-        .filter(|names| !names.is_empty())
-        .collect();
-    // P2: the survivor reads the united members, and one declaration has
-    // members.
-    if fields.concat() != expected_aliases || (!expected_aliases.is_empty() && fields.len() != 1) {
-        return Err(RealizationError::AliasField);
-    }
+    // Whether the survivor reads the united alias members in one declaration
+    // is the transaction's model check (P2), on the final bytes.
     let source_body = &source.blocks[usize::from(headers[1].first_root)..];
     let skip = usize::from(headers[0].first_root && !normalize_target);
     let roots = &read.roots;

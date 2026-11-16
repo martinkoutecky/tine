@@ -78,9 +78,27 @@ impl<'a> PagePlan<'a> {
             // sync delivery or an import wrote bytes lsdoc cannot take) refuses
             // this transaction and leaves the file untouched; unwound, it would
             // poison the writer lock and fail every later save and read of the
-            // graph until restart (og-gh644 F3).
+            // graph until restart (og-gh644 F3). The model's check of a
+            // rename's or merge's step runs here, per step, on its final bytes
+            // (the parse it makes is under the same isolation).
             let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                self.preflight(step, &allocated, &mut titles)
+                let mut observed = None;
+                #[allow(unused_mut)]
+                let mut next = self.preflight(step, &allocated, &mut titles, &mut observed)?;
+                #[cfg(any(test, feature = "test-faults"))]
+                model_check::writer_bug(step, &mut next);
+                if let Step::Rewrite {
+                    check: Some(check), ..
+                }
+                | Step::Move {
+                    check: Some(check), ..
+                } = step
+                {
+                    crate::cost_counters::model_check(|| {
+                        model_check::check(check, &next, observed)
+                    })?;
+                }
+                Ok(next)
             }))
             .unwrap_or_else(|_| {
                 Err(Why::Refused(Refusal::ReadOnly(
@@ -122,6 +140,7 @@ impl<'a> PagePlan<'a> {
         step: &Step,
         allocated: &HashSet<FileId>,
         titles: &mut validation::TitleIndexes,
+        observed: &mut Option<Arc<tine_core::cm_check::Content>>,
     ) -> Result<Prepared, Why> {
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
@@ -304,11 +323,13 @@ impl<'a> PagePlan<'a> {
                 renames,
                 rebind_title,
                 prepared,
+                check,
             } => {
                 let file = id.file();
                 if !self.page(&file) {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
+                let carried = check.as_ref().and_then(|check| check.observed.clone());
                 let old = self.stage(&file, expected)?;
                 let path = self.path(&file)?;
                 let config = self.store.config();
@@ -324,13 +345,18 @@ impl<'a> PagePlan<'a> {
                     .transpose()?
                     .flatten();
                 let new = if *rebind_title {
-                    rewrite_move(&old, &path, renames, titles, format, None)?
+                    let (new, read) = rewrite_move(&old, &path, renames, titles, format, None)?;
+                    *observed = read;
+                    new
                 } else if let Some(new) = reused.map(String::into_bytes) {
                     let is_org = Format::from_path(&path) == Format::Org;
                     refuse_read_only_org(&old, &new, is_org)?;
+                    *observed = carried;
                     new
                 } else {
-                    rewrite(&old, &path, renames, format)?
+                    let (new, read) = rewrite(&old, &path, renames, format)?;
+                    *observed = read;
+                    new
                 };
                 // Reject an unreadable replacement before further native
                 // validation walks; its byte bound is already known.
@@ -368,6 +394,7 @@ impl<'a> PagePlan<'a> {
                 to,
                 renames,
                 prepared,
+                check,
             } => {
                 if to.as_str().starts_with("logseq/.tine-") {
                     return Err(Why::Refused(Refusal::InvalidTarget(to.as_str().into())));
@@ -404,7 +431,13 @@ impl<'a> PagePlan<'a> {
                             }
                             _ => None,
                         };
-                        Some(rewrite_move(old, &path, map, titles, format, reused)?)
+                        let carried = reused
+                            .as_ref()
+                            .and(check.as_ref())
+                            .and_then(|check| check.observed.clone());
+                        let (new, read) = rewrite_move(old, &path, map, titles, format, reused)?;
+                        *observed = read.or(carried);
+                        Some(new)
                     }
                     (Some(old), None) => Some(old.clone()),
                     (None, None) => None,

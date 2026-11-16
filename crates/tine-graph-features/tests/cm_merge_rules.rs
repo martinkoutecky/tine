@@ -977,6 +977,10 @@ mod cm_touched;
 #[path = "cm_report.rs"]
 mod cm_report;
 
+/// CM step 2 check slice B (P2, P3): every write path is checked.
+#[path = "cm_model_check.rs"]
+mod cm_model_check;
+
 /// CM step 2 slice 2 (model r6 O8): the settings step.
 #[path = "cm_settings.rs"]
 mod cm_settings;

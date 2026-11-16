@@ -625,13 +625,9 @@ fn o6_rename_merge_allocates_by_the_mapped_keys() {
 }
 
 /// A namespace key: O1 maps `old/k` to `new/k` (`siteResult` maps every site
-/// kind through `nameMap`), so it clashes with the survivor's `new/k`. Red:
-/// the reference rewriter maps a property key only by its exact name
-/// (`refs_rename.rs` `Renames::keys`), not by namespace prefix, in every
-/// rename. That file is outside this slice; the writer allocates by the key
-/// the rewriter writes.
+/// kind through `nameMap`), so it clashes with the survivor's `new/k`; the
+/// writer allocates by the key the rewriter writes (`Renames::key`).
 #[test]
-#[ignore = "O1 gap in the reference rewriter (namespace property keys), outside the merge writer"]
 fn o6_rename_merge_maps_a_namespace_key() {
     let _guard = crate::integration_lock();
     let files = [

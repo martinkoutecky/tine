@@ -26,6 +26,8 @@ pub(crate) use faults::FaultPoint;
 
 mod faults;
 mod io_helpers;
+mod model_check;
+pub use model_check::{CheckPlan, Guarantee, RenameCheck};
 mod move_file;
 mod plan;
 mod preflight;
@@ -290,6 +292,18 @@ pub enum Refusal {
     /// the asset. The asset is kept; callers report this as a normal outcome
     /// (the block edit that dropped one reference stands), not as a failure.
     AssetReferenced,
+    /// A rename's or merge's file `file` fails the conceptual model's check
+    /// (R-RENAME-CHECK, docs/storage-contract.md): `P2`, it would not read as
+    /// the plan intends or not sit where it should (a writer defect); `P3`,
+    /// Tine's own save would rewrite its bytes (malformed input: content an
+    /// external editor, a sync delivery or an import wrote that Tine's save
+    /// normalizes). Nothing is written.
+    ModelCheck {
+        /// The promise the file breaks.
+        guarantee: Guarantee,
+        /// The file, at the path it has before the rename.
+        file: FileId,
+    },
 }
 
 /// Reason a transaction did not commit.
@@ -428,6 +442,8 @@ enum Step {
         renames: Arc<RenameMap>,
         rebind_title: bool,
         prepared: Option<Box<PreparedRewrite>>,
+        /// The model's check of the final bytes ([`PagePlan::check`]).
+        check: Option<Box<RenameCheck>>,
     },
     Move {
         file: FileId,
@@ -435,6 +451,8 @@ enum Step {
         to: FileId,
         renames: Option<Arc<RenameMap>>,
         prepared: Option<Box<PreparedRewrite>>,
+        /// The model's check of the final bytes ([`PagePlan::check`]).
+        check: Option<Box<RenameCheck>>,
     },
     Trash {
         file: FileId,
@@ -882,6 +900,7 @@ impl<'a> PagePlan<'a> {
                         renames: Arc::clone(renames),
                         rebind_title: title == TitleRebind::Own,
                         prepared: None,
+                        check: None,
                     });
                     return RewriteEffect::Changes;
                 };
@@ -910,6 +929,7 @@ impl<'a> PagePlan<'a> {
                 renames: Arc::clone(renames),
                 rebind_title: title == TitleRebind::Own,
                 prepared,
+                check: None,
             });
         }
         effect
@@ -971,6 +991,7 @@ impl<'a> PagePlan<'a> {
             to: to.clone(),
             renames,
             prepared,
+            check: None,
         });
         self
     }

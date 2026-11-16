@@ -33,6 +33,23 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
     page_filename::decode_page_name(stem, fmt == crate::config::FileNameFormat::Legacy)
 }
 
+/// The stem of an Org `file:` link's path, the part that names a page through
+/// the file-name codec ([`decode_page_name`]): its range in `link`, the link's
+/// whole text (`[[file:dir/stem.ext]]` or `[[file:…][label]]`). `None` for a
+/// link with no `file:` path or an empty stem. The one reading for the rename
+/// writer and the model check. Cost O(link bytes).
+pub fn org_file_link_stem(link: &str) -> Option<std::ops::Range<usize>> {
+    let body = link
+        .get(2..link.len().saturating_sub(2))?
+        .strip_prefix("file:")?;
+    let path = &body[..body.find("][").unwrap_or(body.len())];
+    let slash = path.rfind('/').map_or(0, |at| at + 1);
+    let file = &path[slash..];
+    let stem_len = file.rfind('.').unwrap_or(file.len());
+    let start = "[[file:".len() + slash;
+    (stem_len > 0).then(|| start..start + stem_len)
+}
+
 /// First nonempty `title::` in the preamble; Org also accepts `#+title:` and
 /// `:title:`. The preamble is exactly the page model's `pre_block`: the text
 /// before the first block-opening line as the outline authority

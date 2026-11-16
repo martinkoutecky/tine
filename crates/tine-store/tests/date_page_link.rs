@@ -101,7 +101,7 @@ fn day_opens(root: &std::path::Path, names: &[&str]) -> Vec<(String, String, Str
 }
 
 /// Model r6 O3 ("a journal holds every accepted spelling of its day") and
-/// cm-cut6 SPEC §2.1: with title format `MM-dd`, two days may display the
+/// cm-cut6k SPEC §2.1: with title format `MM-dd`, two days may display the
 /// same label, "they remain distinct day identities", and `Dates.parse`
 /// "must not substitute an ambiguous rendered title for the day". So a
 /// spelling that parses to a day is held only by that day's journal, not by

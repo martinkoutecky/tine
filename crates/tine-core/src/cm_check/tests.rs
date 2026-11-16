@@ -506,7 +506,8 @@ fn many_aliases_cost_linear_steps() {
 #[test]
 fn many_query_arguments_share_one_macro() {
     let n = 1_000;
-    let before = format!("- {{{{query (or {})}}}}\n", "[[A]] ".repeat(n));
+    let name = crate::query::ir::QUERY_MACRO_NAMES[0];
+    let before = format!("- {{{{{name} (or {})}}}}\n", "[[A]] ".repeat(n));
     let after = before.replace("[[A]]", "[[B]]");
     let c = md(&before);
     let mut seen = std::collections::HashSet::new();
@@ -550,4 +551,64 @@ fn observe_parses_the_document_once() {
         observe(text, format);
         assert_eq!(observe::DOCUMENT_PARSES.with(|n| n.get()), 1, "{text:?}");
     }
+}
+
+/// O6: "any other header text are the leftover lines". Org prose before a
+/// directive is header text: it was dropped from the reading, so a writer
+/// losing it passed and the writer keeping it was refused.
+#[test]
+fn org_prose_before_a_directive_is_other_header_text() {
+    let source = "free text\n\n#+k: s\n* source\n";
+    let want = merged(source, "#+k: t\n* target\n", Format::Org);
+    let read = |text: &str| matches(&want, &observe(text, Format::Org), true);
+    assert!(read(
+        "#+k: t\n* target\n*\n#+BEGIN_QUOTE\nfree text\n#+k: s\n#+END_QUOTE\n* source\n"
+    ));
+    // Negative control: the prose lost.
+    assert!(!read(
+        "#+k: t\n* target\n*\n#+BEGIN_QUOTE\n#+k: s\n#+END_QUOTE\n* source\n"
+    ));
+}
+
+/// An Org head drawer's alias declares its names, as it does when another
+/// drawer follows: the header is read through the drawer's `:END:` (found by
+/// the transaction check, where a lone drawer's `:ALIAS:` read as other
+/// header text and every merge keeping it was refused).
+#[test]
+fn a_lone_org_drawer_alias_declares_its_names() {
+    let names = |text: &str| super::semantic(&observe(text, Format::Org)).alias_names;
+    assert_eq!(
+        names(":PROPERTIES:\n:ALIAS: a, b\n:END:\n* t\n"),
+        ["a", "b"]
+    );
+    assert_eq!(
+        names(":PROPERTIES:\n:ALIAS: a\n:END:\n:PROPERTIES:\n:ALIAS: b\n:END:\n* t\n"),
+        ["a", "b"]
+    );
+    let source = ":PROPERTIES:\n:ALIAS: x\n:END:\n* source\n";
+    let want = merged(source, "* target\n", Format::Org);
+    let read = |text: &str| matches(&want, &observe(text, Format::Org), true);
+    assert!(read(":PROPERTIES:\n:ALIAS: x\n:END:\n* target\n* source\n"));
+    // Negative controls: the alias lost, or written as another name.
+    assert!(!read("* target\n* source\n"));
+    assert!(!read(
+        ":PROPERTIES:\n:ALIAS: c\n:END:\n* target\n* source\n"
+    ));
+}
+
+/// O6: "Text before the first block of a file is read as that file's first
+/// block": a query in preamble prose is a query site, as in a block.
+#[test]
+fn a_query_in_preamble_prose_reads_as_in_a_block() {
+    let within = |c: &Content| {
+        text_sites(&c.blocks[0].body)
+            .map(|s| (s.kind, s.within.as_ref().map(|w| w.0.name.clone())))
+            .collect::<Vec<_>>()
+    };
+    let block = md("- {{query [[A]]}}\n- x\n");
+    assert_eq!(within(&md("{{query [[A]]}}\n- x\n")), within(&block));
+    assert_eq!(
+        within(&md("title:: t\n{{query [[A]]}}\n- x\n")),
+        within(&block)
+    );
 }

@@ -100,7 +100,6 @@ pub(super) fn parser_unwind<T>(prepare: impl FnOnce() -> io::Result<T>) -> io::R
 /// of what it rendered (Markdown layout retention's fallback and header
 /// promotion render and parse again); per-block projections. Everything
 /// [`save_content`] does.
-#[cfg_attr(not(test), allow(dead_code))] // the P3 check's, once it is wired
 pub(crate) fn unchanged_save(
     path: &Path,
     owner: Option<&str>,

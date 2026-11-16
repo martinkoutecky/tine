@@ -3,6 +3,7 @@
 //! settings step (O8).
 
 use std::io;
+use std::sync::Arc;
 
 use tine_core::refs;
 
@@ -174,3 +175,121 @@ pub(super) fn site_exceptions<'a>(
         },
     })
 }
+
+/// A rename or merge the conceptual model's check refused before any write
+/// (R-RENAME-CHECK): the file `file` (graph-relative, where it is before the
+/// rename) breaks `guarantee`. Carried inside the `io::Error` it returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckRefused {
+    pub guarantee: tine_store::Guarantee,
+    pub file: String,
+}
+
+impl std::fmt::Display for CheckRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let file = &self.file;
+        match self.guarantee {
+            tine_store::Guarantee::P3 => write!(
+                f,
+                "cannot rename: the next time Tine saves {file}, it would rewrite that file's header, so the rename cannot write it as it is; open {file} in the Tine app and save it once, then repeat the rename"
+            ),
+            tine_store::Guarantee::P2 => write!(
+                f,
+                "cannot rename: Tine's rewrite of {file} did not read back as the rename intends, so nothing was changed; this is a bug in Tine, please report it with the page names at https://github.com/martinkoutecky/tine/issues"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CheckRefused {}
+
+impl CheckRefused {
+    pub(crate) fn error(self) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, self)
+    }
+
+    /// The check's refusal inside a rename's or merge's error, if it is one.
+    pub fn of(error: &io::Error) -> Option<&CheckRefused> {
+        error.get_ref().and_then(|cause| cause.downcast_ref())
+    }
+}
+
+/// The model's checks of one rename's steps: the one rename the request
+/// names (its destination is the source's planned identity), each step's
+/// page and whether it keeps its path read from the planning view.
+pub(super) struct StepChecks<'g> {
+    pub(super) plan: Arc<tine_store::CheckPlan>,
+    graph: &'g tine_store::WholeGraph,
+}
+
+impl<'g> StepChecks<'g> {
+    pub(super) fn new(
+        graph: &'g tine_store::WholeGraph,
+        old: &str,
+        renamed: &[super::RenamedPage],
+        days: &tine_core::date::JournalFormat,
+        names: tine_core::config::FileNameFormat,
+    ) -> io::Result<Self> {
+        let destination = renamed
+            .iter()
+            .find(|page| refs::normalize(&page.from) == refs::normalize(old))
+            .map(|page| page.to.clone())
+            .ok_or_else(|| io::Error::other("rename plan names no destination"))?;
+        let plan = tine_store::CheckPlan {
+            old: Some(old.to_owned()),
+            destination,
+            days: days.clone(),
+            names,
+        };
+        Ok(Self {
+            plan: Arc::new(plan),
+            graph,
+        })
+    }
+
+    /// The file's page name before the rename, and whether it is a journal.
+    pub(super) fn entry(&self, id: &tine_core::model::PageId) -> (String, bool) {
+        let scope = tine_store::InventoryScope::File(id);
+        let inventory = self.graph.inventory(scope);
+        let first = inventory.0.first();
+        first
+            .map(|e| (e.name.clone(), e.is_journal))
+            .unwrap_or_default()
+    }
+
+    /// The check of a referrer's, rebound page's or moved page's step.
+    pub(super) fn step(
+        &self,
+        id: &tine_core::model::PageId,
+        observed: Option<Arc<Observed>>,
+    ) -> tine_store::RenameCheck {
+        let (page, fixed) = self.entry(id);
+        let plan = Arc::clone(&self.plan);
+        let source = None;
+        tine_store::RenameCheck {
+            plan,
+            page,
+            fixed,
+            observed,
+            source,
+        }
+    }
+}
+
+/// The model's check of a merge's survivor under `plan`: it keeps its path,
+/// and its expected reading is the merge of the source's and its own.
+pub(super) fn survivor_check(
+    plan: &Arc<tine_store::CheckPlan>,
+    observed: &(Arc<Observed>, Arc<Observed>),
+    page: String,
+) -> tine_store::RenameCheck {
+    tine_store::RenameCheck {
+        plan: Arc::clone(plan),
+        page,
+        fixed: true,
+        observed: Some(Arc::clone(&observed.1)),
+        source: Some(Arc::clone(&observed.0)),
+    }
+}
+
+type Observed = tine_core::cm_check::Content;

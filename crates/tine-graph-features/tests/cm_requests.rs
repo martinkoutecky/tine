@@ -258,14 +258,6 @@ fn journal_files_follow_the_rename_like_any_other_file() {
             "#+ALIASES: new\n\n* day\n",
         ),
         (
-            "first-root",
-            vec![("journals/2026_10_26.md", "- aliases:: old\n- day\n")],
-            "old",
-            "new",
-            "journals/2026_10_26.md",
-            "- aliases:: new\n- day\n",
-        ),
-        (
             "day-parent",
             vec![
                 ("journals/2026_10_26.md", "- day\n"),
@@ -287,6 +279,25 @@ fn journal_files_follow_the_rename_like_any_other_file() {
         rename(&store, old, new, RenameChoice::Rename).unwrap();
         assert_eq!(snapshot(&root)[path], expected, "{label}");
     }
+    // The declaration in a first root of only properties: Tine's save writes
+    // that block as the page header (`aliases:: new\n\n- day\n`), so the
+    // renamed bytes would not survive its next save. P3 (check slice B):
+    // refused before any write, naming the journal.
+    let first_root = "- aliases:: old\n- day\n";
+    let (root, store) = fixture(
+        "journal-header-first-root",
+        &[("journals/2026_10_26.md", first_root)],
+    );
+    let error = rename(&store, "old", "new", RenameChoice::Rename).unwrap_err();
+    assert_eq!(
+        tine_graph_features::pages::CheckRefused::of(&error),
+        Some(&tine_graph_features::pages::CheckRefused {
+            guarantee: tine_store::Guarantee::P3,
+            file: "journals/2026_10_26.md".into(),
+        }),
+        "{error}"
+    );
+    assert_eq!(snapshot(&root)["journals/2026_10_26.md"], first_root);
 }
 
 /// O3: "No holder, and a page other than the source declares B as an alias,

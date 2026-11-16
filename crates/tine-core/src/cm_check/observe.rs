@@ -68,9 +68,20 @@ pub fn observe_parsed(
     if let Some(pre) = doc.pre_block.as_deref() {
         let regions = crate::block_regions::parse_document(pre, org);
         let properties: Vec<&Property> = regions.page_properties().collect();
-        if let Some(end) = properties.iter().map(|p| p.line.1).max() {
+        if let Some(last) = properties.iter().map(|p| p.line.1).max() {
+            // Through the end of the region (an Org drawer's `:END:`) that
+            // holds the last property: cut inside it, the drawer would not
+            // read as one, and its values would hold no sites.
+            let end = regions
+                .property_regions
+                .iter()
+                .filter(|g| g.0 < last && last <= g.1)
+                .map(|g| g.1)
+                .max()
+                .unwrap_or(last);
             let block = projected(&pre[..end], org);
             content.header = header_rows(&block, reader, properties.iter().copied());
+            other_header_text(&block, reader, &regions, &mut content.header);
         }
         if let Some(prose) =
             tine_outline::page_preamble::preamble_content_range_in(pre, org, &regions)
@@ -170,6 +181,56 @@ fn header_rows<'p>(
         });
     }
     rows
+}
+
+/// O6's "any other header text": each non-blank line of the header `block`
+/// (the pre-block through its last page property) that is neither a property
+/// line nor inside a property drawer, e.g. Org prose before a directive. It
+/// has no key and stays in line order among the property rows.
+fn other_header_text(block: &DocBlock, r: Reader, regions: &BlockRegions, rows: &mut Vec<Header>) {
+    let raw = block.raw();
+    let covered = |at: usize| {
+        regions
+            .page_properties()
+            .any(|p| p.line.0 <= at && at < p.line.1)
+            || regions
+                .property_regions
+                .iter()
+                .any(|g| g.0 <= at && at < g.1)
+    };
+    let mut lines = Vec::new();
+    let mut at = 0;
+    for line in raw.split_inclusive('\n') {
+        let text = line.trim_end_matches(['\n', '\r']);
+        if !text.trim().is_empty() && !covered(at) {
+            lines.push(at..at + text.len());
+        }
+        at += line.len();
+    }
+    if lines.is_empty() {
+        return;
+    }
+    let sites = block_sites(block, r);
+    let starts: Vec<usize> = regions.page_properties().map(|p| p.line.0).collect();
+    // Back to front, so each insertion index counts only property rows.
+    for line in lines.into_iter().rev() {
+        let at = starts.iter().filter(|s| **s < line.start).count();
+        let form = if r.org {
+            NativeForm::Directive
+        } else {
+            NativeForm::Markdown
+        };
+        let text = atoms(raw, &sites, line);
+        rows.insert(
+            at,
+            Header {
+                role: HeaderRole::Other,
+                form,
+                key: String::new(),
+                text,
+            },
+        );
+    }
 }
 
 fn text_has(text: &[Atom], kind: SiteKind) -> bool {
@@ -281,9 +342,10 @@ fn nest(sites: Vec<(Range<usize>, Site)>) -> Vec<(Range<usize>, Site)> {
         match open.last_mut() {
             Some((p, parent)) => {
                 let at = r.start - p.start..r.end - p.start;
-                let encodes = parent.kind == SiteKind::Tag
-                    && at == (1..parent.native.len())
-                    && s.name == parent.name;
+                // A tag is tag-shaped wherever it stands: a block's `#x`
+                // (`Tag`) or one in a property value (`MdTag`).
+                let tag = parent.kind == SiteKind::Tag || parent.context == Context::MdTag;
+                let encodes = tag && at == (1..parent.native.len()) && s.name == parent.name;
                 if !encodes {
                     parent.inner.push((at, s));
                 }
@@ -417,36 +479,22 @@ fn reference_sites(
 /// macro in code (in the text or in a property's value), and a macro the query
 /// readers do not take as written, has none.
 fn query_sites(raw: &str, regions: &BlockRegions, org: bool, out: &mut Vec<(Range<usize>, Site)>) {
-    use crate::query::macro_text::{query_macro_extents, split_trailing_map, FormFamily};
-    let mut value_code = crate::refs::rename::PropertyValueCode::new(raw, regions, org);
-    for extent in query_macro_extents(raw) {
-        if regions.literal_at(extent.start) || value_code.contains(extent.start) {
-            continue;
-        }
-        let family = FormFamily::for_macro_name(&extent.name);
-        let argument_end = extent.end - 2;
-        let argument_start = argument_end - extent.argument.len();
-        let (form, _) = split_trailing_map(&extent.argument, family);
-        let form_start =
-            argument_start + extent.argument.len() - extent.argument.trim_start().len();
-        if raw.get(argument_start..argument_end) != Some(extent.argument.as_str())
-            || !raw[form_start..].starts_with(form.as_str())
-            || !crate::query::query_source_within_limit(&form)
-            || !crate::query::query_nesting_within_limit(&form)
-        {
-            continue;
-        }
-        let names = match family {
-            FormFamily::Tql => crate::query::tql::page_name_literals(&form),
-            FormFamily::Edn if crate::query::is_advanced(&form) => Vec::new(),
-            FormFamily::Edn => crate::query::og::page_name_arguments(&form),
-        };
+    for query in crate::query::page_names::macro_page_names(raw, regions, org) {
+        let argument_start = query.argument_start;
         let within = Arc::new(QueryMacro {
-            name: extent.name,
-            argument: extent.argument,
+            name: query.name,
+            argument: query.argument,
+            tokens: (query.names.iter())
+                .map(|(at, name)| {
+                    (
+                        at.start - argument_start,
+                        raw[at.clone()].to_owned(),
+                        name.clone(),
+                    )
+                })
+                .collect(),
         });
-        for (range, name) in names {
-            let at = form_start + range.start..form_start + range.end;
+        for (at, name) in query.names {
             let native = &raw[at.clone()];
             let mut s = site(SiteKind::Query, native, 0..native.len(), Some(&name));
             if s.context == Context::Ordinary {
@@ -486,23 +534,21 @@ fn target_sites(raw: &str, target: RewriteTarget, r: Reader, out: &mut Vec<(Rang
             }
         }
         RewriteTarget::FileLink(range) => {
-            // `[[file:dir/stem.ext]]` or `[[file:…][label]]`: the stem of the
-            // path's last component names a page through the file-name codec.
-            let inner = range.start + 2..range.end.saturating_sub(2);
-            let Some(body) = raw.get(inner.clone()).and_then(|t| t.strip_prefix("file:")) else {
+            // The stem of the path's last component names a page through
+            // the file-name codec.
+            let Some(stem) = raw
+                .get(range.clone())
+                .and_then(crate::model::org_file_link_stem)
+            else {
                 return;
             };
-            let path = &body[..body.find("][").unwrap_or(body.len())];
-            let slash = path.rfind('/').map_or(0, |at| at + 1);
-            let file = &path[slash..];
-            let stem = &file[..file.rfind('.').unwrap_or(file.len())];
-            if stem.is_empty() {
-                return;
-            }
-            let start = inner.start + "file:".len() + slash;
+            let at = range.start + stem.start..range.start + stem.end;
+            let stem = &raw[at.clone()];
             let name = crate::model::decode_page_name(stem, r.names);
-            let s = site(SiteKind::OrgFile, stem, 0..stem.len(), Some(&name));
-            out.push((start..start + stem.len(), s));
+            out.push((
+                at,
+                site(SiteKind::OrgFile, stem, 0..stem.len(), Some(&name)),
+            ));
         }
     }
 }

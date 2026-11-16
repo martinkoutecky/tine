@@ -19,8 +19,10 @@ pub use rename_offer::{rename_offer, rename_page_as, RenameOffer};
 #[path = "pages_rename_report.rs"]
 mod rename_report;
 use rename_plan::{plan_rename, RenamePlan};
-use rename_report::{site_exceptions, IncompleteRename};
-pub use rename_report::{Disposition, RenameOutcome, RenameReport, SiteException, TouchedPage};
+use rename_report::{site_exceptions, survivor_check, IncompleteRename, StepChecks};
+pub use rename_report::{
+    CheckRefused, Disposition, RenameOutcome, RenameReport, SiteException, TouchedPage,
+};
 
 impl RenamePlan {
     /// Input policy of the host operation (STEP3 §7).
@@ -852,6 +854,16 @@ fn rename_transaction<'s>(
             survivor.proposal.trace.clone(),
         );
     }
+    // The model's check of every step's final bytes.
+    let checks = StepChecks::new(&graph, old, &renamed, &days, config.file_name_format)?;
+    let check = |id: &PageId, observed| checks.step(id, observed);
+    if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
+        let page = checks.entry(dst).0;
+        tx.check(
+            &dst.file(),
+            survivor_check(&checks.plan, &survivor.observed, page),
+        );
+    }
     let name_format = config.file_name_format;
     let spelling = refs::RenameFormat::new(name_format, &days);
     let mut edits = Vec::new();
@@ -930,6 +942,7 @@ fn rename_transaction<'s>(
                 Err(_) => rewrite(&mut names),
             };
             tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
+            tx.check(&file, check(&id, None));
             new != content
         } else {
             let prepared = match rewritten.remove(&id) {
@@ -954,6 +967,7 @@ fn rename_transaction<'s>(
                         name_format,
                         proposal.trace,
                     );
+                    tx.check(&file, check(&id, proposal.observed));
                 }
                 changed
             } else {
@@ -981,6 +995,7 @@ fn rename_transaction<'s>(
             // References unchanged, but the interrupted rename's title
             // still needs rebinding in place.
             tx.rewrite_refs(&id, rev.clone(), None, &map, TitleRebind::Own);
+            tx.check(&file, check(&id, None));
         }
         if moved || rebind || changed {
             rewritten_names.borrow_mut().extend(names);
@@ -1044,17 +1059,22 @@ fn rename_transaction<'s>(
         .filter(|(id, _, _)| moves.contains_key(id))
     {
         let to = &moves[&id];
+        let mut observed = None;
         let rewrite = match carried.remove(&id).filter(|_| rewrite) {
-            Some((old, proposal)) => tine_store::MoveRewrite::Prepared {
-                renames: Arc::clone(&map),
-                old,
-                proposal,
-                format: name_format,
-            },
+            Some((old, mut proposal)) => {
+                observed = proposal.observed.take();
+                tine_store::MoveRewrite::Prepared {
+                    renames: Arc::clone(&map),
+                    old,
+                    proposal,
+                    format: name_format,
+                }
+            }
             None if rewrite => tine_store::MoveRewrite::Rewrite(Arc::clone(&map)),
             None => tine_store::MoveRewrite::Verbatim,
         };
         tx.move_file(&id.file(), rev, to, rewrite);
+        tx.check(&id.file(), check(&id, observed));
     }
     if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
         tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
@@ -1322,6 +1342,7 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
     let transaction = |survivor: &Survivor| {
         let mut tx = store.page_plan(Some(tine_store::EditKind::InsertBlocks));
+        let config = store.config();
         tx.rewrite_refs_prepared(
             &[
                 tine_store::EditKind::InsertBlocks,
@@ -1331,8 +1352,19 @@ pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str)
             survivor.dst_rev.clone(),
             (survivor.old.clone(), survivor.proposal.text.clone()),
             None,
-            store.config().file_name_format,
+            config.file_name_format,
             survivor.proposal.trace.clone(),
+        );
+        // A merge that renames nothing: the model's empty plan.
+        let plan = Arc::new(tine_store::CheckPlan {
+            old: None,
+            destination: String::new(),
+            days: config.config.journal_format(),
+            names: config.file_name_format,
+        });
+        tx.check(
+            &dst,
+            survivor_check(&plan, &survivor.observed, String::new()),
         );
         tx.trash(&src, survivor.src_rev.clone(), tine_store::TrashIf::Any);
         tx
@@ -1363,6 +1395,11 @@ struct Survivor {
     proposal: merge_payload::MergeProposal,
     src_rev: FileRev,
     dst_rev: FileRev,
+    /// The model's readings of the source and the survivor's old text.
+    observed: (
+        Arc<tine_core::cm_check::Content>,
+        Arc<tine_core::cm_check::Content>,
+    ),
 }
 
 /// Realize the survivor from revision-guarded input bytes; no DTO serialization.
@@ -1412,7 +1449,18 @@ fn merged_survivor(
             .borrow_mut()
             .extend(proposal.rewritten.iter().cloned());
     }
+    // The model check's readings of both inputs. The merge writer reads them
+    // through the page DTO, not the parser's document, so they are read here.
+    let format = Format::from_path(dst.as_str().as_ref());
+    let read = |text: &str| {
+        Arc::new(tine_core::cm_check::observe(
+            text,
+            format,
+            config.file_name_format,
+        ))
+    };
     Ok(Survivor {
+        observed: (read(&src_text), read(&dst_text)),
         old: dst_text,
         proposal,
         src_rev,

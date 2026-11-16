@@ -611,7 +611,13 @@ message names the files). Every other refusal of the app's rename planner (a nam
 page or alias has, a journal day as the source, a name inside the source's own namespace, a
 moved file with conflict markers that would need a rewrite) refuses as
 `refused:rename-refused` with the planner's message. All of these come before any change
-(`detail.admitted: false`). A date whose day has a journal file is owned by that
+(`detail.admitted: false`). The rename's check of every file it would write (the
+conceptual model's P2 and P3, R-RENAME-CHECK) also refuses as `refused:rename-refused`,
+before any change, naming the file as it is on disk: either Tine's next save of that
+file would rewrite its header, so the rename cannot write it as it is (the message says
+to open the file in the Tine app, save it once, then repeat the rename; no `tine` verb
+saves a page without changing it), or Tine's rewrite of it would not read back as the
+rename intends, which is a bug in Tine (the message asks for a bug report). A date whose day has a journal file is owned by that
 journal under every spelling the app accepts for the day (`2026_11_02`, `2026-11-02`,
 `Nov 2nd, 2026`), so it refuses the same way and writes nothing. A date no file claims is
 an ordinary page under `pages/` with exactly that name: `[[NAME]]` then opens it, and the
@@ -869,7 +875,7 @@ whose reply is lost reports `uncertain` (exit 8) and is never resent automatical
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
 | `page-exists` | page creation or rename would replace an existing file or alias |
-| `rename-refused` | `page rename` refused by the app's rename planner for another reason (message says why); nothing changed |
+| `rename-refused` | `page rename` refused by the app's rename planner for another reason, or by the rename's check of a file it would write (message says why and names the file); nothing changed |
 | `confirmation` | `page delete`, or `delete` of a block whose removal would break incoming references, needs `--yes` or `--force` |
 | `rename-options` | graph-wide `page rename` cannot use the single-file `--rev` guard or run commits |
 | `revision-required` | `block.edit` supplies a parser-owned LOGBOOK drawer without the read's `--rev`; reread and pass that revision |

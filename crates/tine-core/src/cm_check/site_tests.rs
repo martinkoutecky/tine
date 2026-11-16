@@ -189,6 +189,37 @@ fn every_rewriter_rule_has_an_observed_kind() {
     }
 }
 
+/// The legality of a macro's respelled tokens is one reading of the macro
+/// (design "Cost"): a macro with 1, 10 or 100 renamed tokens is read once.
+/// Red before: once per token (1, 10, 100).
+#[test]
+fn a_query_macro_is_read_once_however_many_tokens_it_holds() {
+    for n in [1, 10, 100] {
+        let before = format!("- {{{{query (or {})}}}}\n", "[[Old]] ".repeat(n).trim_end());
+        let after = before.replace("Old", "New");
+        MACRO_READINGS.with(|r| r.set(0));
+        assert!(accepts("Old", "New", &before, &after, MD));
+        assert_eq!(MACRO_READINGS.with(|r| r.get()), 1, "{n} tokens");
+    }
+}
+
+/// A macro's tokens follow together or keep their bytes, the writer's rule: a
+/// new name that would end the macro leaves every token of it, and the check
+/// accepts exactly that.
+#[test]
+fn a_query_macro_that_cannot_hold_the_name_keeps_every_token() {
+    let before = "- {{query (or [[Old]] [[Old]])}}\n";
+    assert_eq!(written("Old", "a}b", before, MD), before);
+    assert!(accepts("Old", "a}b", before, before, MD));
+    assert!(!accepts(
+        "Old",
+        "a}b",
+        before,
+        &before.replace("Old", "a}b"),
+        MD
+    ));
+}
+
 #[test]
 fn a_query_page_argument_is_respelled() {
     case(
@@ -347,20 +378,30 @@ fn an_org_file_link_stem_is_respelled() {
     );
 }
 
-/// A disagreement the check surfaces (receipt, Continuation question Q-f): the
-/// evidence names a Markdown file link `[Old](file:x.md)` by its label, so it
-/// is a link to `Old`, but the writer respells a Markdown label link only when
-/// its target is `[[…]]`, so it keeps the label and the check refuses its
-/// output. Org file links are respelled by their label (above). A writer that
-/// respells the label flips the first assertion.
+/// The evidence names a Markdown file link `[Old](file:x.md)` by its label,
+/// so it is a link to `Old` (Q-f), and slice 2's label rule respells a
+/// contiguous name in the label with its formatting kept: the writer's output
+/// passes, the unchanged text fails. Org file links are respelled by their
+/// label too (above).
 #[test]
-fn a_markdown_file_link_label_is_a_link_the_writer_keeps() {
-    for before in ["- [Old](file:x.md)\n", "- [Old](../pages/x.md)\n"] {
-        assert_eq!(written("Old", "New", before, MD), before);
-        assert!(!accepts("Old", "New", before, before, MD), "{before:?}");
-        let after = before.replace("[Old]", "[New]");
-        assert!(accepts("Old", "New", before, &after, MD), "{before:?}");
+fn a_markdown_file_link_label_is_respelled_with_its_formatting() {
+    for (before, after) in [
+        ("- [Old](file:x.md)\n", "- [New](file:x.md)\n"),
+        ("- [Old](../pages/x.md)\n", "- [New](../pages/x.md)\n"),
+        ("- [**Old**](file:x.md)\n", "- [**New**](file:x.md)\n"),
+    ] {
+        case("Old", "New", before, after, before, MD);
     }
+}
+
+/// A name split by markup in a Markdown file-link label (`O**ld**`) has no
+/// contiguous spelling to replace: the writer leaves it and reports it (O7),
+/// and the check accepts the text it left.
+#[test]
+fn a_markdown_file_link_label_split_by_markup_is_left() {
+    let before = "- [O**ld**](file:x.md)\n";
+    assert_eq!(written("Old", "New", before, MD), before);
+    assert!(accepts("Old", "New", before, before, MD));
 }
 
 /// Review round 2, finding 1: every level of a nested reference is a site.
@@ -475,4 +516,24 @@ fn another_stem_and_a_markdown_file_link_stay() {
     ] {
         case("Old", "New", before, before, wrong, format);
     }
+}
+
+/// A tag in a property value respelled into its bracket form (`#x` →
+/// `#[[Next Name]]`) is one site, as a block's tag is: the `[[Next Name]]`
+/// that spells it is no site of its own. (Found by the transaction check on
+/// `client::page_rename_matches_legacy_for_refs_namespace_case_and_tags`.)
+#[test]
+fn a_property_value_tag_in_bracket_form_is_one_site() {
+    let c = read("tags:: #[[Next Name]]\n", MD);
+    let sites: Vec<_> = c.header.iter().flat_map(|h| text_sites(&h.text)).collect();
+    assert_eq!(sites.len(), 1, "{sites:?}");
+    assert!(sites[0].inner.is_empty(), "{sites:?}");
+    case(
+        "x",
+        "Next Name",
+        "tags:: #x\n- a\n",
+        "tags:: #[[Next Name]]\n- a\n",
+        "tags:: #[[Other]]\n- a\n",
+        MD,
+    );
 }

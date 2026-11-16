@@ -111,6 +111,10 @@ static FILE_RENAMES: AtomicU64 = AtomicU64::new(0);
 static PARSE_INPUT_CHECKS: AtomicU64 = AtomicU64::new(0);
 static RENAME_MAP_CLONES: AtomicU64 = AtomicU64::new(0);
 static RENAME_TITLE_PROBES: AtomicU64 = AtomicU64::new(0);
+static MODEL_CHECKS: AtomicU64 = AtomicU64::new(0);
+static MODEL_CHECK_PARSES: AtomicU64 = AtomicU64::new(0);
+static MODEL_CHECK_NANOS: AtomicU64 = AtomicU64::new(0);
+static MODEL_CHECK_INPUT_CHECKS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -480,6 +484,17 @@ pub struct Counts {
     /// Rename-map entries examined to match a moved page's own title: a
     /// map's entries once to index it, then one probe per titled page.
     pub rename_title_probes: u64,
+    /// Rename and merge steps whose final bytes the model check read (P2, P3).
+    pub model_checks: u64,
+    /// Store parses made inside those checks (the new text; the old text
+    /// only where no writer read it): part of `parses`.
+    pub model_check_parses: u64,
+    /// Time spent in those checks.
+    pub model_check_nanos: u64,
+    /// Page-byte input checks made inside those checks (the unchanged save's
+    /// scans of the candidate and of its render): part of
+    /// `parse_input_checks`.
+    pub model_check_input_checks: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -536,6 +551,10 @@ pub fn reset() {
         &PARSE_INPUT_CHECKS,
         &RENAME_MAP_CLONES,
         &RENAME_TITLE_PROBES,
+        &MODEL_CHECKS,
+        &MODEL_CHECK_PARSES,
+        &MODEL_CHECK_NANOS,
+        &MODEL_CHECK_INPUT_CHECKS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -595,7 +614,29 @@ pub fn snapshot() -> Counts {
         parse_input_checks: PARSE_INPUT_CHECKS.load(Ordering::Relaxed),
         rename_map_clones: RENAME_MAP_CLONES.load(Ordering::Relaxed),
         rename_title_probes: RENAME_TITLE_PROBES.load(Ordering::Relaxed),
+        model_checks: MODEL_CHECKS.load(Ordering::Relaxed),
+        model_check_parses: MODEL_CHECK_PARSES.load(Ordering::Relaxed),
+        model_check_nanos: MODEL_CHECK_NANOS.load(Ordering::Relaxed),
+        model_check_input_checks: MODEL_CHECK_INPUT_CHECKS.load(Ordering::Relaxed),
     }
+}
+
+/// Bill one model check: `check` returns its result; the store parses and
+/// page-byte input checks it made are those counters' growth meanwhile (one
+/// caller at a time in cost tests).
+pub(crate) fn model_check<R>(check: impl FnOnce() -> R) -> R {
+    let before = PARSES.load(Ordering::Relaxed);
+    let inputs_before = PARSE_INPUT_CHECKS.load(Ordering::Relaxed);
+    let started = std::time::Instant::now();
+    let result = check();
+    let nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    MODEL_CHECK_NANOS.fetch_add(nanos, Ordering::Relaxed);
+    MODEL_CHECKS.fetch_add(1, Ordering::Relaxed);
+    let after = PARSES.load(Ordering::Relaxed);
+    MODEL_CHECK_PARSES.fetch_add(after.saturating_sub(before), Ordering::Relaxed);
+    let inputs = PARSE_INPUT_CHECKS.load(Ordering::Relaxed);
+    MODEL_CHECK_INPUT_CHECKS.fetch_add(inputs.saturating_sub(inputs_before), Ordering::Relaxed);
+    result
 }
 
 pub(crate) fn file_rename() {

@@ -44,9 +44,7 @@ use std::ops::Range;
 use crate::config::FileNameFormat;
 use crate::doc::{property_key_norm, DocBlock};
 use crate::outline::{self, OutlineFormat};
-use crate::query::macro_text::{
-    macro_safe, query_macro_extents, recognizable_macro, split_trailing_map, FormFamily,
-};
+use crate::query::macro_text::{macro_safe, query_macro_extents, recognizable_macro, FormFamily};
 use crate::reference_evidence::RewriteTarget;
 use crate::refs::{is_linkable_property_separator, page_key};
 use crate::text_trace::{TextTrace, TraceError};
@@ -141,6 +139,9 @@ pub struct RenameProposal {
     pub trace: TextTrace,
     pub unrealized: Vec<Site>,
     pub rewritten: HashSet<(String, String)>,
+    /// The model's reading of the proposal's input text, from the page parse
+    /// the rewrite read; `None` on a proposal rebuilt from a prepared step.
+    pub observed: Option<std::sync::Arc<crate::cm_check::Content>>,
 }
 
 impl RenameProposal {
@@ -330,7 +331,7 @@ pub(crate) fn rewrite_page(
     // `\r` of each CRLF and turns a lone `\r` into `\n`, so an LF offset moves
     // by the CRLFs before it.
     let lf = crate::doc::normalize_line_endings(text);
-    let edits = page_edits(&lf, is_org, renames);
+    let edits = page_edits(&lf, is_org, renames, None);
     if edits.is_empty() {
         return text.to_owned();
     }
@@ -345,18 +346,27 @@ pub(crate) fn rewrite_page(
     )
 }
 
-/// The same legal span finder as `rewrite_page`, carrying its partition and
-/// omitted covered sites. No additional block walk or I/O.
+/// The same legal span finder as `rewrite_page`, carrying its partition,
+/// omitted covered sites and the model's reading of `text` (the rename
+/// check's old observation, [`crate::cm_check::observe`]), made from the one
+/// page parse the span finder reads. No additional block walk or I/O.
 pub(crate) fn proposal(
     text: &str,
     is_org: bool,
     renames: &Renames<'_>,
 ) -> Result<RenameProposal, TraceError> {
     let lf = crate::doc::normalize_line_endings(text);
+    let (doc, headers) = crate::doc::parse_outlined(&lf, is_org);
+    let format = if is_org {
+        crate::model::Format::Org
+    } else {
+        crate::model::Format::Md
+    };
+    let observed = crate::cm_check::observe_parsed(&lf, &doc, format, renames.file_name_format);
     let edits = if renames.pages.is_empty() && renames.queries.is_none() {
         Vec::new()
     } else {
-        page_edits(&lf, is_org, renames)
+        page_edits(&lf, is_org, renames, Some((&headers, &doc)))
     };
     let crlf = lf_offsets_of_crlf(text);
     let original = |at: usize| at + crlf.partition_point(|lf_at| *lf_at < at);
@@ -412,6 +422,7 @@ pub(crate) fn proposal(
         trace,
         unrealized,
         rewritten,
+        observed: Some(std::sync::Arc::new(observed)),
     })
 }
 
@@ -491,7 +502,16 @@ fn settle(mut edits: Vec<Edit>) -> std::vec::IntoIter<Edit> {
 }
 
 /// The edits of LF page `text`, in page offsets, settled.
-fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
+/// The edits of the page `text` (LF). `parsed` is the page parse of `text`
+/// with its outline headers ([`crate::doc::parse_outlined`]): the walk then
+/// reads that outline and each block whose text is the parse's block, so
+/// their projections are made once for the rename and the check's reading.
+fn page_edits(
+    text: &str,
+    is_org: bool,
+    renames: &Renames<'_>,
+    parsed: Option<(&[outline::Header], &crate::doc::Document)>,
+) -> Vec<Edit> {
     #[cfg(feature = "test-counters")]
     crate::text_trace::work::page_walk();
     let format = if is_org {
@@ -501,7 +521,20 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
     };
     // An outline lsdoc cannot represent has no blocks: the page parse reads the
     // whole text as the pre-block (`doc::parse`), and so does the rename.
-    let headers = outline::headers(text, format).unwrap_or_default();
+    let headers = match parsed {
+        Some((headers, _)) => headers.to_vec(),
+        None => outline::headers(text, format).unwrap_or_default(),
+    };
+    let mut parsed_blocks = Vec::new();
+    if let Some((_, doc)) = parsed {
+        fn flat<'d>(blocks: &'d [DocBlock], out: &mut Vec<&'d DocBlock>) {
+            for block in blocks {
+                out.push(block);
+                flat(&block.children, out);
+            }
+        }
+        flat(&doc.roots, &mut parsed_blocks);
+    }
     let body = text.strip_suffix('\n').unwrap_or(text);
     let lines: Vec<&str> = if body.is_empty() {
         Vec::new()
@@ -529,10 +562,18 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
             pieces.push((raw.len(), line_starts[k] + line.len() - kept.len()));
             raw.push_str(kept);
         }
-        let mut block = DocBlock::new(raw.as_str());
-        block.set_org(is_org);
+        let own;
+        let block = match parsed_blocks.get(n).filter(|block| block.raw() == raw) {
+            Some(block) => *block,
+            None => {
+                let mut block = DocBlock::new(raw.as_str());
+                block.set_org(is_org);
+                own = block;
+                &own
+            }
+        };
         let misses = renames.unrealized.borrow().len();
-        for (range, to, name) in block_edits(&raw, is_org, &block, renames) {
+        for (range, to, name) in block_edits(&raw, is_org, block, renames) {
             let at = pieces.partition_point(|(start, _)| *start <= range.start) - 1;
             let (piece_start, page_start) = pieces[at];
             let piece_end = pieces.get(at + 1).map_or(raw.len(), |(start, _)| start - 1);
@@ -540,7 +581,7 @@ fn page_edits(text: &str, is_org: bool, renames: &Renames<'_>) -> Vec<Edit> {
                 let shift = page_start - piece_start;
                 edits.push((range.start + shift..range.end + shift, to, name));
             } else {
-                let kind = site_kind_at(&raw, &block, &range);
+                let kind = site_kind_at(&raw, block, &range);
                 renames.miss(range, Unrealized::CrossPiece, kind);
             }
         }
@@ -739,13 +780,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
         for target in crate::reference_evidence::rename_targets(raw, is_org) {
             match target {
                 RewriteTarget::FileLink(range) => {
-                    let inner = range.start + 2..range.end.saturating_sub(2);
-                    if let Some((stem, to, name)) = raw
-                        .get(inner.clone())
-                        .and_then(|inner| file_link_stem_edit(inner, renames))
-                    {
-                        edits.push((inner.start + stem.start..inner.start + stem.end, to, name));
-                    }
+                    edits.extend(file_link_stem_edit(raw, range, renames));
                 }
                 // A new name with `}` would end the macro early: the macro keeps
                 // its old bytes, as a query macro does.
@@ -888,72 +923,8 @@ fn label_edit(
     }
 }
 
-/// Where the code is in the property values of one block, each value read once.
-///
-/// The outline parser reads a property line as one `Properties` node and keeps
-/// each value as text, which is why the block's literal regions end at the
-/// node; the app shows the value as inline text (`PagePropertyValue`), so the
-/// value parsed on its own, as the parser would read it as text, says what is
-/// code there (a backtick span, an Org `=…=` or `~…~` span).
-///
-/// Lower bound: a value holding a query macro is read once, however many
-/// macros it holds (O(its bytes)), and a value without one is not read; each
-/// macro is then a binary search of that read's code ranges. `properties` are
-/// in source order and disjoint (`block_regions`' visitors append in source
-/// order), and so are a parse's `literals` (sorted and merged).
-///
-/// A shared reader, not part of the writer: it answers only where a value
-/// holds code, for the writer's `query_edits` and the model check's query
-/// sites (`cm_check::observe`) alike.
-pub(crate) struct PropertyValueCode<'a> {
-    raw: &'a str,
-    regions: &'a crate::block_regions::BlockRegions,
-    is_org: bool,
-    /// The code ranges of each value already read, in the value's own offsets,
-    /// by its index in `regions.properties`.
-    read: HashMap<usize, Vec<crate::block_regions::Range>>,
-}
-
-impl<'a> PropertyValueCode<'a> {
-    pub(crate) fn new(
-        raw: &'a str,
-        regions: &'a crate::block_regions::BlockRegions,
-        is_org: bool,
-    ) -> Self {
-        Self {
-            raw,
-            regions,
-            is_org,
-            read: HashMap::new(),
-        }
-    }
-
-    /// Whether `at` (an offset in `raw`) is inside code written in a property's
-    /// value.
-    pub(crate) fn contains(&mut self, at: usize) -> bool {
-        let (raw, is_org, properties) = (self.raw, self.is_org, &self.regions.properties);
-        let index = properties.partition_point(|property| property.value_range.1 <= at);
-        let Some(property) = properties
-            .get(index)
-            .filter(|property| property.value_range.contains(at))
-        else {
-            return false;
-        };
-        let code = self.read.entry(index).or_insert_with(|| {
-            #[cfg(test)]
-            VALUE_PARSES.with(|reads| reads.set(reads.get() + 1));
-            crate::block_regions::parse(property.value_range.slice(raw), is_org).literals
-        });
-        let at = at - property.value_range.0;
-        let next = code.partition_point(|range| range.1 <= at);
-        code.get(next).is_some_and(|range| range.0 <= at)
-    }
-}
-
 #[cfg(test)]
 thread_local! {
-    /// Property values read for code on this thread (tests reset it first).
-    static VALUE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static BLOCK_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -969,38 +940,14 @@ fn query_edits(
     renames: &Renames<'_>,
 ) -> Vec<Edit> {
     let mut edits = Vec::new();
-    if !raw.contains("{{") {
-        return edits;
-    }
-    let mut value_code = PropertyValueCode::new(raw, regions, is_org);
-    for extent in query_macro_extents(raw) {
-        if regions.literal_at(extent.start) || value_code.contains(extent.start) {
-            continue;
-        }
-        let family = FormFamily::for_macro_name(&extent.name);
-        let argument_end = extent.end - 2;
-        let argument_start = argument_end - extent.argument.len();
-        let (form, _) = split_trailing_map(&extent.argument, family);
-        let form_start =
-            argument_start + extent.argument.len() - extent.argument.trim_start().len();
-        if raw.get(argument_start..argument_end) != Some(extent.argument.as_str())
-            || !raw[form_start..].starts_with(form.as_str())
-            || !crate::query::query_source_within_limit(&form)
-            || !crate::query::query_nesting_within_limit(&form)
-        {
-            continue;
-        }
-        let names = match family {
-            FormFamily::Tql => crate::query::tql::page_name_literals(&form),
-            FormFamily::Edn if crate::query::is_advanced(&form) => Vec::new(),
-            FormFamily::Edn => crate::query::og::page_name_arguments(&form),
-        };
+    for query in crate::query::page_names::macro_page_names(raw, regions, is_org) {
+        let (family, argument_start) = (query.family, query.argument_start);
         let mut local: Vec<Edit> = Vec::new();
-        for (range, name) in names {
+        for (range, name) in query.names {
             let Some(to) = renames.query_page(&name) else {
                 continue;
             };
-            let token = &form[range.clone()];
+            let token = &raw[range.clone()];
             let spelled = match family {
                 FormFamily::Tql => crate::query::print::sql_string(&to),
                 FormFamily::Edn => og_token_spelling(token, &to),
@@ -1020,22 +967,17 @@ fn query_edits(
             } else {
                 (range, spelled)
             };
-            local.push(renames.edit(
-                form_start + range.start..form_start + range.end,
-                &name,
-                &to,
-                spelled,
-            ));
+            local.push(renames.edit(range, &name, &to, spelled));
         }
         if local.is_empty() {
             continue;
         }
-        let mut argument = extent.argument.clone();
+        let mut argument = query.argument;
         for (range, to, _) in local.iter().rev() {
             argument.replace_range(range.start - argument_start..range.end - argument_start, to);
         }
         if macro_safe(&argument, family).is_ok()
-            && recognizable_macro(&extent.name, &argument).is_ok()
+            && recognizable_macro(&query.name, &argument).is_ok()
         {
             edits.extend(local);
         } else {
@@ -1105,21 +1047,15 @@ pub(crate) fn headline_tag_ok(to: &str) -> bool {
 
 /// Respell an Org `file:` link path whose stem names a renamed page, through
 /// the graph's file-name codec (the one the page move uses, master
-/// b8f73b9af107). `inner` is the link's text between `[[` and `]]`; the
-/// result is the stem's range in `inner` and the new stem.
-fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
-    let body = inner.strip_prefix("file:")?;
-    let path_end = body.find("][").unwrap_or(body.len());
-    let path = &body[..path_end];
-    let slash = path.rfind('/').map_or(0, |at| at + 1);
-    let file = &path[slash..];
-    let stem_len = file.rfind('.').map_or(file.len(), |dot| dot);
-    let stem = &file[..stem_len];
-    let decoded = crate::model::decode_page_name(stem, renames.file_name_format);
+/// b8f73b9af107). `link` is the link's range in `raw`; the result is the
+/// stem's range in `raw` and the new stem.
+fn file_link_stem_edit(raw: &str, link: Range<usize>, renames: &Renames<'_>) -> Option<Edit> {
+    let stem = crate::model::org_file_link_stem(raw.get(link.clone())?)?;
+    let stem = link.start + stem.start..link.start + stem.end;
+    let decoded = crate::model::decode_page_name(&raw[stem.clone()], renames.file_name_format);
     let to = renames.page(&decoded)?;
-    let start = "file:".len() + slash;
     Some(renames.edit(
-        start..start + stem_len,
+        stem,
         &decoded,
         &to,
         crate::model::encode_page_name(&to, renames.file_name_format),
@@ -1130,8 +1066,9 @@ fn file_link_stem_edit(inner: &str, renames: &Renames<'_>) -> Option<Edit> {
 mod tests {
     //! Rename reads a property value for code once, however many query macros
     //! it holds (qs-leftovers-1109 round 2; PC-1, PC-3, PC-5).
-    use super::{HashMap, HashSet, VALUE_PARSES};
+    use super::{HashMap, HashSet};
     use crate::config::FileNameFormat;
+    use crate::query::page_names::VALUE_PARSES;
     use std::time::{Duration, Instant};
 
     /// O2 per site (round 2 finding 1): page `2026 10 26` is no day, but its

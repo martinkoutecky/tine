@@ -86,7 +86,7 @@ impl ClaimLookup<'_> {
     /// up. A spelling that parses to a day is held only by that day's
     /// journals (model r6 O3: "a journal holds every accepted spelling of
     /// its day"): a title format without a year (`MM-dd`) gives two days one
-    /// title, and they remain distinct days (cm-cut6 SPEC §2.1), so the
+    /// title, and they remain distinct days (cm-cut6k SPEC §2.1), so the
     /// title's other journals do not hold it. Ordinary pages, and lookups of
     /// a name that is no day (the shared label `10-26` itself), keep every
     /// claimant of the name. O(1) per claimant.

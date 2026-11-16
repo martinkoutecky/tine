@@ -166,8 +166,9 @@ fn o7_keys_that_do_not_name_the_page_stay_and_are_not_reported() {
             "day",
             &[day_format, ("pages/ns.md", "- ns\n")],
             ("ns", "nt"),
-            "- ns/2026-10-26:: v\n- [[ns/sub]]\n",
-            "- ns/2026-10-26:: v\n- [[nt/sub]]\n",
+            // Not a first block of only properties (a page header).
+            "- r\n- ns/2026-10-26:: v\n- [[ns/sub]]\n",
+            "- r\n- ns/2026-10-26:: v\n- [[nt/sub]]\n",
         ),
     ];
     for (label, sources, (old, new), referrer, after) in cases {
@@ -219,20 +220,21 @@ fn o7_a_site_that_cannot_spell_the_new_name_is_reported_where_it_stands() {
 
 /// O7: "a property key is written in key spelling (lower-cased, whitespace
 /// hyphenated), reported when that differs from the new name". The key is
-/// rewritten and the report says it was respelled.
+/// rewritten and the report says it was respelled. (The property block is
+/// not the file's first block: a first block of only properties is a page
+/// header Tine's save rewrites, so a rename of it refuses with P3;
+/// `cm_model_check::a_referrer_tine_would_reformat_is_refused_with_p3`.)
 #[test]
 fn o7_a_property_key_respelled_into_key_spelling_is_reported() {
+    let referrer = "- r\n- Old:: value\n";
     let (root, store) = fixture(
         "o7-key-spelling",
-        &[
-            ("pages/Old.md", "- old\n"),
-            ("pages/r.md", "- Old:: value\n"),
-        ],
+        &[("pages/Old.md", "- old\n"), ("pages/r.md", referrer)],
     );
     let report = report(&store, "Old", "Two Words");
     assert_eq!(
         fs::read_to_string(root.join("pages/r.md")).unwrap(),
-        "- two-words:: value\n"
+        "- r\n- two-words:: value\n"
     );
     let [site] = report.site_exceptions.as_slice() else {
         panic!("one site exception: {:?}", report.site_exceptions);
@@ -240,7 +242,7 @@ fn o7_a_property_key_respelled_into_key_spelling_is_reported() {
     assert_eq!(site.path, "pages/r.md");
     assert_eq!(site.kind, SiteKind::PropertyKey);
     assert_eq!(site.disposition, Disposition::NormalizedKey);
-    assert_eq!(&"- Old:: value\n"[site.start..site.end], "Old");
+    assert_eq!(&referrer[site.start..site.end], "Old");
 }
 
 /// O7 control: a rename every site can spell reports no exception (the key
@@ -270,7 +272,9 @@ fn o7_a_rename_every_site_spells_reports_nothing() {
 /// reported (its key spelling differs from the new name `B/…`).
 #[test]
 fn o1_a_property_key_under_the_source_follows_the_namespace_prefix() {
-    let md = "- a/x:: one\n- a/y:: two\n";
+    // Not a first block of only properties (a page header; see
+    // `o7_a_property_key_respelled_into_key_spelling_is_reported`).
+    let md = "- r\n- a/x:: one\n- a/y:: two\n";
     let org = "* h\n:PROPERTIES:\n:a/x: one\n:a/y: two\n:END:\n";
     let (root, store) = fixture(
         "o1-key-prefix",
@@ -284,7 +288,7 @@ fn o1_a_property_key_under_the_source_follows_the_namespace_prefix() {
     let report = report(&store, "A", "B");
     assert_eq!(
         fs::read_to_string(root.join("pages/r.md")).unwrap(),
-        "- b/x:: one\n- b/y:: two\n"
+        "- r\n- b/x:: one\n- b/y:: two\n"
     );
     assert_eq!(
         fs::read_to_string(root.join("pages/r.org")).unwrap(),

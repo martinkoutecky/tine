@@ -958,6 +958,18 @@ pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
     parse_document_with(content, SerializeOpts::from_outline)
 }
 
+/// [`parse`] (or, `is_org`, [`crate::org::parse_org`]) of LF text `content`,
+/// with the outline headers that parse found: the rename writer reads the
+/// same outline and blocks, so one outline parse serves both.
+pub(crate) fn parse_outlined(content: &str, is_org: bool) -> (Document, Vec<outline::Header>) {
+    if is_org {
+        let headers = outline::headers_or_none(content, OutlineFormat::Org);
+        (crate::org::parse_org_with(content, &headers), headers)
+    } else {
+        parse_document_with(content, |_, _, headers| headers.to_vec())
+    }
+}
+
 fn parse_document_with<T>(
     content: &str,
     layout: impl FnOnce(&str, &[&str], &[outline::Header]) -> T,

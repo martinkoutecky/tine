@@ -40,6 +40,8 @@ thread_local! {
     /// Steps of the loops over a file's sites and header entries on this
     /// thread: one per element visited or compared (tests reset it).
     static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Query macros read for the legality of their respelled tokens.
+    static MACRO_READINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Count one step (see [`STEPS`]).
@@ -102,11 +104,14 @@ pub struct Site {
     pub inner: Vec<(std::ops::Range<usize>, Site)>,
 }
 
-/// The query macro around `Query` sites: its name and its argument as written.
+/// The query macro around `Query` sites: its name, its argument as written,
+/// and every page-name token in it (where it starts in the argument, its
+/// text, the name it reads).
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct QueryMacro {
     pub name: String,
     pub argument: String,
+    pub tokens: Vec<(usize, String, String)>,
 }
 
 /// One part of a title: Lean `String ⊕ Site`.
@@ -185,6 +190,9 @@ pub struct Rename<'a> {
     pages: HashMap<String, String>,
     days: Option<&'a crate::date::JournalFormat>,
     names: FileNameFormat,
+    /// Each query macro read so far ([`Self::macro_legal`]), held by its
+    /// observation (the `Arc` keeps the address from being reused).
+    macros: std::cell::RefCell<HashMap<usize, (Arc<QueryMacro>, bool)>>,
 }
 
 impl<'a> Rename<'a> {
@@ -200,7 +208,46 @@ impl<'a> Rename<'a> {
             pages,
             days,
             names,
+            macros: Default::default(),
         }
+    }
+
+    /// The empty plan: a merge that renames nothing (`merge_pages`), whose
+    /// survivor is checked by [`expected`]'s merge with every site kept.
+    pub fn none(days: Option<&'a crate::date::JournalFormat>, names: FileNameFormat) -> Self {
+        Self {
+            destination: "",
+            pages: HashMap::new(),
+            days,
+            names,
+            macros: Default::default(),
+        }
+    }
+
+    /// Whether `q`, with every page-name token whose name the rename maps
+    /// respelled, still reads as that macro (the writer's rule: a macro's
+    /// tokens follow together or it keeps its bytes, O7). One reading per
+    /// macro, however many tokens it holds.
+    fn macro_legal(&self, q: &Arc<QueryMacro>) -> bool {
+        use crate::query::macro_text::{macro_safe, recognizable_macro};
+        let key = Arc::as_ptr(q) as usize;
+        if let Some((_, legal)) = self.macros.borrow().get(&key) {
+            return *legal;
+        }
+        #[cfg(test)]
+        MACRO_READINGS.with(|n| n.set(n.get() + 1));
+        let family = FormFamily::for_macro_name(&q.name);
+        let mut argument = q.argument.clone();
+        for (at, native, name) in q.tokens.iter().rev() {
+            let n = self.mapped_name(name);
+            if n != *name {
+                argument.replace_range(*at..at + native.len(), &query_token(family, native, &n));
+            }
+        }
+        let legal =
+            macro_safe(&argument, family).is_ok() && recognizable_macro(&q.name, &argument).is_ok();
+        self.macros.borrow_mut().insert(key, (Arc::clone(q), legal));
+        legal
     }
 
     /// Lean `nameMap` / `mappedName`: a day stays, else `nsSubst`; the one
@@ -247,7 +294,7 @@ pub enum Expect<'a> {
 /// reads (the writer's `macro_safe` and `recognizable_macro`); a link in
 /// another macro's argument is unspellable with a `}` (it would end the
 /// macro); an Org file stem is the name through the graph's file-name codec.
-fn spell(site: &Site, name: &str, names: FileNameFormat) -> Option<String> {
+fn spell(rename: &Rename, site: &Site, name: &str) -> Option<String> {
     let replaced = || {
         let mut out = site.native.clone();
         out.replace_range(site.slot.clone(), name);
@@ -263,9 +310,9 @@ fn spell(site: &Site, name: &str, names: FileNameFormat) -> Option<String> {
     match (site.context, site.kind) {
         (Context::SplitLine, _) => None,
         (Context::OrgHeadlineTag, _) => crate::refs::rename::headline_tag_ok(name).then(replaced),
-        (_, SiteKind::Query) => query_spelling(site, name),
+        (_, SiteKind::Query) => query_spelling(rename, site, name),
         (_, SiteKind::MacroArg) => (!name.contains('}')).then(replaced),
-        (_, SiteKind::OrgFile) => Some(crate::model::encode_page_name(name, names)),
+        (_, SiteKind::OrgFile) => Some(crate::model::encode_page_name(name, rename.names)),
         (_, SiteKind::Tag) => Some(tag()),
         (_, SiteKind::PropertyValue | SiteKind::AliasName) => {
             Some(if site.native.starts_with("[[") {
@@ -280,21 +327,23 @@ fn spell(site: &Site, name: &str, names: FileNameFormat) -> Option<String> {
     }
 }
 
-/// A query argument's token respelled for `name`, if its macro still reads
-/// as that macro. Cost: the macro's argument, once per respelled token (the
-/// legality of one token is a reading of the whole macro).
-fn query_spelling(site: &Site, name: &str) -> Option<String> {
-    use crate::query::macro_text::{macro_safe, recognizable_macro};
-    let (q, at) = site.within.as_ref()?;
+/// A query argument's token respelled for `name`, if its macro, with every
+/// token the rename maps respelled, still reads as that macro
+/// ([`Rename::macro_legal`], one reading per macro).
+fn query_spelling(rename: &Rename, site: &Site, name: &str) -> Option<String> {
+    let (q, _) = site.within.as_ref()?;
     let family = FormFamily::for_macro_name(&q.name);
-    let token = match family {
+    rename
+        .macro_legal(q)
+        .then(|| query_token(family, &site.native, name))
+}
+
+/// A query token respelled for `name`, keeping its form.
+fn query_token(family: FormFamily, native: &str, name: &str) -> String {
+    match family {
         FormFamily::Tql => crate::query::print::sql_string(name),
-        FormFamily::Edn => crate::refs::rename::og_token_spelling(&site.native, name),
-    };
-    let rest = &q.argument[at + site.native.len()..];
-    let argument = [&q.argument[..*at], &token, rest].concat();
-    (macro_safe(&argument, family).is_ok() && recognizable_macro(&q.name, &argument).is_ok())
-        .then_some(token)
+        FormFamily::Edn => crate::refs::rename::og_token_spelling(native, name),
+    }
 }
 
 /// Lean `siteResult` (the site only; dispositions are reports, not P2). The
@@ -317,7 +366,7 @@ fn site_result(rename: &Rename, skip: bool, s: &Site) -> Site {
     } else {
         Some(n.into_owned())
     };
-    match k.and_then(|k| spell(&s, &k, rename.names).map(|raw| (k, raw))) {
+    match k.and_then(|k| spell(rename, &s, &k).map(|raw| (k, raw))) {
         Some((k, raw)) => Site {
             inner: kept_inner(rename, &s),
             slot: 0..raw.len(),
