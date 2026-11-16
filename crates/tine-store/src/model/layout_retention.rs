@@ -4,14 +4,17 @@
 //! The DTO carries each block's semantic text, not the file's layout: base
 //! indentation offsets, depth jumps, continuation indentation, whitespace-only
 //! lines. Rebuilding the whole page from the DTO would rewrite that layout in
-//! blocks the save never touched. Instead, every DTO block whose raw text equals
-//! an old block's raw (matched by a pre-order LCS, then by equal text for moved
-//! blocks) reuses that block's physical lines; only new or changed blocks, and
-//! the page-property preamble when it changed, are rendered; a changed block
-//! still keeps the bytes of the continuation lines its edit did not touch. A reused block
-//! keeps its indentation unless the parse rule for its new position forbids it
-//! (it must be deeper than its parent and no deeper than its previous sibling);
-//! then its lines are re-based as a unit onto a valid prefix.
+//! blocks the save never touched. Instead, every DTO block that is an old block
+//! (by runtime id, when the caller knows the old blocks' ids) or, failing
+//! identity, has an old block's raw text (by a pre-order LCS, then by equal text
+//! for moved blocks) reuses that block's physical lines; only new or changed
+//! blocks, and the page-property preamble when it changed, are rendered; a
+//! changed block still keeps the bytes of the continuation lines its edit did
+//! not touch. A block known to stay with its original parent retains its
+//! offset from that parent, so it carries the parent's prefix change; a known
+//! block joining another parent takes its new siblings' prefix (or one indent
+//! step below its parent). A block matched by text alone keeps its old prefix
+//! wherever the parse rule allows it.
 //!
 //! Cost: borrows the caller's single old-source parse; one output parse (two,
 //! plus a full serialization, when the
@@ -23,6 +26,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use tine_core::doc::{self, DocBlock, Document, SerializeOpts};
+use tine_core::BlockId;
 
 use super::line_endings;
 
@@ -58,7 +62,7 @@ pub(super) fn serialize(
     let olds = map_old_blocks(old, &lines)?;
     let mut news = Vec::new();
     flatten(&doc.roots, &mut news);
-    let (keep, hint) = match_blocks(&olds, &news);
+    let Matches { keep, hint, known } = match_blocks(&olds, &news);
 
     let region = olds.first().map_or(lines.len(), |o| o.start);
     let mut out: Vec<(String, Option<usize>)> = Vec::new();
@@ -68,6 +72,7 @@ pub(super) fn serialize(
         olds: &olds,
         keep,
         hint,
+        known,
         unit: &opts.indent,
         out,
     };
@@ -154,13 +159,15 @@ pub(super) fn restore_org(
                 start: start - len,
                 len,
                 bulleted: true,
+                parent: None,
+                id: &block.uuid,
             }
         })
         .collect();
     let old_content = start;
     let mut news = Vec::new();
     flatten(&doc.roots, &mut news);
-    let (keep, hint) = match_blocks(&olds, &news);
+    let Matches { keep, hint, .. } = match_blocks(&olds, &news);
 
     let new: Vec<&str> = serialized.split('\n').collect();
     let mut origin: Vec<Option<usize>> = vec![None; new.len()];
@@ -245,6 +252,11 @@ struct OldBlock<'a> {
     /// Written as `- …`; false for an unbulleted ATX heading (lsdoc), whose
     /// lines are its raw text verbatim.
     bulleted: bool,
+    /// Markdown parent's pre-order index, used to carry a rebased prefix only
+    /// into that parent's original children. Org only pairs line terminators.
+    parent: Option<usize>,
+    /// Its runtime id, empty when the caller does not know it.
+    id: &'a BlockId,
 }
 
 /// Locate every old block's physical lines. Blocks own the tail of the body,
@@ -272,7 +284,15 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
         return None;
     }
     let mut olds = Vec::with_capacity(flat.len());
+    let mut parents: Vec<(usize, usize)> = Vec::new();
     for block in flat {
+        while parents.last().is_some_and(|(_, left)| *left == 0) {
+            parents.pop();
+        }
+        let parent = parents.last_mut().map(|(index, left)| {
+            *left -= 1;
+            *index
+        });
         let raw = block.raw();
         let len = raw.split('\n').count();
         let head = lines[start].trim_start_matches(LAYOUT_WS);
@@ -284,11 +304,14 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
         if bulleted && dash != Some(first) {
             return None;
         }
+        parents.push((olds.len(), block.children.len()));
         olds.push(OldBlock {
             raw,
             start,
             len,
             bulleted,
+            parent,
+            id: &block.uuid,
         });
         start += len;
     }
@@ -306,48 +329,87 @@ fn subtree_len(block: &DocBlock) -> usize {
     1 + block.children.iter().map(subtree_len).sum::<usize>()
 }
 
-/// For each new block: the old block whose lines it reuses (equal raw), and
-/// for unmatched ones an old block at the same place whose indentation it
-/// should prefer (a changed block).
-type Matches = (Vec<Option<usize>>, Vec<Option<usize>>);
+/// For each new block: the old block whose lines it reuses (equal raw); for
+/// unmatched ones an old block whose indentation and terminators it should
+/// prefer (a changed block); and whether that old block is its identity.
+struct Matches {
+    keep: Vec<Option<usize>>,
+    hint: Vec<Option<usize>>,
+    known: Vec<bool>,
+}
 
+/// Which old block each new block is. Identity first: a new block whose
+/// runtime id names exactly one old block is that block (the save path gives
+/// the old blocks the ids the saved document uses for them, where it can tell:
+/// `model::page_parse::identify_old_blocks`). Text only for the rest, among
+/// the old blocks no identity kept: equal raw by an LCS over the changed middle, unpaired blocks by
+/// position inside each gap between matches (a changed block), then equal raw
+/// anywhere (a moved block). A text match is never identity, so it keeps its
+/// old lines and prefix but does not carry a parent's re-indentation
+/// ([`Emitter::preferred_prefix`]). O(old + new blocks) plus the capped LCS.
 fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
     #[cfg(test)]
     BLOCK_MATCHES.with(|n| n.set(n.get() + 1));
     let (n, m) = (olds.len(), news.len());
-    let mut keep = vec![None; m];
+    let (mut keep, mut hint) = (vec![None; m], vec![None; m]);
+    let (mut used, mut known) = (vec![false; n], vec![false; m]);
+    // `None`: an id two old blocks carry names neither.
+    let mut by_id: HashMap<&BlockId, Option<usize>> = HashMap::new();
+    for (o, old) in olds
+        .iter()
+        .enumerate()
+        .filter(|(_, old)| !old.id.is_empty())
+    {
+        by_id
+            .entry(old.id)
+            .and_modify(|o| *o = None)
+            .or_insert(Some(o));
+    }
+    for (j, new) in news.iter().enumerate() {
+        if let Some(Some(o)) = by_id.get_mut(&new.uuid).map(Option::take) {
+            known[j] = true;
+            // A changed block's old lines stay free for a block that kept
+            // their text (text matching below), as they always were.
+            if olds[o].raw == new.raw() {
+                (keep[j], used[o]) = (Some(o), true);
+            } else {
+                hint[j] = Some(o);
+            }
+        }
+    }
+    let a: Vec<usize> = (0..n).filter(|&o| !used[o]).collect();
+    let b: Vec<usize> = (0..m).filter(|&j| !known[j]).collect();
+    let eq = |i: usize, j: usize| olds[a[i]].raw == news[b[j]].raw();
+    let (n2, m2) = (a.len(), b.len());
     let mut head = 0;
-    while head < n.min(m) && olds[head].raw == news[head].raw() {
-        keep[head] = Some(head);
+    while head < n2.min(m2) && eq(head, head) {
+        keep[b[head]] = Some(a[head]);
         head += 1;
     }
     let mut tail = 0;
-    while tail < (n - head).min(m - head) && olds[n - 1 - tail].raw == news[m - 1 - tail].raw() {
-        keep[m - 1 - tail] = Some(n - 1 - tail);
+    while tail < (n2 - head).min(m2 - head) && eq(n2 - 1 - tail, m2 - 1 - tail) {
+        keep[b[m2 - 1 - tail]] = Some(a[n2 - 1 - tail]);
         tail += 1;
     }
-    let (a, b) = (&olds[head..n - tail], &news[head..m - tail]);
     // Quadratic LCS only over the changed middle; a huge middle keeps the
     // unchanged prefix/suffix and re-renders the rest.
-    if a.len() * b.len() <= 4_000_000 {
-        for (i, j) in lcs(a.len(), b.len(), |i, j| a[i].raw == b[j].raw()) {
-            keep[head + j] = Some(head + i);
+    let (mid_a, mid_b) = (n2 - tail - head, m2 - tail - head);
+    if mid_a * mid_b <= 4_000_000 {
+        for (i, j) in lcs(mid_a, mid_b, |i, j| eq(head + i, head + j)) {
+            keep[b[head + j]] = Some(a[head + i]);
         }
     }
+    keep.iter().flatten().for_each(|&o| used[o] = true);
     // Changed blocks: pair unmatched old and new blocks positionally inside
     // each gap between matched anchors.
-    let mut hint = vec![None; m];
-    let mut used = vec![false; n];
-    keep.iter().flatten().for_each(|&o| used[o] = true);
-    let (mut next_old, mut j) = (0, 0);
-    while j < m {
-        if let Some(o) = keep[j] {
+    let mut next_old = 0;
+    for j in 0..m {
+        if let Some(o) = keep[j].or(hint[j]) {
             next_old = o + 1;
         } else if next_old < n && !used[next_old] {
             hint[j] = Some(next_old);
             next_old += 1;
         }
-        j += 1;
     }
     // Moved blocks: unmatched new blocks with the text of an unmatched old block.
     let mut free: HashMap<&str, VecDeque<usize>> = HashMap::new();
@@ -355,11 +417,11 @@ fn match_blocks(olds: &[OldBlock], news: &[&DocBlock]) -> Matches {
         .filter(|&o| !used[o])
         .for_each(|o| free.entry(olds[o].raw).or_default().push_back(o));
     for j in 0..m {
-        if keep[j].is_none() {
+        if keep[j].is_none() && !known[j] {
             keep[j] = free.get_mut(news[j].raw()).and_then(VecDeque::pop_front);
         }
     }
-    (keep, hint)
+    Matches { keep, hint, known }
 }
 
 #[cfg(test)]
@@ -490,6 +552,7 @@ struct Emitter<'a> {
     olds: &'a [OldBlock<'a>],
     keep: Vec<Option<usize>>,
     hint: Vec<Option<usize>>,
+    known: Vec<bool>,
     unit: &'a str,
     /// Emitted lines, each with the old line it reuses (for its terminator).
     out: Vec<(String, Option<usize>)>,
@@ -501,9 +564,50 @@ impl Emitter<'_> {
         &line[..line.len() - line.trim_start_matches(LAYOUT_WS).len()]
     }
 
+    /// The old block new block `new` is (its identity), if known.
+    fn identity(&self, new: usize) -> Option<usize> {
+        self.known[new]
+            .then(|| self.keep[new].or(self.hint[new]))
+            .flatten()
+    }
+
+    /// The prefix new block `new` would like from its old block `old`, under
+    /// `parent` (its chosen prefix and identity). A block known to be `old`
+    /// under the old parent keeps its offset from that parent's prefix; known
+    /// at the root, it keeps its own; known elsewhere, it has no preference.
+    /// A block matched by text alone keeps `old`'s prefix, whatever moved.
+    fn preferred_prefix(
+        &self,
+        new: usize,
+        old: usize,
+        parent: Option<(&str, Option<usize>)>,
+    ) -> Option<String> {
+        let own = self.old_prefix(old);
+        if !self.known[new] {
+            return Some(own.to_string());
+        }
+        match (parent, self.olds[old].parent) {
+            (None, None) => Some(own.to_string()),
+            (Some((prefix, Some(was))), Some(old_parent)) if was == old_parent => {
+                let from = self.old_prefix(was);
+                Some(if prefix == from {
+                    own.to_string()
+                } else {
+                    format!("{prefix}{}", &own[from.len()..])
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Emit one sibling list. `parent` is the parent's chosen prefix; `index`
     /// is the pre-order index of the first sibling and advances past the list.
-    fn place(&mut self, blocks: &[DocBlock], parent: Option<&str>, index: &mut usize) {
+    fn place(
+        &mut self,
+        blocks: &[DocBlock],
+        parent: Option<(&str, Option<usize>)>,
+        index: &mut usize,
+    ) {
         let mut starts = Vec::with_capacity(blocks.len() + 1);
         starts.push(*index);
         for block in blocks {
@@ -515,21 +619,23 @@ impl Emitter<'_> {
             // The outline parser nests by column: a block must be deeper than
             // its parent and no deeper than its previous sibling.
             let valid = |p: &str| {
-                parent.is_none_or(|pp| p.len() > pp.len())
+                parent.is_none_or(|(pp, _)| p.len() > pp.len())
                     && prev.as_ref().is_none_or(|ps| p.len() <= ps.len())
             };
             let own = self.keep[i]
                 .or(self.hint[i])
-                .map(|o| self.old_prefix(o).to_string());
+                .and_then(|o| self.preferred_prefix(i, o, parent));
             let next = (j + 1 < blocks.len())
                 .then(|| self.keep[starts[j + 1]])
                 .flatten()
-                .map(|o| self.old_prefix(o).to_string());
+                .and_then(|o| self.preferred_prefix(starts[j + 1], o, parent));
             let prefix = own
                 .filter(|p| valid(p))
                 .or_else(|| prev.clone())
                 .or_else(|| next.filter(|p| valid(p)))
-                .unwrap_or_else(|| parent.map_or(String::new(), |pp| format!("{pp}{}", self.unit)));
+                .unwrap_or_else(|| {
+                    parent.map_or(String::new(), |(pp, _)| format!("{pp}{}", self.unit))
+                });
             match self.keep[i] {
                 // An unbulleted heading's indentation is part of its raw text,
                 // so it can only be reused where it stood.
@@ -540,7 +646,7 @@ impl Emitter<'_> {
                 None => self.render(block.raw(), &prefix, self.hint[i]),
             }
             *index = i + 1;
-            self.place(&block.children, Some(&prefix), index);
+            self.place(&block.children, Some((&prefix, self.identity(i))), index);
             prev = Some(prefix);
         }
         *index = starts[blocks.len()];

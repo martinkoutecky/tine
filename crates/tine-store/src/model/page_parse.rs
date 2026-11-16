@@ -2,6 +2,7 @@
 //! their block vectors release growth capacity before publication.
 
 use super::*;
+use tine_core::BlockId;
 
 impl Graph {
     /// Publication eligibility shared by prepared saves and external parses.
@@ -127,6 +128,76 @@ pub(super) fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock
     }
 }
 
+/// Give `old`, the fresh parse of the bytes a save replaces, the runtime ids
+/// that `new` (the document saved over it) uses for those blocks, so layout
+/// retention tells blocks apart by identity, not text (#960). A page read
+/// gives each block either its position-derived id (a fresh parse of the
+/// file at `owner`, graph-relative) or the cached row's id, which a save keeps
+/// from the saved document; after a structural save the two differ. `new`
+/// descends from one of them: the one holding every id of `new` that either
+/// holds. When both qualify, only blocks they agree on keep an id; when
+/// neither does, or `owner` is unknown, no block has one, and retention
+/// matches by text alone. O(blocks).
+pub(super) fn identify_old_blocks(
+    old: &mut Document,
+    owner: Option<&str>,
+    cached: Option<&Document>,
+    new: &Document,
+) {
+    fn ids<'a>(blocks: &'a [DocBlock], out: &mut Vec<&'a BlockId>) {
+        for block in blocks {
+            out.push(&block.uuid);
+            ids(&block.children, out);
+        }
+    }
+    fn set(blocks: &mut [DocBlock], ids: &mut impl Iterator<Item = BlockId>) {
+        for block in blocks {
+            block.uuid = ids.next().unwrap_or_default();
+            set(&mut block.children, ids);
+        }
+    }
+    let Some(owner) = owner.filter(|owner| !owner.is_empty()) else {
+        return;
+    };
+    assign_doc_runtime_ids(&mut old.roots, owner);
+    let Some(cached) = cached.filter(|cached| **cached == *old) else {
+        return;
+    };
+    let (mut kept, mut fresh, mut saving) = (Vec::new(), Vec::new(), Vec::new());
+    ids(&cached.roots, &mut kept);
+    ids(&old.roots, &mut fresh);
+    if kept == fresh {
+        return;
+    }
+    ids(&new.roots, &mut saving);
+    let (kept_ids, fresh_ids): (HashSet<_>, HashSet<_>) = (
+        kept.iter().copied().collect(),
+        fresh.iter().copied().collect(),
+    );
+    let holds = |space: &HashSet<&BlockId>, other: &HashSet<&BlockId>| {
+        saving
+            .iter()
+            .all(|id| space.contains(id) || !other.contains(id))
+    };
+    let chosen: Vec<BlockId> = match (holds(&kept_ids, &fresh_ids), holds(&fresh_ids, &kept_ids)) {
+        (true, false) => kept.into_iter().cloned().collect(),
+        (false, true) => return,
+        (true, true) => kept
+            .iter()
+            .zip(&fresh)
+            .map(|(k, f)| {
+                if k == f {
+                    (*k).clone()
+                } else {
+                    BlockId::default()
+                }
+            })
+            .collect(),
+        (false, false) => vec![BlockId::default(); kept.len()],
+    };
+    set(&mut old.roots, &mut chosen.into_iter());
+}
+
 /// Build a page DTO from a cached document. `read_only` is left false here (the
 /// on-disk bytes aren't known at this point); `load_page` sets it from the file
 /// it reads.
@@ -142,5 +213,57 @@ pub(super) fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         read_only: false,
 
         guide: false,
+    }
+}
+
+#[cfg(test)]
+mod identify_old_blocks_tests {
+    use super::*;
+
+    fn with_ids(source: &str, ids: &[&BlockId]) -> Document {
+        let mut doc = parse_doc(Path::new("pages/p.md"), source);
+        for (block, id) in doc.roots.iter_mut().zip(ids) {
+            block.uuid = (*id).clone();
+        }
+        doc
+    }
+
+    /// The saving document's lineage picks the id space: the cached row's
+    /// (an editor that saved keeps its ids) or the position-derived one (a
+    /// fresh read); where both are possible, only agreeing blocks keep an id.
+    #[test]
+    fn the_saving_documents_lineage_picks_the_old_ids() {
+        let source = "- p\n- p\n- r\n";
+        let mut fresh = parse_doc(Path::new("pages/p.md"), source);
+        assign_doc_runtime_ids(&mut fresh.roots, "pages/p.md");
+        let s: Vec<BlockId> = fresh.roots.iter().map(|b| b.uuid.clone()).collect();
+        let t = BlockId::from("kept-only");
+        let identify = |owner: Option<&str>, cached: &[&BlockId], saving: &[&BlockId]| {
+            let mut old = parse_doc(Path::new("pages/p.md"), source);
+            let cached = with_ids(source, cached);
+            identify_old_blocks(&mut old, owner, Some(&cached), &with_ids(source, saving));
+            old.roots.iter().map(|b| b.uuid.clone()).collect::<Vec<_>>()
+        };
+        let none = BlockId::default();
+        // After a save moved blocks, the cache keeps the saved ids.
+        let kept = [&s[1], &s[0], &t];
+        assert_eq!(
+            identify(Some("pages/p.md"), &kept, &kept),
+            [s[1].clone(), s[0].clone(), t.clone()]
+        );
+        assert_eq!(
+            identify(Some("pages/p.md"), &kept, &[&s[0], &s[1], &s[2]]),
+            s
+        );
+        // A permutation leaves both spaces possible: only `r` agrees.
+        let swapped = [&s[1], &s[0], &s[2]];
+        assert_eq!(
+            identify(Some("pages/p.md"), &swapped, &[&s[0], &s[1], &s[2]]),
+            [none.clone(), none.clone(), s[2].clone()]
+        );
+        assert_eq!(
+            identify(None, &kept, &kept),
+            [none.clone(), none.clone(), none]
+        );
     }
 }

@@ -2,6 +2,9 @@
 use super::*;
 use crate::owner::terminal::{error_json, error_text, exit_code, render};
 
+#[path = "move_indent_tests.rs"]
+mod move_indent_tests;
+
 #[test]
 fn cli_edit_keeps_builtin_srs_and_configured_hidden_lines() {
     for org in [false, true] {
@@ -490,6 +493,7 @@ fn write_transcript_corpus() {
             corpus.push(json!({"case": format!("{}-host-{name}", if org {"org"} else {"md"}), "command": cli_command("block.edit", &json!({"handle": UUID, "text": "x"})), "request": {"verb": "block.edit", "args": {"handle": UUID, "text": "x"}}, "injected_host_outcome": name, "input": input, "after": input, "text": error_text(&body), "json": serde_json::from_str::<Value>(&error_json(&body)).unwrap(), "exit": exit_code(&body.code)}));
         }
     }
+    corpus.extend(move_indent_tests::shallower_move_transcripts());
     let actual = serde_json::to_string_pretty(&corpus).unwrap() + "\n";
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owner/owner_tests/write-transcripts.json");
