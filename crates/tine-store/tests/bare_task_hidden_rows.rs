@@ -246,6 +246,7 @@ fn scheduled() -> Edit {
 
 #[test]
 fn a_bare_task_stays_a_task_through_every_structural_edit() {
+    let _guard = crate::integration_lock();
     // (file, source, block index, edit, bytes after, task raw after)
     type Case = (
         &'static str,
@@ -327,6 +328,7 @@ fn a_bare_task_stays_a_task_through_every_structural_edit() {
 
 #[test]
 fn a_logseq_bare_task_with_an_id_drawer_opens_edits_and_loses_its_id_as_a_task() {
+    let _guard = crate::integration_lock();
     for (source, stripped) in [
         (
             "* TODO\n:PROPERTIES:\n:id: 6679-abc\n:END:\n* other\n",
@@ -367,6 +369,7 @@ fn a_logseq_bare_task_with_an_id_drawer_opens_edits_and_loses_its_id_as_a_task()
 
 #[test]
 fn prose_after_a_bare_marker_stays_prose_when_an_id_is_added() {
+    let _guard = crate::integration_lock();
     // Logseq reads `TODO` followed by a body line as text, not a task; adding a
     // hidden row must not turn it into one.
     let graph = Graph::new("pages/o.org", "* TODO\nbody\n");
@@ -382,6 +385,7 @@ fn prose_after_a_bare_marker_stays_prose_when_an_id_is_added() {
 /// through open, an id edit and a reopen.
 #[test]
 fn crlf_and_blank_lines_beside_the_rows_keep_the_task() {
+    let _guard = crate::integration_lock();
     for (path, source) in [
         (
             "pages/o.org",
@@ -426,6 +430,7 @@ fn crlf_and_blank_lines_beside_the_rows_keep_the_task() {
 /// (an id stripped on copy, an Org task expanded) leaves it a task.
 #[test]
 fn removing_the_last_row_beside_blank_lines_keeps_the_task() {
+    let _guard = crate::integration_lock();
     let unfold = || Edit::Property {
         key: "collapsed".into(),
         value: None,
@@ -457,6 +462,7 @@ fn removing_the_last_row_beside_blank_lines_keeps_the_task() {
 
 #[test]
 fn a_bare_task_after_a_leading_blank_line_keeps_its_task_through_an_id() {
+    let _guard = crate::integration_lock();
     // Review r4: the block boundary skips leading blank lines (`\nTODO` is a
     // task); adding an id, reopening and removing the id keeps it one.
     let graph = Graph::new("pages/m.md", "- \n  TODO\n- other\n");
@@ -531,6 +537,7 @@ fn owner() -> Edit {
 /// bare title is still the task its LF twin is, alone or before rows.
 #[test]
 fn r1a_a_crlf_bare_task_is_a_task_alone_and_before_rows() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[
         (
             "pages/o.org",
@@ -566,6 +573,7 @@ fn r1a_a_crlf_bare_task_is_a_task_alone_and_before_rows() {
 /// body text.
 #[test]
 fn r1b_blank_lines_beside_the_rows_keep_the_task() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[
         (
             "pages/m.md",
@@ -601,6 +609,7 @@ fn r1b_blank_lines_beside_the_rows_keep_the_task() {
 /// which is still the task.
 #[test]
 fn r2_removing_the_last_row_before_a_blank_tail_keeps_the_task() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[
         (
             "pages/m.md",
@@ -636,6 +645,7 @@ fn r2_removing_the_last_row_before_a_blank_tail_keeps_the_task() {
 /// `TODO`), so rows go after that title, not after the first physical line.
 #[test]
 fn r5_rows_go_after_a_title_that_follows_leading_blank_lines() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[
         (
             "pages/o.org",
@@ -690,6 +700,7 @@ fn r5_rows_go_after_a_title_that_follows_leading_blank_lines() {
 /// drawer and the id survives every edit.
 #[test]
 fn r6_an_empty_headline_keeps_its_id_drawer_through_a_fold_and_a_schedule() {
+    let _guard = crate::integration_lock();
     let id_of = |graph: &Graph| -> Option<String> {
         let store = graph.open();
         let read = store.page(&PageId::from(graph.path)).expect("opens");
@@ -746,6 +757,7 @@ fn r6_an_empty_headline_keeps_its_id_drawer_through_a_fold_and_a_schedule() {
 // space or tab, LF and CRLF.
 #[test]
 fn r8_org_bare_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[(
         "pages/o.org",
         "* TODO \nbody\n",
@@ -759,6 +771,7 @@ fn r8_org_bare_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() 
 
 #[test]
 fn r8_org_bare_task_with_a_trailing_tab_keeps_its_marker_through_a_schedule() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[(
         "pages/o.org",
         "* TODO \t\nbody\n",
@@ -772,6 +785,7 @@ fn r8_org_bare_task_with_a_trailing_tab_keeps_its_marker_through_a_schedule() {
 
 #[test]
 fn r8_org_crlf_bare_task_with_a_trailing_space_keeps_its_marker_through_an_id() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[(
         "pages/o.org",
         "* TODO \r\nbody\r\n",
@@ -785,6 +799,7 @@ fn r8_org_crlf_bare_task_with_a_trailing_space_keeps_its_marker_through_an_id() 
 
 #[test]
 fn r8_markdown_bare_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[(
         "pages/m.md",
         "- TODO \n  body\n",
@@ -798,6 +813,7 @@ fn r8_markdown_bare_task_with_a_trailing_space_keeps_its_marker_through_a_schedu
 
 #[test]
 fn r8_markdown_crlf_bare_task_with_a_trailing_tab_keeps_its_marker_through_a_schedule() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[(
         "pages/m.md",
         "- TODO \t\r\n  body\r\n",
@@ -811,6 +827,7 @@ fn r8_markdown_crlf_bare_task_with_a_trailing_tab_keeps_its_marker_through_a_sch
 
 #[test]
 fn r8_markdown_bare_heading_task_with_a_trailing_space_keeps_its_marker_through_a_schedule() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[(
         "pages/m.md",
         "- ## TODO \n  body\n",
@@ -827,6 +844,7 @@ fn r8_markdown_bare_heading_task_with_a_trailing_space_keeps_its_marker_through_
 /// so the bare task stays a task (an id added, a page that already has one).
 #[test]
 fn r10_markdown_hard_break_blank_beside_the_rows_keeps_the_task() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[
         (
             "pages/m.md",
@@ -864,6 +882,7 @@ fn r10_markdown_hard_break_blank_beside_the_rows_keeps_the_task() {
 /// text before and after, as `block_regions` reads it there.
 #[test]
 fn r11_an_org_directive_beside_a_bare_task_is_a_row_through_id_edits() {
+    let _guard = crate::integration_lock();
     run_witnesses(&[
         (
             "pages/o.org",
