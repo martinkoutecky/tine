@@ -13,6 +13,105 @@ const NAMES: FileNameFormat = FileNameFormat::TripleLowbar;
 const MD: Format = Format::Md;
 const ORG: Format = Format::Org;
 
+/// O1/O7: exercise the spelling decisions shared with the writer across
+/// every non-nested site family, with inline syntax and separator names.
+#[test]
+fn spelling_rules_agree_at_every_site_kind() {
+    let mut failures = Vec::new();
+    for (before, format) in [
+        ("- #Old\n", MD),
+        ("- #[[Old]]\n", MD),
+        ("- block\n  tags:: Old\n", MD),
+        ("alias:: Old\n\n- body\n", MD),
+        ("- old:: value\n", MD),
+        ("* heading :Old:\n", ORG),
+        ("- {{renderer [[Old]]}}\n", MD),
+        ("- {{query (page Old)}}\n", MD),
+        ("- {{tine-query @page and name = 'Old'}}\n", MD),
+        ("- {{query #Old}}\n", MD),
+        ("#+alias: Old\n* body\n", ORG),
+        ("alias:: [Old](file:x.md)\n\n- body\n", MD),
+        ("#+alias: [[file:x.org][Old]]\n* body\n", ORG),
+        ("* h\n:PROPERTIES:\n:tags: Old\n:END:\n", ORG),
+        ("* [[Old]]\n", ORG),
+        ("* [[file:Old.org][label]]\n", ORG),
+        ("- [[Old]]\n", MD),
+        ("* [[Old][label]]\n", ORG),
+        ("- [label]([[Old]])\n", MD),
+        ("- **[[Old]]**\n", MD),
+        ("- {{embed [[Old]]}}\n", MD),
+    ] {
+        for to in [
+            "a]b",
+            r"New\\Tail",
+            "a*b",
+            "a#b",
+            "a_b",
+            "a`b",
+            "a,b",
+            "a:b",
+            "a\"b",
+            "a b",
+            "a+b",
+        ] {
+            let after = written("Old", to, before, format);
+            if !accepts("Old", to, before, &after, format) {
+                failures.push(format!(
+                    "{before:?} -> {to:?}: {after:?}; reading {:?}",
+                    read(&after, format)
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Sharing the spelling answer must not erase the parser's actual name.
+/// Equal native text with a different observed name is still a P2 mismatch.
+#[test]
+fn a_labels_parsed_name_is_compared_even_with_equal_native_text() {
+    let before = read("- [Old](file:x.md)\n", MD);
+    let rename = Rename::new("Old", "New", None, NAMES);
+    let want = expected(
+        &rename,
+        MD,
+        Expect::File {
+            content: &before,
+            skip: false,
+        },
+    );
+    let mut actual = read("- [New](file:x.md)\n", MD);
+    assert!(matches(&want, &actual, false));
+    assert!(!matches(
+        &want,
+        &read("- [**New**](file:x.md)\n", MD),
+        false
+    ));
+    for atom in &mut actual.blocks[0].body {
+        if let Atom::Site(s) = atom {
+            s.name = "Another".into();
+        }
+    }
+    assert!(!matches(&want, &actual, false));
+}
+
+/// A label is still the property member its reader reports, not an
+/// ordinary body link. Alias allocation depends on this classification.
+#[test]
+fn file_link_labels_remain_alias_members() {
+    for (before, format) in [
+        ("alias:: [Old](file:x.md)\n\n- body\n", MD),
+        ("#+alias: [[file:x.org][Old]]\n* body\n", ORG),
+    ] {
+        let content = read(before, format);
+        assert_eq!(content.header[0].role, HeaderRole::Aliases);
+        assert!(text_sites(&content.header[0].text)
+            .any(|s| s.kind == SiteKind::AliasName && s.name == "Old"));
+        let after = written("Old", "New", before, format);
+        assert!(accepts("Old", "New", before, &after, format));
+    }
+}
+
 fn read(text: &str, format: Format) -> Content {
     observe(text, format, NAMES)
 }

@@ -116,6 +116,8 @@ static MODEL_CHECK_PARSES: AtomicU64 = AtomicU64::new(0);
 static MODEL_CHECK_NANOS: AtomicU64 = AtomicU64::new(0);
 static MODEL_CHECK_INPUT_CHECKS: AtomicU64 = AtomicU64::new(0);
 static MODEL_CHECK_SAVE_PARSES: AtomicU64 = AtomicU64::new(0);
+static SAVE_SERIALIZATIONS: AtomicU64 = AtomicU64::new(0);
+static MODEL_CHECK_SERIALIZATIONS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
@@ -487,8 +489,9 @@ pub struct Counts {
     pub rename_title_probes: u64,
     /// Rename and merge steps whose final bytes the model check read (P2, P3).
     pub model_checks: u64,
-    /// Store parses made inside those checks (the new text; the old text
-    /// only where no writer read it): part of `parses`.
+    /// Store parses inside those checks: the candidate text and the save's
+    /// re-read of its render, part of `parses`. Excludes core observation/
+    /// projection parses (old readings and spelling candidates included).
     pub model_check_parses: u64,
     /// Time spent in those checks.
     pub model_check_nanos: u64,
@@ -498,8 +501,10 @@ pub struct Counts {
     pub model_check_input_checks: u64,
     /// Of `model_check_parses`, those inside the unchanged save P3 runs (the
     /// save path's own re-read of what it rendered); the rest read the new
-    /// text, once for P2 and P3, and an old text no writer read.
+    /// text, once for P2 and P3.
     pub model_check_save_parses: u64,
+    /// Whole-document serializations inside the model check's unchanged save.
+    pub model_check_serializations: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -561,6 +566,8 @@ pub fn reset() {
         &MODEL_CHECK_NANOS,
         &MODEL_CHECK_INPUT_CHECKS,
         &MODEL_CHECK_SAVE_PARSES,
+        &SAVE_SERIALIZATIONS,
+        &MODEL_CHECK_SERIALIZATIONS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -625,6 +632,7 @@ pub fn snapshot() -> Counts {
         model_check_nanos: MODEL_CHECK_NANOS.load(Ordering::Relaxed),
         model_check_input_checks: MODEL_CHECK_INPUT_CHECKS.load(Ordering::Relaxed),
         model_check_save_parses: MODEL_CHECK_SAVE_PARSES.load(Ordering::Relaxed),
+        model_check_serializations: MODEL_CHECK_SERIALIZATIONS.load(Ordering::Relaxed),
     }
 }
 
@@ -632,10 +640,21 @@ pub fn snapshot() -> Counts {
 /// (one caller at a time in cost tests).
 pub(crate) fn model_check_save<R>(save: impl FnOnce() -> R) -> R {
     let before = PARSES.load(Ordering::Relaxed);
+    let serializations = SAVE_SERIALIZATIONS.load(Ordering::Relaxed);
     let result = save();
     let after = PARSES.load(Ordering::Relaxed);
     MODEL_CHECK_SAVE_PARSES.fetch_add(after.saturating_sub(before), Ordering::Relaxed);
+    MODEL_CHECK_SERIALIZATIONS.fetch_add(
+        SAVE_SERIALIZATIONS
+            .load(Ordering::Relaxed)
+            .saturating_sub(serializations),
+        Ordering::Relaxed,
+    );
     result
+}
+
+pub(crate) fn save_serialization() {
+    SAVE_SERIALIZATIONS.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Bill one model check: `check` returns its result; the store parses and

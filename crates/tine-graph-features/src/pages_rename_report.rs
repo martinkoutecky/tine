@@ -171,7 +171,8 @@ pub(super) fn site_exceptions<'a>(
             | refs::Unrealized::StoredQuery
             | refs::Unrealized::CrossPiece
             | refs::Unrealized::MacroLink
-            | refs::Unrealized::LinkLabel => Disposition::Unspellable,
+            | refs::Unrealized::LinkLabel
+            | refs::Unrealized::NativeSpelling => Disposition::Unspellable,
         },
     })
 }

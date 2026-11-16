@@ -75,10 +75,10 @@ pub enum Unrealized {
     /// whitespace hyphenated), reported when that differs from the new name".
     /// The key is rewritten.
     KeySpelling,
-    /// A file link's label cannot hold the new name (a bracket or a line
-    /// break; inside formatting, a formatting delimiter), or markup splits
-    /// the name in the label; left as it is.
+    /// No faithful label spelling or contiguous name run; left and reported (O7).
     LinkLabel,
+    /// O7: this reference's native syntax cannot spell the new name.
+    NativeSpelling,
 }
 
 /// The kind of a reported name site (the model's `SiteKind`, the kinds a
@@ -244,6 +244,21 @@ pub(crate) struct Renames<'a> {
     days: Option<&'a crate::date::JournalFormat>,
     record: bool,
     unrealized: std::cell::RefCell<Vec<Site>>,
+}
+
+/// Select a target-only page even when O7 leaves every target unchanged.
+pub(crate) fn target_needs_report_or_write(
+    raw: &str,
+    org: bool,
+    pre: bool,
+    renames: &Renames<'_>,
+) -> bool {
+    let text = if pre {
+        rewrite_pre_block(raw, org, renames, None)
+    } else {
+        rewrite_block(raw, org, renames, None)
+    };
+    text != raw || !renames.unrealized.borrow().is_empty()
 }
 
 impl<'a> Renames<'a> {
@@ -727,7 +742,11 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
             }
             "implicit_linkable_property" => {
                 if let Some(to) = renames.page(&reference.name) {
-                    edits.push(renames.edit(range, &reference.name, &to, member_spelling(&to)));
+                    if let Some(spelling) = member_spelling(&to, is_org) {
+                        edits.push(renames.edit(range, &reference.name, &to, spelling));
+                    } else {
+                        renames.miss(range, Unrealized::NativeSpelling, SiteKind::PropertyValue);
+                    }
                 }
             }
             "explicit_tag" => {
@@ -735,11 +754,19 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     continue;
                 };
                 if node.starts_with('#') {
-                    let (start, end, spelling) = if node.starts_with("#[[") && node.ends_with("]]")
-                    {
-                        (3, node.len() - 2, to.to_string())
+                    let bracketed = node.starts_with("#[[") && node.ends_with("]]");
+                    let Some(spelling) = tag_spelling(&to, bracketed, is_org) else {
+                        renames.miss(range, Unrealized::NativeSpelling, SiteKind::Tag);
+                        continue;
+                    };
+                    let (start, end, spelling) = if bracketed {
+                        (
+                            3,
+                            node.len() - 2,
+                            spelling[3..spelling.len() - 2].to_owned(),
+                        )
                     } else {
-                        (1, node.len(), tag_for(&to)[1..].to_owned())
+                        (1, node.len(), spelling[1..].to_owned())
                     };
                     edits.push(renames.edit(
                         range.start + start..range.start + end,
@@ -754,7 +781,7 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                     renames.miss(range, Unrealized::HeadlineTag, SiteKind::Tag);
                 }
             }
-            "explicit_link" => link_edits(raw, range, &reference.name, renames, &mut edits),
+            "explicit_link" => link_edits(raw, range, &reference.name, is_org, renames, &mut edits),
             "explicit_nested_link" => nested_edits(node, range.start, renames, &mut edits),
             "explicit_embed" => {
                 if let (Some(open), Some(close)) = (node.find("[["), node.rfind("]]")) {
@@ -785,12 +812,23 @@ fn block_edits(raw: &str, is_org: bool, block: &DocBlock, renames: &Renames<'_>)
                 // A new name with `}` would end the macro early: the macro keeps
                 // its old bytes, as a query macro does.
                 RewriteTarget::MacroLink(reference) => {
+                    let misses = renames.unrealized.borrow().len();
                     let mut local = Vec::new();
                     let node = &raw[reference.range.clone()];
                     if reference.rule == "explicit_nested_link" {
                         nested_edits(node, reference.range.start, renames, &mut local);
                     } else {
-                        link_edits(raw, reference.range, &reference.name, renames, &mut local);
+                        link_edits(
+                            raw,
+                            reference.range,
+                            &reference.name,
+                            is_org,
+                            renames,
+                            &mut local,
+                        );
+                    }
+                    for site in &mut renames.unrealized.borrow_mut()[misses..] {
+                        site.kind = SiteKind::MacroArg;
                     }
                     for edit in local {
                         if edit.1.contains('}') {
@@ -827,6 +865,7 @@ fn link_edits(
     raw: &str,
     range: Range<usize>,
     name: &str,
+    is_org: bool,
     renames: &Renames<'_>,
     edits: &mut Vec<Edit>,
 ) {
@@ -836,31 +875,35 @@ fn link_edits(
     let node = &raw[range.clone()];
     let mut push = |inner: Range<usize>| {
         if renames.page(&node[inner.clone()]).as_deref() == Some(to.as_ref()) {
-            edits.push(renames.edit(
-                range.start + inner.start..range.start + inner.end,
-                name,
-                &to,
-                to.to_string(),
-            ));
+            let at = range.start + inner.start..range.start + inner.end;
+            match crate::refs::label::reference_spelling(node, inner, &to, is_org, "explicit_link")
+            {
+                Some(spelling) => edits.push(renames.edit(at, name, &to, spelling)),
+                None => renames.miss(at, Unrealized::NativeSpelling, SiteKind::Link),
+            }
         }
     };
-    let label = |inner: Range<usize>, is_org: bool| {
-        label_edit(
-            raw,
-            range.clone(),
-            range.start + inner.start..range.start + inner.end,
-            (name, &to),
-            is_org,
-            renames,
-        )
-    };
+    if let Some(label) = crate::refs::FileLabel::read(node, name, is_org) {
+        match label.spelling(&to) {
+            Some(spelling) => {
+                let run = label.run.expect("a spelling has a name run");
+                edits.push(renames.edit(
+                    range.start + run.start..range.start + run.end,
+                    name,
+                    &to,
+                    spelling,
+                ));
+            }
+            None => renames.miss(
+                range.start + label.label.start..range.start + label.label.end,
+                Unrealized::LinkLabel,
+                SiteKind::Link,
+            ),
+        }
+        return;
+    }
     if let Some(body) = node.strip_prefix("[[").and_then(|b| b.strip_suffix("]]")) {
         match body.find("][") {
-            // Org file link: its label names the page (the evidence's rule);
-            // the path stem is a rewrite target of its own.
-            Some(split) if body.starts_with("file:") => {
-                edits.extend(label(2 + split + 2..node.len() - 2, true));
-            }
             Some(split) => push(2..2 + split),
             None => push(2..node.len() - 2),
         }
@@ -871,96 +914,8 @@ fn link_edits(
         if trimmed.starts_with("[[") && trimmed.ends_with("]]") && trimmed.len() >= 4 {
             let start = split + 2 + lead + 2;
             push(start..start + trimmed.len() - 4);
-        } else if let Some(open) = ["[", "!["].iter().find(|open| node.starts_with(**open)) {
-            // Markdown file link (`[Old](file:x.md)`, `[Old](../pages/x.md)`,
-            // or an image link the evidence names): its label names the page
-            // (the evidence's rule), as for Org.
-            edits.extend(label(open.len()..split, false));
         }
     }
-}
-
-/// A file link's label names its page: the evidence's name, which it reads
-/// through the label's formatting (`[**Old**](file:x.md)` names `Old`). The
-/// name is respelled where it stands when it is one contiguous run of the
-/// label, the formatting kept, in the first spelling the parser reads back as
-/// the new name: the name itself, else (Markdown) the name with its
-/// punctuation backslash-escaped (`New\\Tail` is written `New\\\\Tail`). The
-/// link `node` with the candidate in place is parsed and the link it holds
-/// must name exactly `to`: the spelling is the parser's answer, never a list
-/// of characters. Otherwise, a name split by markup (`[**Ol**_d_](…)`, Org
-/// `[[file:x.org][*Ol*d]]`) or a new name no spelling holds, the site is left
-/// as it is and reported (O7). A line break is never written: it would end
-/// the block's line. The name's identity is the evidence's; the label text
-/// is only searched for where that name is written. Cost: one parse of the
-/// link node per spelling tried (at most two).
-fn label_edit(
-    raw: &str,
-    node: Range<usize>,
-    label: Range<usize>,
-    (name, to): (&str, &str),
-    is_org: bool,
-    renames: &Renames<'_>,
-) -> Option<Edit> {
-    let text = &raw[label.clone()];
-    let mut runs = text.match_indices(name);
-    let run = match (runs.next(), runs.next()) {
-        (Some((at, _)), None) if !name.is_empty() && !to.contains(['\n', '\r']) => {
-            Some(label.start + at)
-        }
-        _ => None,
-    };
-    let reads = |at: usize, spelling: &str| {
-        let candidate = format!(
-            "{}{spelling}{}",
-            &raw[node.start..at],
-            &raw[at + name.len()..node.end]
-        );
-        link_names(&candidate, is_org, to)
-    };
-    let spelled = run.and_then(|at| {
-        std::iter::once(to.to_owned())
-            .chain((!is_org).then(|| markdown_escaped(to)))
-            .find(|spelling| reads(at, spelling))
-            .map(|spelling| (at, spelling))
-    });
-    match spelled {
-        Some((at, spelling)) => Some(renames.edit(at..at + name.len(), name, to, spelling)),
-        None => {
-            renames.miss(label, Unrealized::LinkLabel, SiteKind::Link);
-            None
-        }
-    }
-}
-
-/// Whether the link `node` (the whole text of one link) reads, to the same
-/// evidence walk the rename reads, as one link naming exactly `to`.
-fn link_names(node: &str, is_org: bool, to: &str) -> bool {
-    let mut block = DocBlock::new(node);
-    block.set_org(is_org);
-    let projection = block.projection();
-    let mut links = projection
-        .reference_source()
-        .explicit
-        .iter()
-        .filter(|reference| reference.rule == "explicit_link");
-    matches!(
-        (links.next(), links.next()),
-        (Some(link), None) if link.range == (0..node.len()) && link.name == to
-    )
-}
-
-/// Markdown plain text for `to`: each ASCII punctuation character
-/// backslash-escaped (CommonMark backslash escapes).
-fn markdown_escaped(to: &str) -> String {
-    let mut out = String::with_capacity(to.len() * 2);
-    for c in to.chars() {
-        if c.is_ascii_punctuation() {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
 }
 
 #[cfg(test)]
@@ -1056,15 +1011,32 @@ pub(crate) fn tag_for(to: &str) -> String {
 }
 
 /// A linkable property member: bare when it stays one member, else `[[to]]`.
-pub(crate) fn member_spelling(to: &str) -> String {
-    if to.contains(is_linkable_property_separator)
+pub(crate) fn member_spelling(to: &str, org: bool) -> Option<String> {
+    let candidate = if to.contains(is_linkable_property_separator)
         || to.starts_with(['#', '"'])
         || to.contains("[[")
         || to.contains("]]")
     {
-        format!("[[{to}]]")
+        format!("[[{}]]", crate::refs::label::bracket_name(to, org)?)
     } else {
         to.to_owned()
+    };
+    let reads = |value: &str| {
+        // Alias members use the same separated-member reader as linkable
+        // properties; this probe is parsed in memory, never written.
+        let node = if org {
+            format!("h\n:PROPERTIES:\n:alias: {value}\n:END:")
+        } else {
+            format!("alias:: {value}")
+        };
+        crate::refs::label::reads_reference(&node, org, "implicit_linkable_property", to, None)
+            || crate::refs::label::reads_reference(&node, org, "explicit_link", to, None)
+    };
+    if reads(&candidate) {
+        Some(candidate)
+    } else {
+        let wrapped = format!("[[{}]]", crate::refs::label::bracket_name(to, org)?);
+        reads(&wrapped).then_some(wrapped)
     }
 }
 
@@ -1079,10 +1051,36 @@ pub(crate) fn property_key_spelling(to: &str) -> Option<String> {
     (!key.is_empty() && !key.contains(':')).then_some(key)
 }
 
-/// An Org headline tag holds no whitespace and no `:`; a name that does
-/// cannot be written there, so that tag keeps the old name.
+/// Whether the parser reads one Org headline tag; otherwise O7 leaves and reports it.
 pub(crate) fn headline_tag_ok(to: &str) -> bool {
-    !to.is_empty() && !to.contains(':') && !to.contains(char::is_whitespace)
+    !to.is_empty()
+        && !to.contains(['\n', '\r'])
+        && crate::refs::label::reads_reference(
+            &format!("h :{to}:"),
+            true,
+            "explicit_tag",
+            to,
+            Some(3..3 + to.len()),
+        )
+}
+
+/// Keep a bracketed tag's form; otherwise try the existing bare/wrapped
+/// convention. The parser confirms the whole tag and its actual name.
+pub(crate) fn tag_spelling(to: &str, bracketed: bool, org: bool) -> Option<String> {
+    if !bracketed {
+        let candidate = tag_for(to);
+        if crate::refs::label::reads_reference(
+            &candidate,
+            org,
+            "explicit_tag",
+            to,
+            Some(0..candidate.len()),
+        ) {
+            return Some(candidate);
+        }
+    }
+    crate::refs::label::reference_spelling("#[[Old]]", 3..6, to, org, "explicit_tag")
+        .map(|name| format!("#[[{name}]]"))
 }
 
 /// Respell an Org `file:` link path whose stem names a renamed page, through
@@ -1094,12 +1092,13 @@ fn file_link_stem_edit(raw: &str, link: Range<usize>, renames: &Renames<'_>) -> 
     let stem = link.start + stem.start..link.start + stem.end;
     let decoded = crate::model::decode_page_name(&raw[stem.clone()], renames.file_name_format);
     let to = renames.page(&decoded)?;
-    Some(renames.edit(
-        stem,
-        &decoded,
-        &to,
-        crate::model::encode_page_name(&to, renames.file_name_format),
-    ))
+    let Some(spelling) =
+        crate::refs::label::file_stem_spelling(&raw[link.clone()], &to, renames.file_name_format)
+    else {
+        renames.miss(stem, Unrealized::NativeSpelling, SiteKind::Link);
+        return None;
+    };
+    Some(renames.edit(stem, &decoded, &to, spelling))
 }
 
 #[cfg(test)]

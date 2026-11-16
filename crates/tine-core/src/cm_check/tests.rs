@@ -6,6 +6,34 @@ use crate::date::JournalFormat;
 
 const NAMES: FileNameFormat = FileNameFormat::Legacy;
 
+/// PC-1/PC-3: header coverage visits ordered ranges once, even when every
+/// line is a property (the old per-line search was quadratic).
+#[test]
+fn header_coverage_work_is_linear() {
+    for org in [false, true] {
+        for n in [10, 100, 1000] {
+            let header: String = (0..n)
+                .map(|i| {
+                    if org {
+                        format!("#+field{i}: value\n")
+                    } else {
+                        format!("field{i}:: value\n")
+                    }
+                })
+                .collect();
+            let text = format!("{header}{}", if org { "* body\n" } else { "- body\n" });
+            STEPS.with(|s| s.set(0));
+            let observed = observe(&text, if org { Format::Org } else { Format::Md });
+            let steps = STEPS.with(|s| s.get());
+            assert_eq!(observed.header.len(), n);
+            assert!(
+                steps <= 12 * n + 10,
+                "org={org}, n={n}: {steps} header/site visits"
+            );
+        }
+    }
+}
+
 fn observe(text: &str, format: Format) -> Content {
     super::observe(text, format, NAMES)
 }

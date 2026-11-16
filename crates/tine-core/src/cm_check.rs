@@ -98,6 +98,12 @@ pub struct Site {
     /// `Observations.spell` sees the site; this is the part of the file the
     /// spelling rule reads).
     pub within: Option<(Arc<QueryMacro>, usize)>,
+    /// A file label's original parsing context and name run. Like `within`,
+    /// this is input to the spelling rule, erased before comparison.
+    pub label: Option<Arc<crate::refs::FileLabel>>,
+    /// Syntax and complete Org file-link context used only for spelling.
+    pub org: bool,
+    pub file_link: Option<Arc<str>>,
     /// The sites the parser reports inside this one, each with its range in
     /// `native`, in source order: the inner levels of a nested link (the
     /// enclosing name is a site too), the link that spells a tag `#[[x]]`.
@@ -295,33 +301,56 @@ pub enum Expect<'a> {
 /// another macro's argument is unspellable with a `}` (it would end the
 /// macro); an Org file stem is the name through the graph's file-name codec.
 fn spell(rename: &Rename, site: &Site, name: &str) -> Option<String> {
+    if site.context == Context::SplitLine || (site.kind == SiteKind::MacroArg && name.contains('}'))
+    {
+        return None;
+    }
+    if let Some(label) = &site.label {
+        let mut native = site.native.clone();
+        native.replace_range(site.slot.clone(), &label.spelling(name)?);
+        return Some(native);
+    }
     let replaced = || {
         let mut out = site.native.clone();
         out.replace_range(site.slot.clone(), name);
         out
     };
-    let tag = || {
-        if site.native.starts_with("#[[") {
-            replaced()
+    let tag = || crate::refs::rename::tag_spelling(name, site.native.starts_with("#[["), site.org);
+    let link = || {
+        if !site.inner.is_empty() {
+            Some(replaced())
         } else {
-            crate::refs::rename::tag_for(name)
+            crate::refs::label::reference_spelling(
+                &site.native,
+                site.slot.clone(),
+                name,
+                site.org,
+                "explicit_link",
+            )
+            .map(|spelling| {
+                let mut out = site.native.clone();
+                out.replace_range(site.slot.clone(), &spelling);
+                out
+            })
         }
     };
     match (site.context, site.kind) {
-        (Context::SplitLine, _) => None,
         (Context::OrgHeadlineTag, _) => crate::refs::rename::headline_tag_ok(name).then(replaced),
         (_, SiteKind::Query) => query_spelling(rename, site, name),
-        (_, SiteKind::MacroArg) => (!name.contains('}')).then(replaced),
-        (_, SiteKind::OrgFile) => Some(crate::model::encode_page_name(name, rename.names)),
-        (_, SiteKind::Tag) => Some(tag()),
+        (_, SiteKind::MacroArg) => link(),
+        (_, SiteKind::OrgFile) => {
+            crate::refs::label::file_stem_spelling(site.file_link.as_ref()?, name, rename.names)
+        }
+        (_, SiteKind::Tag) => tag(),
+        (_, SiteKind::Link) => link(),
         (_, SiteKind::PropertyValue | SiteKind::AliasName) => {
-            Some(if site.native.starts_with("[[") {
-                replaced()
+            if site.native.starts_with("[[") {
+                link()
             } else if site.native.starts_with('#') {
                 tag()
             } else {
-                crate::refs::rename::member_spelling(name)
-            })
+                crate::refs::rename::member_spelling(name, site.org)
+            }
         }
         _ => Some(replaced()),
     }
@@ -576,6 +605,9 @@ fn erase_site(s: &Site) -> Site {
         native: s.native.clone(),
         slot: 0..0,
         within: None,
+        label: None,
+        org: false,
+        file_link: None,
         inner: s.inner.iter().map(|(_, i)| (0..0, erase_site(i))).collect(),
     }
 }

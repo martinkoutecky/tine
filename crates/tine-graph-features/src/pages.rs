@@ -198,8 +198,8 @@ fn existing(target: Resolved) -> Vec<PageId> {
 /// file, is the reference). Found by scanning the planning view's parsed
 /// blocks and pre-blocks in memory, with no index (D-10; no persisted record,
 /// I-25): O(B) substring checks, plus the rename's own rewrite of each text
-/// that may hold a target. Exact: a page is selected only when one of its
-/// texts would change.
+/// that may hold a target. A page is selected when one of its texts needs
+/// a write or an O7 report, including an unspellable target left unchanged.
 ///
 /// A macro's target spells its page's name in the text itself, so a text
 /// holding `{{` is rewritten (one parse) only when its folded text contains a
@@ -240,7 +240,7 @@ fn rewrite_target_pages(
             };
             if let Some(pre) = page.document.pre_block.as_deref() {
                 if may_hold(pre)
-                    && refs::rename_pre_block(pre, org, renames, None, format, None) != pre
+                    && refs::rename_target_needs_report_or_write(pre, org, true, renames, format)
                 {
                     return true;
                 }
@@ -249,7 +249,7 @@ fn rewrite_target_pages(
             while let Some(block) = stack.pop() {
                 let raw = block.raw();
                 if may_hold(raw)
-                    && refs::rename_block_raw(raw, org, renames, None, format, None) != raw
+                    && refs::rename_target_needs_report_or_write(raw, org, false, renames, format)
                 {
                     return true;
                 }

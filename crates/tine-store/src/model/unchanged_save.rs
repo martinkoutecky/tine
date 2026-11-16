@@ -24,6 +24,8 @@ pub(super) fn counted_parse() {
 /// Count one whole-document serialization (a layout-retaining render or a
 /// whole-page serializer run).
 pub(super) fn counted_serialization() {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::save_serialization();
     #[cfg(test)]
     SAVE_WORK.with(|w| w.set((w.get().0, w.get().1 + 1)));
 }

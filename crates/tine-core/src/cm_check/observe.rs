@@ -141,6 +141,7 @@ fn header_rows<'p>(
 ) -> Vec<Header> {
     let raw = block.raw();
     let sites = block_sites(block, r);
+    let mut next_site = 0;
     let mut rows = Vec::new();
     for p in properties {
         let line = p.line.0..p.line.0 + p.line.slice(raw).trim_end_matches(['\n', '\r']).len();
@@ -151,10 +152,11 @@ fn header_rows<'p>(
             (true, false) => NativeForm::Drawer,
         };
         let value = p.value_range.0..p.value_range.1;
+        let sites = ordered_sites(&sites, &mut next_site, &line);
         let (role, text) = if key == "title" {
-            (HeaderRole::Title, title_row(raw, &sites, line, value))
+            (HeaderRole::Title, title_row(raw, sites, line, value))
         } else {
-            let text = atoms(raw, &sites, line);
+            let text = atoms(raw, sites, line);
             let aliases = crate::page_header::is_alias_key(&key);
             match aliases && text_has(&text, SiteKind::PropertyValue) {
                 true => (HeaderRole::Aliases, as_alias_names(text)),
@@ -178,48 +180,65 @@ fn header_rows<'p>(
 /// has no key and stays in line order among the property rows.
 fn other_header_text(block: &DocBlock, r: Reader, regions: &BlockRegions, rows: &mut Vec<Header>) {
     let raw = block.raw();
-    let covered = |at: usize| {
-        regions
-            .page_properties()
-            .any(|p| p.line.0 <= at && at < p.line.1)
-            || regions
-                .property_regions
-                .iter()
-                .any(|g| g.0 <= at && at < g.1)
-    };
-    let mut lines = Vec::new();
+    let mut properties = regions.page_properties().peekable();
+    let mut drawers = regions.property_regions.iter().peekable();
+    let mut property_rows = std::mem::take(rows).into_iter();
+    let sites = std::cell::OnceCell::new();
+    let mut next_site = 0;
     let mut at = 0;
     for line in raw.split_inclusive('\n') {
+        super::step();
+        // Both lists are parser-ordered. Each range and each property row
+        // advances once; no search from the start and no Vec insertion.
+        while properties.peek().is_some_and(|p| p.line.1 <= at) {
+            super::step();
+            properties.next();
+            rows.extend(property_rows.next());
+        }
+        while drawers.peek().is_some_and(|g| g.1 <= at) {
+            super::step();
+            drawers.next();
+        }
+        let covered = properties.peek().is_some_and(|p| p.line.0 <= at)
+            || drawers.peek().is_some_and(|g| g.0 <= at);
         let text = line.trim_end_matches(['\n', '\r']);
-        if !text.trim().is_empty() && !covered(at) {
-            lines.push(at..at + text.len());
+        if !text.trim().is_empty() && !covered {
+            let sites = sites.get_or_init(|| block_sites(block, r));
+            let line = at..at + text.len();
+            let sites = ordered_sites(sites, &mut next_site, &line);
+            rows.push(Header {
+                role: HeaderRole::Other,
+                form: if r.org {
+                    NativeForm::Directive
+                } else {
+                    NativeForm::Markdown
+                },
+                key: String::new(),
+                text: atoms(raw, sites, line),
+            });
         }
         at += line.len();
     }
-    if lines.is_empty() {
-        return;
+    rows.extend(property_rows);
+}
+
+/// Sites starting in successive, ordered header lines, with a cursor rather
+/// than a fresh search per property. Each site is visited at most once.
+fn ordered_sites<'s>(
+    sites: &'s [(Range<usize>, Site)],
+    next: &mut usize,
+    line: &Range<usize>,
+) -> &'s [(Range<usize>, Site)] {
+    while *next < sites.len() && sites[*next].0.start < line.start {
+        super::step();
+        *next += 1;
     }
-    let sites = block_sites(block, r);
-    let starts: Vec<usize> = regions.page_properties().map(|p| p.line.0).collect();
-    // Back to front, so each insertion index counts only property rows.
-    for line in lines.into_iter().rev() {
-        let at = starts.iter().filter(|s| **s < line.start).count();
-        let form = if r.org {
-            NativeForm::Directive
-        } else {
-            NativeForm::Markdown
-        };
-        let text = atoms(raw, &sites, line);
-        rows.insert(
-            at,
-            Header {
-                role: HeaderRole::Other,
-                form,
-                key: String::new(),
-                text,
-            },
-        );
+    let first = *next;
+    while *next < sites.len() && sites[*next].0.start < line.end {
+        super::step();
+        *next += 1;
     }
+    &sites[first..*next]
 }
 
 fn text_has(text: &[Atom], kind: SiteKind) -> bool {
@@ -264,6 +283,9 @@ fn title_row(
         slot: 0..native.len(),
         native,
         within: None,
+        label: None,
+        org: false,
+        file_link: None,
         inner: Vec::new(),
     };
     super::compact(vec![
@@ -317,6 +339,9 @@ fn block_sites(block: &DocBlock, r: Reader) -> Vec<(Range<usize>, Site)> {
     sites.sort_by_key(|(r, _)| (r.start, std::cmp::Reverse(r.end)));
     // The evidence names a nested link once per level, with one range.
     sites.dedup();
+    for (_, site) in &mut sites {
+        site.org = r.org;
+    }
     nest(sites)
 }
 
@@ -377,6 +402,25 @@ fn link_slot(node: &str, name: &str) -> Range<usize> {
     at..(at + name.len()).min(node.len())
 }
 
+/// One observation of a file label, whether it is a reference/property
+/// member or a macro argument. Org references leave the file stem as a
+/// separate site; macro arguments observe the whole link node.
+fn label_site(kind: SiteKind, node: &str, name: &str, r: Reader) -> Option<(Range<usize>, Site)> {
+    let label = crate::refs::FileLabel::read(node, name, r.org)?;
+    let extent = if r.org && kind != SiteKind::MacroArg {
+        label.label.clone()
+    } else {
+        0..node.len()
+    };
+    let slot = label
+        .run
+        .as_ref()
+        .map_or(0..0, |run| run.start - extent.start..run.end - extent.start);
+    let mut s = site(kind, &node[extent.clone()], slot, Some(name));
+    s.label = Some(Arc::new(label));
+    Some((extent, s))
+}
+
 /// The sites the reference evidence reports.
 fn reference_sites(
     raw: &str,
@@ -394,6 +438,7 @@ fn reference_sites(
     let mut nested: Option<Range<usize>> = None;
     for p in source.explicit {
         let node = &raw[p.range.clone()];
+        let value = values.contains(&std::ptr::from_ref(p));
         if p.rule == "explicit_nested_link" {
             // The evidence names every level of the node, the enclosing one
             // included (`nested_reference_names`: each `[[…]]` body), once
@@ -413,19 +458,18 @@ fn reference_sites(
                 continue;
             }
         }
-        if p.rule == "explicit_link" && r.org && node.starts_with("[[file:") {
-            // An Org file link: its label names the page (a site of its own);
-            // its path's stem is a rewrite target (`target_sites`).
-            if let Some(split) = node[2..node.len() - 2].find("][") {
-                let at = p.range.start + 2 + split + 2..p.range.end - 2;
-                let label = &raw[at.clone()];
-                let s = site(SiteKind::Link, label, 0..label.len(), Some(&p.name));
-                sites.push((at, s));
+        if p.rule == "explicit_link" {
+            let kind = if value {
+                SiteKind::PropertyValue
+            } else {
+                SiteKind::Link
+            };
+            if let Some((extent, s)) = label_site(kind, node, &p.name, r) {
+                sites.push((p.range.start + extent.start..p.range.start + extent.end, s));
+                continue;
             }
-            continue;
         }
         super::step();
-        let value = values.contains(&std::ptr::from_ref(p));
         let (kind, slot) = match p.rule {
             "explicit_property_key" => (SiteKind::PropertyKey, 0..node.len()),
             "explicit_task_marker" => (SiteKind::Task, 0..node.len()),
@@ -501,7 +545,11 @@ fn target_sites(raw: &str, target: RewriteTarget, r: Reader, out: &mut Vec<(Rang
         RewriteTarget::MacroLink(p) => {
             let node = &raw[p.range.clone()];
             let mut push = |at: Range<usize>, slot: Range<usize>, name: Option<&str>| {
-                let mut s = site(SiteKind::MacroArg, &raw[at.clone()], slot, name);
+                let native = &raw[at.clone()];
+                let mut s = name
+                    .and_then(|name| label_site(SiteKind::MacroArg, native, name, r))
+                    .map(|(_, site)| site)
+                    .unwrap_or_else(|| site(SiteKind::MacroArg, native, slot, name));
                 if s.context == Context::Ordinary {
                     s.context = Context::MacroArgument;
                 }
@@ -534,10 +582,9 @@ fn target_sites(raw: &str, target: RewriteTarget, r: Reader, out: &mut Vec<(Rang
             let at = range.start + stem.start..range.start + stem.end;
             let stem = &raw[at.clone()];
             let name = crate::model::decode_page_name(stem, r.names);
-            out.push((
-                at,
-                site(SiteKind::OrgFile, stem, 0..stem.len(), Some(&name)),
-            ));
+            let mut s = site(SiteKind::OrgFile, stem, 0..stem.len(), Some(&name));
+            s.file_link = Some(Arc::from(&raw[range]));
+            out.push((at, s));
         }
     }
 }
@@ -556,6 +603,9 @@ fn site(kind: SiteKind, native: &str, slot: Range<usize>, name: Option<&str>) ->
         native: native.to_owned(),
         slot,
         within: None,
+        label: None,
+        org: false,
+        file_link: None,
         inner: Vec::new(),
     }
 }

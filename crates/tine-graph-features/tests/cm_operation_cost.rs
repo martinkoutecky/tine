@@ -402,11 +402,12 @@ fn a_rename_costs_a_bounded_constant_per_referrer() {
     );
 }
 
-/// CM step 2 P2/P3 (design item 6): the model check reads each changed file
-/// once. A rename with 1, 10 and 100 referrers checks every referrer and the
-/// moved page, one check each, with exactly two store parses each (the new
-/// text, and the real save's re-parse of its render; the old reading is the
-/// writer's, carried), so its cost grows by one check per referrer. Its time is billed apart and stays below
+/// CM step 2 P2/P3: count store parses, serializations and page-byte input
+/// scans inside the check, for 1, 10 and 100 referrers plus the moved page.
+/// Each has two store parses (new text and the save's re-read of its render)
+/// and one serialization. These counters do not count the old reading's
+/// observation/projection work or label-candidate projection parses.
+/// Its time is billed apart and stays below
 /// the rest of the operation's (the design's stop line: the warm check must
 /// not cost more than the operation it checks).
 #[test]
@@ -419,9 +420,11 @@ fn the_model_check_reads_each_changed_file_once() {
     for (n, bill) in &bills {
         let c = bill.io;
         eprintln!(
-            "rename, {n} referrers: {} checks, {} check parses, {:?} checking of {:?}",
+            "rename, {n} referrers: {} checks, {} store parses, {} serializations, {} input scans, {:?} checking of {:?}",
             c.model_checks,
             c.model_check_parses,
+            c.model_check_serializations,
+            c.model_check_input_checks,
             Duration::from_nanos(c.model_check_nanos),
             bill.call
         );
@@ -432,12 +435,17 @@ fn the_model_check_reads_each_changed_file_once() {
         );
         // Per check: the save path's own parse of what it rendered, inside
         // the unchanged save P3 runs (`unchanged_save`), and the one parse of
-        // the new text, shared by P2 and P3 (no old text is parsed again:
-        // every writer's reading is carried).
+        // the new text, shared by P2 and P3. Core observation/projection work
+        // is outside this store-parse counter.
         assert_eq!(
             c.model_check_save_parses,
             n + 1,
             "one save re-read per check: {bill:?}"
+        );
+        assert_eq!(
+            c.model_check_serializations,
+            n + 1,
+            "one serialization per check: {bill:?}"
         );
         assert_eq!(
             c.model_check_parses - c.model_check_save_parses,

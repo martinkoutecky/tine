@@ -8,6 +8,10 @@ use crate::config::FileNameFormat;
 pub(crate) mod page_identity;
 pub use page_identity::page_key;
 
+#[path = "refs_label.rs"]
+pub(crate) mod label;
+pub use label::FileLabel;
+
 /// Comparison form for page identity. NFC composition requires allocation; this
 /// deliberately delegates to the canonical key so cache scans cannot drift.
 pub fn same_page(a: &str, b: &str) -> bool {
@@ -394,6 +398,22 @@ pub fn rename_pre_block<'f>(
         ),
         rewritten,
     )
+}
+
+/// Whether a held block or pre-block needs a rename write or an O7 report.
+/// Target-only sites (macro arguments, queries, Org file stems) may have no
+/// reference selecting their page; unspellable ones still need a report.
+/// Reuses the local rewrite walk and its spelling decisions, O(text bytes),
+/// without a page parse, graph scan or I/O.
+pub fn rename_target_needs_report_or_write(
+    raw: &str,
+    org: bool,
+    pre_block: bool,
+    pages: &std::collections::HashMap<String, String>,
+    format: RenameFormat<'_>,
+) -> bool {
+    let renames = rename::Renames::new(pages, None, format, false);
+    rename::target_needs_report_or_write(raw, org, pre_block, &renames)
 }
 
 #[cfg(test)]
